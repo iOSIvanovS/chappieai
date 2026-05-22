@@ -12,7 +12,7 @@ import Foundation
 /// Модель запроса к API AI-провайдера.
 /// Что это: Структура данных, описывающая параметры запроса (какую модель используем, сообщения, инструменты).
 /// Зачем: Используется для сериализации в JSON при отправке POST-запроса на сервер.
-public struct AITunnelRequest: Encodable {
+public struct AITunnelRequest: Encodable, Sendable {
     public let model: String
     public let messages: [AIMessage]
     public let temperature: Double?
@@ -29,7 +29,7 @@ public struct AITunnelRequest: Encodable {
 /// Модель единичного сообщения в чате.
 /// Что это: Сообщение, которое может исходить от пользователя, ассистента, системы или инструмента.
 /// Зачем: Формирует контекст для нейросети.
-public struct AIMessage: Codable {
+public struct AIMessage: Codable, Sendable {
     public var role: String
     public var content: String?
     public var tool_calls: [AIToolCall]?
@@ -50,7 +50,7 @@ public struct AIMessage: Codable {
 /// Модель инструмента (Tool), доступного нейросети.
 /// Что это: Обертка над функцией, которую ИИ может вызвать.
 /// Зачем: API требует передавать инструменты в массиве с указанием типа (обычно "function").
-public struct AITool: Codable {
+public struct AITool: Codable, Sendable {
     public let type: String
     public let function: AIFunctionDefinition
     
@@ -63,7 +63,7 @@ public struct AITool: Codable {
 /// Описание самой функции для инструмента.
 /// Что это: Имя, описание и параметры функции.
 /// Зачем: Нейросеть читает описание и решает, когда и с какими аргументами вызывать функцию.
-public struct AIFunctionDefinition: Codable {
+public struct AIFunctionDefinition: Codable, Sendable {
     public let name: String
     public let description: String
     public let parameters: AIToolParameters
@@ -78,7 +78,7 @@ public struct AIFunctionDefinition: Codable {
 /// Параметры функции в формате JSON Schema.
 /// Что это: Описание входных аргументов (какие поля есть, их типы, какие обязательны).
 /// Зачем: Позволяет строго типизировать аргументы, которые генерирует нейросеть.
-public struct AIToolParameters: Codable {
+public struct AIToolParameters: Codable, Sendable {
     public let type: String
     public let properties: [String: AIToolProperty]
     public let required: [String]?
@@ -93,7 +93,7 @@ public struct AIToolParameters: Codable {
 /// Описание отдельного свойства (аргумента) функции.
 /// Что это: Тип данных (например, "string") и его описание для нейросети.
 /// Зачем: Помогает ИИ правильно заполнить конкретное поле аргумента.
-public struct AIToolProperty: Codable {
+public struct AIToolProperty: Codable, Sendable {
     public let type: String
     public let description: String?
     
@@ -108,7 +108,7 @@ public struct AIToolProperty: Codable {
 /// Модель ответа от API AI-провайдера.
 /// Что это: Структура данных, возвращаемая сервером после успешного запроса.
 /// Зачем: Для десериализации JSON-ответа и получения сгенерированного сообщения или вызова инструмента.
-public struct AITunnelResponse: Decodable {
+public struct AITunnelResponse: Decodable, Sendable {
     public let id: String?
     public let choices: [AIChoice]
     public let usage: AIUsage?
@@ -117,7 +117,7 @@ public struct AITunnelResponse: Decodable {
 /// Вариант ответа (Choice), сгенерированный нейросетью.
 /// Что это: Содержит само сообщение и причину завершения генерации.
 /// Зачем: Обычно берется первый элемент из массива `choices`.
-public struct AIChoice: Decodable {
+public struct AIChoice: Decodable, Sendable {
     public let message: AIMessage
     public let finish_reason: String?
 }
@@ -125,7 +125,7 @@ public struct AIChoice: Decodable {
 /// Статистика использования токенов.
 /// Что это: Информация о потраченных токенах и балансе (если поддерживается провайдером).
 /// Зачем: Для аналитики и контроля расходов.
-public struct AIUsage: Decodable {
+public struct AIUsage: Decodable, Sendable {
     public let prompt_tokens: Int?
     public let completion_tokens: Int?
     public let total_tokens: Int?
@@ -138,7 +138,7 @@ public struct AIUsage: Decodable {
 /// Вызов инструмента, инициированный нейросетью.
 /// Что это: Идентификатор вызова, тип и сама функция с аргументами.
 /// Зачем: Нейросеть возвращает этот объект, когда хочет выполнить действие на нашей стороне.
-public struct AIToolCall: Codable {
+public struct AIToolCall: Codable, Sendable {
     public let id: String
     public let type: String
     public let function: AIToolCallFunction
@@ -147,7 +147,7 @@ public struct AIToolCall: Codable {
 /// Функция в рамках вызова инструмента.
 /// Что это: Имя вызванной функции и её аргументы в виде JSON-строки.
 /// Зачем: Мы парсим `arguments` и выполняем соответствующую логику в приложении.
-public struct AIToolCallFunction: Codable {
+public struct AIToolCallFunction: Codable, Sendable {
     public let name: String
     public let arguments: String
 }

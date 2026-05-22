@@ -11,13 +11,19 @@ import Foundation
 /// Что это: Структура, инкапсулирующая логику создания и отправки HTTP-запросов к нейросети.
 /// Зачем: Изолирует сетевой слой от бизнес-логики приложения. Позволяет легко мокать запросы для тестов
 /// или менять провайдера в будущем без переписывания ViewModel.
-public struct AITunnelClient {
+public struct AITunnelClient: Sendable {
     private let endpointURL = URL(string: "https://api.aitunnel.ru/v1/chat/completions")!
-    private let apiKey = "REMOVED_API_KEY"
-    private let modelName = "gemini-3.1-pro-preview-customtools"
+    private let apiKey: String
+    private let modelName: String
     
-    /// Инициализатор по умолчанию.
-    public init() {}
+    /// Инициализатор
+    /// - Parameters:
+    ///   - apiKey: API ключ для доступа к сервису
+    ///   - modelName: Имя модели (по умолчанию gemini-3.1-pro-preview-customtools)
+    public init(apiKey: String, modelName: String = "gemini-3.1-pro-preview-customtools") {
+        self.apiKey = apiKey
+        self.modelName = modelName
+    }
     
     /// Отправляет запрос к нейросети и получает ответ.
     /// - Parameters:
@@ -28,11 +34,9 @@ public struct AITunnelClient {
     ///            потраченную сумму (если провайдер отдает) и остаток баланса.
     public func sendRequest(systemPrompt: String, chatHistory: [AIMessage], tools: [AITool]) async throws -> (message: AIMessage, cost: Double?, balance: Double?) {
         
-        // Формируем полный массив сообщений: сначала системный промпт, затем история чата
         var messages = [AIMessage(role: "system", content: systemPrompt)]
         messages.append(contentsOf: chatHistory)
         
-        // Создаем тело запроса. Если массив инструментов пуст, передаем nil, чтобы не смущать API.
         let requestBody = AITunnelRequest(
             model: modelName,
             messages: messages,
@@ -40,35 +44,52 @@ public struct AITunnelClient {
             tools: tools.isEmpty ? nil : tools
         )
         
-        // Настраиваем HTTP-запрос
         var request = URLRequest(url: endpointURL)
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
         request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         
-        // Кодируем тело запроса в JSON
         let encoder = JSONEncoder()
-        request.httpBody = try encoder.encode(requestBody)
+        do {
+            request.httpBody = try encoder.encode(requestBody)
+        } catch {
+            throw ChappieError.parsingError("Не удалось закодировать запрос: \(error.localizedDescription)")
+        }
         
-        // Выполняем сетевой запрос
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw ChappieError.networkError(error.localizedDescription)
+        }
         
-        // Проверяем статус-код ответа
-        guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ChappieError.networkError("Неверный тип ответа от сервера")
+        }
+        
+        if !(200...299).contains(httpResponse.statusCode) {
             let errorMessage = String(data: data, encoding: .utf8) ?? "Неизвестная ошибка сервера"
-            throw URLError(.badServerResponse, userInfo: [NSLocalizedDescriptionKey: "Ошибка HTTP: \(errorMessage)"])
+            
+            // Если слишком большой контекст, обычно возвращается 400 или 413, но лучше проверить текст ошибки
+            if httpResponse.statusCode == 413 || errorMessage.lowercased().contains("context") || errorMessage.lowercased().contains("limit") {
+                throw ChappieError.aiContextLimitExceeded
+            }
+            throw ChappieError.networkError("Код \(httpResponse.statusCode): \(errorMessage)")
         }
         
-        // Декодируем успешный ответ
         let decoder = JSONDecoder()
-        let result = try decoder.decode(AITunnelResponse.self, from: data)
-        
-        // Извлекаем первый вариант ответа (обычно он один)
-        guard let choice = result.choices.first else {
-            throw URLError(.cannotParseResponse, userInfo: [NSLocalizedDescriptionKey: "Пустой ответ от модели"])
+        let result: AITunnelResponse
+        do {
+            result = try decoder.decode(AITunnelResponse.self, from: data)
+        } catch {
+            throw ChappieError.parsingError("Не удалось декодировать ответ от нейросети: \(error.localizedDescription)")
         }
         
-        // Возвращаем само сообщение и финансовую статистику
+        guard let choice = result.choices.first else {
+            throw ChappieError.parsingError("Пустой ответ от модели")
+        }
+        
         return (choice.message, result.usage?.cost_rub, result.usage?.balance)
     }
 }

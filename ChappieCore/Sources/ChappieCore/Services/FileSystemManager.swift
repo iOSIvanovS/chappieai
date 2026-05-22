@@ -25,14 +25,12 @@ public actor FileSystemManager {
     /// Зачем: ИИ должен понимать структуру проекта, чтобы знать, какие файлы можно редактировать.
     /// - Returns: Массив строк с относительными путями.
     public func listFiles() throws -> [String] {
-        // skipsHiddenFiles автоматически исключит скрытые папки вроде .git, .build, .swiftpm
         guard let enumerator = fileManager.enumerator(at: workspaceURL, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) else {
-            return []
+            throw ChappieError.fileSystemError("Не удалось получить доступ к директории: \(workspaceURL.path)")
         }
         
         var filePaths: [String] = []
         for case let fileURL as URL in enumerator {
-            // Возвращаем агенту пути без привязки к локальному диску пользователя (только относительные)
             let relativePath = fileURL.path.replacingOccurrences(of: workspaceURL.path + "/", with: "")
             filePaths.append(relativePath)
         }
@@ -44,7 +42,11 @@ public actor FileSystemManager {
     /// - Returns: Содержимое файла в виде строки.
     public func readFile(at relativePath: String) throws -> String {
         let fileURL = workspaceURL.appendingPathComponent(relativePath)
-        return try String(contentsOf: fileURL, encoding: .utf8)
+        do {
+            return try String(contentsOf: fileURL, encoding: .utf8)
+        } catch {
+            throw ChappieError.fileSystemError("Не удалось прочитать файл \(relativePath): \(error.localizedDescription)")
+        }
     }
 
     /// Записывает текст в файл. Если файла или папок нет — создает их.
@@ -55,12 +57,14 @@ public actor FileSystemManager {
         let fileURL = workspaceURL.appendingPathComponent(relativePath)
         let directoryURL = fileURL.deletingLastPathComponent()
         
-        // Автоматически создаем подпапки, если агент решил положить файл глубоко в иерархию
-        if !fileManager.fileExists(atPath: directoryURL.path) {
-            try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        do {
+            if !fileManager.fileExists(atPath: directoryURL.path) {
+                try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+            }
+            try content.write(to: fileURL, atomically: true, encoding: .utf8)
+        } catch {
+            throw ChappieError.fileSystemError("Не удалось записать файл \(relativePath): \(error.localizedDescription)")
         }
-        
-        try content.write(to: fileURL, atomically: true, encoding: .utf8)
     }
 
     /// Удаляет файл из проекта.
@@ -68,7 +72,13 @@ public actor FileSystemManager {
     public func deleteFile(at relativePath: String) throws {
         let fileURL = workspaceURL.appendingPathComponent(relativePath)
         if fileManager.fileExists(atPath: fileURL.path) {
-            try fileManager.removeItem(at: fileURL)
+            do {
+                try fileManager.removeItem(at: fileURL)
+            } catch {
+                throw ChappieError.fileSystemError("Не удалось удалить файл \(relativePath): \(error.localizedDescription)")
+            }
+        } else {
+            throw ChappieError.fileSystemError("Файл не найден для удаления: \(relativePath)")
         }
     }
 }

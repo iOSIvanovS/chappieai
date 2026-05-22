@@ -47,7 +47,7 @@ struct ContentView: View {
                         LazyVStack(spacing: 12) {
                             if viewModel.messages.isEmpty {
                                 HStack {
-                                    Text("Привет, Дилан! Я - Чаппи. Выбери проект и скажи, что нужно сделать.")
+                                    Text("Привет! Я - Чаппи. Выбери проект и скажи, что нужно сделать.")
                                         .padding()
                                         .background(Color(NSColor.windowBackgroundColor))
                                         .cornerRadius(10)
@@ -64,7 +64,6 @@ struct ContentView: View {
                                                 .foregroundStyle(msg.isUser ? .white : .primary)
                                                 .textSelection(.enabled)
                                             
-                                            // 🔥 Монетка и стоимость снизу справа (только для ИИ)
                                             if let cost = msg.cost {
                                                 Text(String(format: "🪙 %.2f ₽", cost))
                                                     .font(.system(size: 10, weight: .medium))
@@ -101,13 +100,11 @@ struct ContentView: View {
                         .padding()
                     }
                     .onAppear {
-                        // Скроллим вниз при первоначальной загрузке интерфейса
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                             proxy.scrollTo("BottomSpacer", anchor: .bottom)
                         }
                     }
                     .onChange(of: viewModel.messages.count) { _, _ in
-                        // Небольшая задержка, чтобы UI успел обновить фреймы перед скроллом
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                             withAnimation(.easeOut(duration: 0.3)) {
                                 proxy.scrollTo("BottomSpacer", anchor: .bottom)
@@ -125,23 +122,23 @@ struct ContentView: View {
                     }
                 }
                 
-                HStack(alignment: .bottom, spacing: 12) {
-                    TextField("Напиши, что нужно сделать?", text: $prompt, axis: .vertical)
-                        .textFieldStyle(.roundedBorder)
-                        .lineLimit(1...10) // Поле может расширяться до 10 строк
-                        .onSubmit {
-                            // В macOS onSubmit для TextField(axis: .vertical) срабатывает по нажатию Return (Enter).
-                            // Для переноса строки внутри поля используется Option+Return (⌥+Enter).
-                            sendMessage()
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .bottom, spacing: 12) {
+                        TextField("Напиши сообщение... (Enter - отправить, ⌥+Enter - перенос)", text: $prompt, axis: .vertical)
+                            .textFieldStyle(.roundedBorder)
+                            .lineLimit(1...10)
+                            .onSubmit {
+                                sendMessage()
+                            }
+                            .disabled(viewModel.workspaceURL == nil || viewModel.isThinking)
+                        
+                        Button(action: sendMessage) {
+                            Image(systemName: "paperplane.fill")
                         }
-                        .disabled(viewModel.workspaceURL == nil || viewModel.isThinking)
-                    
-                    Button(action: sendMessage) {
-                        Image(systemName: "paperplane.fill")
+                        .buttonStyle(.borderedProminent)
+                        .disabled(prompt.isEmpty || viewModel.workspaceURL == nil || viewModel.isThinking)
+                        .padding(.bottom, 2)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(prompt.isEmpty || viewModel.workspaceURL == nil || viewModel.isThinking)
-                    .padding(.bottom, 2) // Выравниваем кнопку по нижнему краю многострочного поля
                 }
                 .padding(12)
                 .background(Color(NSColor.windowBackgroundColor))
@@ -151,7 +148,6 @@ struct ContentView: View {
                 .padding(.bottom, 16)
             }
             .toolbar {
-                // 🔥 Постоянный баланс в тулбаре
                 ToolbarItem(placement: .primaryAction) {
                     if let balance = viewModel.currentBalance {
                         HStack(spacing: 4) {

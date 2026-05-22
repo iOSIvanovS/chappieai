@@ -32,9 +32,15 @@ final class ChappieViewModel {
     
     private var fileSystem: FileSystemManager?
     private var toolService: ToolExecutionService?
-    private let aiClient = AITunnelClient()
+    private var aiClient: AITunnelClient
+    private var orchestrator: AIOrchestrator?
     
     init() {
+        // Читаем API-ключ из UserDefaults. В будущем можно добавить UI для его ввода и хранить в Keychain.
+        let defaultKey = "REMOVED_API_KEY"
+        let savedKey = UserDefaults.standard.string(forKey: "aiTunnelApiKey") ?? defaultKey
+        self.aiClient = AITunnelClient(apiKey: savedKey)
+        
         loadMessages()
         if let savedBalance = UserDefaults.standard.object(forKey: "savedBalance") as? Double {
             self.currentBalance = savedBalance
@@ -44,8 +50,14 @@ final class ChappieViewModel {
     
     func setWorkspace(_ url: URL) {
         workspaceURL = url
-        fileSystem = FileSystemManager(workspaceURL: url)
-        toolService = ToolExecutionService(fileSystem: fileSystem)
+        let fs = FileSystemManager(workspaceURL: url)
+        self.fileSystem = fs
+        
+        let ts = ToolExecutionService(fileSystem: fs)
+        self.toolService = ts
+        
+        self.orchestrator = AIOrchestrator(aiClient: aiClient, toolService: ts, fileSystem: fs)
+        
         saveWorkspaceWithSecurityScope(url)
         
         if messages.isEmpty {
@@ -55,6 +67,10 @@ final class ChappieViewModel {
     
     func send(prompt: String) {
         guard !prompt.isEmpty else { return }
+        guard let orchestrator = orchestrator else {
+            messages.append(ChatMessage(isUser: false, text: "Ошибка: Оркестратор не инициализирован. Подключите папку с проектом."))
+            return
+        }
         
         messages.append(ChatMessage(isUser: true, text: prompt))
         isThinking = true
@@ -65,92 +81,78 @@ final class ChappieViewModel {
             return AIMessage(role: msg.isUser ? "user" : "assistant", content: msg.text)
         }
         
-        // Ограничиваем историю последних N сообщений для экономии токенов и ускорения
-        let historyLimit = 15
-        var networkHistory = Array(cleanHistory.suffix(historyLimit))
+        // Используем лимит из AppConfig (устранение магического числа 15)
+        let historyLimit = AppConfig.shared.maxHistoryMessages
+        let networkHistory = Array(cleanHistory.suffix(historyLimit))
         
         Task {
-            var totalCost: Double = 0.0
-            
-            // Запускаем цикл общения с интеллектом (ограничиваем 10 шагами, чтобы не ушел в бесконечность)
-            for _ in 0..<10 {
-                do {
-                    // 1. Формируем контекст с всегда актуальным списком файлов
-                    var fileTree: [String] = []
-                    if let fileSystem { fileTree = try await fileSystem.listFiles() }
-                    
-                    let systemPrompt = """
-                    Ты — Чаппи, Senior macOS/iOS ИИ-разработчик. 
-                    Текущая структура файлов проекта:
-                    \(fileTree.joined(separator: "\n"))
-
-                    ТВОИ ПРАВИЛА:
-                    1. При использовании инструмента `write_file`, ВСЕГДА передавай полный, рабочий и компилируемый Swift-код.
-                    2. Никогда не обрывай код и не оставляй незаконченных строк.
-                    3. Внимательно экранируй спецсимволы в JSON.
-                    4. Перед сохранением убедись, что не сломал синтаксис.
-                    5. Для чтения или перезаписи файлов всегда ИСПОЛЬЗУЙ ИНСТРУМЕНТЫ (tools).
-                    """
-                    
-                    // 2. Отправляем запрос
-                    let tools = toolService?.availableTools ?? []
-                    let (apiMessage, stepCost, stepBalance) = try await aiClient.sendRequest(
-                        systemPrompt: systemPrompt,
-                        chatHistory: networkHistory,
-                        tools: tools
-                    )
-                    
-                    if let sc = stepCost { totalCost += sc }
-                    if let sb = stepBalance { self.currentBalance = sb }
-                    
-                    // Сохраняем ответ агента в сетевую историю
-                    networkHistory.append(apiMessage)
-                    
-                    // 3. Проверяем: это текст или вызов функции?
-                    if let toolCalls = apiMessage.tool_calls, !toolCalls.isEmpty {
-                        
-                        // Агент решил использовать инструменты! 
-                        for call in toolCalls {
-                            // Печатаем в UI красивую информационную плашку
-                            let argsDict = try? JSONSerialization.jsonObject(with: call.function.arguments.data(using: .utf8) ?? Data()) as? [String: String]
-                            let targetPath = argsDict?["path"] ?? argsDict?["key"] ?? argsDict?["type"] ?? ""
-                            self.messages.append(ChatMessage(isUser: false, text: "🛠 Выполняю: \(call.function.name) -> \(targetPath)", cost: nil))
-                            
-                            // Выполняем реальный код через сервис
-                            let toolResult = await toolService?.execute(call: call) ?? "Ошибка: ToolExecutionService недоступен"
-                            
-                            // Возвращаем результат нейросети
-                            networkHistory.append(AIMessage(role: "tool", content: toolResult, tool_call_id: call.id, name: call.function.name))
+            do {
+                let result = try await orchestrator.process(
+                    prompt: prompt,
+                    history: networkHistory,
+                    onToolCall: { toolName, targetPath in
+                        Task { @MainActor in
+                            self.messages.append(ChatMessage(isUser: false, text: "🛠 Выполняю: \(toolName) -> \(targetPath)", cost: nil))
                         }
-                        
-                        // Идем на следующий круг `for` отправлять результаты нейронке
-                        continue
-                        
-                    } else if let content = apiMessage.content {
-                        // Инструментов больше нет, есть финальный текст! Отдаем его пользователю и завершаем задачу.
-                        self.messages.append(ChatMessage(isUser: false, text: content, cost: totalCost))
-                        break
                     }
-                    
-                } catch {
-                    self.messages.append(ChatMessage(isUser: false, text: "Упс, ошибка сети: \(error.localizedDescription)"))
-                    break
+                )
+                
+                let cleanedResponse = self.cleanAIResponse(result.finalResponse)
+                self.messages.append(ChatMessage(isUser: false, text: cleanedResponse, cost: result.totalCost))
+                
+                if let newBalance = result.newBalance {
+                    self.currentBalance = newBalance
                 }
-            } // конец цикла `for`
+            } catch {
+                self.messages.append(ChatMessage(isUser: false, text: "Упс, ошибка: \(error.localizedDescription)"))
+            }
             
             isThinking = false
         }
     }
     
+    // MARK: - Очистка ответа от служебных мыслей
+    
+    private func cleanAIResponse(_ text: String) -> String {
+        var cleanedText = text
+        
+        // Удаляем блок мыслей (от 94>thought до No more tool calls are needed. или похожего конца)
+        if let regex = try? NSRegularExpression(pattern: "94>thought.*?needed\\.\\n*", options: [.dotMatchesLineSeparators]) {
+            cleanedText = regex.stringByReplacingMatches(
+                in: cleanedText,
+                options: [],
+                range: NSRange(location: 0, length: cleanedText.utf16.count),
+                withTemplate: ""
+            )
+        }
+        
+        return cleanedText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
     // MARK: - Локальное сохранение / Восстановление
     
     private func saveMessages() {
-        if let encoded = try? JSONEncoder().encode(messages) { UserDefaults.standard.set(encoded, forKey: "savedChatMessages") }
+        // Используем новый сервис для сохранения истории в файл (Tech Debt #2)
+        ChatHistoryManager.shared.saveMessages(messages)
     }
     
     private func loadMessages() {
-        if let data = UserDefaults.standard.data(forKey: "savedChatMessages"),
-           let decoded = try? JSONDecoder().decode([ChatMessage].self, from: data) { self.messages = decoded }
+        // Пытаемся загрузить из нового места (файла)
+        let loadedMessages: [ChatMessage] = ChatHistoryManager.shared.loadMessages()
+        
+        if !loadedMessages.isEmpty {
+            self.messages = loadedMessages
+        } else {
+            // Миграция со старого UserDefaults
+            if let data = UserDefaults.standard.data(forKey: "savedChatMessages"),
+               let decoded = try? JSONDecoder().decode([ChatMessage].self, from: data) {
+                self.messages = decoded
+                // Сразу сохраняем в новый файл, чтобы в следующий раз грузить оттуда
+                ChatHistoryManager.shared.saveMessages(self.messages)
+                // Удаляем из UserDefaults, чтобы не занимать место
+                UserDefaults.standard.removeObject(forKey: "savedChatMessages")
+            }
+        }
     }
     
     private func saveWorkspaceWithSecurityScope(_ url: URL) {
@@ -170,12 +172,24 @@ final class ChappieViewModel {
         if let url = try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale) {
             _ = url.startAccessingSecurityScopedResource()
             self.workspaceURL = url
-            self.fileSystem = FileSystemManager(workspaceURL: url)
-            self.toolService = ToolExecutionService(fileSystem: self.fileSystem)
+            
+            let fs = FileSystemManager(workspaceURL: url)
+            self.fileSystem = fs
+            
+            let ts = ToolExecutionService(fileSystem: fs)
+            self.toolService = ts
+            
+            self.orchestrator = AIOrchestrator(aiClient: aiClient, toolService: ts, fileSystem: fs)
         } else if let url = try? URL(resolvingBookmarkData: data, options: [], relativeTo: nil, bookmarkDataIsStale: &isStale) {
             self.workspaceURL = url
-            self.fileSystem = FileSystemManager(workspaceURL: url)
-            self.toolService = ToolExecutionService(fileSystem: self.fileSystem)
+            
+            let fs = FileSystemManager(workspaceURL: url)
+            self.fileSystem = fs
+            
+            let ts = ToolExecutionService(fileSystem: fs)
+            self.toolService = ts
+            
+            self.orchestrator = AIOrchestrator(aiClient: aiClient, toolService: ts, fileSystem: fs)
         }
     }
 }
