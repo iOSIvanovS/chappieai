@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		87F3739B2FBF768A0091E2C0 /* ChappieCore in Frameworks */ = {isa = PBXBuildFile; productRef = 87F3739A2FBF768A0091E2C0 /* ChappieCore */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		87BAA4782FBEED3A001DDBED /* Chappie.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Chappie.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,6 +27,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				87F3739B2FBF768A0091E2C0 /* ChappieCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,6 +70,7 @@
 			);
 			name = Chappie;
 			packageProductDependencies = (
+				87F3739A2FBF768A0091E2C0 /* ChappieCore */,
 			);
 			productName = Chappie;
 			productReference = 87BAA4782FBEED3A001DDBED /* Chappie.app */;
@@ -94,6 +100,9 @@
 			);
 			mainGroup = 87BAA46F2FBEED3A001DDBED;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				87F373992FBF768A0091E2C0 /* XCLocalSwiftPackageReference "ChappieCore" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 87BAA4792FBEED3A001DDBED /* Products */;
 			projectDirPath = "";
@@ -256,8 +265,18 @@
 				DEVELOPMENT_TEAM = 7Z69B62G84;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
+				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
+				ENABLE_RESOURCE_ACCESS_USB = NO;
+				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -288,8 +307,18 @@
 				DEVELOPMENT_TEAM = 7Z69B62G84;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
+				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
+				ENABLE_RESOURCE_ACCESS_USB = NO;
+				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -331,6 +360,20 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		87F373992FBF768A0091E2C0 /* XCLocalSwiftPackageReference "ChappieCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ChappieCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		87F3739A2FBF768A0091E2C0 /* ChappieCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ChappieCore;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 87BAA4702FBEED3A001DDBED /* Project object */;
 }

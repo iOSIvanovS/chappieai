@@ -6,6 +6,8 @@
 //
 
 import SwiftUI
+import SwiftData
+import ChappieCore
 
 @main
 struct ChappieApp: App {
@@ -13,5 +15,6 @@ struct ChappieApp: App {
         WindowGroup {
             ContentView()
         }
+        .modelContainer(MemoryManager.shared.container)
     }
 }
