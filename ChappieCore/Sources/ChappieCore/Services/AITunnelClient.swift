@@ -15,14 +15,20 @@ public struct AITunnelClient: Sendable {
     private let endpointURL = URL(string: "https://api.aitunnel.ru/v1/chat/completions")!
     private let apiKey: String
     private let modelName: String
+    private let urlSession: URLSession
     
     /// Инициализатор
     /// - Parameters:
     ///   - apiKey: API ключ для доступа к сервису
-    ///   - modelName: Имя модели (по умолчанию gemini-3.1-pro-preview-customtools)
-    public init(apiKey: String, modelName: String = "gemini-3.1-pro-preview-customtools") {
+    ///   - modelName: Имя модели (по умолчанию gemini-3.5-flash)
+    public init(apiKey: String, modelName: String = "gemini-3.5-flash") {
         self.apiKey = apiKey
         self.modelName = modelName
+        
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 300 // 5 минут ожидания, так как LLM могут отвечать долго
+        config.timeoutIntervalForResource = 300
+        self.urlSession = URLSession(configuration: config)
     }
     
     /// Отправляет запрос к нейросети и получает ответ.
@@ -59,7 +65,7 @@ public struct AITunnelClient: Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await urlSession.data(for: request)
         } catch {
             throw ChappieError.networkError(error.localizedDescription)
         }

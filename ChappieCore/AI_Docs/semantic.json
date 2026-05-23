@@ -1,0 +1,12 @@
+{
+  "project": "ChappieCore",
+  "description": "Ядро приложения Chappie. Содержит сетевой слой, работу с инструментами, памятью и оркестрацию.",
+  "rules": [
+    "Ориентироваться в проекте с помощью файлов в папке AI_Docs.",
+    "Всегда обновлять architecture.md, project_map.md и semantic.json при изменении структуры библиотеки."
+  ],
+  "facts": [
+    "Инструмент list_files добавлен в ToolExecutionService.swift.",
+    "MemoryManager использует SwiftData для хранения информации."
+  ]
+}

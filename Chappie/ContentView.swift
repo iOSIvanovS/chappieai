@@ -44,7 +44,7 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(spacing: 12) {
+                        VStack(spacing: 12) {
                             if viewModel.messages.isEmpty {
                                 HStack {
                                     Text("Привет! Я - Чаппи. Выбери проект и скажи, что нужно сделать.")
@@ -100,23 +100,17 @@ struct ContentView: View {
                         .padding()
                     }
                     .onAppear {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            proxy.scrollTo("BottomSpacer", anchor: .bottom)
-                        }
+                        proxy.scrollTo("BottomSpacer", anchor: .bottom)
                     }
-                    .onChange(of: viewModel.messages.count) { _, _ in
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            withAnimation(.easeOut(duration: 0.3)) {
-                                proxy.scrollTo("BottomSpacer", anchor: .bottom)
-                            }
+                    .onChange(of: viewModel.messages) { _, _ in
+                        withAnimation(.easeOut(duration: 0.3)) {
+                            proxy.scrollTo("BottomSpacer", anchor: .bottom)
                         }
                     }
                     .onChange(of: viewModel.isThinking) { _, isThinking in
                         if isThinking {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                withAnimation(.easeOut(duration: 0.3)) {
-                                    proxy.scrollTo("BottomSpacer", anchor: .bottom)
-                                }
+                            withAnimation(.easeOut(duration: 0.3)) {
+                                proxy.scrollTo("BottomSpacer", anchor: .bottom)
                             }
                         }
                     }
