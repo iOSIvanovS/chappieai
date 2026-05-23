@@ -46,16 +46,37 @@ final class ChappieViewModel {
     private var fileSystem: FileSystemManager?
     private var memoryManager: MemoryManager?
     private var toolService: ToolExecutionService?
+
+    /// Клиент API — хранится как var, потому что может быть пересоздан при смене ключа.
+    /// ПОЧЕМУ VAR: при вызове updateApiKey() мы создаём новый экземпляр AITunnelClient
+    /// с обновлённым ключом. Если бы это было let — смена ключа потребовала бы перезапуска.
     private var aiClient: AITunnelClient
+
     private var orchestrator: AIOrchestrator?
+    
+    // MARK: - Менеджер истории чата
+    // Ключевое свойство: держим актуальный экземпляр ChatHistoryManager,
+    // привязанный к текущему воркспейсу. Это позволяет изолировать историю
+    // каждого проекта в отдельном файле внутри папки проекта.
+    // При смене воркспейса этот экземпляр заменяется новым — UI автоматически
+    // перерисовывает историю именно для выбранного проекта.
+    private var chatHistoryManager: ChatHistoryManager
     
     // MARK: - Инициализация
     
     public init() {
-        // Дефолтный ключ API AITunnel для разработки.
-        let defaultKey = "REMOVED_API_KEY"
-        let savedKey = UserDefaults.standard.string(forKey: "aiTunnelApiKey") ?? defaultKey
+        // ИСПРАВЛЕНИЕ БАГ-1: API-ключ больше НЕ захардкожен в коде.
+        // Теперь он читается из SettingsManager, который хранит его в UserDefaults.
+        // Если ключ не задан — передаём пустую строку; AITunnelClient вернёт понятную ошибку
+        // при попытке сделать запрос, а UI покажет кнопку настроек.
+        let savedKey = SettingsManager.shared.apiKey
         self.aiClient = AITunnelClient(apiKey: savedKey)
+        
+        // На старте воркспейс ещё не выбран — используем глобальный фолбэк-менеджер
+        // истории (ChatHistoryManager.shared), который хранит данные в стандартном
+        // Documents/Chappie. Как только воркспейс будет загружен/восстановлен,
+        // chatHistoryManager заменится на экземпляр, привязанный к папке проекта.
+        self.chatHistoryManager = ChatHistoryManager.shared
         
         loadMessages()
         
@@ -67,6 +88,28 @@ final class ChappieViewModel {
         loadWorkspaceWithSecurityScope()
     }
     
+    // MARK: - Публичные методы управления API-ключом
+    
+    /// Обновляет API-ключ и пересоздаёт AITunnelClient с новым ключом.
+    ///
+    /// ПОЧЕМУ НУЖЕН ЭТОТ МЕТОД:
+    /// AITunnelClient создаётся в init() с ключом, актуальным на момент запуска.
+    /// Если пользователь меняет ключ в настройках, нам нужно пересоздать клиент —
+    /// иначе до перезапуска приложения будет использоваться старый ключ.
+    /// Этот метод вызывается из SettingsView через коллбэк onApiKeyChanged.
+    func updateApiKey(_ newKey: String) {
+        // Пересоздаём клиент с новым ключом
+        self.aiClient = AITunnelClient(apiKey: newKey)
+        
+        // Пересоздаём оркестратор, так как он держит ссылку на старый aiClient.
+        // Без этого оркестратор продолжит использовать старый клиент.
+        if let ts = toolService, let fs = fileSystem {
+            self.orchestrator = AIOrchestrator(aiClient: aiClient, toolService: ts, fileSystem: fs)
+        }
+        
+        messages.append(ChatMessage(isUser: false, text: "✅ API-ключ обновлён. Готов к работе!"))
+    }
+    
     // MARK: - Публичные методы управления воркспейсом
     
     /// Подключает новую папку проекта к приложению Chappie.
@@ -75,32 +118,15 @@ final class ChappieViewModel {
     func setWorkspace(_ url: URL) {
         workspaceURL = url
         
-        // 1. Создаем менеджер файловой системы для нового воркспейса
-        let fs = FileSystemManager(workspaceURL: url)
-        self.fileSystem = fs
+        // Инициализируем весь стек сервисов для нового воркспейса
+        initializeServices(for: url)
         
-        // 2. Создаем менеджер памяти
-        let mm = MemoryManager(workspaceURL: url)
-        self.memoryManager = mm
+        // Переключаем менеджер истории на новый воркспейс.
+        // КРИТИЧНО: делаем это ДО loadMessages(), иначе прочитаем данные из предыдущего хранилища.
+        chatHistoryManager = ChatHistoryManager(workspaceURL: url)
+        loadMessages()
         
-        // КРИТИЧЕСКИЙ АВТОМАТИЗМ (Решение нашей проблемы с детерминизмом памяти):
-        // Мы запускаем инициализацию памяти воркспейса СТРОГО и явно в момент выбора папки.
-        // Это гарантирует, что папки AI_Docs и файлы semantic.json, architecture.md, project_map.md
-        // будут проверены и созданы (если их нет) при каждом подключении проекта, 
-        // не дожидаясь, пока ИИ решит вызвать инструмент работы с памятью.
-        Task {
-            await mm.initializeWorkspaceMemory()
-        }
-        
-        // 3. Инициализируем сервисы выполнения инструментов и оркестратор
-        let defaultKey = "REMOVED_API_KEY"
-        let savedKey = UserDefaults.standard.string(forKey: "aiTunnelApiKey") ?? defaultKey
-        let ts = ToolExecutionService(fileSystem: fs, memoryManager: mm, apiKey: savedKey)
-        self.toolService = ts
-        
-        self.orchestrator = AIOrchestrator(aiClient: aiClient, toolService: ts, fileSystem: fs)
-        
-        // 4. Сохраняем закладку доступа (Security-Scoped Bookmark) для macOS Sandbox
+        // Сохраняем закладку доступа (Security-Scoped Bookmark) для macOS Sandbox
         saveWorkspaceWithSecurityScope(url)
         
         if messages.isEmpty {
@@ -119,18 +145,26 @@ final class ChappieViewModel {
             return
         }
         
+        // Проверяем наличие API-ключа перед отправкой.
+        // Лучше сразу сказать пользователю о проблеме, чем получить сетевую ошибку.
+        guard SettingsManager.shared.isApiKeyValid else {
+            messages.append(ChatMessage(isUser: false, text: "⚠️ API-ключ не задан или некорректен. Откройте настройки (⚙️) и введите ключ AITunnel."))
+            return
+        }
+        
         messages.append(ChatMessage(isUser: true, text: prompt))
         isThinking = true
         
         // Подготавливаем чистую историю для сетевого запроса.
-        // Мы убираем системные приветствия и сервисные логи вызова инструментов, чтобы не засорять контекст.
+        // Убираем системные приветствия и сервисные логи вызова инструментов,
+        // чтобы не засорять контекст модели.
         let cleanHistory: [AIMessage] = messages.compactMap { msg -> AIMessage? in
             if msg.text.contains("Проект подключен") || msg.text.hasPrefix("🛠") { return nil }
             
             var content = msg.text
-            // ОПТИМИЗАЦИЯ КОНТЕКСТА: удаляем огромные блоки кода из старых ответов ассистента в истории,
-            // заменяя их на легкие информативные заглушки. Если ИИ понадобится этот код снова,
-            // он сможет прочитать его с диска с помощью инструмента read_file. 
+            // ОПТИМИЗАЦИЯ КОНТЕКСТА: удаляем огромные блоки кода из старых ответов ассистента,
+            // заменяя их на лёгкие информативные заглушки. Если ИИ понадобится этот код снова,
+            // он сможет прочитать его с диска с помощью инструмента read_file.
             // Это экономит до 90% токенов в длинных диалогах!
             if !msg.isUser {
                 content = self.stripCodeBlocks(from: content)
@@ -149,8 +183,8 @@ final class ChappieViewModel {
                     prompt: prompt,
                     history: networkHistory,
                     onToolCall: { toolName, targetPath in
-                        // Данный коллбэк вызывается на каждом шаге, когда ИИ решает применить инструмент.
-                        // Мы выводим это в UI, чтобы пользователь видел "мыслительный процесс" и работу Чаппи в реальном времени.
+                        // Коллбэк вызывается на каждом шаге, когда ИИ применяет инструмент.
+                        // Выводим это в UI, чтобы пользователь видел "мыслительный процесс" Чаппи.
                         Task { @MainActor in
                             self.messages.append(ChatMessage(isUser: false, text: "🛠 Выполняю: \(toolName) -> \(targetPath)", cost: nil))
                         }
@@ -172,7 +206,53 @@ final class ChappieViewModel {
         }
     }
     
-    // MARK: - Вспомогательные методы очистки текста
+    // MARK: - Вспомогательные методы
+    
+    /// Очищает историю чата текущего воркспейса.
+    func clearMessages() {
+        messages = []
+    }
+    
+    /// Полная очистка контекста с приветственным сообщением.
+    func clearHistory() {
+        messages.removeAll()
+        messages.append(ChatMessage(isUser: false, text: "Память очищена. Я забыл всё, что мы обсуждали до этого момента. Готов начать с чистого листа!"))
+    }
+    
+    // MARK: - Приватные методы инициализации сервисов
+    
+    /// Создаёт и связывает весь стек сервисов для указанного воркспейса.
+    ///
+    /// ПОЧЕМУ ВЫНЕСЕНО В ОТДЕЛЬНЫЙ МЕТОД:
+    /// Раньше идентичный блок из ~15 строк дублировался в setWorkspace() и loadWorkspaceWithSecurityScope().
+    /// Любое изменение (например, добавление нового сервиса) требовало правки в двух местах —
+    /// классический источник багов. Теперь это единственное место инициализации стека.
+    private func initializeServices(for url: URL) {
+        // 1. Файловая система — базовый сервис, от которого зависят остальные
+        let fs = FileSystemManager(workspaceURL: url)
+        self.fileSystem = fs
+        
+        // 2. Менеджер памяти — читает/пишет AI_Docs внутри воркспейса
+        let mm = MemoryManager(workspaceURL: url)
+        self.memoryManager = mm
+        
+        // КРИТИЧЕСКИЙ АВТОМАТИЗМ:
+        // Запускаем инициализацию памяти воркспейса СТРОГО в момент подключения папки.
+        // Это гарантирует, что папки AI_Docs и файлы semantic.json, architecture.md, project_map.md
+        // будут проверены и созданы (если их нет) сразу, не дожидаясь первого вызова инструмента.
+        Task {
+            await mm.initializeWorkspaceMemory()
+        }
+        
+        // 3. Сервис выполнения инструментов — оборачивает fs и mm в вызываемые инструменты
+        let ts = ToolExecutionService(fileSystem: fs, memoryManager: mm)
+        self.toolService = ts
+        
+        // 4. Оркестратор — мозг системы, координирует цикл reasoning + tool calls
+        self.orchestrator = AIOrchestrator(aiClient: aiClient, toolService: ts, fileSystem: fs)
+    }
+    
+    // MARK: - Очистка текста
     
     /// Удаляет технические теги размышлений из финального ответа ИИ для чистого отображения в UI.
     private func cleanAIResponse(_ text: String) -> String {
@@ -204,22 +284,28 @@ final class ChappieViewModel {
     
     // MARK: - Локальное сохранение и восстановление истории чата
     
+    /// Сохраняет текущий массив сообщений через актуальный менеджер истории.
+    /// Вызывается автоматически через didSet при каждом изменении messages.
     private func saveMessages() {
-        ChatHistoryManager.shared.saveMessages(messages)
+        chatHistoryManager.saveMessages(messages)
     }
     
+    /// Загружает историю сообщений через актуальный менеджер истории.
+    /// Вызывается при инициализации и при смене воркспейса.
     private func loadMessages() {
-        let loadedMessages: [ChatMessage] = ChatHistoryManager.shared.loadMessages()
+        let loadedMessages: [ChatMessage] = chatHistoryManager.loadMessages()
         
         if !loadedMessages.isEmpty {
             self.messages = loadedMessages
         } else {
-            // Фолбэк на старое место хранения в UserDefaults (для обратной совместимости)
+            // Проверяем legacy-хранилище UserDefaults для миграции данных
+            // пользователей, обновившихся со старой версии приложения.
             if let data = UserDefaults.standard.data(forKey: "savedChatMessages"),
                let decoded = try? JSONDecoder().decode([ChatMessage].self, from: data) {
                 self.messages = decoded
-                ChatHistoryManager.shared.saveMessages(self.messages)
-                UserDefaults.standard.removeObject(forKey: "savedChatMessages") // Очищаем старый ключ
+                // Мигрируем в новое хранилище и удаляем старый ключ
+                chatHistoryManager.saveMessages(self.messages)
+                UserDefaults.standard.removeObject(forKey: "savedChatMessages")
             }
         }
     }
@@ -227,13 +313,18 @@ final class ChappieViewModel {
     // MARK: - Работа с Security-Scoped Bookmarks (macOS Sandbox)
     
     /// Сохраняет URL папки в виде Security-Scoped Bookmark в UserDefaults.
-    /// Это позволяет приложению получать доступ к этой папке при следующих запусках без повторного показа NSOpenPanel.
+    /// Это позволяет приложению получать доступ к папке при следующих запусках
+    /// без повторного показа NSOpenPanel.
     private func saveWorkspaceWithSecurityScope(_ url: URL) {
         do {
-            let bookmarkData = try url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+            let bookmarkData = try url.bookmarkData(
+                options: .withSecurityScope,
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
             UserDefaults.standard.set(bookmarkData, forKey: "workspaceBookmark")
         } catch {
-            // Если песочница отключена или произошла ошибка, сохраняем обычный Bookmark как фолбэк
+            // Фолбэк для не-песочного режима разработки
             if let data = try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) {
                 UserDefaults.standard.set(data, forKey: "workspaceBookmark")
             }
@@ -245,53 +336,39 @@ final class ChappieViewModel {
         guard let data = UserDefaults.standard.data(forKey: "workspaceBookmark") else { return }
         var isStale = false
         
-        // Пытаемся восстановить как Security-Scoped URL
-        if let url = try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale) {
+        // Пытаемся восстановить как Security-Scoped URL (режим Sandbox)
+        let secureURL = try? URL(
+            resolvingBookmarkData: data,
+            options: .withSecurityScope,
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        )
+        
+        if let url = secureURL {
             _ = url.startAccessingSecurityScopedResource()
             self.workspaceURL = url
+            initializeServices(for: url)
+            chatHistoryManager = ChatHistoryManager(workspaceURL: url)
+            loadMessages()
             
-            let fs = FileSystemManager(workspaceURL: url)
-            self.fileSystem = fs
+            // Если закладка устарела — обновляем её
+            if isStale { saveWorkspaceWithSecurityScope(url) }
             
-            let mm = MemoryManager(workspaceURL: url)
-            self.memoryManager = mm
+        } else {
+            // Фолбэк: пробуем без Security Scope (для не-песочного режима разработки)
+            let fallbackURL = try? URL(
+                resolvingBookmarkData: data,
+                options: [],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            )
             
-            // КРИТИЧЕСКИЙ АВТОМАТИЗМ (Решение нашей проблемы с детерминизмом памяти):
-            // Запускаем инициализацию памяти воркспейса СТРОГО и явно при авто-восстановлении папки при старте приложения.
-            // Это гарантирует, что папки AI_Docs и файлы semantic.json, architecture.md, project_map.md
-            // будут проверены и созданы (если их нет) при каждом запуске приложения автоматически!
-            Task {
-                await mm.initializeWorkspaceMemory()
+            if let url = fallbackURL {
+                self.workspaceURL = url
+                initializeServices(for: url)
+                chatHistoryManager = ChatHistoryManager(workspaceURL: url)
+                loadMessages()
             }
-            
-            let defaultKey = "REMOVED_API_KEY"
-            let savedKey = UserDefaults.standard.string(forKey: "aiTunnelApiKey") ?? defaultKey
-            let ts = ToolExecutionService(fileSystem: fs, memoryManager: mm, apiKey: savedKey)
-            self.toolService = ts
-            
-            self.orchestrator = AIOrchestrator(aiClient: aiClient, toolService: ts, fileSystem: fs)
-            
-        } else if let url = try? URL(resolvingBookmarkData: data, options: [], relativeTo: nil, bookmarkDataIsStale: &isStale) {
-            // Фолбэк для не-песочного режима
-            self.workspaceURL = url
-            
-            let fs = FileSystemManager(workspaceURL: url)
-            self.fileSystem = fs
-            
-            let mm = MemoryManager(workspaceURL: url)
-            self.memoryManager = mm
-            
-            // Повторяем критический автоматизм для фолбэк-ветки
-            Task {
-                await mm.initializeWorkspaceMemory()
-            }
-            
-            let defaultKey = "REMOVED_API_KEY"
-            let savedKey = UserDefaults.standard.string(forKey: "aiTunnelApiKey") ?? defaultKey
-            let ts = ToolExecutionService(fileSystem: fs, memoryManager: mm, apiKey: savedKey)
-            self.toolService = ts
-            
-            self.orchestrator = AIOrchestrator(aiClient: aiClient, toolService: ts, fileSystem: fs)
         }
     }
 }

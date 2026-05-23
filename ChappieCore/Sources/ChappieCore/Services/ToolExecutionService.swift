@@ -8,33 +8,46 @@
 import Foundation
 
 /// Сервис выполнения инструментов (функций) ИИ.
-/// Что это: Сервис, который принимает вызов функции от ИИ, парсит аргументы и выполняет соответствующее действие.
-/// Зачем: Предоставляет "инструменты" (Tools / Function Calling) для ИИ-агента, связывая его с файловой системой, памятью и другими агентами.
+///
+/// Что это: Сервис, который принимает вызов функции от ИИ, парсит аргументы
+/// и выполняет соответствующее действие в файловой системе или памяти.
+///
+/// Зачем: Предоставляет "инструменты" (Tools / Function Calling) для ИИ-агента,
+/// связывая его с файловой системой и менеджером памяти.
+///
+/// Архитектурное решение: После перехода к монофизитной архитектуре (один агент —
+/// Чаппи) инструмент `delegate_task` был полностью удалён. Он был концептуально
+/// мёртв: в `execute()` не было его обработки, и любой вызов падал в `default`
+/// с ошибкой "Неизвестный инструмент". Теперь `apiKey` тоже не нужен —
+/// никаких саб-агентов нет.
 public actor ToolExecutionService {
     private let fileSystem: FileSystemManager
     private let memoryManager: MemoryManager
-    private let apiKey: String
-    
+
     /// Инициализатор сервиса.
     /// - Parameters:
     ///   - fileSystem: Менеджер файловой системы проекта.
     ///   - memoryManager: Менеджер долгосрочной памяти.
-    ///   - apiKey: API ключ для доступа к AITunnel (необходим для работы саб-агентов).
-    public init(fileSystem: FileSystemManager, memoryManager: MemoryManager, apiKey: String) {
+    public init(fileSystem: FileSystemManager, memoryManager: MemoryManager) {
         self.fileSystem = fileSystem
         self.memoryManager = memoryManager
-        self.apiKey = apiKey
     }
-    
+
     /// Массив доступных ИИ-агенту инструментов.
-    /// Этот массив передается в API запросы, чтобы модель знала, какие функции она может вызывать.
+    ///
+    /// Этот массив передаётся в каждый API-запрос, чтобы модель знала,
+    /// какие функции она может вызывать. Список строго соответствует
+    /// монофизитной архитектуре: только файловая система и память.
     public var availableTools: [AITool] {
         return [
+            // --- Инструменты файловой системы ---
+
             AITool(function: AIFunctionDefinition(
                 name: "list_files",
                 description: "Получить список всех файлов в проекте (относительные пути).",
                 parameters: AIToolParameters(properties: [:], required: [])
             )),
+
             AITool(function: AIFunctionDefinition(
                 name: "read_file",
                 description: "Прочитать содержимое файла в проекте.",
@@ -45,6 +58,7 @@ public actor ToolExecutionService {
                     required: ["path"]
                 )
             )),
+
             AITool(function: AIFunctionDefinition(
                 name: "write_file",
                 description: "Создать новый или полностью перезаписать существующий файл (подпапки создадутся автоматически).",
@@ -56,6 +70,7 @@ public actor ToolExecutionService {
                     required: ["path", "content"]
                 )
             )),
+
             AITool(function: AIFunctionDefinition(
                 name: "delete_file",
                 description: "Удалить файл из проекта.",
@@ -66,6 +81,9 @@ public actor ToolExecutionService {
                     required: ["path"]
                 )
             )),
+
+            // --- Инструменты долгосрочной памяти ---
+
             AITool(function: AIFunctionDefinition(
                 name: "memorize",
                 description: "Запомнить важную информацию, договоренность, факт или правило в долгосрочную память.",
@@ -80,6 +98,7 @@ public actor ToolExecutionService {
                     required: ["key", "type", "jsonString"]
                 )
             )),
+
             AITool(function: AIFunctionDefinition(
                 name: "recall",
                 description: "Вспомнить информацию из долгосрочной памяти по ключу.",
@@ -91,6 +110,7 @@ public actor ToolExecutionService {
                     required: ["key"]
                 )
             )),
+
             AITool(function: AIFunctionDefinition(
                 name: "search_memory",
                 description: "Найти все записи в памяти по определенному типу.",
@@ -102,6 +122,7 @@ public actor ToolExecutionService {
                     required: ["type"]
                 )
             )),
+
             AITool(function: AIFunctionDefinition(
                 name: "delete_memory",
                 description: "Удалить запись из долгосрочной памяти по ключу.",
@@ -112,46 +133,41 @@ public actor ToolExecutionService {
                     ],
                     required: ["key"]
                 )
-            )),
-            AITool(function: AIFunctionDefinition(
-                name: "delegate_task",
-                description: "Делегировать выполнение узкой задачи саб-агенту (Senior, Middle, Junior). Возвращает готовый код или результат работы.",
-                parameters: AIToolParameters(
-                    properties: [
-                        "role": AIToolProperty(type: "string", description: "Уровень саб-агента: senior (сложная архитектура), middle (рутина, UI, CRUD), junior (комментарии, рефакторинг)"),
-                        "task": AIToolProperty(type: "string", description: "Четкое ТЗ для саб-агента, что именно нужно сделать"),
-                        "context": AIToolProperty(type: "string", description: "Узкий контекст: только те файлы или куски кода, которые нужны для выполнения задачи"),
-                        "guidelines": AIToolProperty(type: "string", description: "Дополнительные правила (опционально)")
-                    ],
-                    required: ["role", "task", "context"]
-                )
             ))
         ]
     }
-    
+
     /// Выполняет указанный инструмент и возвращает строковый результат.
+    ///
+    /// Зачем возвращать строку: API Claude ожидает результат вызова инструмента
+    /// в виде строки — она добавляется в историю чата как сообщение с ролью "tool".
+    ///
     /// - Parameter call: Объект вызова инструмента с именем и JSON-аргументами.
     /// - Returns: Результат выполнения в виде строки (успех или описание ошибки).
     public func execute(call: AIToolCall) async -> String {
         let name = call.function.name
         let argsData = call.function.arguments.data(using: .utf8) ?? Data()
-        
+
         do {
             switch name {
+
+            // MARK: - Файловая система
+
             case "list_files":
+                // Возвращаем список файлов в виде JSON-массива строк
                 let files = try await fileSystem.listFiles()
                 let encoder = JSONEncoder()
                 encoder.outputFormatting = .prettyPrinted
                 let data = try encoder.encode(files)
                 return String(data: data, encoding: .utf8) ?? "[]"
-                
+
             case "read_file":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let path = args["path"] else {
                     return "Ошибка: Неверные аргументы для read_file"
                 }
                 return try await fileSystem.readFile(at: path)
-                
+
             case "write_file":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let path = args["path"],
@@ -160,15 +176,17 @@ public actor ToolExecutionService {
                 }
                 try await fileSystem.writeFile(at: path, content: content)
                 return "Успешно: Файл \(path) записан."
-                
+
             case "delete_file":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let path = args["path"] else {
                     return "Ошибка: Неверные аргументы для delete_file"
                 }
                 try await fileSystem.deleteFile(at: path)
-                return "Успешно: Файл \(path) удален."
-                
+                return "Успешно: Файл \(path) удалён."
+
+            // MARK: - Долгосрочная память
+
             case "memorize":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let key = args["key"],
@@ -179,9 +197,16 @@ public actor ToolExecutionService {
                 let scopeString = args["scope"] ?? "project"
                 let scope = MemoryScope(rawValue: scopeString) ?? .project
                 let targetName = args["targetName"]
-                await memoryManager.saveMemory(key: key, type: type, jsonString: jsonString, scope: scope, targetName: targetName)
-                return "Успешно: Запись \(key) сохранена в памяти \(targetName != nil ? "таргета \(targetName!)" : "проекта")."
-                
+                await memoryManager.saveMemory(
+                    key: key,
+                    type: type,
+                    jsonString: jsonString,
+                    scope: scope,
+                    targetName: targetName
+                )
+                let location = targetName.map { "таргета \($0)" } ?? "проекта"
+                return "Успешно: Запись '\(key)' сохранена в памяти \(location)."
+
             case "recall":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let key = args["key"] else {
@@ -191,9 +216,10 @@ public actor ToolExecutionService {
                 if let record = await memoryManager.readMemory(key: key, targetName: targetName) {
                     return record
                 } else {
-                    return "Запись по ключу \(key) не найдена в памяти \(targetName != nil ? "таргета \(targetName!)" : "проекта")."
+                    let location = targetName.map { "таргета \($0)" } ?? "проекта"
+                    return "Запись по ключу '\(key)' не найдена в памяти \(location)."
                 }
-                
+
             case "search_memory":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let type = args["type"] else {
@@ -205,7 +231,7 @@ public actor ToolExecutionService {
                 encoder.outputFormatting = .prettyPrinted
                 let data = try encoder.encode(results)
                 return String(data: data, encoding: .utf8) ?? "{}"
-                
+
             case "delete_memory":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let key = args["key"] else {
@@ -213,80 +239,16 @@ public actor ToolExecutionService {
                 }
                 let targetName = args["targetName"]
                 await memoryManager.deleteMemory(key: key, targetName: targetName)
-                return "Успешно: Запись \(key) удалена из памяти \(targetName != nil ? "таргета \(targetName!)" : "проекта")."
-                
-            case "delegate_task":
-                guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
-                      let role = args["role"],
-                      let task = args["task"],
-                      let context = args["context"] else {
-                    return "Ошибка: Неверные аргументы для delegate_task"
-                }
-                let guidelines = args["guidelines"] ?? ""
-                return try await delegateToSubAgent(role: role, task: task, context: context, guidelines: guidelines)
-                
+                let location = targetName.map { "таргета \($0)" } ?? "проекта"
+                return "Успешно: Запись '\(key)' удалена из памяти \(location)."
+
             default:
-                return "Ошибка: Неизвестный инструмент \(name)"
+                // Сюда не должны попадать никакие известные инструменты.
+                // Если попали — значит, модель вызвала что-то несуществующее.
+                return "Ошибка: Неизвестный инструмент '\(name)'. Доступные инструменты: list_files, read_file, write_file, delete_file, memorize, recall, search_memory, delete_memory."
             }
         } catch {
-            return "Ошибка при выполнении \(name): \(error.localizedDescription)"
+            return "Ошибка при выполнении '\(name)': \(error.localizedDescription)"
         }
-    }
-    
-    /// Вспомогательный метод для делегирования задачи саб-агенту через AITunnel.
-    /// - Parameters:
-    ///   - role: Роль исполнителя (senior, middle, junior).
-    ///   - task: Текст технического задания.
-    ///   - context: Исходный код или файлы, необходимые для выполнения.
-    ///   - guidelines: Дополнительные инструкции и правила.
-    /// - Returns: Код или текстовый ответ от саб-агента.
-    private func delegateToSubAgent(role: String, task: String, context: String, guidelines: String) async throws -> String {
-        // Определяем модель в зависимости от назначенной роли
-        let model: String
-        let roleDescription: String
-        switch role.lowercased() {
-        case "senior":
-            model = "claude-sonnet-4.6" // Claude Sonnet 4.6 — лучший выбор для сложного рефакторинга и архитектуры
-            roleDescription = "Senior macOS/iOS Developer (Claude Sonnet 4.6)"
-        case "middle":
-            model = "gpt-5.4-mini" // GPT 5.4 Mini — быстрая и надежная модель для стандартной верстки и CRUD
-            roleDescription = "Middle macOS/iOS Developer (GPT 5.4 Mini)"
-        case "junior":
-            model = "gemini-3.1-flash-lite" // Gemini 3.1 Flash Lite — идеальный выбор для мелких правок и форматирования
-            roleDescription = "Junior macOS/iOS Developer (Gemini 3.1 Flash Lite)"
-        default:
-            model = "gpt-5.4-mini"
-            roleDescription = "Middle macOS/iOS Developer (GPT 5.4 Mini)"
-        }
-        
-        let client = AITunnelClient(apiKey: apiKey, modelName: model)
-        
-        let systemPrompt = """
-        Ты — \(roleDescription) в виртуальной команде разработки под macOS/iOS (SwiftUI, Swift 6).
-        Твоя задача — выполнить конкретное ТЗ, используя предоставленный контекст.
-        
-        CRITICAL RULE (ПРИНЦИП ОТЧУЖДАЕМОСТИ КОДА):
-        Весь создаваемый тобой код должен быть плотно обложен понятными и подробными комментариями на грамотном русском языке.
-        Комментарии должны объяснять ПОЧЕМУ написан этот код, а не только ЧТО он делает. Любой сторонний разработчик должен мгновенно разобраться в кодовой базе.
-        Пиши только чистый, рабочий и компилируемый Swift-код. Не пиши никаких лишних рассуждений до или после кода. Возвращай только код в тройных обратных кавычках.
-        """
-        
-        let userPrompt = """
-        ЗАДАЧА:
-        \(task)
-        
-        КОНТЕКСТ (КОД И ФАЙЛЫ):
-        \(context)
-        
-        \(guidelines.isEmpty ? "" : "ДОПОЛНИТЕЛЬНЫЕ ПРАВИЛА:\n\(guidelines)")
-        """
-        
-        let (message, _, _) = try await client.sendRequest(
-            systemPrompt: systemPrompt,
-            chatHistory: [AIMessage(role: "user", content: userPrompt)],
-            tools: []
-        )
-        
-        return message.content ?? "Ошибка: Пустой ответ от саб-агента."
     }
 }

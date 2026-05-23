@@ -2,18 +2,55 @@
 //  ContentView.swift
 //  Chappie
 //
-//  Created by   Сергей on 21.05.2026.
+//  Created by Сергей on 21.05.2026.
 //
 
 import SwiftUI
 import UniformTypeIdentifiers
 
+// MARK: - Message Bubble
+
+private struct MessageBubble: View {
+    let msg: ChatMessage
+
+    var body: some View {
+        HStack {
+            if msg.isUser { Spacer() }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(msg.text)
+                    .foregroundStyle(msg.isUser ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                    .textSelection(.enabled)
+
+                if let cost = msg.cost {
+                    Text(String(format: "🪙 %.2f ₽", cost))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            }
+            .padding()
+            .background(msg.isUser ? Color.accentColor : Color(NSColor.windowBackgroundColor))
+            .cornerRadius(10)
+            .shadow(color: .black.opacity(0.15), radius: 3, x: 0, y: 2)
+
+            if !msg.isUser { Spacer() }
+        }
+        .id(msg.id)
+    }
+}
+
+// MARK: - Content View
+
 struct ContentView: View {
     @State private var viewModel = ChappieViewModel()
     @State private var prompt: String = ""
 
+    @State private var showSettings: Bool = false
+
     var body: some View {
         NavigationSplitView {
+            // MARK: - Сайдбар
             List {
                 Section("Контекст") {
                     if let workspaceURL = viewModel.workspaceURL {
@@ -24,30 +61,50 @@ struct ContentView: View {
                             Text(workspaceURL.lastPathComponent)
                                 .font(.headline)
                         }
-                        
+
                         Button("Сменить папку...") {
                             selectWorkspace()
                         }
                         .buttonStyle(.link)
                         .padding(.top, 4)
-                        
+
                     } else {
                         Button("Выбрать папку проекта...") {
                             selectWorkspace()
                         }
                     }
                 }
+
+                if !SettingsManager.shared.isApiKeyValid {
+                    Section("⚠️ Внимание") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("API-ключ не задан")
+                                .font(.subheadline.bold())
+                                .foregroundStyle(.orange)
+                            Text("Без ключа AITunnel Чаппи не сможет отвечать.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Button("Открыть настройки") {
+                                showSettings = true
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
             }
             .scrollContentBackground(.hidden)
             .navigationTitle("Чаппи")
         } detail: {
+            // MARK: - Основная область чата
             VStack(spacing: 0) {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(spacing: 12) {
                             if viewModel.messages.isEmpty {
                                 HStack {
-                                    Text("Привет! Я - Чаппи. Выбери проект и скажи, что нужно сделать.")
+                                    Text("Привет! Я — Чаппи. Выбери проект и скажи, что нужно сделать.")
                                         .padding()
                                         .background(Color(NSColor.windowBackgroundColor))
                                         .cornerRadius(10)
@@ -56,32 +113,10 @@ struct ContentView: View {
                                 }
                             } else {
                                 ForEach(viewModel.messages) { msg in
-                                    HStack {
-                                        if msg.isUser { Spacer() }
-                                        
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text(msg.text)
-                                                .foregroundStyle(msg.isUser ? .white : .primary)
-                                                .textSelection(.enabled)
-                                            
-                                            if let cost = msg.cost {
-                                                Text(String(format: "🪙 %.2f ₽", cost))
-                                                    .font(.system(size: 10, weight: .medium))
-                                                    .foregroundStyle(.secondary)
-                                                    .frame(maxWidth: .infinity, alignment: .trailing)
-                                            }
-                                        }
-                                        .padding()
-                                        .background(msg.isUser ? Color.accentColor : Color(NSColor.windowBackgroundColor))
-                                        .cornerRadius(10)
-                                        .shadow(color: .black.opacity(0.15), radius: 3, x: 0, y: 2)
-                                        
-                                        if !msg.isUser { Spacer() }
-                                    }
-                                    .id(msg.id)
+                                    MessageBubble(msg: msg)
                                 }
                             }
-                            
+
                             if viewModel.isThinking {
                                 HStack {
                                     ProgressView()
@@ -93,7 +128,7 @@ struct ContentView: View {
                                 }
                                 .id("ThinkingIndicator")
                             }
-                            
+
                             Spacer(minLength: 0)
                                 .id("BottomSpacer")
                         }
@@ -115,17 +150,18 @@ struct ContentView: View {
                         }
                     }
                 }
-                
+
+                // MARK: - Поле ввода
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .bottom, spacing: 12) {
-                        TextField("Напиши сообщение... (Enter - отправить, ⌥+Enter - перенос)", text: $prompt, axis: .vertical)
+                        TextField("Напиши сообщение... (Enter — отправить, ⌥+Enter — перенос)", text: $prompt, axis: .vertical)
                             .textFieldStyle(.roundedBorder)
                             .lineLimit(1...10)
                             .onSubmit {
                                 sendMessage()
                             }
                             .disabled(viewModel.workspaceURL == nil || viewModel.isThinking)
-                        
+
                         Button(action: sendMessage) {
                             Image(systemName: "paperplane.fill")
                         }
@@ -158,6 +194,16 @@ struct ContentView: View {
                         .shadow(color: .black.opacity(0.1), radius: 2, y: 1)
                     }
                 }
+
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showSettings = true
+                    } label: {
+                        Image(systemName: "gear")
+                    }
+                    .help("Настройки Чаппи")
+                    .foregroundStyle(SettingsManager.shared.isApiKeyValid ? AnyShapeStyle(.primary) : AnyShapeStyle(.orange))
+                }
             }
         }
         .background {
@@ -167,20 +213,27 @@ struct ContentView: View {
                 .ignoresSafeArea()
                 .opacity(0.5)
         }
+        .sheet(isPresented: $showSettings) {
+            SettingsView { newKey in
+                viewModel.updateApiKey(newKey)
+            }
+        }
     }
-    
+
+    // MARK: - Приватные методы
+
     private func selectWorkspace() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.message = "Выберите папку проекта для Чаппи"
-        
+
         if panel.runModal() == .OK, let url = panel.url {
             viewModel.setWorkspace(url)
         }
     }
-    
+
     private func sendMessage() {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         viewModel.send(prompt: prompt)
