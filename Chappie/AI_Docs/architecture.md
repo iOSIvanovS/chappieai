@@ -4,7 +4,7 @@
   ДОКУМЕНТ АРХИТЕКТУРЫ — CHAPPIE APP (UI LAYER)
 
   Этот файл описывает РЕАЛЬНУЮ архитектуру UI-слоя приложения Chappie.
-  Обновлён в ходе полной инспекции кода — отражает фактическое состояние на 2026-05-27.
+  Обновлён после Этапа 4 (2026-05-27): ContentView разбит на компоненты.
   Обновляй при каждом значимом архитектурном изменении.
 -->
 
@@ -20,6 +20,7 @@
 - **Никакой бизнес-логики во View.** View только отображают данные из ViewModel.
 - **Никакой прямой работы с сетью или файлами в UI.** Всё делегируется в ChappieCore.
 - **ViewModel — единственный посредник** между UI и ChappieCore.
+- **Каждый компонент — отдельный файл.** ТД-4 закрыт в Этапе 4.
 
 ---
 
@@ -27,19 +28,28 @@
 
 ```
 Chappie/
-├── ChappieApp.swift              # @main, точка входа, создаёт WindowGroup → ContentView
-├── ContentView.swift             # Монолитный корневой экран: сайдбар + чат + ввод + тулбар
-│                                 # ВНИМАНИЕ: весь UI в одном файле — технический долг (ТД-4)
-├── ChappieViewModel.swift        # Единственный ViewModel (@Observable, @MainActor)
-│                                 # Содержит также модель ChatMessage (struct)
+├── ChappieApp.swift                    # @main, точка входа, создаёт WindowGroup → ContentView
+├── ContentView.swift                   # Чистый "дирижёр": собирает компоненты, делегирует логику
+├── ChappieViewModel.swift              # Единственный ViewModel (@Observable, @MainActor)
+│                                       # Содержит также модель ChatMessage (struct)
+├── Views/
+│   ├── Chat/
+│   │   ├── MessageBubbleView.swift     # Пузырёк одного сообщения (текст + стоимость)
+│   │   └── ChatScrollView.swift        # Лента сообщений с автоскроллом + спиннер
+│   ├── Input/
+│   │   └── InputBarView.swift          # Панель ввода: TextField + кнопка отправки
+│   ├── Sidebar/
+│   │   └── SidebarView.swift           # Боковая панель: воркспейс + предупреждения
+│   └── Toolbar/
+│       └── ToolbarContent.swift        # Тулбар: баланс + кнопка настроек
 ├── Settings/
-│   ├── SettingsManager.swift     # Хранение и валидация API-ключа (UserDefaults)
-│   └── SettingsView.swift        # Sheet настроек: ввод ключа, валидация, сохранение
-├── Assets.xcassets/              # Иконки, фоны (Chappie.jpg), акцентный цвет
+│   ├── SettingsManager.swift           # Хранение и валидация API-ключа (UserDefaults)
+│   └── SettingsView.swift              # Sheet настроек: ввод ключа, валидация, сохранение
+├── Assets.xcassets/                    # Иконки, фоны (Chappie.jpg), акцентный цвет
 └── AI_Docs/
-    ├── semantic.json             # Семантическая память App-таргета
-    ├── architecture.md           # Этот файл
-    └── project_map.md            # Карта файлов проекта
+    ├── semantic.json                   # Семантическая память App-таргета
+    ├── architecture.md                 # Этот файл
+    └── project_map.md                  # Карта файлов проекта
 ```
 
 ---
@@ -53,12 +63,20 @@ graph TD
 
         App["ChappieApp\n@main\n──────────────\nЗапускает WindowGroup.\nСоздаёт ContentView."]
 
-        subgraph ViewLayer ["🎨 View Layer"]
-            ContentView["ContentView\n──────────────\nКорневой монолит.\nNavigationSplitView:\n• Сайдбар (воркспейс, API-статус)\n• Чат (ScrollView + MessageBubble)\n• Поле ввода (TextField + кнопка)\n• Тулбар (баланс, настройки ⚙️)\n• Sheet → SettingsView"]
+        subgraph ViewLayer ["🎨 View Layer (компонентная архитектура)"]
+            ContentView["ContentView\n──────────────\nЧистый дирижёр.\nNavigationSplitView:\nСобирает компоненты,\nпрокидывает данные из VM."]
 
-            MessageBubble["MessageBubble\n(private struct)\n──────────────\nПузырёк сообщения.\nПоказывает текст и стоимость."]
+            SidebarView["SidebarView\n──────────────\nВоркспейс + предупреждения.\nКнопки выбора/смены папки."]
 
-            SettingsView["SettingsView\n──────────────\nSheet настроек.\nВвод/показ API-ключа.\nВалидация формата.\nКоллбэк onApiKeyChanged."]
+            ChatScrollView["ChatScrollView\n──────────────\nЛента сообщений.\nАвтоскролл. Спиннер."]
+
+            MessageBubbleView["MessageBubbleView\n──────────────\nОдин пузырёк.\nТекст + стоимость."]
+
+            InputBarView["InputBarView\n──────────────\nTextField + кнопка Send.\nМногострочный ввод."]
+
+            ToolbarContent["ToolbarContent\n──────────────\nБаланс + кнопка ⚙️."]
+
+            SettingsView["SettingsView\n──────────────\nSheet настроек.\nВвод/показ API-ключа.\nВалидация. Коллбэк."]
         end
 
         subgraph VMLayer ["🧠 ViewModel Layer"]
@@ -82,9 +100,12 @@ graph TD
     end
 
     App --> ContentView
-    ContentView --> MessageBubble
-    ContentView -->|"@State var viewModel"| ChappieViewModel
-    ContentView -->|"showSettings = true"| SettingsView
+    ContentView -->|"SidebarView(...)"| SidebarView
+    ContentView -->|"ChatScrollView(...)"| ChatScrollView
+    ChatScrollView -->|"ForEach → MessageBubbleView"| MessageBubbleView
+    ContentView -->|"InputBarView(...)"| InputBarView
+    ContentView -->|"ToolbarContent(...)"| ToolbarContent
+    ContentView -->|"sheet → SettingsView"| SettingsView
     SettingsView -->|"onApiKeyChanged"| ChappieViewModel
     ChappieViewModel -->|"читает/пишет"| SettingsManager
     ChappieViewModel -->|"await orchestrator.process()"| AIOrchestrator
@@ -147,39 +168,76 @@ ViewModel является центром UI-архитектуры. Это **е
 
 ---
 
-## 5. ContentView — реальная структура
+## 5. Компонентная архитектура View (Этап 4)
 
-**ВАЖНО:** Сейчас весь UI находится в одном файле `ContentView.swift`. Это **технический долг (ТД-4)**.
-Компонент `MessageBubble` вынесен в `private struct` внутри того же файла.
+**ContentView** — чистый "дирижёр". Он знает о ViewModel и раздаёт данные компонентам,
+но сам не рендерит ни одного пузырька и не содержит бизнес-логику.
 
-### Фактическая компоновка
+### Иерархия компонентов
 
 ```
 ContentView (NavigationSplitView)
-├── Sidebar (List)
-│   ├── Section("Контекст")
-│   │   ├── Если workspace выбран: имя папки + кнопка "Сменить"
-│   │   └── Если нет: кнопка "Выбрать папку проекта..."
-│   └── Section("⚠️ Внимание") — показывается ТОЛЬКО если API-ключ не задан
-│       └── Кнопка "Открыть настройки"
+│   @State var viewModel = ChappieViewModel()
+│   @State var showSettings = false
+│   @State var currentPrompt = ""
 │
-└── Detail (VStack)
-    ├── ScrollViewReader → ScrollView
-    │   ├── Приветствие (если messages пустые)
-    │   ├── ForEach(messages) → MessageBubble
-    │   └── ProgressView (если isThinking == true)
-    ├── Поле ввода (TextField + кнопка paperplane)
-    └── Toolbar
-        ├── Баланс (если currentBalance != nil)
-        └── Кнопка ⚙️ → showSettings = true → SettingsView (sheet)
+├── SidebarView
+│   Входные данные:
+│   ├── workspaceURL: URL?
+│   ├── isApiKeyValid: Bool
+│   ├── onSelectWorkspace: () -> Void
+│   └── onOpenSettings: () -> Void
+│   Показывает:
+│   ├── Имя воркспейса / кнопка выбора
+│   └── Предупреждение если ключ не задан
+│
+├── VStack (detail area)
+│   ├── ChatScrollView
+│   │   Входные данные:
+│   │   ├── messages: [ChatMessage]
+│   │   └── isThinking: Bool
+│   │   Показывает:
+│   │   ├── Приветствие (если messages пустые)
+│   │   ├── ForEach → MessageBubbleView (для каждого сообщения)
+│   │   └── ProgressView (если isThinking == true)
+│   │   Поведение: автоскролл к концу при изменении messages/isThinking
+│   │
+│   └── InputBarView
+│       Входные данные:
+│       ├── prompt: Binding<String>
+│       ├── isWorkspaceSelected: Bool
+│       ├── isThinking: Bool
+│       └── onSend: () -> Void
+│       Показывает: TextField + кнопка paperplane
+│       Блокируется: если нет воркспейса или isThinking == true
+│
+└── Toolbar → ToolbarContent
+    Входные данные:
+    ├── balance: Double?
+    ├── isApiKeyValid: Bool
+    └── onOpenSettings: () -> Void
+    Показывает: таблетка баланса + кнопка ⚙️
 
-Background: Image("Chappie") opacity 0.5
+Sheet (showSettings == true) → SettingsView
+    Входные данные:
+    └── onApiKeyChanged: (String) -> Void → viewModel.updateApiKey(_:)
 ```
 
-### Поведение автопрокрутки
-- `onAppear` → прокрутка к `"BottomSpacer"`
-- `onChange(of: messages)` → анимированная прокрутка к `"BottomSpacer"`
-- `onChange(of: isThinking)` → прокрутка к `"ThinkingIndicator"` при старте
+### MessageBubbleView — детали рендеринга
+
+```
+MessageBubbleView (входные данные: msg: ChatMessage)
+├── Сообщения пользователя (msg.isUser == true):
+│   ├── Выравнивание: справа
+│   ├── Цвет фона: .accentColor
+│   └── Цвет текста: .white
+├── Сообщения Чаппи (msg.isUser == false):
+│   ├── Выравнивание: слева
+│   ├── Цвет фона: Color(nsColor: .windowBackgroundColor)
+│   └── Цвет текста: .primary
+└── Если msg.cost != nil:
+    └── "🪙 X.XX ₽" — снизу справа, мелким шрифтом
+```
 
 ---
 
@@ -193,27 +251,11 @@ SettingsManager (@Observable, singleton)
 ```
 
 **Почему UserDefaults, а не Keychain:**
-Текущая реализация использует UserDefaults для простоты. Keychain — следующий шаг (TODO).
+Текущая реализация использует UserDefaults для простоты. Keychain — следующий шаг (ТД-5).
 
 ---
 
-## 7. SettingsView — экран настроек
-
-Sheet, открываемый по кнопке ⚙️ в тулбаре или по кнопке в сайдбаре (при отсутствии ключа).
-
-```
-SettingsView
-├── SecureField / TextField (переключается кнопкой "показать/скрыть")
-├── Индикатор валидности (✅ зелёный / ❌ красный)
-├── Кнопка "Сохранить" → SettingsManager.saveApiKey() → onApiKeyChanged(key)
-└── Кнопка "Закрыть"
-```
-
-Коллбэк `onApiKeyChanged: (String) -> Void` вызывает `viewModel.updateApiKey(_:)`.
-
----
-
-## 8. Swift 6 Concurrency в UI-слое
+## 7. Swift 6 Concurrency в UI-слое
 
 ### @MainActor — гарантия безопасности UI
 
@@ -249,17 +291,19 @@ func send(prompt: String) {
 
 ---
 
-## 9. Поток данных: от нажатия кнопки до обновления UI
+## 8. Поток данных: от нажатия кнопки до обновления UI
 
 ```mermaid
 sequenceDiagram
     participant User as 👤 Пользователь
-    participant CV as ContentView (SwiftUI)
+    participant IB as InputBarView
+    participant CV as ContentView (дирижёр)
     participant VM as ChappieViewModel (@MainActor)
     participant Orch as AIOrchestrator (actor)
     participant Tools as ToolExecutionService (actor)
 
-    User->>CV: Нажимает "Send" или Enter
+    User->>IB: Нажимает "Send" или Enter
+    IB->>CV: onSend() callback
     CV->>VM: send(prompt: "Напиши тест")
 
     Note over VM: @MainActor: обновляем UI немедленно
@@ -276,7 +320,6 @@ sequenceDiagram
         Orch-->>VM: onToolCall("write_file", "ContentView.swift")
         Note over VM: Task { @MainActor in }: обновить UI
         VM->>VM: messages.append("🛠 Выполняю: write_file")
-        CV->>User: Видит прогресс в реальном времени
     end
 
     Orch-->>-VM: AIOrchestratorResult(finalResponse, totalCost, newBalance)
@@ -284,16 +327,15 @@ sequenceDiagram
     VM->>VM: messages.append(.assistant, cost)
     VM->>VM: currentBalance = newBalance
     VM->>VM: isThinking = false
-    CV->>User: Видит финальный ответ с ценой
 ```
 
 ---
 
-## 10. Ключевые инварианты UI-слоя
+## 9. Ключевые инварианты UI-слоя
 
 > Нарушение любого из этих инвариантов означает архитектурный баг.
 
-1. **Один ViewModel на всё приложение.** `ChappieViewModel` создаётся один раз в `ContentView` как `@State` и не передаётся в ChappieCore.
+1. **Один ViewModel на всё приложение.** `ChappieViewModel` создаётся один раз в `ContentView` как `@State`.
 
 2. **View никогда не держат ссылку на ChappieCore напрямую.** Все обращения к `AIOrchestrator`, `FileSystemManager` и т.д. — только через `ChappieViewModel`.
 
@@ -305,17 +347,19 @@ sequenceDiagram
 
 6. **История чата изолирована по воркспейсу.** `ChatHistoryManager` создаётся с `workspaceURL` — каждый проект имеет свою историю.
 
+7. **Каждый View-компонент — отдельный файл.** ContentView — только дирижёр, не рендерит сам.
+
 ---
 
-## 11. Технический долг (актуальный)
+## 10. Технический долг (актуальный)
 
-| # | Описание | Приоритет |
-|---|---|---|
-| ТД-4 | `ContentView.swift` — монолит. Нужно разбить на `ChatView`, `InputView`, `SidebarView` | 🟠 |
-| ТД-5 | API-ключ хранится в `UserDefaults`. Нужно перенести в Keychain | 🟡 |
-| ТД-6 | Вызовы инструментов добавляются как обычные `ChatMessage` с эмодзи-префиксом | 🟡 |
-| ТД-7 | Нет стриминга токенов — пользователь ждёт полного ответа | 🟡 |
-| ТД-8 | Нет тестов для ViewModel | 🟡 |
+| # | Описание | Приоритет | Статус |
+|---|---|---|---|
+| ТД-4 | ContentView-монолит → разбить на компоненты | 🟠 | ✅ Закрыт (Этап 4) |
+| ТД-5 | API-ключ хранится в UserDefaults → перенести в Keychain | 🟡 | Открыт |
+| ТД-6 | ToolCall-сообщения как ChatMessage с эмодзи-префиксом → типизировать | 🟡 | Открыт |
+| ТД-7 | Нет стриминга токенов — пользователь ждёт полного ответа | 🟡 | Открыт |
+| ТД-8 | Нет тестов для ViewModel | 🟡 | Открыт |
 
 ---
 
@@ -324,4 +368,5 @@ sequenceDiagram
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-05-21 | Initial creation | Chappie AI |
-| 2026-05-27 | Полная переработка: документ приведён в соответствие с реальным кодом. Убраны несуществующие файлы, исправлены типы (ObservableObject→@Observable, actor→struct для AITunnelClient), добавлены SettingsManager/SettingsView, реальная структура ContentView | Chappie AI |
+| 2026-05-27 | Полная переработка: документ приведён в соответствие с реальным кодом. Убраны несуществующие файлы, исправлены типы. Добавлены SettingsManager/SettingsView. | Chappie AI |
+| 2026-05-27 | Этап 4: ТД-4 закрыт. ContentView разбит на компоненты. Обновлена схема, добавлена секция 5 с иерархией компонентов. | Chappie AI |
