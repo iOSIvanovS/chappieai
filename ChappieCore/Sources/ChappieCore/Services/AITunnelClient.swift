@@ -300,131 +300,113 @@ public struct AITunnelClient: Sendable {
     ///   tool: "результат write_file" [cache✅]  ← breakpoint 3
     ///   user: "текущий запрос"        ← добавляется buildContextWindow() (не кэшируется)
     ///
-    ///
+    private func buildMessages(systemPrompt: String, chatHistory: [AIMessage]) -> [AIMessage] {
+        var messages: [AIMessage] = []
 
-    // MARK: - Формирование сообщений
-        
-        private func buildMessages(systemPrompt: String, chatHistory: [AIMessage]) -> [AIMessage] {
-            var messages: [AIMessage] = []
+        // ── Breakpoint 1: системный промпт ──────────────────────────────────────
+        // Стабильный, никогда не меняется. ~2384 токена стабильно кэшируются.
+        let systemMessage = AIMessage(
+            role: "system",
+            contentBlocks: [.cached(systemPrompt)]
+        )
+        messages.append(systemMessage)
 
-            // Передаем системный промпт как обычную строку.
-            // Если шлюз поддерживает кэширование, он закэширует его сам автоматически.
-            let systemMessage = AIMessage(
-                role: "system",
-                content: systemPrompt
-            )
-            messages.append(systemMessage)
-            
-            // Добавляем историю без модификаций и тегов
-            messages.append(contentsOf: chatHistory)
-            
+        guard !chatHistory.isEmpty else {
+            print("[AITunnelClient] 🗃️ Кэш: 1 блок (только system), история пуста")
             return messages
         }
-    
-//    private func buildMessages(systemPrompt: String, chatHistory: [AIMessage]) -> [AIMessage] {
-//        var messages: [AIMessage] = []
-//
-//        // ── Breakpoint 1: системный промпт ──────────────────────────────────────
-//        // Стабильный, никогда не меняется. ~2384 токена стабильно кэшируются.
-//        let systemMessage = AIMessage(
-//            role: "system",
-//            contentBlocks: [.cached(systemPrompt)]
-//        )
-//        messages.append(systemMessage)
-//
-//        guard !chatHistory.isEmpty else {
-//            print("[AITunnelClient] 🗃️ Кэш: 1 блок (только system), история пуста")
-//            return messages
-//        }
-//
-//        // ── Ищем индексы для breakpoint 2 и 3 ───────────────────────────────────
-//
-//        // Breakpoint 2: последний user-элемент (ищем с конца истории).
-//        // ПОЧЕМУ С КОНЦА: нам нужен самый поздний user-элемент — он максимизирует
-//        // кэшируемый префикс. Итерируем reversed() и берём первый найденный.
-//        let lastUserIndex = chatHistory.indices.reversed().first { idx in
-//            chatHistory[idx].role == "user"
-//        }
-//
-//        // Breakpoint 3: последнее сообщение в истории (если оно отличается от breakpoint 2).
-//        // Кэшируем "хвост" из tool-ответов, который накопился после последнего user-сообщения.
-//        // ОГРАНИЧЕНИЕ: ставим только на role="tool" или role="user" (у них есть текстовый контент).
-//        // role="assistant" с tool_calls имеет contentString=nil → кэшировать нечего.
-//        let lastIndex = chatHistory.count - 1
-//        let lastMessage = chatHistory[lastIndex]
-//        let canCacheLastMessage = (lastMessage.role == "tool" || lastMessage.role == "user")
-//            && (lastMessage.contentString != nil && !lastMessage.contentString!.isEmpty)
-//
-//        // Breakpoint 3 актуален только если последнее сообщение ≠ последнему user-сообщению.
-//        // Если они совпадают — breakpoint 2 уже покрывает это сообщение.
-//        let useThirdBreakpoint = canCacheLastMessage && lastUserIndex != lastIndex
-//
-//        // ── Собираем массив сообщений с breakpoint'ами ───────────────────────────
-//
-//        if let targetIdx = lastUserIndex {
-//            // Добавляем все сообщения ДО целевого user-элемента — без кэширования
-//            if targetIdx > 0 {
-//                messages.append(contentsOf: chatHistory[0..<targetIdx])
-//            }
-//
-//            // ── Breakpoint 2: последний user-элемент ────────────────────────────
-//            let targetMessage = chatHistory[targetIdx]
-//            if let content = targetMessage.contentString, !content.isEmpty {
-//                let cachedMessage = AIMessage(
-//                    role: targetMessage.role,
-//                    contentBlocks: [.cached(content)],
-//                    tool_calls: targetMessage.tool_calls,       // ← сохраняем
-//                    tool_call_id: targetMessage.tool_call_id,   // ← сохраняем (критично для role="tool")
-//                    name: targetMessage.name                     // ← сохраняем
-//                )
-//                messages.append(cachedMessage)
-//            } else {
-//                // Если контент пустой или сложный (tool_calls) — добавляем как есть
-//                messages.append(targetMessage)
-//            }
-//
-//            // Добавляем сообщения МЕЖДУ breakpoint 2 и концом истории
-//            if targetIdx < chatHistory.count - 1 {
-//                let afterUserMessages = chatHistory[(targetIdx + 1)...]
-//
-//                if useThirdBreakpoint {
-//                    // Добавляем все сообщения кроме последнего без кэширования
-//                    let withoutLast = afterUserMessages.dropLast()
-//                    messages.append(contentsOf: withoutLast)
-//
-//                    // ── Breakpoint 3: последнее сообщение истории ───────────────
-//                    // Кэшируем "хвост" из tool-результатов текущего шага.
-//                    // На следующем шаге цикла этот хвост станет стабильным префиксом
-//                    // и будет полностью прочитан из кэша → created ≈ 0.
-//                    if let content = lastMessage.contentString, !content.isEmpty {
-//                        let cachedLast = AIMessage(
-//                            role: lastMessage.role,
-//                            contentBlocks: [.cached(content)]
-//                        )
-//                        messages.append(cachedLast)
-//                    } else {
-//                        messages.append(lastMessage)
-//                    }
-//                } else {
-//                    // Третий breakpoint не нужен — добавляем хвост как есть
-//                    messages.append(contentsOf: afterUserMessages)
-//                }
-//            }
-//
-//            // Формируем описание для лога
-//            let afterCount = chatHistory.count - 1 - targetIdx
-//            let bpCount = useThirdBreakpoint ? 3 : 2
-//            print("[AITunnelClient] 🗃️ Кэш: \(bpCount) блока (system + user[idx:\(targetIdx)]\(useThirdBreakpoint ? " + last[idx:\(lastIndex)]" : ""), \(afterCount) сообщений после bp2), всего: \(messages.count)")
-//
-//        } else {
-//            // В истории нет ни одного user-сообщения (только tool/assistant).
-//            // Это редкий случай, но защищаемся: добавляем историю без кэширования.
-//            messages.append(contentsOf: chatHistory)
-//            print("[AITunnelClient] 🗃️ Кэш: 1 блок (только system, в истории нет user-сообщений)")
-//        }
-//
-//        return messages
-//    }
+
+        // ── Ищем индексы для breakpoint 2 и 3 ───────────────────────────────────
+
+        // Breakpoint 2: последний user-элемент (ищем с конца истории).
+        // ПОЧЕМУ С КОНЦА: нам нужен самый поздний user-элемент — он максимизирует
+        // кэшируемый префикс. Итерируем reversed() и берём первый найденный.
+        let lastUserIndex = chatHistory.indices.reversed().first { idx in
+            chatHistory[idx].role == "user"
+        }
+
+        // Breakpoint 3: последнее сообщение в истории (если оно отличается от breakpoint 2).
+        // Кэшируем "хвост" из tool-ответов, который накопился после последнего user-сообщения.
+        // ОГРАНИЧЕНИЕ: ставим только на role="tool" или role="user" (у них есть текстовый контент).
+        // role="assistant" с tool_calls имеет contentString=nil → кэшировать нечего.
+        let lastIndex = chatHistory.count - 1
+        let lastMessage = chatHistory[lastIndex]
+        let canCacheLastMessage = (lastMessage.role == "tool" || lastMessage.role == "user")
+            && (lastMessage.contentString != nil && !lastMessage.contentString!.isEmpty)
+
+        // Breakpoint 3 актуален только если последнее сообщение ≠ последнему user-сообщению.
+        // Если они совпадают — breakpoint 2 уже покрывает это сообщение.
+        let useThirdBreakpoint = canCacheLastMessage && lastUserIndex != lastIndex
+
+        // ── Собираем массив сообщений с breakpoint'ами ───────────────────────────
+
+        if let targetIdx = lastUserIndex {
+            // Добавляем все сообщения ДО целевого user-элемента — без кэширования
+            if targetIdx > 0 {
+                messages.append(contentsOf: chatHistory[0..<targetIdx])
+            }
+
+            // ── Breakpoint 2: последний user-элемент ────────────────────────────
+            let targetMessage = chatHistory[targetIdx]
+            if let content = targetMessage.contentString, !content.isEmpty {
+                let cachedMessage = AIMessage(
+                    role: targetMessage.role,
+                    contentBlocks: [.cached(content)],
+                    tool_calls: targetMessage.tool_calls,       // ← сохраняем tool_calls если есть
+                    tool_call_id: targetMessage.tool_call_id,   // ← критично для role="tool"
+                    name: targetMessage.name                     // ← имя функции для tool-сообщений
+                )
+                messages.append(cachedMessage)
+            } else {
+                // Если контент пустой или сложный (tool_calls без текста) — добавляем как есть
+                messages.append(targetMessage)
+            }
+
+            // Добавляем сообщения МЕЖДУ breakpoint 2 и концом истории
+            if targetIdx < chatHistory.count - 1 {
+                let afterUserMessages = chatHistory[(targetIdx + 1)...]
+
+                if useThirdBreakpoint {
+                    // Добавляем все сообщения кроме последнего без кэширования
+                    let withoutLast = afterUserMessages.dropLast()
+                    messages.append(contentsOf: withoutLast)
+
+                    // ── Breakpoint 3: последнее сообщение истории ───────────────
+                    // Кэшируем "хвост" из tool-результатов текущего шага.
+                    // На следующем шаге цикла этот хвост станет стабильным префиксом
+                    // и будет полностью прочитан из кэша → created ≈ 0.
+                    if let content = lastMessage.contentString, !content.isEmpty {
+                        let cachedLast = AIMessage(
+                            role: lastMessage.role,
+                            contentBlocks: [.cached(content)],
+                            tool_calls: lastMessage.tool_calls,
+                            tool_call_id: lastMessage.tool_call_id, // ← обязательно для role="tool"
+                            name: lastMessage.name
+                        )
+                        messages.append(cachedLast)
+                    } else {
+                        messages.append(lastMessage)
+                    }
+                } else {
+                    // Третий breakpoint не нужен — добавляем хвост как есть
+                    messages.append(contentsOf: afterUserMessages)
+                }
+            }
+
+            // Формируем описание для лога
+            let afterCount = chatHistory.count - 1 - targetIdx
+            let bpCount = useThirdBreakpoint ? 3 : 2
+            print("[AITunnelClient] 🗃️ Кэш: \(bpCount) блока (system + user[idx:\(targetIdx)]\(useThirdBreakpoint ? " + last[idx:\(lastIndex)]" : ""), \(afterCount) сообщений после bp2), всего: \(messages.count)")
+
+        } else {
+            // В истории нет ни одного user-сообщения (только tool/assistant).
+            // Это редкий случай, но защищаемся: добавляем историю без кэширования.
+            messages.append(contentsOf: chatHistory)
+            print("[AITunnelClient] 🗃️ Кэш: 1 блок (только system, в истории нет user-сообщений)")
+        }
+
+        return messages
+    }
 
     /// Логирует статистику кэширования через вычисляемые свойства AIUsage.
     ///

@@ -13,6 +13,8 @@
     ПОСЛЕДНИЙ user-элемент в истории, а не на последнее сообщение.
   Обновлён после CACHE-MSG-2 (2026-05-29): третий cache breakpoint на ПОСЛЕДНЕЕ
     сообщение истории — кэширует "хвост" из tool-ответов текущего шага цикла.
+  Обновлён после MCP-TOOLS (2026-05-29): добавлены MCP-инструменты (git + xcodebuild)
+    через MCPToolBridge → ChappieMCP сервер.
   Обновляй при каждом значимом архитектурном изменении.
 -->
 
@@ -48,7 +50,8 @@ ChappieCore/
     └── Services/
         ├── AITunnelClient.swift        # 3 cache breakpoint'а (CACHE-MSG-2)
         ├── AIOrchestrator.swift        # Единый цикл без probe (SINGLE-STREAM)
-        ├── ToolExecutionService.swift
+        ├── ToolExecutionService.swift  # + MCP-инструменты (MCP-TOOLS)
+        ├── MCPToolBridge.swift         # HTTP-клиент к ChappieMCP (MCP-TOOLS)
         ├── FileSystemManager.swift
         ├── MemoryManager.swift
         └── ChatHistoryManager.swift
@@ -271,7 +274,7 @@ sequenceDiagram
 
 ## 8. Инструменты Чаппи (Function Calling)
 
-`ToolExecutionService` предоставляет 8 инструментов.
+`ToolExecutionService` предоставляет **17 инструментов** (8 базовых + 9 MCP).
 
 ### Инструменты файловой системы
 
@@ -290,6 +293,41 @@ sequenceDiagram
 | `recall` | `key` | `targetName` |
 | `search_memory` | `type` | `targetName` |
 | `delete_memory` | `key` | `targetName` |
+
+### MCP-инструменты Git (требуют ChappieMCP сервер на localhost:7771)
+
+| Инструмент | Аргументы | Описание |
+|---|---|---|
+| `git_status` | — | Статус репозитория |
+| `git_diff` | `staged?` | Diff изменений |
+| `git_add` | `paths?` | Добавить в staging |
+| `git_commit` | `message` | Создать коммит |
+| `git_log` | `count?` | История коммитов |
+| `git_reset` | — | Убрать из staging |
+
+### MCP-инструменты Build
+
+| Инструмент | Аргументы | Описание |
+|---|---|---|
+| `build_project` | — | xcodebuild Chappie |
+| `run_tests` | `target?` | xcodebuild test / swift test |
+| `read_build_log` | — | Полный лог последней сборки |
+
+### Архитектура MCP (MCP-TOOLS)
+
+```
+ToolExecutionService (actor)
+    └── MCPToolBridge (actor)        ← HTTP-клиент
+          │ GET /health (таймаут 2с) — проверка доступности
+          │ POST /tool               — выполнение инструмента
+          ▼
+    ChappieMCP (отдельный процесс, localhost:7771)
+          ├── GitTools  (Process() → /usr/bin/git)
+          └── BuildTools (Process() → /usr/bin/xcodebuild)
+```
+
+**Если ChappieMCP не запущен:** MCPToolBridge возвращает понятное сообщение
+с инструкцией по запуску вместо таймаута.
 
 ---
 
@@ -315,7 +353,9 @@ sequenceDiagram
 │       └──► ToolExecutionService (actor)                  │
 │                │                                         │
 │                ├──► FileSystemManager (actor)            │
-│                └──► MemoryManager (actor)                │
+│                ├──► MemoryManager (actor)                │
+│                └──► MCPToolBridge (actor)  ← НОВЫЙ      │
+│                          └── URLSession → localhost:7771 │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -357,6 +397,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
 | CTX-OPT | maxMessagesInContext — лимит по количеству | 🟡 | ✅ Закрыт |
 | CACHE-MSG | Умное позиционирование 2-го cache breakpoint'а | 🔴 | ✅ Закрыт |
 | CACHE-MSG-2 | Третий breakpoint на последнее сообщение истории | 🔴 | ✅ Закрыт |
+| MCP-TOOLS | Git + xcodebuild инструменты через ChappieMCP | 🔴 | ✅ Закрыт |
 | ТД-5 | API-ключ в UserDefaults → перенести в Keychain | 🟡 | Открыт |
 | ТД-8 | Нет тестового таргета в Package.swift | 🟡 | Открыт |
 
@@ -374,3 +415,4 @@ public struct AppConfig: Codable, Equatable, Sendable {
 | 2026-05-29 | CTX-OPT: добавлен maxMessagesInContext=12 в AppConfig и buildContextWindow() | Chappie AI |
 | 2026-05-29 | CACHE-MSG: второй breakpoint на последний user-элемент истории | Chappie AI |
 | 2026-05-29 | CACHE-MSG-2: третий breakpoint на последнее сообщение истории | Chappie AI |
+| 2026-05-29 | MCP-TOOLS: ChappieMCP сервер + MCPToolBridge + 9 новых инструментов | Chappie AI |

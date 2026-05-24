@@ -26,28 +26,15 @@
 // Все параметры (tokenBudget, recentFullMessages, summaryThreshold) живут ТОЛЬКО в AppConfig.
 // ViewModel и Orchestrator читают их оттуда. Никаких дублирующих констант.
 //
-// ИЗМЕНЕНИЕ (Этап 6 — ТД-6):
-// Тип ChatMessage переехал в Models/ChatMessage.swift и стал enum.
-// ViewModel больше не создаёт ChatMessage(isUser: false, text: "🛠 Выполняю: ...")  —
-// вместо этого используется семантически корректный .toolCall(toolName:targetPath:).
-// Фильтрация истории для API теперь опирается на типизированный кейс, а не на
-// хрупкую проверку строки по содержимому (hasPrefix("🛠")).
+// АРХИТЕКТУРА ЗАПУСКА ХЕЛПЕРА (MCPHelperLauncher):
+// ПРОБЛЕМА: если запускать MCPHelperLauncher.shared.launch() без пути (из ChappieApp.onAppear),
+// хелпер получает FileManager.currentDirectoryPath = "/" как воркспейс.
+// Git не находит репозиторий, все команды падают.
 //
-// ИЗМЕНЕНИЕ (ТД-7 — Стриминг):
-// Добавлено свойство `streamingText: String` — накапливает токены финального ответа
-// по мере их поступления из SSE-потока. UI отображает его как "живой" пузырь.
-// После завершения стриминга streamingText сбрасывается в "" и добавляется
-// полноценное .message в историю (с cost и сохранением на диск).
-//
-// ИЗМЕНЕНИЕ (ТД-UX-PERF — Оптимизация производительности UI):
-// `visibleMessages` — вычисляемое свойство, которое отдаёт в UI только последние
-// 30 текстовых сообщений (.message). .toolCall в ленту не попадают вообще.
-// `currentToolCall` — строка с именем текущего вызываемого инструмента.
-//
-// ИЗМЕНЕНИЕ (ТД-COST-SUMMARY — Self-Summary):
-// Каждый ответ Чаппи содержит тег <summary>...</summary> в конце.
-// Метод `extractAndCleanSummary()` извлекает его и возвращает отдельно от основного текста.
-// Полный текст показывается пользователю, summary сохраняется в ChatMessage.summary.
+// РЕШЕНИЕ: хелпер запускается ТОЛЬКО когда путь к воркспейсу известен:
+//   а) loadWorkspaceWithSecurityScope() — восстановление при старте → launch(workspacePath:)
+//   б) setWorkspace() — ручной выбор папки → restartWithWorkspace()
+// ChappieApp.onAppear больше НЕ вызывает launch() — там путь ещё неизвестен.
 
 import SwiftUI
 import ChappieCore
@@ -154,6 +141,9 @@ final class ChappieViewModel {
             self.currentBalance = savedBalance
         }
 
+        // ВАЖНО: loadWorkspaceWithSecurityScope() также запускает MCPHelperLauncher
+        // с правильным путём к воркспейсу (если он был сохранён ранее).
+        // Это единственное место старта хелпера при восстановлении сессии.
         loadWorkspaceWithSecurityScope()
     }
 
@@ -180,6 +170,10 @@ final class ChappieViewModel {
         loadMessages()
         saveWorkspaceWithSecurityScope(url)
 
+        // Перезапускаем хелпер ChappieMCP с новым воркспейсом.
+        // Хелпер использует воркспейс как рабочий каталог для git и xcodebuild.
+        MCPHelperLauncher.shared.restartWithWorkspace(url)
+
         if messages.isEmpty {
             messages.append(.message(isUser: false, text: "Проект подключен. Я готов к работе!"))
         }
@@ -195,17 +189,6 @@ final class ChappieViewModel {
     /// AIOrchestrator.process() получает сырую историю и сам применяет
     /// buildContextWindow() с параметрами из AppConfig.
     /// Это единственный источник истины для логики сжатия.
-    ///
-    /// СТРИМИНГ:
-    /// Передаём в orchestrator.process() коллбэк onToken, который вызывается
-    /// для каждого нового токена финального ответа. Токены аппендятся к streamingText
-    /// на @MainActor — SwiftUI перерисовывает "живой" пузырь при каждом изменении.
-    ///
-    /// SELF-SUMMARY:
-    /// После завершения оркестратора вызываем `extractAndCleanSummary()` —
-    /// он разделяет полный ответ на (displayText, summary). displayText показываем
-    /// пользователю, summary сохраняем в ChatMessage для будущей экономии токенов
-    /// в buildContextWindow() оркестратора.
     func send(prompt: String) {
         guard !prompt.isEmpty else { return }
         guard let orchestrator = orchestrator else {
@@ -251,16 +234,12 @@ final class ChappieViewModel {
                 )
 
                 // Разбираем ответ: извлекаем summary и очищаем текст от тега.
-                // cleanAIResponse убирает технические теги размышлений,
-                // extractAndCleanSummary — разделяет <summary> от основного текста.
                 let rawResponse = self.cleanAIResponse(result.finalResponse)
                 let (displayText, summary) = self.extractAndCleanSummary(from: rawResponse)
 
                 self.streamingText = ""
                 self.currentToolCall = nil
 
-                // Сохраняем сообщение с summary — он будет использован
-                // в AIOrchestrator.compressMessage() для экономии токенов
                 self.messages.append(.message(
                     isUser: false,
                     text: displayText,
@@ -300,32 +279,12 @@ final class ChappieViewModel {
     ///
     /// ОТВЕТСТВЕННОСТЬ ЭТОГО МЕТОДА — ТОЛЬКО КОНВЕРТАЦИЯ ТИПОВ:
     /// ChatMessage (UI-тип) → AIMessage (сетевой тип)
-    ///
-    /// ЧТО ЭТОТ МЕТОД НЕ ДЕЛАЕТ (и не должен делать):
-    /// - НЕ обрезает историю по количеству
-    /// - НЕ применяет токенный бюджет
-    /// - НЕ заменяет длинные ответы на summary
-    /// - НЕ удаляет блоки кода
-    ///
-    /// ПОЧЕМУ:
-    /// Вся логика сжатия живёт в AIOrchestrator.buildContextWindow().
-    /// Дублирование этой логики здесь приводило к двойному сжатию и
-    /// рассинхронизации параметров (разные tokenBudget, разные recentFullMessages).
-    ///
-    /// Оркестратор получает сырую историю и сам решает что оставить,
-    /// используя AppConfig как единственный источник истины для параметров.
-    ///
-    /// ИСКЛЮЧЕНИЯ (фильтруем):
-    /// - .toolCall записи — модели не нужны логи вызовов инструментов
-    /// - Системные сообщения ("Проект подключен", "Память очищена") — технический мусор
     private func buildRawNetworkHistory() -> [AIMessage] {
         return messages.compactMap { msg -> AIMessage? in
-            // Пропускаем записи о вызовах инструментов — они не часть диалога
             guard case .message(_, let isUser, let text, _, let summary) = msg else {
                 return nil
             }
 
-            // Фильтруем системные/технические сообщения — они не несут контекста для модели
             let isSystemMessage = text.contains("Проект подключен")
                 || text.contains("Память очищена")
                 || text.contains("API-ключ обновлён")
@@ -335,24 +294,9 @@ final class ChappieViewModel {
 
             if isSystemMessage { return nil }
 
-            // Передаём оба варианта текста — оркестратор сам выберет что использовать.
-            // Если есть summary и текст длинный — оркестратор возьмёт summary.
-            // Если summary нет или текст короткий — оркестратор возьмёт полный текст.
-            //
-            // ВАЖНО: Мы передаём полный text (не stripCodeBlocks!).
-            // Оркестратор сам решает нужно ли убирать блоки кода.
-            // Это позволяет централизовать всю логику сжатия в одном месте.
             let role = isUser ? "user" : "assistant"
 
-            // Для ответов Чаппи передаём оба варианта через специальный формат:
-            // content = полный текст, summary хранится в ChatMessage и используется
-            // в AIOrchestrator.compressMessage() через extractSummary()
-            //
-            // Хитрость: мы встраиваем summary обратно в текст как тег <summary>,
-            // чтобы оркестратор мог его извлечь через extractSummary().
-            // Это позволяет не менять сигнатуру AIMessage.
             if !isUser, let summary = summary {
-                // Встраиваем summary в конец текста — оркестратор его извлечёт
                 let textWithSummary = text + "\n<summary>\(summary)</summary>"
                 return AIMessage(role: role, content: textWithSummary)
             }
@@ -364,27 +308,7 @@ final class ChappieViewModel {
     // MARK: - Парсинг Self-Summary
 
     /// Извлекает тег <summary> из ответа Чаппи и возвращает (чистый текст, summary).
-    ///
-    /// ФОРМАТ ТЕГА:
-    /// Оркестратор требует от модели завершать каждый ответ тегом:
-    ///   <summary>Краткое резюме действий.</summary>
-    ///
-    /// Этот метод:
-    /// 1. Ищет последнее вхождение <summary>...</summary> в тексте.
-    /// 2. Извлекает содержимое тега как summary.
-    /// 3. Возвращает текст БЕЗ тега (для показа пользователю) и сам summary.
-    ///
-    /// ПОЧЕМУ ПОСЛЕДНЕЕ ВХОЖДЕНИЕ:
-    /// Теоретически в ответе может быть несколько тегов (если модель упомянула
-    /// пример тега в объяснении). Нас интересует только финальный summary.
-    ///
-    /// FALLBACK:
-    /// Если тег не найден (модель нарушила правило) — summary == nil,
-    /// полный текст используется как есть. Система не ломается, просто
-    /// для этого сообщения не будет экономии токенов в будущем.
     private func extractAndCleanSummary(from text: String) -> (displayText: String, summary: String?) {
-        // Регулярное выражение: ищем <summary>любой текст</summary>
-        // .dotMatchesLineSeparators — summary может быть многострочным
         guard let regex = try? NSRegularExpression(
             pattern: "<summary>(.*?)</summary>",
             options: [.dotMatchesLineSeparators, .caseInsensitive]
@@ -395,7 +319,6 @@ final class ChappieViewModel {
         let range = NSRange(text.startIndex..., in: text)
         let matches = regex.matches(in: text, options: [], range: range)
 
-        // Берём последнее совпадение — финальный summary
         guard let lastMatch = matches.last,
               let summaryRange = Range(lastMatch.range(at: 1), in: text),
               let fullMatchRange = Range(lastMatch.range, in: text) else {
@@ -404,13 +327,10 @@ final class ChappieViewModel {
 
         let summary = String(text[summaryRange]).trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Убираем тег из текста для отображения пользователю
         var displayText = text
         displayText.removeSubrange(fullMatchRange)
         displayText = displayText.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Если после удаления тега текст пустой — значит ответ состоял только из summary.
-        // Это странно, но не критично — показываем summary как текст.
         let finalDisplayText = displayText.isEmpty ? summary : displayText
 
         return (finalDisplayText, summary.isEmpty ? nil : summary)
@@ -420,10 +340,14 @@ final class ChappieViewModel {
 
     /// Создаёт и связывает весь стек сервисов для указанного воркспейса.
     ///
-    /// ЗАЧЕМ ОТДЕЛЬНЫЙ МЕТОД:
-    /// Инициализация сервисов нужна в двух местах: setWorkspace() и loadWorkspaceWithSecurityScope().
-    /// Вынос в отдельный метод устраняет дублирование — любое изменение стека сервисов
-    /// нужно делать только здесь.
+    /// КЛЮЧЕВОЙ МОМЕНТ — ПЕРЕДАЧА socketPath:
+    /// MCPHelperLauncher.shared.socketPath — это путь к Unix Domain Socket (/tmp/com.chappie.mcp.sock).
+    /// Этот путь передаётся в ToolExecutionService, который передаёт его в MCPToolBridge.
+    /// MCPToolBridge использует его для POSIX connect() к ChappieMCP серверу.
+    ///
+    /// Зачем передавать через DI, а не хардкодить в MCPToolBridge:
+    /// MCPHelperLauncher — единственный источник истины о пути сокета.
+    /// Это позволяет менять путь централизованно без правок в нескольких местах.
     private func initializeServices(for url: URL) {
         let fs = FileSystemManager(workspaceURL: url)
         self.fileSystem = fs
@@ -435,7 +359,10 @@ final class ChappieViewModel {
             await mm.initializeWorkspaceMemory()
         }
 
-        let ts = ToolExecutionService(fileSystem: fs, memoryManager: mm)
+        // Получаем socketPath от лаунчера — он является единственным источником истины
+        let socketPath = MCPHelperLauncher.shared.socketPath
+
+        let ts = ToolExecutionService(fileSystem: fs, memoryManager: mm, socketPath: socketPath)
         self.toolService = ts
 
         self.orchestrator = AIOrchestrator(aiClient: aiClient, toolService: ts, fileSystem: fs)
@@ -472,7 +399,6 @@ final class ChappieViewModel {
         if !loadedMessages.isEmpty {
             self.messages = loadedMessages
         } else {
-            // Миграция из старого хранилища UserDefaults
             if let data = UserDefaults.standard.data(forKey: "savedChatMessages"),
                let decoded = try? JSONDecoder().decode([ChatMessage].self, from: data) {
                 self.messages = decoded
@@ -503,6 +429,15 @@ final class ChappieViewModel {
         }
     }
 
+    /// Восстанавливает воркспейс из сохранённого Security-Scoped Bookmark.
+    ///
+    /// КЛЮЧЕВОЕ: этот метод также запускает MCPHelperLauncher с правильным путём.
+    /// Это единственное место, где хелпер стартует при восстановлении сессии.
+    ///
+    /// ПОЧЕМУ ЗДЕСЬ, А НЕ В ChappieApp.onAppear:
+    /// onAppear вызывается до восстановления воркспейса — путь ещё неизвестен.
+    /// Если запустить хелпер без пути, он получит "/" как рабочий каталог,
+    /// и все git/build команды упадут с "not a git repository".
     private func loadWorkspaceWithSecurityScope() {
         guard let data = UserDefaults.standard.data(forKey: "workspaceBookmark") else { return }
         var isStale = false
@@ -522,8 +457,12 @@ final class ChappieViewModel {
             loadMessages()
             if isStale { saveWorkspaceWithSecurityScope(url) }
 
+            // Запускаем хелпер с правильным путём к воркспейсу.
+            // Именно здесь — потому что путь уже известен и проверен.
+            MCPHelperLauncher.shared.launch(workspacePath: url.path)
+
         } else {
-            // Fallback без security scope (для разработки без sandbox)
+            // Fallback: пробуем без security scope (sandbox удалён из проекта)
             let fallbackURL = try? URL(
                 resolvingBookmarkData: data,
                 options: [],
@@ -536,6 +475,9 @@ final class ChappieViewModel {
                 initializeServices(for: url)
                 chatHistoryManager = ChatHistoryManager(workspaceURL: url)
                 loadMessages()
+
+                // Запускаем хелпер даже в fallback-режиме — путь известен
+                MCPHelperLauncher.shared.launch(workspacePath: url.path)
             }
         }
     }

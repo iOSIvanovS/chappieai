@@ -1,43 +1,73 @@
+// ToolExecutionService.swift
+// ChappieCore
 //
-//  ToolExecutionService.swift
-//  ChappieCore
+// ЗАЧЕМ ЭТОТ ФАЙЛ:
+// Сервис выполнения инструментов ИИ-агента. Принимает вызов функции от модели,
+// парсит аргументы и выполняет действие: файловая система, память или MCP-сервер.
 //
-//  Created by Chappie.
+// АРХИТЕКТУРА MCP-СОЕДИНЕНИЯ:
+// MCPToolBridge создаётся с явным socketPath, который передаётся через init().
 //
+// ПОЧЕМУ socketPath ПРИХОДИТ СНАРУЖИ, А НЕ ХАРДКОДИТСЯ:
+// Путь к Unix Domain Socket вычисляется MCPHelperLauncher в Chappie.app через
+// FileManager.default.temporaryDirectory — это путь ВНУТРИ sandbox-контейнера.
+// ChappieCore — отдельный Swift Package, он не имеет доступа к MCPHelperLauncher.
+// Поэтому путь передаётся через DI: Chappie.app знает путь → передаёт в ToolExecutionService.
+//
+// ЦЕПОЧКА ПЕРЕДАЧИ ПУТИ:
+// MCPHelperLauncher.socketPath
+//   → ChappieViewModel.initializeServices(for:)
+//     → ToolExecutionService(socketPath:)
+//       → MCPToolBridge(socketPath:)
+//         → POSIX connect() → ChappieMCP сервер
+//
+// АРХИТЕКТУРНОЕ РЕШЕНИЕ — МОНОФИЗИТНАЯ АРХИТЕКТУРА:
+// После перехода к монофизитной архитектуре (один агент — Чаппи)
+// инструмент `delegate_task` был полностью удалён. apiKey тоже не нужен —
+// никаких саб-агентов нет.
 
 import Foundation
 
-/// Сервис выполнения инструментов (функций) ИИ.
+/// Сервис выполнения инструментов ИИ-агента.
 ///
-/// Что это: Сервис, который принимает вызов функции от ИИ, парсит аргументы
-/// и выполняет соответствующее действие в файловой системе или памяти.
-///
-/// Зачем: Предоставляет "инструменты" (Tools / Function Calling) для ИИ-агента,
-/// связывая его с файловой системой и менеджером памяти.
-///
-/// Архитектурное решение: После перехода к монофизитной архитектуре (один агент —
-/// Чаппи) инструмент `delegate_task` был полностью удалён. Он был концептуально
-/// мёртв: в `execute()` не было его обработки, и любой вызов падал в `default`
-/// с ошибкой "Неизвестный инструмент". Теперь `apiKey` тоже не нужен —
-/// никаких саб-агентов нет.
+/// Зачем actor: async операции с файловой системой и сетью требуют
+/// правильной изоляции в Swift 6. Actor гарантирует отсутствие гонок данных.
 public actor ToolExecutionService {
     private let fileSystem: FileSystemManager
     private let memoryManager: MemoryManager
 
+    /// Мост к ChappieMCP серверу для git и xcodebuild инструментов.
+    /// Создаётся один раз с путём к сокету от MCPHelperLauncher.
+    private let mcpBridge: MCPToolBridge
+
     /// Инициализатор сервиса.
+    ///
     /// - Parameters:
     ///   - fileSystem: Менеджер файловой системы проекта.
     ///   - memoryManager: Менеджер долгосрочной памяти.
-    public init(fileSystem: FileSystemManager, memoryManager: MemoryManager) {
+    ///   - socketPath: Путь к Unix Domain Socket файлу ChappieMCP.
+    ///     Должен совпадать с путём, по которому ChappieMCP создал свой сокет.
+    ///     Передаётся из MCPHelperLauncher.shared.socketPath через ChappieViewModel.
+    ///     Дефолтное значение — строковый литерал (не константа!) из-за ограничений
+    ///     Swift: default argument в public init не может ссылаться на internal/private символы.
+    public init(
+        fileSystem: FileSystemManager,
+        memoryManager: MemoryManager,
+        socketPath: String = "/tmp/com.chappie.mcp.sock"
+    ) {
         self.fileSystem = fileSystem
         self.memoryManager = memoryManager
+        // Создаём bridge с явным путём — он будет использовать именно этот сокет
+        self.mcpBridge = MCPToolBridge(socketPath: socketPath)
     }
+
+    // MARK: - Доступные инструменты
 
     /// Массив доступных ИИ-агенту инструментов.
     ///
     /// Этот массив передаётся в каждый API-запрос, чтобы модель знала,
     /// какие функции она может вызывать. Список строго соответствует
-    /// монофизитной архитектуре: только файловая система и память.
+    /// монофизитной архитектуре: файловая система, память и MCP-инструменты.
     public var availableTools: [AITool] {
         return [
             // --- Инструменты файловой системы ---
@@ -133,9 +163,94 @@ public actor ToolExecutionService {
                     ],
                     required: ["key"]
                 )
+            )),
+
+            // --- MCP: Инструменты Git ---
+
+            AITool(function: AIFunctionDefinition(
+                name: "git_status",
+                description: "Показать текущий статус git-репозитория: изменённые, новые и удалённые файлы.",
+                parameters: AIToolParameters(properties: [:], required: [])
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "git_diff",
+                description: "Показать содержимое изменений в коде.",
+                parameters: AIToolParameters(
+                    properties: [
+                        "staged": AIToolProperty(type: "string", description: "true — показать staged изменения (после git add), false — unstaged (по умолчанию)")
+                    ],
+                    required: []
+                )
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "git_add",
+                description: "Добавить файлы в staging area (подготовить к коммиту).",
+                parameters: AIToolParameters(
+                    properties: [
+                        "paths": AIToolProperty(type: "string", description: "Пути через пробел, или '.' для всех файлов (по умолчанию '.')")
+                    ],
+                    required: []
+                )
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "git_commit",
+                description: "Создать git-коммит с заданным сообщением.",
+                parameters: AIToolParameters(
+                    properties: [
+                        "message": AIToolProperty(type: "string", description: "Текст коммита")
+                    ],
+                    required: ["message"]
+                )
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "git_log",
+                description: "Показать историю последних коммитов.",
+                parameters: AIToolParameters(
+                    properties: [
+                        "count": AIToolProperty(type: "string", description: "Количество коммитов (по умолчанию 10)")
+                    ],
+                    required: []
+                )
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "git_reset",
+                description: "Убрать все файлы из staging area (git reset HEAD).",
+                parameters: AIToolParameters(properties: [:], required: [])
+            )),
+
+            // --- MCP: Инструменты сборки ---
+
+            AITool(function: AIFunctionDefinition(
+                name: "build_project",
+                description: "Собрать проект Chappie.xcodeproj через xcodebuild. Возвращает успех или список ошибок компиляции.",
+                parameters: AIToolParameters(properties: [:], required: [])
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "run_tests",
+                description: "Запустить автотесты. Для ChappieCore используется swift test, для Chappie.app — xcodebuild test.",
+                parameters: AIToolParameters(
+                    properties: [
+                        "target": AIToolProperty(type: "string", description: "Имя тест-таргета (например 'ChappieCoreTests'). Пусто = все тесты.")
+                    ],
+                    required: []
+                )
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "read_build_log",
+                description: "Прочитать полный лог последней сборки или запуска тестов.",
+                parameters: AIToolParameters(properties: [:], required: [])
             ))
         ]
     }
+
+    // MARK: - Выполнение инструментов
 
     /// Выполняет указанный инструмент и возвращает строковый результат.
     ///
@@ -147,23 +262,26 @@ public actor ToolExecutionService {
     public func execute(call: AIToolCall) async -> String {
         let name = call.function.name
         let argsData = call.function.arguments.data(using: .utf8) ?? Data()
-        
+
         do {
             switch name {
+
+            // MARK: - Файловая система
+
             case "list_files":
                 let files = try await fileSystem.listFiles()
                 let encoder = JSONEncoder()
                 encoder.outputFormatting = .prettyPrinted
                 let data = try encoder.encode(files)
                 return String(data: data, encoding: .utf8) ?? "[]"
-                
+
             case "read_file":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let path = args["path"] else {
                     return "Ошибка: Неверные аргументы для read_file"
                 }
                 return try await fileSystem.readFile(at: path)
-                
+
             case "write_file":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let path = args["path"],
@@ -172,7 +290,7 @@ public actor ToolExecutionService {
                 }
                 try await fileSystem.writeFile(at: path, content: content)
                 return "Успешно: Файл \(path) записан."
-                
+
             case "delete_file":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let path = args["path"] else {
@@ -180,7 +298,9 @@ public actor ToolExecutionService {
                 }
                 try await fileSystem.deleteFile(at: path)
                 return "Успешно: Файл \(path) удален."
-                
+
+            // MARK: - Долгосрочная память
+
             case "memorize":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let key = args["key"],
@@ -193,7 +313,7 @@ public actor ToolExecutionService {
                 let targetName = args["targetName"]
                 await memoryManager.saveMemory(key: key, type: type, jsonString: jsonString, scope: scope, targetName: targetName)
                 return "Успешно: Запись \(key) сохранена в памяти \(targetName != nil ? "таргета \(targetName!)" : "проекта")."
-                
+
             case "recall":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let key = args["key"] else {
@@ -205,7 +325,7 @@ public actor ToolExecutionService {
                 } else {
                     return "Запись по ключу \(key) не найдена в памяти \(targetName != nil ? "таргета \(targetName!)" : "проекта")."
                 }
-                
+
             case "search_memory":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let type = args["type"] else {
@@ -217,7 +337,7 @@ public actor ToolExecutionService {
                 encoder.outputFormatting = .prettyPrinted
                 let data = try encoder.encode(results)
                 return String(data: data, encoding: .utf8) ?? "{}"
-                
+
             case "delete_memory":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let key = args["key"] else {
@@ -226,7 +346,49 @@ public actor ToolExecutionService {
                 let targetName = args["targetName"]
                 await memoryManager.deleteMemory(key: key, targetName: targetName)
                 return "Успешно: Запись \(key) удалена из памяти \(targetName != nil ? "таргета \(targetName!)" : "проекта")."
-                
+
+            // MARK: - MCP: Git инструменты
+            // Все git-инструменты делегируются в MCPToolBridge → ChappieMCP сервер.
+            // Аргументы парсим из JSON, передаём как [String: String] словарь.
+
+            case "git_status":
+                return await mcpBridge.execute(tool: "git_status")
+
+            case "git_diff":
+                let args = (try? JSONDecoder().decode([String: String].self, from: argsData)) ?? [:]
+                return await mcpBridge.execute(tool: "git_diff", args: args)
+
+            case "git_add":
+                var args = (try? JSONDecoder().decode([String: String].self, from: argsData)) ?? [:]
+                if args["paths"] == nil { args["paths"] = "." }
+                return await mcpBridge.execute(tool: "git_add", args: args)
+
+            case "git_commit":
+                guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
+                      let message = args["message"] else {
+                    return "Ошибка: Аргумент 'message' обязателен для git_commit"
+                }
+                return await mcpBridge.execute(tool: "git_commit", args: ["message": message])
+
+            case "git_log":
+                let args = (try? JSONDecoder().decode([String: String].self, from: argsData)) ?? [:]
+                return await mcpBridge.execute(tool: "git_log", args: args)
+
+            case "git_reset":
+                return await mcpBridge.execute(tool: "git_reset")
+
+            // MARK: - MCP: Build инструменты
+
+            case "build_project":
+                return await mcpBridge.execute(tool: "build_project")
+
+            case "run_tests":
+                let args = (try? JSONDecoder().decode([String: String].self, from: argsData)) ?? [:]
+                return await mcpBridge.execute(tool: "run_tests", args: args)
+
+            case "read_build_log":
+                return await mcpBridge.execute(tool: "read_build_log")
+
             default:
                 return "Ошибка: Неизвестный инструмент \(name)"
             }

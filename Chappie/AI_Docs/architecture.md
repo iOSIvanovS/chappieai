@@ -3,8 +3,7 @@
 
   ДОКУМЕНТ АРХИТЕКТУРЫ — CHAPPIE APP (UI LAYER)
 
-  Этот файл описывает РЕАЛЬНУЮ архитектуру UI-слоя приложения Chappie.
-  Обновлён после FIX-DOUBLE-CONTEXT (2026-06-02): устранено двойное сжатие истории.
+  Обновлён: MCP Helper Launcher — исправлен воркспейс "/" (2026-06-XX)
   Обновляй при каждом значимом архитектурном изменении.
 -->
 
@@ -28,7 +27,8 @@
 
 ```
 Chappie/
-├── ChappieApp.swift                    # @main, точка входа, создаёт WindowGroup → ContentView
+├── ChappieApp.swift                    # @main, точка входа, AppDelegate для terminateHelper
+├── MCPHelperLauncher.swift             # Управляет жизненным циклом дочернего процесса ChappieMCP
 ├── ContentView.swift                   # Чистый "дирижёр": собирает компоненты, делегирует логику
 ├── ChappieViewModel.swift              # Единственный ViewModel (@Observable, @MainActor)
 │                                       # + streamingText: String (ТД-7)
@@ -36,6 +36,11 @@ Chappie/
 │                                       # + currentToolCall: String? (ТД-UX-PERF)
 ├── Models/
 │   └── ChatMessage.swift               # enum ChatMessage: .message | .toolCall
+├── ChappieMCP/                         # Xcode-таргет: исходники хелпера
+│   ├── main.swift                      # Точка входа хелпера, запускает MCPUnixServer
+│   ├── MCPHTTPServer.swift             # Unix Domain Socket сервер, диспетчер инструментов
+│   ├── GitTools.swift                  # git_status, git_diff, git_add, git_commit, git_log, git_reset
+│   └── BuildTools.swift               # build_project, run_tests, read_build_log
 ├── Views/
 │   ├── Chat/
 │   │   ├── MessageBubbleView.swift     # Пузырёк одного сообщения (только .message)
@@ -59,7 +64,84 @@ Chappie/
 
 ---
 
-## 3. КРИТИЧЕСКИ ВАЖНО: Кто строит контекстное окно истории
+## 3. MCP Helper Architecture
+
+### Как работает дочерний процесс ChappieMCP
+
+```
+ChappieViewModel.loadWorkspaceWithSecurityScope()  ← при старте (восстановление)
+    или
+ChappieViewModel.setWorkspace()                    ← при ручном выборе папки
+    ↓
+MCPHelperLauncher.shared.launch(workspacePath:)
+    ↓
+Bundle.main → Contents/Helpers/ChappieMCP (бинарник)
+    ↓
+Process.run(arguments: [workspacePath, socketPath])
+    ↓
+ChappieMCP слушает /tmp/com.chappie.mcp.sock
+    ↓
+MCPToolBridge в ChappieCore → connect() → ToolDispatcher → GitTools/BuildTools
+```
+
+### КРИТИЧЕСКИ ВАЖНО: Когда запускать хелпер
+
+**ПРОБЛЕМА (была):** `ChappieApp.onAppear` вызывал `MCPHelperLauncher.shared.launch()` без пути.
+В этот момент воркспейс ещё не восстановлен из bookmark.
+`FileManager.default.currentDirectoryPath` возвращал `/` (корень ФС).
+Хелпер запускался с воркспейсом `/` → git не находил репозиторий → все команды падали.
+
+**РЕШЕНИЕ:** Хелпер запускается ТОЛЬКО когда путь к воркспейсу известен:
+- `loadWorkspaceWithSecurityScope()` — после успешного восстановления bookmark → `launch(workspacePath: url.path)`
+- `setWorkspace()` — при ручном выборе папки → `restartWithWorkspace(url)`
+- `ChappieApp.onAppear` — НЕ запускает хелпер (убрано).
+
+### App Sandbox
+
+**ПРОБЛЕМА (была):** `ENABLE_APP_SANDBOX = YES` в pbxproj блокировал `bind()` для дочернего процесса.
+**РЕШЕНИЕ:** `ENABLE_APP_SANDBOX = NO` в Debug и Release конфигурациях таргета Chappie.
+Сокет располагается в `/tmp/com.chappie.mcp.sock` — стандартное место для Unix Domain Sockets.
+
+### kSocketPath — default argument
+
+**ПРОБЛЕМА (была):** `private let kSocketPath = "..."` как default argument в `public init` — компилятор
+отклоняет: "internal let cannot be referenced from a default argument value".
+**РЕШЕНИЕ:** строковый литерал `"/tmp/com.chappie.mcp.sock"` прямо в default argument.
+
+### lazy vs @Observable
+
+**ПРОБЛЕМА (была):** `lazy var socketPath` в `@Observable` классе — компилятор падает:
+"init accessor cannot refer to property '_socketPath'".
+**ПРИЧИНА:** `@Observable` макрос генерирует init accessor для каждого хранимого свойства,
+и `lazy` несовместимо с этой генерацией.
+**РЕШЕНИЕ:** вычислять `socketPath` в `init()` и хранить как обычное `var`.
+
+### Расположение бинарника
+
+```
+Chappie.app/
+└── Contents/
+    ├── MacOS/
+    │   └── Chappie          # Основной бинарник
+    └── Helpers/
+        └── ChappieMCP       # Helper executable (Copy Files Build Phase)
+```
+
+### MCPHelperLauncher — ключевые решения
+
+| Решение | Причина |
+|---|---|
+| Singleton `shared` | Один хелпер на всё приложение, управление из любого места |
+| `@MainActor` | Process и @Observable свойства — только главный поток |
+| `terminationHandler` через `Task { @MainActor }` | Handler вызывается на фоновом потоке |
+| `applicationWillTerminate` через NSApplicationDelegate | SwiftUI App не даёт хука на завершение |
+| `SIGTERM` (код 15) — не считается крашем | Это наш собственный terminate() |
+| `Bundle.main.url(forAuxiliaryExecutable:)` + fallback | Стандартный API + ручной путь для надёжности |
+| Запуск только из ViewModel, не из ChappieApp | Путь к воркспейсу известен только в ViewModel |
+
+---
+
+## 4. КРИТИЧЕСКИ ВАЖНО: Кто строит контекстное окно истории
 
 ### Проблема (была до FIX-DOUBLE-CONTEXT)
 
@@ -68,7 +150,6 @@ Chappie/
 1. `ChappieViewModel.buildNetworkHistory()` — tokenBudget=**30,000**, recentFullCount=**6**, summaryThreshold=**200**
 2. `AIOrchestrator.buildContextWindow()` — tokenBudget=**12,000**, recentFullCount=**3**, summaryThreshold=**400**
 
-Оркестратор получал уже сжатую историю и сжимал её снова. Параметры рассинхронизированы.
 **Результат: 21,000+ токенов на запрос вместо ожидаемых 5,000-7,000.**
 
 ### Решение (FIX-DOUBLE-CONTEXT)
@@ -81,37 +162,11 @@ Chappie/
 | `AIOrchestrator.buildContextWindow()` | Токенный бюджет, замена на summary, обрезка. Читает параметры из `AppConfig`. |
 | `AppConfig.shared` | Единственное место где живут `tokenBudget`, `recentFullMessages`, `summaryThreshold`. |
 
-### Как summary передаётся из ViewModel в Orchestrator
-
-ViewModel встраивает summary обратно в текст сообщения как тег:
-```swift
-// buildRawNetworkHistory() в ViewModel
-let textWithSummary = text + "\n<summary>\(summary)</summary>"
-return AIMessage(role: "assistant", content: textWithSummary)
-```
-
-Оркестратор извлекает его через `extractSummary()` в `compressMessage()`:
-```swift
-// AIOrchestrator.compressMessage()
-if let summary = extractSummary(from: fullText) {
-    return AIMessage(role: ..., content: "[СЖАТО] \(summary)")
-}
-```
-
-Это позволяет не менять сигнатуру `AIMessage` и сохранить чистый интерфейс.
-
 ---
 
-## 4. Оптимизация производительности UI (ТД-UX-PERF)
+## 5. Оптимизация производительности UI (ТД-UX-PERF)
 
-### Проблема
-
-Массив `messages` хранил все записи за всё время, включая тысячи `.toolCall`.
-При ресайзе окна SwiftUI перерисовывал весь ForEach — отсюда тормоза и 200 МБ памяти.
-
-### Решение: двойная оптимизация
-
-#### 4.1 visibleMessages — фильтрация и лимит
+### visibleMessages — фильтрация и лимит
 
 ```swift
 var visibleMessages: [ChatMessage] {
@@ -120,7 +175,7 @@ var visibleMessages: [ChatMessage] {
 }
 ```
 
-#### 4.2 currentToolCall — строка состояния
+### currentToolCall — строка состояния
 
 ```swift
 self.currentToolCall = "\(toolName) → \(shortPath)"  // во время работы
@@ -129,7 +184,7 @@ self.currentToolCall = nil                             // после завер�
 
 ---
 
-## 5. Стриминг токенов (ТД-7)
+## 6. Стриминг токенов (ТД-7)
 
 ```
 AITunnelClient.streamRequest()     → AsyncThrowingStream<String, Error>
@@ -140,25 +195,6 @@ ChappieViewModel.streamingText     → @Observable, SwiftUI перерисовы
     ↓
 ChatScrollView.streamingBubble     → Text(streamingText) + BlinkingCursor
 ```
-
----
-
-## 6. ChappieViewModel — публичный интерфейс
-
-| Свойство / Метод | Тип | Назначение |
-|---|---|---|
-| `messages` | `[ChatMessage]` | Полная история. `didSet` → автосохранение на диск |
-| `visibleMessages` | `[ChatMessage]` | Только `.message`, макс. 30 — для UI |
-| `currentToolCall` | `String?` | Текущий инструмент для StatusBarView |
-| `isThinking` | `Bool` | Флаг активного AI-запроса |
-| `streamingText` | `String` | Накопленный текст стримингового ответа |
-| `workspaceURL` | `URL?` | Текущий воркспейс |
-| `currentBalance` | `Double?` | Баланс AITunnel |
-| `send(prompt:)` | `func` | Отправить запрос в оркестратор (со стримингом) |
-| `setWorkspace(_:)` | `func` | Подключить новую папку проекта |
-| `updateApiKey(_:)` | `func` | Обновить ключ без перезапуска |
-| `clearHistory()` | `func` | Очистить историю с приветствием |
-| `buildRawNetworkHistory()` | `private func` | Конвертация в [AIMessage] БЕЗ сжатия |
 
 ---
 
@@ -174,6 +210,9 @@ ChatScrollView.streamingBubble     → Text(streamingText) + BlinkingCursor
 | ТД-TEST | Unit-тесты | 🟡 | ✅ Закрыт |
 | ТД-COST | Prompt caching + токенное окно | 🟡 | ✅ Закрыт |
 | FIX-DOUBLE-CONTEXT | Двойное сжатие истории → единый источник истины | 🔴 | ✅ Закрыт |
+| MCP-HELPER | ChappieMCP как дочерний процесс + MCPHelperLauncher | 🔴 | ✅ Закрыт |
+| MCP-WORKSPACE | Хелпер запускался с "/" → git не работал | 🔴 | ✅ Закрыт |
+| MCP-SANDBOX | ENABLE_APP_SANDBOX = YES блокировал bind() | 🔴 | ✅ Закрыт |
 
 ---
 
@@ -188,3 +227,6 @@ ChatScrollView.streamingBubble     → Text(streamingText) + BlinkingCursor
 | 2026-05-28 | ТД-7: Стриминг токенов |
 | 2026-06-01 | ТД-UX-PERF: visibleMessages, currentToolCall, StatusBarView |
 | 2026-06-02 | FIX-DOUBLE-CONTEXT: buildRawNetworkHistory() — только конвертация без сжатия |
+| 2026-06-XX | MCP-HELPER: MCPHelperLauncher + ChappieAppDelegate + ChappieMCP Xcode target |
+| 2026-06-XX | MCP-SANDBOX: ENABLE_APP_SANDBOX = NO, /tmp/ сокет, lazy→init(), kSocketPath→литерал |
+| 2026-06-XX | MCP-WORKSPACE: хелпер запускается из loadWorkspaceWithSecurityScope(), не из onAppear |

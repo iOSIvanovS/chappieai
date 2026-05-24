@@ -8,12 +8,46 @@
 
 /* Begin PBXBuildFile section */
 		874866102FC305DF00F5E876 /* ChappieCore in Frameworks */ = {isa = PBXBuildFile; productRef = 8748660F2FC305DF00F5E876 /* ChappieCore */; };
+		874866472FC363FC00F5E876 /* ChappieMCP in CopyFiles */ = {isa = PBXBuildFile; fileRef = 874866232FC35DF000F5E876 /* ChappieMCP */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		87F3739B2FBF768A0091E2C0 /* ChappieCore in Frameworks */ = {isa = PBXBuildFile; productRef = 87F3739A2FBF768A0091E2C0 /* ChappieCore */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		874866482FC3641B00F5E876 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 87BAA4702FBEED3A001DDBED /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 874866222FC35DF000F5E876;
+			remoteInfo = ChappieMCP;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		874866212FC35DF000F5E876 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = /usr/share/man/man1/;
+			dstSubfolderSpec = 0;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 1;
+		};
+		874866462FC3639B00F5E876 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Helpers;
+			dstSubfolderSpec = 1;
+			files = (
+				874866472FC363FC00F5E876 /* ChappieMCP in CopyFiles */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		874865FA2FC3029E00F5E876 /* ChappieCoreTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ChappieCoreTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8748660D2FC304B500F5E876 /* ChappieCoreTests.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = ChappieCoreTests.xctestplan; sourceTree = "<group>"; };
+		874866232FC35DF000F5E876 /* ChappieMCP */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = ChappieMCP; sourceTree = BUILT_PRODUCTS_DIR; };
 		87BAA4782FBEED3A001DDBED /* Chappie.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Chappie.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -21,6 +55,11 @@
 		874865FB2FC3029E00F5E876 /* ChappieCoreTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = ChappieCoreTests;
+			sourceTree = "<group>";
+		};
+		874866242FC35DF000F5E876 /* ChappieMCP */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ChappieMCP;
 			sourceTree = "<group>";
 		};
 		87BAA47A2FBEED3A001DDBED /* Chappie */ = {
@@ -36,6 +75,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				874866102FC305DF00F5E876 /* ChappieCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		874866202FC35DF000F5E876 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -63,6 +109,7 @@
 				8748660D2FC304B500F5E876 /* ChappieCoreTests.xctestplan */,
 				87BAA47A2FBEED3A001DDBED /* Chappie */,
 				874865FB2FC3029E00F5E876 /* ChappieCoreTests */,
+				874866242FC35DF000F5E876 /* ChappieMCP */,
 				8748660E2FC305DF00F5E876 /* Frameworks */,
 				87BAA4792FBEED3A001DDBED /* Products */,
 			);
@@ -73,6 +120,7 @@
 			children = (
 				87BAA4782FBEED3A001DDBED /* Chappie.app */,
 				874865FA2FC3029E00F5E876 /* ChappieCoreTests.xctest */,
+				874866232FC35DF000F5E876 /* ChappieMCP */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -104,6 +152,28 @@
 			productReference = 874865FA2FC3029E00F5E876 /* ChappieCoreTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		874866222FC35DF000F5E876 /* ChappieMCP */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 874866272FC35DF000F5E876 /* Build configuration list for PBXNativeTarget "ChappieMCP" */;
+			buildPhases = (
+				8748661F2FC35DF000F5E876 /* Sources */,
+				874866202FC35DF000F5E876 /* Frameworks */,
+				874866212FC35DF000F5E876 /* CopyFiles */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				874866242FC35DF000F5E876 /* ChappieMCP */,
+			);
+			name = ChappieMCP;
+			packageProductDependencies = (
+			);
+			productName = ChappieMCP;
+			productReference = 874866232FC35DF000F5E876 /* ChappieMCP */;
+			productType = "com.apple.product-type.tool";
+		};
 		87BAA4772FBEED3A001DDBED /* Chappie */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 87BAA4832FBEED3C001DDBED /* Build configuration list for PBXNativeTarget "Chappie" */;
@@ -111,10 +181,12 @@
 				87BAA4742FBEED3A001DDBED /* Sources */,
 				87BAA4752FBEED3A001DDBED /* Frameworks */,
 				87BAA4762FBEED3A001DDBED /* Resources */,
+				874866462FC3639B00F5E876 /* CopyFiles */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				874866492FC3641B00F5E876 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				87BAA47A2FBEED3A001DDBED /* Chappie */,
@@ -141,6 +213,9 @@
 						CreatedOnToolsVersion = 26.5;
 						LastSwiftMigration = 2650;
 					};
+					874866222FC35DF000F5E876 = {
+						CreatedOnToolsVersion = 26.5;
+					};
 					87BAA4772FBEED3A001DDBED = {
 						CreatedOnToolsVersion = 26.5;
 					};
@@ -165,6 +240,7 @@
 			targets = (
 				87BAA4772FBEED3A001DDBED /* Chappie */,
 				874865F92FC3029E00F5E876 /* ChappieCoreTests */,
+				874866222FC35DF000F5E876 /* ChappieMCP */,
 			);
 		};
 /* End PBXProject section */
@@ -194,6 +270,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		8748661F2FC35DF000F5E876 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		87BAA4742FBEED3A001DDBED /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -207,6 +290,11 @@
 		874866022FC302CB00F5E876 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			productRef = 874866012FC302CB00F5E876 /* ChappieCore */;
+		};
+		874866492FC3641B00F5E876 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 874866222FC35DF000F5E876 /* ChappieMCP */;
+			targetProxy = 874866482FC3641B00F5E876 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -264,6 +352,32 @@
 				SWIFT_VERSION = 5.0;
 				VALIDATE_PRODUCT = YES;
 				WATCHOS_DEPLOYMENT_TARGET = 26.5;
+			};
+			name = Release;
+		};
+		874866282FC35DF000F5E876 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 7Z69B62G84;
+				ENABLE_HARDENED_RUNTIME = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		874866292FC35DF000F5E876 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 7Z69B62G84;
+				ENABLE_HARDENED_RUNTIME = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
 		};
@@ -396,7 +510,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 7Z69B62G84;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
@@ -438,7 +552,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 7Z69B62G84;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
@@ -479,6 +593,15 @@
 			buildConfigurations = (
 				874865FF2FC3029E00F5E876 /* Debug */,
 				874866002FC3029E00F5E876 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		874866272FC35DF000F5E876 /* Build configuration list for PBXNativeTarget "ChappieMCP" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				874866282FC35DF000F5E876 /* Debug */,
+				874866292FC35DF000F5E876 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

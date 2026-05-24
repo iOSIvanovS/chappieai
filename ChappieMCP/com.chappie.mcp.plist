@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.chappie.mcp.plist — LaunchAgent для автозапуска ChappieMCP сервера.
+
+  УСТАНОВКА:
+    cp /Volumes/Хранилище/Работа/Chappie/ChappieMCP/com.chappie.mcp.plist \
+       ~/Library/LaunchAgents/com.chappie.mcp.plist
+    launchctl load ~/Library/LaunchAgents/com.chappie.mcp.plist
+
+  ПРОВЕРКА:
+    launchctl list | grep chappie
+    curl http://localhost:7771/health
+
+  ОСТАНОВКА:
+    launchctl unload ~/Library/LaunchAgents/com.chappie.mcp.plist
+
+  ЛОГИ:
+    tail -f /tmp/chappie-mcp.log
+    tail -f /tmp/chappie-mcp-error.log
+
+  ПОЧЕМУ LaunchAgent, А НЕ LaunchDaemon:
+  LaunchAgent запускается от имени пользователя (не root),
+  имеет доступ к ~/.gitconfig, ~/.ssh/, Keychain пользователя.
+  LaunchDaemon — системный, без доступа к пользовательским ресурсам.
+-->
+<plist version="1.0">
+<dict>
+    <!-- Уникальный идентификатор сервиса -->
+    <key>Label</key>
+    <string>com.chappie.mcp</string>
+
+    <!-- Команда запуска: swift run с указанием пути к пакету и рабочей директории -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/swift</string>
+        <string>run</string>
+        <string>--package-path</string>
+        <string>/Volumes/Хранилище/Работа/Chappie/ChappieMCP</string>
+        <string>ChappieMCP</string>
+        <!-- Аргумент: путь к проекту Chappie -->
+        <string>/Volumes/Хранилище/Работа/Chappie</string>
+    </array>
+
+    <!-- Рабочая директория — корень проекта -->
+    <key>WorkingDirectory</key>
+    <string>/Volumes/Хранилище/Работа/Chappie</string>
+
+    <!-- Автозапуск при логине пользователя -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Автоперезапуск при падении сервера -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Логи stdout в файл -->
+    <key>StandardOutPath</key>
+    <string>/tmp/chappie-mcp.log</string>
+
+    <!-- Логи stderr в файл -->
+    <key>StandardErrorPath</key>
+    <string>/tmp/chappie-mcp-error.log</string>
+
+    <!-- Переменные окружения для корректной работы git и swift -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/sergej</string>
+        <key>PATH</key>
+        <string>/usr/bin:/usr/local/bin:/opt/homebrew/bin</string>
+        <key>LANG</key>
+        <string>en_US.UTF-8</string>
+    </dict>
+</dict>
+</plist>
