@@ -13,11 +13,12 @@ import SwiftUI
 /// ПОЧЕМУ ОТДЕЛЬНЫЙ КЛАСС:
 /// Раньше API-ключ был захардкожен прямо в ChappieViewModel — это создавало риск
 /// утечки ключа в git-историю и делало смену ключа невозможной без перекомпиляции.
-/// Теперь ключ живёт исключительно в UserDefaults и управляется через этот класс.
+/// Теперь ключ живёт исключительно в Keychain и управляется через этот класс.
 ///
-/// ПОЧЕМУ НЕ KEYCHAIN:
-/// UserDefaults достаточно для macOS-приложения в разработке — данные хранятся
-/// в защищённом контейнере приложения. Keychain — следующий шаг при выходе в продакшн.
+/// ПОЧЕМУ KEYCHAIN:
+/// Keychain — зашифрованное системное хранилище macOS, защищённое паролем
+/// пользователя. В отличие от UserDefaults (открытый plist-файл), Keychain
+/// гарантирует что API-ключ не может быть прочитан другими процессами.
 ///
 /// ПОЧЕМУ @Observable:
 /// SettingsManager наблюдается из UI (SettingsView), поэтому нам нужна реактивность.
@@ -32,24 +33,33 @@ final class SettingsManager {
     /// Используется из ChappieViewModel и SettingsView.
     static let shared = SettingsManager()
 
-    // MARK: - Ключи UserDefaults
+    // MARK: - Ключи UserDefaults (только для немиграционных флагов)
 
-    private enum Keys {
-        static let apiKey = "aiTunnelApiKey"
+    private enum UDKeys {
+        /// Флаг: была ли выполнена миграция ключа из UserDefaults в Keychain.
+        /// Нужен однократно при обновлении с предыдущей версии приложения.
+        static let migrationDone = "keychainMigrationDone"
+        /// Старый ключ UserDefaults — нужен только для миграции.
+        static let legacyApiKey = "aiTunnelApiKey"
     }
 
     // MARK: - Свойства
 
     /// Текущий API-ключ AITunnel.
     ///
-    /// При установке нового значения автоматически сохраняется в UserDefaults.
+    /// При установке нового значения автоматически сохраняется в Keychain.
     /// Пустая строка означает "ключ не задан".
     var apiKey: String {
         didSet {
-            // Сохраняем в UserDefaults при каждом изменении.
+            // Сохраняем в Keychain при каждом изменении.
             // Trim убирает случайные пробелы, которые пользователь мог вставить при копировании.
             let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-            UserDefaults.standard.set(trimmed, forKey: Keys.apiKey)
+            if trimmed.isEmpty {
+                // Если ключ пустой — удаляем запись из Keychain полностью
+                KeychainManager.delete()
+            } else {
+                KeychainManager.save(trimmed)
+            }
         }
     }
 
@@ -64,8 +74,35 @@ final class SettingsManager {
     // MARK: - Инициализация
 
     private init() {
-        // Загружаем сохранённый ключ из UserDefaults.
+        // Шаг 1: Проверяем нужна ли миграция с UserDefaults на Keychain.
+        // Это нужно для пользователей, которые уже сохранили ключ в старой версии.
+        let migrationDone = UserDefaults.standard.bool(forKey: UDKeys.migrationDone)
+        if !migrationDone {
+            SettingsManager.migrateFromUserDefaults()
+        }
+
+        // Шаг 2: Загружаем ключ из Keychain.
         // Если ключа нет — возвращаем пустую строку, чтобы UI показал поле для ввода.
-        self.apiKey = UserDefaults.standard.string(forKey: Keys.apiKey) ?? ""
+        self.apiKey = KeychainManager.load() ?? ""
+    }
+
+    // MARK: - Приватные методы
+
+    /// Выполняет однократную миграцию API-ключа из UserDefaults в Keychain.
+    ///
+    /// ПОЧЕМУ НУЖНА МИГРАЦИЯ:
+    /// Предыдущая версия хранила ключ в UserDefaults. Чтобы пользователь
+    /// не потерял свой ключ при обновлении, мы читаем старое значение,
+    /// переносим в Keychain и удаляем из UserDefaults.
+    private static func migrateFromUserDefaults() {
+        if let legacyKey = UserDefaults.standard.string(forKey: UDKeys.legacyApiKey),
+           !legacyKey.isEmpty {
+            // Переносим ключ в Keychain
+            KeychainManager.save(legacyKey)
+            // Удаляем из UserDefaults — больше не нужен
+            UserDefaults.standard.removeObject(forKey: UDKeys.legacyApiKey)
+        }
+        // Помечаем миграцию как выполненную чтобы не повторять при каждом запуске
+        UserDefaults.standard.set(true, forKey: UDKeys.migrationDone)
     }
 }

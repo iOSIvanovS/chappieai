@@ -1,11 +1,17 @@
 {
-  "project": "Chappie",
-  "description": "UI слой приложения Chappie.",
-  "rules": [
-    "Ориентироваться в проекте с помощью файлов в папке AI_Docs.",
-    "Всегда обновлять architecture.md, project_map.md и semantic.json при изменении структуры проекта."
-  ],
-  "facts": [
-    "Ограничение истории сообщений (maxHistoryMessages) возвращено к значению 15 для сохранения оперативной памяти."
-  ]
+  "AITunnelClient_correct_path" : {
+    "data" : "{\"correct_path\": \"ChappieCore\/Sources\/ChappieCore\/Services\/AITunnelClient.swift\", \"wrong_path_used_before\": \"Chappie\/AITunnelClient.swift\", \"note\": \"НИКОГДА не использовать короткий путь Chappie\/* — всегда полный путь через ChappieCore\/Sources\/ChappieCore\/\"}",
+    "timestamp" : 801321713.343235,
+    "type" : "fact"
+  },
+  "AITunnelClient_path" : {
+    "data" : "{\"correct_path\": \"Chappie\/ChappieCore\/Sources\/ChappieCore\/Services\/AITunnelClient.swift\", \"note\": \"Файл ВСЕГДА лежал здесь, не перемещать!\"}",
+    "timestamp" : 801321956.217049,
+    "type" : "fact"
+  },
+  "project_full_inspection" : {
+    "data" : "{\n  \"date\": \"2026-06-01\",\n  \"summary\": \"Полная инспекция проекта Chappie завершена. Два таргета: Chappie (App, SwiftUI) и ChappieCore (Swift Package). Swift 6, macOS 26+. Монофизит-архитектура: один агент без саб-агентов.\",\n  \"real_file_structure\": {\n    \"Chappie\": [\"ChappieApp.swift\", \"ContentView.swift\", \"ChappieViewModel.swift\", \"Assets.xcassets\"],\n    \"ChappieCore_Sources\": [\"ChappieCore.swift\", \"Models\/AITunnelModels.swift\", \"Models\/AppConfig.swift\", \"Models\/ChappieError.swift\", \"Services\/AIOrchestrator.swift\", \"Services\/AITunnelClient.swift\", \"Services\/ToolExecutionService.swift\", \"Services\/MemoryManager.swift\", \"Services\/FileSystemManager.swift\", \"Services\/ChatHistoryManager.swift\"]\n  },\n  \"key_facts\": {\n    \"model\": \"claude-sonnet-4.6\",\n    \"api\": \"AITunnel (OpenAI-совместимый), https:\/\/api.aitunnel.ru\/v1\/chat\/completions\",\n    \"api_key_storage\": \"UserDefaults (ключ aiTunnelApiKey), дефолтный ключ захардкожен в коде — TD!\",\n    \"maxOrchestratorSteps\": 100,\n    \"maxHistoryMessages\": 15,\n    \"architecture\": \"MVVM, @Observable ViewModel, @MainActor, actor-based services\",\n    \"chat_history_storage\": \"JSON файл внутри workspace\/AI_Docs\/chat_history.json\",\n    \"memory_storage\": \"JSON файлы semantic.json в каждом таргете + глобальный ~\/Documents\/Chappie\/semantic.json\",\n    \"sandbox\": \"Security-Scoped Bookmarks через UserDefaults\",\n    \"delegate_task_tool\": \"Присутствует в ToolExecutionService но НЕ реализован в execute() — это баг\/TD!\"\n  },\n  \"tech_debt\": [\n    \"TD-API-KEY: API ключ захардкожен в ChappieViewModel как defaultKey\",\n    \"TD-DELEGATE: инструмент delegate_task объявлен в availableTools но не обрабатывается в execute() switch-case\",\n    \"TD-CONTENTVIEW-MONO: ContentView не разбит на подвью, всё в одном файле\",\n    \"TD-CHAPPIECORE-SWIFT: ChappieCore.swift пустой (только комментарий)\",\n    \"TD-SEMANTIC-JSON: semantic.json файлы содержат устаревший формат (не MemoryRecord, а простой JSON)\",\n    \"TD-DOCS-MISMATCH: architecture.md описывает Views\/Chat\/, Views\/Input\/ и т.д. но реально все в одном ContentView.swift\",\n    \"TD-COST-OPTIMIZATION: Стоимость одного рефакторинга достигает 550 руб. Нужно исследовать и внедрить механизмы снижения стоимости запросов: кэширование системного промпта (prompt caching), сжатие истории чата, умная очистка контекста перед отправкой, возможно переключение на более дешёвую модель для простых задач.\"\n  ]\n}",
+    "timestamp" : 801271152.416358,
+    "type" : "fact"
+  }
 }

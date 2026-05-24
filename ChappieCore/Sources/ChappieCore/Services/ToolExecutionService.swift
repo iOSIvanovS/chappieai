@@ -147,27 +147,23 @@ public actor ToolExecutionService {
     public func execute(call: AIToolCall) async -> String {
         let name = call.function.name
         let argsData = call.function.arguments.data(using: .utf8) ?? Data()
-
+        
         do {
             switch name {
-
-            // MARK: - Файловая система
-
             case "list_files":
-                // Возвращаем список файлов в виде JSON-массива строк
                 let files = try await fileSystem.listFiles()
                 let encoder = JSONEncoder()
                 encoder.outputFormatting = .prettyPrinted
                 let data = try encoder.encode(files)
                 return String(data: data, encoding: .utf8) ?? "[]"
-
+                
             case "read_file":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let path = args["path"] else {
                     return "Ошибка: Неверные аргументы для read_file"
                 }
                 return try await fileSystem.readFile(at: path)
-
+                
             case "write_file":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let path = args["path"],
@@ -176,17 +172,15 @@ public actor ToolExecutionService {
                 }
                 try await fileSystem.writeFile(at: path, content: content)
                 return "Успешно: Файл \(path) записан."
-
+                
             case "delete_file":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let path = args["path"] else {
                     return "Ошибка: Неверные аргументы для delete_file"
                 }
                 try await fileSystem.deleteFile(at: path)
-                return "Успешно: Файл \(path) удалён."
-
-            // MARK: - Долгосрочная память
-
+                return "Успешно: Файл \(path) удален."
+                
             case "memorize":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let key = args["key"],
@@ -197,16 +191,9 @@ public actor ToolExecutionService {
                 let scopeString = args["scope"] ?? "project"
                 let scope = MemoryScope(rawValue: scopeString) ?? .project
                 let targetName = args["targetName"]
-                await memoryManager.saveMemory(
-                    key: key,
-                    type: type,
-                    jsonString: jsonString,
-                    scope: scope,
-                    targetName: targetName
-                )
-                let location = targetName.map { "таргета \($0)" } ?? "проекта"
-                return "Успешно: Запись '\(key)' сохранена в памяти \(location)."
-
+                await memoryManager.saveMemory(key: key, type: type, jsonString: jsonString, scope: scope, targetName: targetName)
+                return "Успешно: Запись \(key) сохранена в памяти \(targetName != nil ? "таргета \(targetName!)" : "проекта")."
+                
             case "recall":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let key = args["key"] else {
@@ -216,10 +203,9 @@ public actor ToolExecutionService {
                 if let record = await memoryManager.readMemory(key: key, targetName: targetName) {
                     return record
                 } else {
-                    let location = targetName.map { "таргета \($0)" } ?? "проекта"
-                    return "Запись по ключу '\(key)' не найдена в памяти \(location)."
+                    return "Запись по ключу \(key) не найдена в памяти \(targetName != nil ? "таргета \(targetName!)" : "проекта")."
                 }
-
+                
             case "search_memory":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let type = args["type"] else {
@@ -231,7 +217,7 @@ public actor ToolExecutionService {
                 encoder.outputFormatting = .prettyPrinted
                 let data = try encoder.encode(results)
                 return String(data: data, encoding: .utf8) ?? "{}"
-
+                
             case "delete_memory":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let key = args["key"] else {
@@ -239,16 +225,13 @@ public actor ToolExecutionService {
                 }
                 let targetName = args["targetName"]
                 await memoryManager.deleteMemory(key: key, targetName: targetName)
-                let location = targetName.map { "таргета \($0)" } ?? "проекта"
-                return "Успешно: Запись '\(key)' удалена из памяти \(location)."
-
+                return "Успешно: Запись \(key) удалена из памяти \(targetName != nil ? "таргета \(targetName!)" : "проекта")."
+                
             default:
-                // Сюда не должны попадать никакие известные инструменты.
-                // Если попали — значит, модель вызвала что-то несуществующее.
-                return "Ошибка: Неизвестный инструмент '\(name)'. Доступные инструменты: list_files, read_file, write_file, delete_file, memorize, recall, search_memory, delete_memory."
+                return "Ошибка: Неизвестный инструмент \(name)"
             }
         } catch {
-            return "Ошибка при выполнении '\(name)': \(error.localizedDescription)"
+            return "Ошибка при выполнении \(name): \(error.localizedDescription)"
         }
     }
 }

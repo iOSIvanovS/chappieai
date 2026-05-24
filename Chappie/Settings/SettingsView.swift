@@ -122,14 +122,42 @@ struct SettingsView: View {
 
                     Divider()
 
-                    // MARK: Информационная секция
+                    // MARK: Секция безопасности
                     VStack(alignment: .leading, spacing: 8) {
-                        Label("Безопасность", systemImage: "lock.shield")
+                        Label("Безопасность", systemImage: "lock.shield.fill")
                             .font(.headline)
 
-                        Text("Ключ хранится локально в UserDefaults вашего Mac и никуда не передаётся, кроме API AITunnel при отправке запросов.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                        // Показываем реальный статус хранилища
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark.seal.fill")
+                                .foregroundStyle(.green)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Ключ хранится в системном Keychain")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                Text("Keychain — зашифрованное хранилище macOS, защищённое вашим паролем. Ключ недоступен другим приложениям и не сохраняется в резервных копиях iCloud.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(12)
+                        .background(.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                    }
+
+                    Divider()
+
+                    // MARK: Кнопка удаления ключа
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Опасная зона", systemImage: "exclamationmark.triangle")
+                            .font(.headline)
+                            .foregroundStyle(.orange)
+
+                        Button(role: .destructive) {
+                            deleteApiKey()
+                        } label: {
+                            Label("Удалить ключ из Keychain", systemImage: "trash")
+                        }
+                        .disabled(settings.apiKey.isEmpty)
                     }
                 }
                 .padding(24)
@@ -168,7 +196,7 @@ struct SettingsView: View {
             .padding(.horizontal, 24)
             .padding(.vertical, 16)
         }
-        .frame(width: 500, height: 380)
+        .frame(width: 500, height: 420)
         .onAppear {
             // При открытии загружаем текущий ключ в локальную копию для редактирования
             localApiKey = settings.apiKey
@@ -177,11 +205,11 @@ struct SettingsView: View {
 
     // MARK: - Приватные методы
 
-    /// Сохраняет новый API-ключ и уведомляет ViewModel.
+    /// Сохраняет новый API-ключ в Keychain и уведомляет ViewModel.
     private func saveApiKey() {
         let trimmed = localApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Сохраняем через SettingsManager — он запишет в UserDefaults
+        // Сохраняем через SettingsManager — он запишет в Keychain
         settings.apiKey = trimmed
 
         // Уведомляем ViewModel, чтобы она пересоздала AITunnelClient с новым ключом.
@@ -189,13 +217,21 @@ struct SettingsView: View {
         // до следующего перезапуска приложения.
         onApiKeyChanged?(trimmed)
 
-        // Показываем анимацию подтверждения на 1.5 секунды, затем закрываем
+        // Показываем анимацию подтверждения на 1.2 секунды, затем закрываем
         withAnimation {
             showSavedConfirmation = true
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
             dismiss()
         }
+    }
+
+    /// Удаляет API-ключ из Keychain и сбрасывает локальное состояние.
+    private func deleteApiKey() {
+        settings.apiKey = ""
+        localApiKey = ""
+        onApiKeyChanged?("")
+        dismiss()
     }
 }
 

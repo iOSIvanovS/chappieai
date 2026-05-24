@@ -1,6 +1,6 @@
 # Карта проекта: Chappie (App Target)
 
-> **Обновлено:** 2026-05-27 — Этап 4 закрыт: ТД-4 снят, Views разбиты на компоненты.
+> **Обновлено:** 2026-06-01 — ТД-UX-PERF закрыт: visibleMessages, currentToolCall, StatusBarView.
 > **Платформа:** macOS 26+, Swift 6, SwiftUI
 > **Архитектура:** MVVM, @Observable, @MainActor
 
@@ -11,14 +11,18 @@
 ```text
 Chappie/
 ├── ChappieApp.swift                    # @main, точка входа, WindowGroup → ContentView
-├── ContentView.swift                   # Чистый "дирижёр": собирает компоненты, делегирует логику
-│                                       # @State var viewModel, @State var showSettings, @State var currentPrompt
+├── ContentView.swift                   # Чистый "дирижёр": прокидывает visibleMessages + currentToolCall
 ├── ChappieViewModel.swift              # Главная ViewModel (@Observable, @MainActor)
-│                                       # Содержит также public struct ChatMessage
+│                                       # + streamingText: String (ТД-7)
+│                                       # + visibleMessages: [ChatMessage] (ТД-UX-PERF)
+│                                       # + currentToolCall: String? (ТД-UX-PERF)
+├── Models/
+│   └── ChatMessage.swift               # enum ChatMessage: .message | .toolCall
 ├── Views/
 │   ├── Chat/
-│   │   ├── MessageBubbleView.swift     # Пузырёк одного сообщения (текст + стоимость)
-│   │   └── ChatScrollView.swift        # Лента сообщений с автоскроллом + спиннер
+│   │   ├── MessageBubbleView.swift     # Пузырёк сообщения (только .message, .toolCall убраны)
+│   │   ├── ChatScrollView.swift        # Лента + спиннер + streamingBubble (макс. 30 элементов)
+│   │   └── StatusBarView.swift         # Строка состояния текущего инструмента (ТД-UX-PERF)
 │   ├── Input/
 │   │   └── InputBarView.swift          # Панель ввода: TextField + кнопка отправки
 │   ├── Sidebar/
@@ -26,15 +30,12 @@ Chappie/
 │   └── Toolbar/
 │       └── ToolbarContent.swift        # Тулбар: баланс + кнопка настроек
 ├── Settings/
-│   ├── SettingsManager.swift           # Хранение API-ключа в UserDefaults (@Observable, singleton)
-│   └── SettingsView.swift              # Sheet настроек: ввод, валидация, сохранение ключа
+│   ├── SettingsManager.swift           # Хранение API-ключа в UserDefaults
+│   └── SettingsView.swift              # Sheet настроек
 ├── Assets.xcassets/
-│   ├── AppIcon.appiconset/             # Иконка приложения
-│   ├── AccentColor.colorset/           # Акцентный цвет
-│   └── Chappie.imageset/               # Фоновое изображение (Chappie.jpg) — opacity 0.5 в UI
 └── AI_Docs/
-    ├── semantic.json                   # Семантическая память App-таргета (ключ → MemoryRecord)
-    ├── architecture.md                 # Архитектурная документация UI-слоя
+    ├── semantic.json
+    ├── architecture.md
     └── project_map.md                  # Этот файл
 ```
 
@@ -43,109 +44,49 @@ Chappie/
 ## 📝 Детальное описание файлов
 
 ### 1. `ChappieApp.swift`
-- **Назначение:** Точка входа приложения (`@main`).
-- **Содержимое:** `struct ChappieApp: App` с `WindowGroup { ContentView() }`.
-- **Импорты:** `SwiftUI`, `ChappieCore`.
-- **Почему минимален:** Точка входа должна быть предсказуемой. Вся логика — в ViewModel.
+- **Назначение:** Точка входа (`@main`). Минимальный bootstrap.
 
 ### 2. `ContentView.swift`
-- **Назначение:** Чистый "дирижёр". Собирает компоненты, прокидывает данные из ViewModel.
-- **Архитектура:** `NavigationSplitView` → `SidebarView` + `VStack(ChatScrollView + InputBarView)`.
-- **НЕ содержит:** бизнес-логику, рендеринг пузырей, логику скролла — всё делегировано компонентам.
-- **Состояние:**
-  - `@State private var viewModel = ChappieViewModel()`
-  - `@State private var showSettings = false`
-  - `@State private var currentPrompt = ""`
-- **Приватные методы:**
-  - `selectWorkspace()` — открывает `NSOpenPanel` (UI-операция, не бизнес-логика).
-  - `sendMessage()` — guard + `viewModel.send()` + сброс поля.
-- **Background:** `Image("Chappie")` с opacity 0.5 поверх всего окна.
+- **Назначение:** Чистый "дирижёр".
+- **Изменение (ТД-UX-PERF):**
+  - Передаёт `viewModel.visibleMessages` в `ChatScrollView` (было `viewModel.messages`)
+  - Добавлен `StatusBarView(toolCall: viewModel.currentToolCall)` между чатом и InputBar
+  - `withAnimation(.easeInOut(duration: 0.25))` — плавное появление/исчезновение строки
 
-### 3. `ChappieViewModel.swift`
-- **Назначение:** Единственный ViewModel. Мост между UI и ChappieCore.
-- **Тип:** `@Observable @MainActor final class`.
-- **Содержит также:** `public struct ChatMessage: Identifiable, Hashable, Codable` (id, isUser, text, cost).
+### 3. `Models/ChatMessage.swift`
+- **Тип:** `public enum ChatMessage: Identifiable, Hashable, Codable`
+- **Кейсы:** `.message(id:isUser:text:cost:)`, `.toolCall(id:toolName:targetPath:)`
+- **Примечание:** `.toolCall` больше не рендерится в ленте — только хранится в `messages` для совместимости с историей на диске.
+
+### 4. `ChappieViewModel.swift`
+- **Тип:** `@Observable @MainActor final class`
 - **Ключевые свойства:**
-  - `messages: [ChatMessage]` — история чата. `didSet` → `saveMessages()`.
-  - `isThinking: Bool` — флаг активного AI-запроса.
-  - `workspaceURL: URL?` — текущий воркспейс.
-  - `currentBalance: Double?` — баланс AITunnel. `didSet` → UserDefaults.
-- **Ключевые методы:**
-  - `send(prompt:)` — запуск агентного цикла.
-  - `setWorkspace(_:)` — подключение новой папки.
-  - `updateApiKey(_:)` — смена ключа без перезапуска.
-  - `initializeServices(for:)` — ЕДИНСТВЕННОЕ место создания стека сервисов.
-  - `clearHistory()` — очистка с приветствием.
-  - `stripCodeBlocks(from:)` — оптимизация контекста (Smart Pruning).
-  - `saveWorkspaceWithSecurityScope(_:)` — сохранение Bookmark.
-  - `loadWorkspaceWithSecurityScope()` — восстановление Bookmark при старте.
+  - `messages: [ChatMessage]` — полная история (все записи, на диск)
+  - `visibleMessages: [ChatMessage]` — только `.message`, макс. 30 **(ТД-UX-PERF)**
+  - `currentToolCall: String?` — текущий инструмент для StatusBarView **(ТД-UX-PERF)**
+  - `isThinking: Bool` — флаг активного запроса
+  - `streamingText: String` — накопленный текст стримингового ответа **(ТД-7)**
+  - `workspaceURL: URL?`, `currentBalance: Double?`
+- **Изменение (ТД-UX-PERF):**
+  - `onToolCall` коллбэк теперь обновляет `currentToolCall` вместо `messages.append(.toolCall)`
+  - После завершения: `currentToolCall = nil`
 
-### 4. `Views/Chat/MessageBubbleView.swift`
-- **Назначение:** Рендеринг одного сообщения в чате.
-- **Тип:** `struct MessageBubbleView: View`.
-- **Входные данные:** `msg: ChatMessage`.
-- **Поведение:**
-  - Сообщения пользователя — справа, акцентный цвет, белый текст.
-  - Сообщения Чаппи — слева, цвет фона окна, основной цвет текста.
-  - Если `msg.cost != nil` — показывает "🪙 X.XX ₽" снизу справа.
-  - `textSelection(.enabled)` — пользователь может копировать текст.
-- **Preview:** `#Preview` с тестовыми сообщениями пользователя и Чаппи.
+### 5. `Views/Chat/MessageBubbleView.swift`
+- **Изменение (ТД-UX-PERF):** Убран рендер `.toolCall`. Компонент рендерит только `.message`.
 
-### 5. `Views/Chat/ChatScrollView.swift`
-- **Назначение:** Прокручиваемая лента сообщений.
-- **Тип:** `struct ChatScrollView: View`.
-- **Входные данные:** `messages: [ChatMessage]`, `isThinking: Bool`.
-- **Поведение:**
-  - Пустой чат → приветственное сообщение.
-  - `isThinking = true` → показывает `ProgressView` в конце ленты.
-  - Автоскролл к `"BottomSpacer"` при изменении `messages` или `isThinking`.
-  - Анимация `.easeOut(duration: 0.3)` при скролле.
-- **Preview:** `#Preview` с набором тестовых сообщений.
+### 6. `Views/Chat/ChatScrollView.swift`
+- **Входные данные:** `messages: [ChatMessage]` (теперь это `visibleMessages` — ≤30 элементов)
+- **Изменение (ТД-UX-PERF):** ForEach работает с максимум 30 элементами — нет тормозов при ресайзе.
 
-### 6. `Views/Input/InputBarView.swift`
-- **Назначение:** Панель ввода сообщения.
-- **Тип:** `struct InputBarView: View`.
-- **Входные данные:** `prompt: Binding<String>`, `isWorkspaceSelected: Bool`, `isThinking: Bool`, `onSend: () -> Void`.
-- **Поведение:**
-  - `TextField` с `axis: .vertical`, лимит 1–10 строк.
-  - Enter → `onSend()`. ⌥+Enter → перенос строки (стандартное поведение macOS).
-  - Заблокирован если воркспейс не выбран или `isThinking = true`.
-  - Кнопка отправки заблокирована если `prompt` пуст.
-- **Preview:** `#Preview` с двумя состояниями: активный и заблокированный.
+### 7. `Views/Chat/StatusBarView.swift` ← **НОВЫЙ ФАЙЛ (ТД-UX-PERF)**
+- **Назначение:** Строка состояния текущего вызова инструмента.
+- **Входные данные:** `toolCall: String?`
+- **Поведение:** `nil` = скрыта, `String` = показывает иконку + текст
+- **Дизайн:** маленький моноширинный шрифт, `.secondary` цвет, вращающаяся шестерёнка
+- **Анимация:** `.transition(.move(edge: .bottom).combined(with: .opacity))`
 
-### 7. `Views/Sidebar/SidebarView.swift`
-- **Назначение:** Боковая панель с контекстом и предупреждениями.
-- **Тип:** `struct SidebarView: View`.
-- **Входные данные:** `workspaceURL: URL?`, `isApiKeyValid: Bool`, `onSelectWorkspace: () -> Void`, `onOpenSettings: () -> Void`.
-- **Поведение:**
-  - Если воркспейс выбран → показывает `lastPathComponent` + кнопку "Сменить".
-  - Если не выбран → кнопка "Выбрать папку проекта...".
-  - Если `!isApiKeyValid` → секция "⚠️ Внимание" с кнопкой настроек.
-- **Preview:** `#Preview` с двумя состояниями: с воркспейсом и без.
-
-### 8. `Views/Toolbar/ToolbarContent.swift`
-- **Назначение:** Контент тулбара главного окна.
-- **Тип:** `struct ChappieToolbarContent: ToolbarContent`.
-- **Входные данные:** `balance: Double?`, `isApiKeyValid: Bool`, `onOpenSettings: () -> Void`.
-- **Поведение:**
-  - Если `balance != nil` → таблетка с "💳 X.XX ₽".
-  - Кнопка ⚙️ — оранжевая если `!isApiKeyValid`.
-- **Preview:** `#Preview` с двумя состояниями: с балансом и без.
-
-### 9. `Settings/SettingsManager.swift`
-- **Назначение:** Единственное место хранения и валидации API-ключа.
-- **Тип:** `@Observable final class`, singleton (`SettingsManager.shared`).
-- **Хранилище:** `UserDefaults` по ключу `"aitunnel_api_key"`.
-- **Валидация:** `isApiKeyValid` — ключ начинается с `"sk-aitunnel-"` и длина > 20 символов.
-
-### 10. `Settings/SettingsView.swift`
-- **Назначение:** Sheet настроек для ввода API-ключа.
-- **Тип:** `struct SettingsView: View`.
-- **Функционал:**
-  - Поле ввода с переключением видимости (SecureField ↔ TextField).
-  - Индикатор валидности в реальном времени.
-  - Кнопка "Сохранить" → вызывает `onApiKeyChanged: (String) -> Void`.
-- **Коллбэк:** `onApiKeyChanged` → `viewModel.updateApiKey(_:)` — пересоздаёт клиент.
+### 8-12. Остальные файлы
+- Без изменений.
 
 ---
 
@@ -153,49 +94,33 @@ Chappie/
 
 | File | Purpose | Тип |
 |------|---------|-----|
-| `ChappieApp.swift` | Точка входа. Минимальный bootstrap. | `@main struct` |
-| `ContentView.swift` | Чистый дирижёр. Собирает компоненты. | `struct View` |
-| `ChappieViewModel.swift` | Единственный ViewModel. Координирует UI и ChappieCore. | `@Observable @MainActor class` |
-| `Views/Chat/MessageBubbleView.swift` | Пузырёк одного сообщения. | `struct View` |
-| `Views/Chat/ChatScrollView.swift` | Лента сообщений с автоскроллом. | `struct View` |
-| `Views/Input/InputBarView.swift` | Панель ввода. | `struct View` |
-| `Views/Sidebar/SidebarView.swift` | Боковая панель. | `struct View` |
-| `Views/Toolbar/ToolbarContent.swift` | Контент тулбара. | `struct ToolbarContent` |
-| `Settings/SettingsManager.swift` | Хранение и валидация API-ключа. | `@Observable class`, singleton |
-| `Settings/SettingsView.swift` | Sheet для ввода API-ключа. | `struct View` |
-| `Assets.xcassets/` | Иконки, фоны, цвета. | Ресурсы |
-| `AI_Docs/semantic.json` | Долгосрочная память App-таргета. | JSON (MemoryRecord) |
+| `ChappieApp.swift` | Точка входа | `@main struct` |
+| `ContentView.swift` | Дирижёр | `struct View` |
+| `Models/ChatMessage.swift` | Типизированная запись истории | `public enum` |
+| `ChappieViewModel.swift` | ViewModel + стриминг + строка состояния | `@Observable @MainActor class` |
+| `Views/Chat/MessageBubbleView.swift` | Рендер .message | `struct View` |
+| `Views/Chat/ChatScrollView.swift` | Лента (≤30 элементов) + стриминговый пузырь | `struct View` |
+| `Views/Chat/StatusBarView.swift` | Строка состояния инструмента | `struct View` |
+| `Views/Input/InputBarView.swift` | Панель ввода | `struct View` |
+| `Views/Sidebar/SidebarView.swift` | Боковая панель | `struct View` |
+| `Views/Toolbar/ToolbarContent.swift` | Контент тулбара | `struct ToolbarContent` |
+| `Settings/SettingsManager.swift` | API-ключ | `@Observable class`, singleton |
+| `Settings/SettingsView.swift` | Sheet настроек | `struct View` |
 
 ---
 
-## 🔌 Public API (что используется из ChappieCore)
+## 🔄 Поток данных (ТД-UX-PERF)
 
-```swift
-// Импортируется в ChappieViewModel.swift
-import ChappieCore
-
-AITunnelClient(apiKey: String)
-FileSystemManager(workspaceURL: URL)
-MemoryManager(workspaceURL: URL)
-ToolExecutionService(fileSystem:memoryManager:)
-AIOrchestrator(aiClient:toolService:fileSystem:)
-ChatHistoryManager(workspaceURL: URL?)
-AppConfig.shared
-
-AIMessage(role:content:)
-AIOrchestratorResult
-MemoryScope
-ChappieError
 ```
+messages (полная история, диск)
+    ↓ visibleMessages (вычисляемое, только .message, suffix(30))
+    ↓ ChatScrollView.messages → ForEach ≤30 элементов → MessageBubbleView
 
----
-
-## 🔄 Жизненный цикл сессии
-
-1. **Запуск** → `ChappieViewModel.init()` → читает ключ из `SettingsManager` → `loadWorkspaceWithSecurityScope()` → `initializeServices(for:)` → загружает историю.
-2. **Выбор воркспейса** → `NSOpenPanel` в `ContentView.selectWorkspace()` → `viewModel.setWorkspace(_:)` → `initializeServices(for:)` + `MemoryManager.initializeWorkspaceMemory()`.
-3. **Отправка сообщения** → `InputBarView.onSend()` → `ContentView.sendMessage()` → `viewModel.send(prompt:)` → Smart Pruning → `orchestrator.process()` → коллбэк `onToolCall` → финальный ответ.
-4. **Смена ключа** → `SettingsView` → `SettingsManager.saveApiKey()` → `onApiKeyChanged` → `viewModel.updateApiKey(_:)` → пересоздание `AITunnelClient` + `AIOrchestrator`.
+onToolCall { toolName, targetPath }
+    ↓ currentToolCall = "toolName → shortPath"
+    ↓ StatusBarView показывает строку
+    ↓ (завершение) currentToolCall = nil → StatusBarView скрывается
+```
 
 ---
 
@@ -203,11 +128,13 @@ ChappieError
 
 | # | Описание | Статус |
 |---|---|---|
-| ТД-4 | ContentView-монолит → разбить на компоненты | ✅ Закрыт (Этап 4) |
-| ТД-5 | API-ключ в UserDefaults → перенести в Keychain | 🟡 Открыт |
-| ТД-6 | ToolCall-сообщения как ChatMessage с эмодзи-префиксом → типизировать | 🟡 Открыт |
-| ТД-7 | Нет стриминга токенов — пользователь ждёт полного ответа | 🟡 Открыт |
-| ТД-8 | Нет Unit-тестов для ViewModel | 🟡 Открыт |
+| ТД-4 | ContentView-монолит → компоненты | ✅ Закрыт |
+| ТД-6 | ToolCall типизация | ✅ Закрыт |
+| ТД-7 | Стриминг токенов | ✅ Закрыт |
+| ТД-UX-PERF | Тормоза UI + 200 МБ памяти | ✅ Закрыт |
+| ТД-COST | Оптимизация стоимости запросов | ✅ Закрыт (частично) |
+| ТД-5 | API-ключ → Keychain | 🟡 Открыт |
+| ТД-8 | Unit-тесты | 🟡 Открыт |
 
 ---
 
@@ -216,6 +143,7 @@ ChappieError
 | Date | Change |
 |------|--------|
 | 2026-05-21 | Initial creation |
-| 2026-05-23 | Expanded with real file descriptions |
-| 2026-05-27 | Полная переработка: синхронизация с реальным кодом. Добавлены Settings/. |
-| 2026-05-27 | Этап 4: ContentView разбит на компоненты. Добавлены Views/Chat, Views/Input, Views/Sidebar, Views/Toolbar. ТД-4 закрыт. |
+| 2026-05-27 | Полная переработка + компоненты (ТД-4) |
+| 2026-05-27 | ChatMessage как enum (ТД-6) |
+| 2026-05-28 | Стриминг токенов (ТД-7): streamingText, streamingBubble, BlinkingCursor |
+| 2026-06-01 | ТД-UX-PERF: visibleMessages, currentToolCall, StatusBarView |

@@ -3,8 +3,16 @@
 
   ДОКУМЕНТ АРХИТЕКТУРЫ — CHAPPIECORE
 
-  Этот файл является главным источником истины об архитектуре ChappieCore.
-  Обновлён в ходе полной инспекции кода — отражает фактическое состояние на 2026-05-27.
+  Обновлён после ТД-7 (2026-05-28): добавлен стриминг токенов через SSE.
+  Обновлён после ТД-COST (2026-05-28): добавлен Prompt Caching для экономии токенов.
+  Обновлён после SINGLE-STREAM (2026-05-29): убран двойной запрос (probe + stream),
+    единый streamRequestWithTools() на каждый шаг цикла.
+  Обновлён после CTX-OPT (2026-05-29): добавлен maxMessagesInContext (12) как жёсткий
+    лимит поверх токенного бюджета.
+  Обновлён после CACHE-MSG (2026-05-29): второй cache breakpoint теперь ставится на
+    ПОСЛЕДНИЙ user-элемент в истории, а не на последнее сообщение.
+  Обновлён после CACHE-MSG-2 (2026-05-29): третий cache breakpoint на ПОСЛЕДНЕЕ
+    сообщение истории — кэширует "хвост" из tool-ответов текущего шага цикла.
   Обновляй при каждом значимом архитектурном изменении.
 -->
 
@@ -26,182 +34,266 @@
 
 ```
 ChappieCore/
-├── Package.swift                           # SPM манифест: Swift 6, macOS 15+
+├── Package.swift
 ├── AI_Docs/
-│   ├── semantic.json                       # Семантическая память Library-таргета
-│   ├── architecture.md                     # Этот файл
-│   └── project_map.md                      # Карта файлов пакета
+│   ├── semantic.json
+│   ├── architecture.md                 # Этот файл
+│   └── project_map.md
 └── Sources/ChappieCore/
-    ├── ChappieCore.swift                   # Фасад пакета: документация публичного API + coreVersion
+    ├── ChappieCore.swift
     ├── Models/
-    │   ├── AITunnelModels.swift            # Codable-модели для API (запросы, ответы, инструменты)
-    │   ├── AppConfig.swift                 # Централизованная конфигурация (struct, singleton)
-    │   └── ChappieError.swift              # Единый перечислитель ошибок (LocalizedError)
+    │   ├── AITunnelModels.swift        # AIStreamChunk, AICacheControl, AIStreamResult (SINGLE-STREAM)
+    │   ├── AppConfig.swift             # + maxMessagesInContext (CTX-OPT)
+    │   └── ChappieError.swift
     └── Services/
-        ├── AITunnelClient.swift            # HTTP-клиент (struct, Sendable) — НЕ actor!
-        ├── AIOrchestrator.swift            # Главный агентный цикл (actor)
-        ├── ToolExecutionService.swift      # Реестр и исполнитель инструментов (actor)
-        ├── FileSystemManager.swift         # Безопасная работа с файлами (actor)
-        ├── MemoryManager.swift             # Долгосрочная память (actor)
-        └── ChatHistoryManager.swift        # История чата (final class, Sendable)
+        ├── AITunnelClient.swift        # 3 cache breakpoint'а (CACHE-MSG-2)
+        ├── AIOrchestrator.swift        # Единый цикл без probe (SINGLE-STREAM)
+        ├── ToolExecutionService.swift
+        ├── FileSystemManager.swift
+        ├── MemoryManager.swift
+        └── ChatHistoryManager.swift
 ```
 
 ---
 
-## 3. Общая архитектура: реальная схема
+## 3. Единый стриминговый цикл (SINGLE-STREAM)
 
-```mermaid
-graph TD
-    subgraph ChappieCore ["📦 ChappieCore (Swift Package)"]
-        direction TB
+### Проблема: двойной запрос (probe + stream)
 
-        subgraph Models ["📐 Модели данных"]
-            AppConfig["AppConfig\nstruct + Sendable\n──────────────\nmaxOrchestratorSteps: 100\nmaxHistoryMessages: 15\nrequestTimeoutSeconds: 300\nconnectionTimeoutSeconds: 30"]
-            ChappieError["ChappieError\nenum + LocalizedError\n──────────────\nnetworkError\nfileSystemError\nparsingError\nmemoryError\naiContextLimitExceeded\nunknown"]
-            AIModels["AITunnelModels\n──────────────\nAIMessage (role/content/tool_calls)\nAITool + AIFunctionDefinition\nAIToolParameters + AIToolProperty\nAITunnelRequest + AITunnelResponse\nAIChoice + AIUsage\nAIToolCall + AIToolCallFunction"]
-        end
+Старая стратегия агентного цикла делала **два запроса** для каждого финального ответа:
+1. `sendRequest()` — probe-запрос с инструментами, чтобы определить: tool_call или финал?
+2. `streamRequest()` — повторный запрос того же содержимого, но через SSE для живого UI.
 
-        subgraph Transport ["🌐 Транспортный уровень"]
-            AITunnelClient["AITunnelClient\nstruct + Sendable ← ВАЖНО: НЕ actor!\n──────────────\napiKey: String\nmodelName: String (claude-sonnet-4.6)\nurlSession: URLSession (кастомный, 300с)\n──────────────\nsendRequest(systemPrompt:chatHistory:tools:)\n→ (AIMessage, cost, balance)"]
-        end
+Это удваивало стоимость и задержку финального ответа. Реальные цифры:
+- Первый запрос: 6,956 токенов in / 133 out
+- Второй запрос: 5,441 токенов in / 131 out
+- Итого: ~12,400 токенов вместо ~6,400 необходимых.
 
-        subgraph Orchestration ["🧠 Оркестрация"]
-            AIOrchestrator["AIOrchestrator\nactor\n──────────────\naiClient: AITunnelClient\ntoolService: ToolExecutionService\nfileSystem: FileSystemManager\nconfig: AppConfig\nsystemPrompt: String (личность Чаппи)\n──────────────\nprocess(prompt:history:onToolCall:)\n→ AIOrchestratorResult"]
-        end
+### Решение: streamRequestWithTools()
 
-        subgraph Tools ["🔧 Инструменты"]
-            ToolExecutionService["ToolExecutionService\nactor\n──────────────\nfileSystem: FileSystemManager\nmemoryManager: MemoryManager\n──────────────\navailableTools: [AITool] (8 инструментов)\nexecute(call:) → String"]
-        end
+**Новый метод `AITunnelClient.streamRequestWithTools()`** делает один стриминговый запрос
+с инструментами и возвращает `AIStreamResult`:
 
-        subgraph Storage ["💾 Хранилище"]
-            FileSystemManager["FileSystemManager\nactor\n──────────────\nworkspaceURL: URL\n──────────────\nlistFiles() → [String]\nreadFile(at:) → String\nwriteFile(at:content:)\ndeleteFile(at:)\n+ validateAndResolvePath() — защита от Path Traversal"]
-
-            MemoryManager["MemoryManager\nactor\n──────────────\nworkspaceURL: URL\ntargets: [WorkspaceTarget]\n──────────────\ninitializeWorkspaceMemory()\nsaveMemory(key:type:jsonString:scope:targetName:)\nreadMemory(key:targetName:) → String?\nsearchMemory(type:targetName:) → [String:String]\ndeleteMemory(key:targetName:)\nrefreshProjectMap(forTarget:)"]
-
-            ChatHistoryManager["ChatHistoryManager\nfinal class + Sendable ← НЕ actor!\n──────────────\nfileURL: URL (вычислен в init)\nshared: статический синглтон\n──────────────\nloadMessages<T>() → [T]\nsaveMessages<T>(_:)\nclearHistory()"]
-        end
-    end
-
-    %% Связи
-    AIOrchestrator -->|"sendRequest()"| AITunnelClient
-    AIOrchestrator -->|"execute(call:)"| ToolExecutionService
-    ToolExecutionService -->|"listFiles/readFile/writeFile/deleteFile"| FileSystemManager
-    ToolExecutionService -->|"memorize/recall/search/delete"| MemoryManager
-    AppConfig -.->|".shared"| AITunnelClient
-    AppConfig -.->|"config.maxOrchestratorSteps"| AIOrchestrator
-
-    style ChappieCore fill:#f3e8f8,stroke:#9C27B0,stroke-width:2px
+```swift
+public struct AIStreamResult: Sendable {
+    let text: String          // накопленный текстовый ответ
+    let toolCalls: [AIToolCall]?  // собранные из SSE-дельт вызовы инструментов
+    let cost: Double?
+    let balance: Double?
+}
 ```
+
+**Как накапливаются tool_calls из SSE:**
+Anthropic API в стриминге отдаёт tool_calls по кусочкам через `delta.tool_calls[index]`:
+- Первый чанк для индекса N: `{index: 0, id: "call_abc", function: {name: "write_file", arguments: "{"}}`
+- Последующие: `{index: 0, function: {arguments: "\"path\": \"file.swift\""}}`
+
+AITunnelClient накапливает аргументы в словаре `[Int: (id, name, arguments)]` и после
+завершения потока собирает полные `AIToolCall` объекты.
+
+**Агентный цикл теперь:**
+```
+loop:
+  result = await streamRequestWithTools(tools: tools, onToken: onToken)
+  if result.toolCalls → executeTools → continue
+  else → финальный ответ, токены уже ушли в UI через onToken → return
+```
+
+Один запрос на шаг. Экономия ~50% стоимости финального ответа.
 
 ---
 
-## 4. Детальный AI-цикл (Агентный Loop)
+## 4. Оптимизация контекстного окна (CTX-OPT)
 
-Это сердце системы. `AIOrchestrator.process()` — главный метод.
+### Проблема: 32 сообщения при 6000 токенах
+
+После исправления формулы estimateTokens() и снижения бюджета до 6,000 —
+buildContextWindow() всё равно отбирал 32 сообщения. Причина: большинство из них
+были короткими саммари (~185 токенов каждое), которые помещались в бюджет.
+
+Модели не нужна длинная цепочка из 30 коротких реплик — ей нужен **смысловой контекст задачи**.
+
+### Решение: двухуровневые ограничения
+
+**AppConfig.maxMessagesInContext = 12** — жёсткий лимит по количеству.
+
+Применяется ПЕРВЫМ, до токенного подсчёта:
+```swift
+let cappedHistory = history.count > maxMessages
+    ? Array(history.suffix(maxMessages))
+    : history
+```
+
+Затем токенный бюджет применяется к уже обрезанной истории.
+
+**Итоговые параметры контекстного окна:**
+| Параметр | Значение | Смысл |
+|---|---|---|
+| `maxMessagesInContext` | 12 | Жёсткий лимит: последние 12 сообщений (~6 обменов) |
+| `tokenBudget` | 6,000 | Мягкий лимит по объёму (≈10,000 реальных токенов) |
+| `recentFullMessages` | 3 | Последние 3 — всегда полностью, без сжатия |
+| `summaryThreshold` | 200 | Сжимать только сообщения длиннее этого порога |
+
+---
+
+## 5. Prompt Caching (ТД-COST + CACHE-MSG + CACHE-MSG-2)
+
+### Проблема
+
+Системный промпт Чаппи (~800-1000 слов) отправляется с **каждым запросом** агентного цикла.
+При сложных задачах (10+ шагов) это даёт огромное количество повторных токенов.
+
+### Решение: Anthropic Prompt Caching
+
+Кэшированные токены при повторном использовании стоят **~10% от обычной цены** (экономия 90%).
+Кэш живёт **5 минут** с момента последнего использования.
+
+### Три cache breakpoint'а в каждом запросе (CACHE-MSG-2)
+
+**Breakpoint 1 — системный промпт (стабильный, всегда работает):**
+```
+system: [{type:"text", text:"...", cache_control:{type:"ephemeral"}}]
+```
+ПОДТВЕРЖДЕНО: ~2384 токена кэшируется стабильно на каждом запросе.
+
+**Breakpoint 2 — последний user-элемент в истории (CACHE-MSG):**
+
+Ищем последний `role="user"` с конца истории. Кэшируем system + всю историю до него.
+Работает даже когда последнее сообщение role="tool" (агентный цикл).
+
+**Breakpoint 3 — последнее сообщение истории (CACHE-MSG-2):**
+
+**Проблема которую решает:** после breakpoint 2 накапливаются tool-сообщения нового шага.
+Они не кэшируются → на каждом следующем шаге пересчитываются заново.
+
+Из реального лога (до CACHE-MSG-2):
+```
+Шаг 1: user[idx:12], 0 после → created: 3711  (записали в кэш)
+Шаг 2: user[idx:12], 3 после → created: 0     ✅ идеал (3 tool-msg прочитаны из кэша)
+Шаг 3: user[idx:12], 6 после → created: 5006  ← ПРОБЛЕМА: 3 новых tool-msg пересчитаны
+Шаг 4: user[idx:12], 9 после → created: 5006  ← ПРОБЛЕМА: снова пересчитываются
+```
+
+**Решение:** ставим третий breakpoint на последнее сообщение истории.
+На следующем шаге цикла этот "хвост" уже будет в кэше → created ≈ 0.
+
+**Ограничения третьего breakpoint'а:**
+- Ставится только если последнее сообщение ≠ последнему user-сообщению (иначе дублирование)
+- Ставится только на `role="tool"` или `role="user"` (у них есть текстовый contentString)
+- `role="assistant"` с tool_calls имеет `contentString=nil` → кэшировать нечего
+
+**Итоговая схема (агентный цикл, шаг 3):**
+```
+system [cache✅]                        ← breakpoint 1
+user: "напиши код"
+assistant: "сейчас"
+tool: "результат read_file"
+user: "продолжи" [cache✅]              ← breakpoint 2: последний user
+assistant: "ещё инструмент"
+tool: "результат write_file" [cache✅]  ← breakpoint 3: последнее сообщение
+user: "текущий запрос"                  ← добавляется buildContextWindow() (не кэшируется)
+```
+
+**Ожидаемый эффект после CACHE-MSG-2:**
+```
+Шаг 1: created: ~3700 (записали в кэш), read: 2384
+Шаг 2: created: ~500  (только новый запрос), read: ~6000  ✅
+Шаг 3: created: ~500  (только новый запрос), read: ~6000  ✅
+Шаг 4: created: ~500  (только новый запрос), read: ~6000  ✅
+```
+
+Кэширование инкапсулировано в `AITunnelClient.buildMessages()`.
+Оркестратор и остальная логика не знают о кэшировании.
+
+---
+
+## 6. Оценка токенов (ИСПРАВЛЕНИЕ)
+
+### Проблема
+
+Старая формула `text.count / 4` считала **символы / 4**.
+Кириллица в UTF-8 = 2 байта на символ → занижение в ~2 раза для русского текста.
+
+### Решение
+
+```swift
+private func estimateTokens(_ message: AIMessage) -> Int {
+    let text = message.contentString ?? ""
+    let utf8ByteCount = text.utf8.count
+    // UTF-8 байты / 4 × 1.5 = реалистичная оценка с запасом безопасности
+    let estimated = Int(Double(utf8ByteCount) / 4.0 * 1.5)
+    return max(1, estimated)
+}
+```
+
+**Почему работает:**
+- Русский текст: символ = 2 байта → 2/4×1.5 = 0.75 токена/символ ✓
+- Английский: символ = 1 байт → 1/4×1.5 = 0.375 токена/символ ✓
+- Код: смешанный → приблизительно правильно ✓
+
+---
+
+## 7. Детальный AI-цикл (единый стриминговый)
 
 ```mermaid
 sequenceDiagram
     participant VM as ChappieViewModel (@MainActor)
     participant Orch as AIOrchestrator (actor)
     participant Tunnel as AITunnelClient (struct)
-    participant Tools as ToolExecutionService (actor)
-    participant FS as FileSystemManager (actor)
-    participant Mem as MemoryManager (actor)
 
-    VM->>+Orch: process(prompt:history:onToolCall:)
+    VM->>+Orch: process(prompt:history:onToolCall:onToken:)
+    Note over Orch: buildContextWindow() — 2 уровня фильтрации
 
-    Note over Orch: Формируем sessionHistory = history + текущий prompt
-    Note over Orch: Инициализируем: stepCount=0, executedToolSignatures=Set
-
-    loop while stepCount < config.maxOrchestratorSteps (100)
-        Orch->>Orch: stepCount += 1
-        Orch->>+Tunnel: sendRequest(systemPrompt:chatHistory:tools:)
-        Tunnel-->>-Orch: (AIMessage, cost?, balance?)
-        Orch->>Orch: sessionHistory.append(responseMessage)
-
-        alt responseMessage содержит tool_calls
-            loop для каждого toolCall
-                Orch->>Orch: Проверка executedToolSignatures (защита от зацикливания)
-                alt Сигнатура уже выполнялась
-                    Orch->>Orch: resultString = "СИСТЕМНАЯ ОШИБКА: повторный вызов"
-                else Новый вызов
-                    Orch-->>VM: onToolCall(toolName, targetPath) → обновить UI
-                    Orch->>+Tools: execute(call: toolCall)
-                    alt Инструмент файловой системы
-                        Tools->>FS: list/read/write/delete
-                        FS-->>Tools: результат
-                    else Инструмент памяти
-                        Tools->>Mem: memorize/recall/search/delete
-                        Mem-->>Tools: результат
-                    end
-                    Tools-->>-Orch: resultString
-                end
-                Orch->>Orch: sessionHistory.append(AIMessage role="tool")
+    loop while stepCount < maxOrchestratorSteps
+        Orch->>+Tunnel: streamRequestWithTools(tools:onToken:)
+        Note over Tunnel: buildMessages() — 3 cache breakpoints (CACHE-MSG-2)
+        loop SSE-поток
+            alt delta.content (текст)
+                Tunnel-->>VM: onToken(token) — живой UI
+            else delta.tool_calls (инструменты)
+                Note over Tunnel: накапливаем в [index: buffer]
             end
-            Note over Orch: continue — следующая итерация цикла
+        end
+        Tunnel-->>-Orch: AIStreamResult(text, toolCalls?, cost, balance)
 
-        else responseMessage без tool_calls (финальный ответ)
-            Orch-->>-VM: AIOrchestratorResult(finalResponse, totalCost, newBalance)
-            Note over Orch: Цикл завершён успешно
+        alt toolCalls не пустой
+            Orch-->>VM: onToolCall(name, path)
+            Orch->>Orch: execute tools → sessionHistory.append(results)
+            Note over Orch: continue — следующая итерация
+        else toolCalls пустой (финальный ответ)
+            Note over Orch: токены уже в UI через onToken
+            Orch-->>-VM: AIOrchestratorResult(finalResponse, cost, balance)
         end
     end
-
-    Note over Orch: Если дошли сюда — throw ChappieError.unknown("Превышен лимит шагов")
 ```
 
 ---
 
-## 5. Инструменты Чаппи (Function Calling)
+## 8. Инструменты Чаппи (Function Calling)
 
-`ToolExecutionService` предоставляет 8 инструментов, зарегистрированных в `availableTools`.
+`ToolExecutionService` предоставляет 8 инструментов.
 
 ### Инструменты файловой системы
 
 | Инструмент | Аргументы | Возвращает |
 |---|---|---|
-| `list_files` | — | JSON-массив относительных путей |
-| `read_file` | `path: String` | Содержимое файла (String) |
-| `write_file` | `path: String`, `content: String` | "Успешно: Файл X записан." |
-| `delete_file` | `path: String` | "Успешно: Файл X удалён." |
+| `list_files` | — | JSON-массив путей |
+| `read_file` | `path` | Содержимое файла |
+| `write_file` | `path`, `content` | Статус |
+| `delete_file` | `path` | Статус |
 
-### Инструменты долгосрочной памяти
+### Инструменты памяти
 
-| Инструмент | Обязательные аргументы | Опциональные |
+| Инструмент | Обязательные | Опциональные |
 |---|---|---|
-| `memorize` | `key`, `type`, `jsonString` | `scope` (project/global), `targetName` |
+| `memorize` | `key`, `type`, `jsonString` | `scope`, `targetName` |
 | `recall` | `key` | `targetName` |
 | `search_memory` | `type` | `targetName` |
 | `delete_memory` | `key` | `targetName` |
 
-### Архитектура памяти
-
-```
-~/Documents/Chappie/semantic.json          ← scope: global
-<workspace>/
-├── Chappie/AI_Docs/semantic.json          ← scope: project, targetName: "Chappie" (App-таргет)
-└── ChappieCore/AI_Docs/semantic.json      ← scope: project, targetName: "ChappieCore"
-```
-
-**Порядок поиска при `recall` без `targetName`:**
-App-таргет → остальные таргеты → глобальная память.
-
 ---
 
-## 6. Swift 6 Concurrency: реальная картина
-
-### Почему `AITunnelClient` — struct, а не actor?
-
-`AITunnelClient` не имеет изменяемого состояния — все свойства `let`.
-`struct` с `let`-свойствами автоматически `Sendable` в Swift 6 без дополнительных аннотаций.
-`URLSession` — потокобезопасна и является `Sendable`.
-Использование `actor` было бы избыточным усложнением без какой-либо пользы.
-
-### Почему `ChatHistoryManager` — class, а не actor?
-
-`ChatHistoryManager` — `final class` с единственным `let fileURL`.
-Все публичные методы не изменяют состояние объекта (только пишут/читают файл).
-`Sendable` достигается через `let`-свойства и `final`.
-Синглтон `shared` используется как фолбэк без воркспейса.
+## 9. Swift 6 Concurrency
 
 ### Схема изоляции
 
@@ -209,141 +301,64 @@ App-таргет → остальные таргеты → глобальная 
 ┌──────────────────────────────────────────────────────────┐
 │  Main Thread (@MainActor)                                │
 │  ChappieViewModel — все обновления UI здесь             │
+│  streamingText += token (через Task { @MainActor in })  │
 └──────────────────┬───────────────────────────────────────┘
-                   │ await (hop off main thread)
+                   │ await
 ┌──────────────────▼───────────────────────────────────────┐
 │  Swift Cooperative Thread Pool                           │
 │                                                          │
 │  AIOrchestrator (actor) — агентный цикл                 │
 │       │                                                  │
-│       ├──► AITunnelClient (struct) — HTTP запросы        │
-│       │                                                  │
+│       └──► AITunnelClient.streamRequestWithTools()       │
+│                 └── URLSession.bytes() — SSE-поток       │
+│                 └── накопление tool_calls по index        │
 │       └──► ToolExecutionService (actor)                  │
 │                │                                         │
-│                ├──► FileSystemManager (actor) — файлы    │
-│                └──► MemoryManager (actor) — память       │
-│                                                          │
-│  ChatHistoryManager (class, Sendable) — история          │
+│                ├──► FileSystemManager (actor)            │
+│                └──► MemoryManager (actor)                │
 └──────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 7. Безопасность: защита от Path Traversal
+## 10. Безопасность: защита от Path Traversal
 
-`FileSystemManager` защищает от атак типа `../../etc/passwd`.
-
-**Алгоритм `validateAndResolvePath(_:)`:**
+`FileSystemManager.validateAndResolvePath(_:)`:
 1. `workspaceURL.resolvingSymlinksInPath()` — стандартизируем корень.
-2. `resolvedWorkspace.appendingPathComponent(relativePath)` — строим абсолютный URL.
-3. `.standardized` — раскрываем все `..` и `.` лексически.
-4. Проверяем: `targetPath.hasPrefix(workspacePath + "/")`.
-5. Если нет — `throw ChappieError.fileSystemError("Нарушение безопасности...")`.
-
-**Почему это критично:** ИИ получает пути от LLM — внешнего источника. LLM может сгенерировать вредоносный путь намеренно или по ошибке.
+2. `appendingPathComponent(relativePath)` → `.standardized` — раскрываем `..`.
+3. Проверяем `hasPrefix(workspacePath + "/")` — если нет → throw.
 
 ---
 
-## 8. AppConfig — единственный источник истины
+## 11. AppConfig — единственный источник истины
 
 ```swift
 public struct AppConfig: Codable, Equatable, Sendable {
     public static let shared = AppConfig()
-
-    public let maxOrchestratorSteps: Int    // 100 — лимит итераций агентного цикла
-    public let maxHistoryMessages: Int       // 15  — лимит сообщений в контексте API
-    public let requestTimeoutSeconds: TimeInterval  // 300 — таймаут запроса (5 минут)
-    public let connectionTimeoutSeconds: TimeInterval // 30 — таймаут соединения
+    public let maxOrchestratorSteps: Int           // 100
+    public let tokenBudget: Int                    // 6,000
+    public let maxMessagesInContext: Int            // 12  ← CTX-OPT
+    public let recentFullMessages: Int             // 3
+    public let summaryThreshold: Int               // 200
+    public let requestTimeoutSeconds: TimeInterval  // 300
+    public let connectionTimeoutSeconds: TimeInterval // 30
 }
 ```
-
-`AIOrchestrator` читает `config.maxOrchestratorSteps` — не захардкоженное число.
-`AITunnelClient` читает `AppConfig.shared.requestTimeoutSeconds` для URLSession и URLRequest.
-
----
-
-## 9. MemoryManager — детальная архитектура
-
-### Структура таргетов
-
-```swift
-public struct WorkspaceTarget: Sendable {
-    let name: String              // "Chappie" или "ChappieCore"
-    let directoryURL: URL         // <workspace>/Chappie/
-    let aiDocsURL: URL            // <workspace>/Chappie/AI_Docs/
-    let semanticFileURL: URL      // <workspace>/Chappie/AI_Docs/semantic.json
-    let architectureFileURL: URL  // <workspace>/Chappie/AI_Docs/architecture.md
-    let projectMapFileURL: URL    // <workspace>/Chappie/AI_Docs/project_map.md
-    let kind: TargetKind          // .appTarget или .library
-}
-```
-
-### Классификация таргетов
-
-App-таргет определяется по наличию файла `*App.swift` (признак `@main` точки входа SwiftUI).
-
-### Фильтрация при сканировании
-
-Исключаются: скрытые папки, `build`, `DerivedData`, `Pods`, `Frameworks`, `.git`, `.swiftpm`,
-а также **директории с расширением в имени** (`.xcodeproj`, `.xcworkspace`, `.playground`).
-
-### Инициализация (идемпотентна)
-
-```
-initializeWorkspaceMemory()
-├── cleanupInvalidAIDocs()      — удаляет ошибочные AI_Docs внутри .xcodeproj и т.д.
-├── setupGlobalMemory()         — создаёт ~/Documents/Chappie/semantic.json
-├── discoverTargets()           — сканирует первый уровень workspace
-├── setupAIDocs(for:)           — создаёт AI_Docs + шаблоны для каждого таргета
-│   └── scanTargetDirectory()   — реальные файлы для project_map.md
-└── migrateOldRootAIDocs()      — миграция из старого корневого AI_Docs
-```
-
----
-
-## 10. ChatHistoryManager — хранение истории
-
-### Пути хранения
-
-| Режим | Путь |
-|---|---|
-| С воркспейсом | `<workspace>/AI_Docs/chat_history.json` |
-| Без воркспейса (фолбэк) | `~/Documents/Chappie/global_chat_history.json` |
-
-### Generic API
-
-Методы `loadMessages<T: Codable>()` и `saveMessages<T: Codable>(_:)` используют дженерики,
-чтобы ChappieCore не зависел от конкретного типа `ChatMessage`, определённого в UI-слое.
-
----
-
-## 11. Ключевые инварианты системы
-
-> Нарушение любого из этих инвариантов означает архитектурный баг.
-
-1. **AIOrchestrator — единственный инициатор AI-запросов.** Никто другой не вызывает `AITunnelClient.sendRequest()` напрямую.
-
-2. **ToolExecutionService — единственный исполнитель инструментов.** AIOrchestrator передаёт `AIToolCall` и получает `String`.
-
-3. **FileSystemManager — единственная точка доступа к файловой системе.** Никакого прямого `FileManager` в других сервисах.
-
-4. **AppConfig — единственный источник всех "магических чисел".** Никаких захардкоженных лимитов в коде.
-
-5. **Все сервисы с изменяемым состоянием — акторы.** Исключения (`AITunnelClient`, `ChatHistoryManager`) — только если они не имеют изменяемого состояния.
-
-6. **Все модели данных — Sendable.** Передача между акторами безопасна.
-
-7. **Нет `@MainActor` в ChappieCore.** Это чистая бизнес-логика без UI.
 
 ---
 
 ## 12. Технический долг (актуальный)
 
-| # | Описание | Приоритет |
-|---|---|---|
-| ТД-7 | Нет стриминга токенов — `sendRequest()` блокирующий | 🟡 |
-| ТД-8 | Нет тестового таргета в `Package.swift` | 🟡 |
-| ТД-6 | ToolCall-сообщения — `ChatMessage` с эмодзи-префиксом вместо типизации | 🟡 |
+| # | Описание | Приоритет | Статус |
+|---|---|---|---|
+| ТД-7 | Стриминг токенов | 🟡 | ✅ Закрыт |
+| ТД-COST | Prompt Caching для экономии токенов | 🔴 | ✅ Закрыт |
+| SINGLE-STREAM | Убран двойной запрос (probe + stream) | 🔴 | ✅ Закрыт |
+| CTX-OPT | maxMessagesInContext — лимит по количеству | 🟡 | ✅ Закрыт |
+| CACHE-MSG | Умное позиционирование 2-го cache breakpoint'а | 🔴 | ✅ Закрыт |
+| CACHE-MSG-2 | Третий breakpoint на последнее сообщение истории | 🔴 | ✅ Закрыт |
+| ТД-5 | API-ключ в UserDefaults → перенести в Keychain | 🟡 | Открыт |
+| ТД-8 | Нет тестового таргета в Package.swift | 🟡 | Открыт |
 
 ---
 
@@ -352,4 +367,10 @@ initializeWorkspaceMemory()
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-05-21 | Initial creation | Chappie AI |
-| 2026-05-27 | Полная переработка: документ приведён в соответствие с реальным кодом. Исправлены типы (AITunnelClient: struct, ChatHistoryManager: class), убраны несуществующие саб-агенты и delegate_task, добавлена реальная схема агентного цикла, инструменты, AppConfig, Path Traversal защита | Chappie AI |
+| 2026-05-27 | Полная переработка: реальное состояние кода | Chappie AI |
+| 2026-05-28 | ТД-7: Стриминг токенов | Chappie AI |
+| 2026-05-28 | ТД-COST: Prompt Caching | Chappie AI |
+| 2026-05-29 | SINGLE-STREAM: убран probe+stream, единый streamRequestWithTools() | Chappie AI |
+| 2026-05-29 | CTX-OPT: добавлен maxMessagesInContext=12 в AppConfig и buildContextWindow() | Chappie AI |
+| 2026-05-29 | CACHE-MSG: второй breakpoint на последний user-элемент истории | Chappie AI |
+| 2026-05-29 | CACHE-MSG-2: третий breakpoint на последнее сообщение истории | Chappie AI |

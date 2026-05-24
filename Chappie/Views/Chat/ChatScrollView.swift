@@ -7,6 +7,19 @@
 //  была вшита прямо в body ContentView. Это делало ContentView сложным для
 //  понимания и изменения. Здесь собрана вся логика отображения ленты сообщений.
 //
+//  ИЗМЕНЕНИЕ (Этап 6 — ТД-6):
+//  #Preview обновлён под новый enum ChatMessage.
+//
+//  ИЗМЕНЕНИЕ (ТД-7 — Стриминг):
+//  Добавлен параметр `streamingText: String`.
+//  Когда streamingText не пуст — показываем "живой" стриминговый пузырь
+//  вместо спиннера ProgressView.
+//
+//  ИЗМЕНЕНИЕ (ТД-UX-PERF — Оптимизация производительности UI):
+//  ChatScrollView теперь принимает `visibleMessages` — уже отфильтрованный
+//  и обрезанный до 30 элементов список. Это снимает нагрузку с рендера:
+//  ForEach больше не итерирует тысячи записей при каждом ресайзе окна.
+//  .toolCall полностью убраны из ленты — они отображаются в StatusBarView.
 
 import SwiftUI
 
@@ -15,57 +28,73 @@ import SwiftUI
 /// Компонент самодостаточен: он сам следит за изменениями в массиве сообщений
 /// и автоматически прокручивается вниз при появлении нового сообщения или
 /// при включении индикатора "Чаппи думает".
+///
+/// ВАЖНО: Принимает `visibleMessages` — уже отфильтрованный список (только .message,
+/// максимум 30 штук). Фильтрация происходит в ViewModel, а не здесь.
 struct ChatScrollView: View {
-    
-    /// Список сообщений для отображения
+
+    /// Отфильтрованный список сообщений для отображения (только .message, макс. 30)
     let messages: [ChatMessage]
-    
-    /// Флаг: Чаппи сейчас думает (показываем спиннер)
+
+    /// Флаг: Чаппи сейчас думает (показываем спиннер или стриминговый пузырь)
     let isThinking: Bool
-    
+
+    /// Накопленный текст стримингового ответа.
+    ///
+    /// Пока пуст — показываем спиннер (Чаппи вызывает инструменты).
+    /// Когда появляются первые символы — заменяем спиннер на "живой" пузырь.
+    /// После завершения стриминга ViewModel сбросит это в "" и добавит .message в историю.
+    let streamingText: String
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 12) {
-                    
+
                     // Приветственный экран — показываем только если чат пуст.
-                    // Это первое, что видит пользователь, и оно должно быть дружелюбным.
-                    if messages.isEmpty {
+                    if messages.isEmpty && !isThinking {
                         welcomeMessage
                     } else {
-                        // Рендерим каждый пузырь сообщения
+                        // ForEach теперь работает с максимум 30 элементами —
+                        // ресайз окна больше не вызывает лагов.
                         ForEach(messages) { msg in
                             MessageBubbleView(msg: msg)
                         }
                     }
-                    
-                    // Индикатор "Чаппи думает" — появляется пока оркестратор работает.
-                    // Показываем его ПОСЛЕ всех сообщений, чтобы он был последним в ленте.
+
+                    // СТРИМИНГОВЫЙ БЛОК: показываем пока Чаппи думает/генерирует.
+                    // Три состояния:
+                    //   1. isThinking == false → ничего не показываем
+                    //   2. isThinking == true, streamingText == "" → спиннер (инструменты)
+                    //   3. isThinking == true, streamingText != "" → живой пузырь (генерация)
                     if isThinking {
-                        thinkingIndicator
-                            .id("ThinkingIndicator")
+                        if streamingText.isEmpty {
+                            // Чаппи ещё не начал генерировать финальный ответ —
+                            // он либо думает, либо вызывает инструменты.
+                            // Текущий инструмент отображается в StatusBarView ниже.
+                            thinkingIndicator
+                        } else {
+                            // Финальный ответ генерируется прямо сейчас.
+                            // Показываем накопленный текст как "живой" пузырь.
+                            // Курсор-мигалка даёт понять что текст ещё пишется.
+                            streamingBubble
+                        }
                     }
-                    
+
                     // Невидимый якорь в самом низу ленты.
-                    // ScrollViewReader.scrollTo("BottomSpacer") всегда приведёт
-                    // пользователя к последнему сообщению, независимо от их количества.
                     Spacer(minLength: 0)
                         .id("BottomSpacer")
                 }
                 .padding()
             }
-            // При первом появлении — скроллим вниз, чтобы показать последнее сообщение
             .onAppear {
                 proxy.scrollTo("BottomSpacer", anchor: .bottom)
             }
-            // При добавлении нового сообщения — плавно скроллим вниз
             .onChange(of: messages) { _, _ in
                 withAnimation(.easeOut(duration: 0.3)) {
                     proxy.scrollTo("BottomSpacer", anchor: .bottom)
                 }
             }
-            // Когда Чаппи начинает думать — скроллим к спиннеру,
-            // чтобы пользователь видел что что-то происходит
             .onChange(of: isThinking) { _, isThinking in
                 if isThinking {
                     withAnimation(.easeOut(duration: 0.3)) {
@@ -73,13 +102,19 @@ struct ChatScrollView: View {
                     }
                 }
             }
+            // Автоскролл при каждом новом токене стриминга.
+            // Без этого пузырь растёт вниз за пределы видимой области.
+            .onChange(of: streamingText) { _, _ in
+                // Без анимации — токены приходят очень часто (десятки в секунду),
+                // анимация каждого скролла создала бы визуальный "дрожащий" эффект.
+                proxy.scrollTo("BottomSpacer", anchor: .bottom)
+            }
         }
     }
-    
+
     // MARK: - Вспомогательные подвью
-    
+
     /// Приветственное сообщение для пустого чата.
-    /// Выровнено влево — как обычный ответ Чаппи, чтобы не ломать визуальный ритм.
     private var welcomeMessage: some View {
         HStack {
             Text("Привет! Я — Чаппи. Выбери проект и скажи, что нужно сделать.")
@@ -90,9 +125,8 @@ struct ChatScrollView: View {
             Spacer()
         }
     }
-    
-    /// Индикатор загрузки пока Чаппи обрабатывает запрос.
-    /// Спиннер выровнен влево — он "говорит" от имени Чаппи.
+
+    /// Спиннер — показывается пока Чаппи думает или вызывает инструменты.
     private var thinkingIndicator: some View {
         HStack {
             ProgressView()
@@ -103,15 +137,93 @@ struct ChatScrollView: View {
             Spacer()
         }
     }
+
+    /// "Живой" пузырь с нарастающим текстом стримингового ответа.
+    ///
+    /// ПОЧЕМУ МИГАЮЩИЙ КУРСОР:
+    /// Без визуального индикатора пользователь не понимает — текст уже закончился
+    /// или ещё пишется. Мигающий курсор — универсальный UX-паттерн для "печатает".
+    private var streamingBubble: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                // Текст с мигающим курсором в конце.
+                // Курсор реализован как отдельный Text с анимацией opacity —
+                // это дешевле чем таймер или кастомный ViewModifier.
+                HStack(alignment: .bottom, spacing: 0) {
+                    Text(streamingText)
+                        .foregroundStyle(Color.primary)
+                        .textSelection(.enabled)
+
+                    // Мигающий курсор — анимируется через repeatForever
+                    BlinkingCursor()
+                }
+            }
+            .padding()
+            .background(Color(NSColor.windowBackgroundColor))
+            .cornerRadius(10)
+            .shadow(color: .black.opacity(0.15), radius: 3, x: 0, y: 2)
+
+            Spacer()
+        }
+    }
 }
 
-#Preview {
+// MARK: - BlinkingCursor
+
+/// Мигающий курсор для стримингового пузыря.
+///
+/// Вынесен в отдельную View, чтобы анимация была изолирована и не влияла
+/// на перерисовку родительского пузыря при каждом новом токене.
+private struct BlinkingCursor: View {
+    /// Состояние видимости курсора — переключается анимацией
+    @State private var isVisible = true
+
+    var body: some View {
+        Text("▍")
+            .foregroundStyle(Color.accentColor)
+            .opacity(isVisible ? 1 : 0)
+            // repeatForever с autoreverse создаёт плавное мигание без резких скачков
+            .animation(
+                .easeInOut(duration: 0.5).repeatForever(autoreverses: true),
+                value: isVisible
+            )
+            .onAppear {
+                // Запускаем анимацию сразу при появлении курсора
+                isVisible = false
+            }
+    }
+}
+
+// MARK: - Preview
+
+#Preview("С историей и стримингом") {
     ChatScrollView(
         messages: [
-            ChatMessage(isUser: true, text: "Привет!"),
-            ChatMessage(isUser: false, text: "Привет, Босс! 🚀", cost: 0.42)
+            .message(isUser: true, text: "Привет, Чаппи!"),
+            .message(isUser: false, text: "Привет, Босс! Готов к работе 🚀", cost: 0.42),
         ],
-        isThinking: true
+        isThinking: true,
+        streamingText: "Прочитал файл. Вот что я нашёл: ContentView является чистым дирижёром..."
     )
     .frame(width: 600, height: 400)
+}
+
+#Preview("Спиннер (инструменты)") {
+    ChatScrollView(
+        messages: [
+            .message(isUser: true, text: "Проанализируй проект"),
+        ],
+        isThinking: true,
+        streamingText: ""
+    )
+    .frame(width: 600, height: 300)
+}
+
+#Preview("Пустой чат") {
+    ChatScrollView(
+        messages: [],
+        isThinking: false,
+        streamingText: ""
+    )
+    .frame(width: 600, height: 300)
 }

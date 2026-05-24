@@ -1,0 +1,25 @@
+{
+  "configurations" : [
+    {
+      "id" : "EA4F037F-CC47-468E-989E-5F371C9648B6",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "performanceAntipatternCheckerEnabled" : true
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:Chappie.xcodeproj",
+        "identifier" : "874865F92FC3029E00F5E876",
+        "name" : "ChappieCoreTests"
+      }
+    }
+  ],
+  "version" : 1
+}
