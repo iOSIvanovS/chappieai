@@ -3,13 +3,19 @@
 //
 // СТРУКТУРА ПАКЕТА:
 // - ChappieCore (library target) — основная бизнес-логика ИИ-ассистента
-// - ChappieCoreTests (test target) — юнит-тесты для акторов и сервисов
 //
 // ПОЧЕМУ ОТДЕЛЬНЫЙ ПАКЕТ:
 // Разделение UI (Chappie.app) и бизнес-логики (ChappieCore) позволяет:
 // 1. Тестировать логику независимо от UI
 // 2. Переиспользовать ядро в других приложениях
 // 3. Чётко разграничить ответственность слоёв
+//
+// ПОЧЕМУ ЗДЕСЬ НЕТ ТЕСТ-ТАРГЕТА:
+// Тесты ChappieCore живут в корневом таргете ChappieCoreTests/ проекта Chappie.xcodeproj
+// и запускаются через ChappieCoreTests.xctestplan (Xcode Test Plan).
+// Это единственный источник истины для тестов — дублирование в Package.swift
+// приводило к двум несинхронизированным наборам тестов, что создавало путаницу.
+// Правило: тесты пишутся в ChappieCoreTests/, запускаются через Xcode.
 
 import PackageDescription
 
@@ -32,12 +38,9 @@ let package = Package(
         .target(
             name: "ChappieCore"
         ),
-        // Тестовый таргет — зависит от ChappieCore, тестирует его публичный API
-        .testTarget(
-            name: "ChappieCoreTests",
-            dependencies: ["ChappieCore"],
-            path: "Tests/ChappieCoreTests"
-        ),
+        // ТЕСТ-ТАРГЕТ УДАЛЁН НАМЕРЕННО.
+        // Все тесты живут в ChappieCoreTests/ и управляются через Xcode Test Plan.
+        // См. ChappieCoreTests.xctestplan в корне проекта.
     ],
     swiftLanguageModes: [.v6]
 )
