@@ -35,6 +35,11 @@
 //   а) loadWorkspaceWithSecurityScope() — восстановление при старте → launch(workspacePath:)
 //   б) setWorkspace() — ручной выбор папки → restartWithWorkspace()
 // ChappieApp.onAppear больше НЕ вызывает launch() — там путь ещё неизвестен.
+//
+// ИЗМЕНЕНИЕ (UX-SMOOTH-ANIMATION):
+// Финальный переход "стриминг → сообщение" теперь анимирован:
+// streamingText сбрасывается и messages обновляется в одном withAnimation блоке.
+// Это устраняет резкий скачок когда Чаппи заканчивает печатать.
 
 import SwiftUI
 import ChappieCore
@@ -237,25 +242,43 @@ final class ChappieViewModel {
                 let rawResponse = self.cleanAIResponse(result.finalResponse)
                 let (displayText, summary) = self.extractAndCleanSummary(from: rawResponse)
 
-                self.streamingText = ""
-                self.currentToolCall = nil
-
-                self.messages.append(.message(
-                    isUser: false,
-                    text: displayText,
-                    cost: result.totalCost,
-                    summary: summary
-                ))
+                // ПЛАВНЫЙ ФИНАЛЬНЫЙ ПЕРЕХОД:
+                // Проблема без анимации: streamingText сбрасывается в "" — стриминговый пузырь
+                // исчезает. Затем messages обновляется — новое сообщение появляется.
+                // Это два отдельных события, между которыми SwiftUI рендерит "пустоту" — рывок.
+                //
+                // Решение: оборачиваем ОБА изменения в один withAnimation блок.
+                // SwiftUI видит их как единую транзакцию и анимирует переход плавно:
+                // стриминговый пузырь плавно уходит, финальное сообщение плавно въезжает.
+                // spring(response:0.5) чуть медленнее чем обычный spring(0.4) — финальный
+                // ответ "приземляется" мягче, без торопливости.
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+                    self.streamingText = ""
+                    self.currentToolCall = nil
+                    self.messages.append(.message(
+                        isUser: false,
+                        text: displayText,
+                        cost: result.totalCost,
+                        summary: summary
+                    ))
+                }
 
                 if let newBalance = result.newBalance {
                     self.currentBalance = newBalance
                 }
             } catch {
-                self.streamingText = ""
-                self.currentToolCall = nil
-                self.messages.append(.message(isUser: false, text: "Упс, ошибка: \(error.localizedDescription)"))
+                // При ошибке тоже анимируем — сообщение об ошибке должно появляться плавно,
+                // а не выпрыгивать резко после исчезновения стримингового пузыря.
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+                    self.streamingText = ""
+                    self.currentToolCall = nil
+                    self.messages.append(.message(isUser: false, text: "Упс, ошибка: \(error.localizedDescription)"))
+                }
             }
 
+            // isThinking сбрасываем отдельно — его анимация уже настроена в ContentView
+            // через .animation(.easeInOut, value: viewModel.isThinking).
+            // Если включить в withAnimation выше — spring перебьёт easeInOut для StatusBarView.
             isThinking = false
         }
     }

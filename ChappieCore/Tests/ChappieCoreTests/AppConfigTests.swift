@@ -10,6 +10,11 @@
 //
 // ПРИНЦИП: Проверяем не конкретные значения, а разумные диапазоны.
 // Это позволяет менять параметры тюнинга без поломки тестов.
+//
+// ИСТОРИЯ ИЗМЕНЕНИЙ:
+// Тест maxHistoryMessagesIsReasonable переименован и обновлён:
+//   - maxHistoryMessages → maxMessagesInContext (поле было переименовано при рефакторинге)
+//   - Смысл теста сохранён: проверяем что лимит сообщений в разумном диапазоне
 
 import Testing
 import Foundation
@@ -39,14 +44,19 @@ struct AppConfigTests {
         #expect(config.maxOrchestratorSteps <= 1000)
     }
 
-    /// maxHistoryMessages должен быть в разумном диапазоне.
-    @Test("maxHistoryMessages в разумном диапазоне [5...100]")
-    func maxHistoryMessagesIsReasonable() {
+    /// maxMessagesInContext — жёсткий лимит на количество сообщений в контекстном окне.
+    ///
+    /// ПОЧЕМУ ОТДЕЛЬНО ОТ tokenBudget:
+    /// tokenBudget контролирует суммарный объём токенов, но не количество сообщений.
+    /// Много коротких сообщений-саммари могут вписаться в бюджет, но создать
+    /// бесполезную длинную цепочку. maxMessagesInContext — жёсткий потолок сверху.
+    @Test("maxMessagesInContext в разумном диапазоне [5...100]")
+    func maxMessagesInContextIsReasonable() {
         let config = AppConfig.shared
-        // Меньше 5 — контекст будет слишком маленьким
+        // Меньше 5 — контекст будет слишком маленьким для связного диалога
         // Больше 100 — риск превышения контекстного окна модели
-        #expect(config.maxHistoryMessages >= 5)
-        #expect(config.maxHistoryMessages <= 100)
+        #expect(config.maxMessagesInContext >= 5)
+        #expect(config.maxMessagesInContext <= 100)
     }
 
     /// requestTimeoutSeconds должен быть достаточным для сложных задач.
