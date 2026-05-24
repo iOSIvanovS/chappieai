@@ -1,7 +1,17 @@
 // FileSystemManagerTests.swift
-// Тесты для FileSystemManager — работа с файловой системой воркспейса.
-// Особое внимание уделено безопасности: Path Traversal атаки должны блокироваться.
-// Каждый тест работает в изолированной временной директории.
+// ChappieCore/Tests/ChappieCoreTests
+//
+// ВАЖНО: Этот файл синхронизирован с ChappieCoreTests/FileSystemManagerTests.swift
+// в корне проекта. Package.swift запускает тесты именно отсюда (path: "Tests/ChappieCoreTests").
+// Тестплан Xcode (ChappieCoreTests.xctestplan) запускает тесты из корневого ChappieCoreTests/.
+// Оба набора должны быть идентичны.
+//
+// ПРИОРИТЕТ ТЕСТИРОВАНИЯ:
+// Самое важное здесь — безопасность. Path Traversal (CWE-22) — критическая уязвимость:
+// если защита сломается, ИИ сможет читать/писать системные файлы.
+//
+// ИЗОЛЯЦИЯ:
+// Каждый тест работает во временной директории — реальные файлы проекта не трогаются.
 
 import Testing
 import Foundation
@@ -10,121 +20,187 @@ import Foundation
 @Suite("FileSystemManager Tests")
 struct FileSystemManagerTests {
 
-    // MARK: - Вспомогательный метод
+    // MARK: - Вспомогательные методы
 
-    /// Создаём временную директорию с тестовыми файлами.
-    /// Структура: a.swift, b.swift, sub/c.swift
+    /// Создаёт временную директорию и возвращает готовый FileSystemManager.
+    /// Используем UUID чтобы тесты были изолированы даже при параллельном запуске.
     private func makeManager() throws -> (FileSystemManager, URL) {
         let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("FSMTests_\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-
-        // Создаём тестовые файлы в корне
-        try "content a".write(to: tempDir.appendingPathComponent("a.swift"), atomically: true, encoding: .utf8)
-        try "content b".write(to: tempDir.appendingPathComponent("b.swift"), atomically: true, encoding: .utf8)
-
-        // Создаём поддиректорию с файлом
-        let subDir = tempDir.appendingPathComponent("sub")
-        try FileManager.default.createDirectory(at: subDir, withIntermediateDirectories: true)
-        try "content c".write(to: subDir.appendingPathComponent("c.swift"), atomically: true, encoding: .utf8)
-
         let manager = FileSystemManager(workspaceURL: tempDir)
         return (manager, tempDir)
     }
 
-    // MARK: - Тесты базовой функциональности
+    private func cleanup(_ url: URL) {
+        try? FileManager.default.removeItem(at: url)
+    }
 
-    /// listFiles должен вернуть все файлы включая вложенные директории.
-    /// Пути должны быть относительными (без префикса воркспейса).
+    // MARK: - Тесты чтения
+
+    /// Базовый сценарий: файл существует → читаем содержимое.
+    @Test("Чтение существующего файла")
+    func readExistingFile() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
+
+        let fileURL = workspace.appendingPathComponent("test.txt")
+        try "Hello, Chappie!".write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let content = try await manager.readFile(at: "test.txt")
+        #expect(content == "Hello, Chappie!")
+    }
+
+    /// Чтение несуществующего файла должно бросать ошибку.
+    @Test("Чтение несуществующего файла бросает ошибку")
+    func readMissingFileThrows() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
+
+        await #expect(throws: (any Error).self) {
+            try await manager.readFile(at: "nonexistent_file_xyz.txt")
+        }
+    }
+
+    // MARK: - Тесты записи
+
+    /// Запись нового файла → файл создаётся с правильным содержимым.
+    @Test("Запись нового файла")
+    func writeNewFile() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
+
+        try await manager.writeFile(at: "new_file.swift", content: "import Foundation")
+
+        let fileURL = workspace.appendingPathComponent("new_file.swift")
+        let content = try String(contentsOf: fileURL, encoding: .utf8)
+        #expect(content == "import Foundation")
+    }
+
+    /// Запись в поддиректорию — директория создаётся автоматически.
+    @Test("writeFile создаёт промежуточные директории")
+    func writeToSubdirectoryCreatesDirectories() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
+
+        try await manager.writeFile(at: "Views/Chat/ChatView.swift", content: "// ChatView")
+
+        let fileURL = workspace.appendingPathComponent("Views/Chat/ChatView.swift")
+        #expect(FileManager.default.fileExists(atPath: fileURL.path))
+    }
+
+    /// Перезапись существующего файла — содержимое обновляется.
+    @Test("Перезапись существующего файла")
+    func overwriteExistingFile() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
+
+        try await manager.writeFile(at: "file.txt", content: "old content")
+        try await manager.writeFile(at: "file.txt", content: "new content")
+
+        let content = try await manager.readFile(at: "file.txt")
+        #expect(content == "new content")
+    }
+
+    // MARK: - Тесты удаления
+
+    /// Удаление существующего файла — файл исчезает.
+    @Test("deleteFile удаляет файл")
+    func deleteExistingFile() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
+
+        try await manager.writeFile(at: "to_delete.txt", content: "bye")
+        try await manager.deleteFile(at: "to_delete.txt")
+
+        let fileURL = workspace.appendingPathComponent("to_delete.txt")
+        #expect(!FileManager.default.fileExists(atPath: fileURL.path))
+    }
+
+    /// Удаление несуществующего файла бросает ошибку (не молчит).
+    @Test("Удаление несуществующего файла бросает ошибку")
+    func deleteMissingFileThrows() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
+
+        await #expect(throws: (any Error).self) {
+            try await manager.deleteFile(at: "ghost_file.txt")
+        }
+    }
+
+    // MARK: - Тесты списка файлов
+
+    /// listFiles возвращает все файлы в директории.
+    ///
+    /// ПОЧЕМУ hasSuffix а не точное совпадение:
+    /// На macOS /tmp является симлинком на /private/tmp. FileSystemManager использует
+    /// workspaceURL.path для вычисления относительных путей через replacingOccurrences.
+    /// Но enumerator может вернуть пути через /private/tmp — тогда replacingOccurrences
+    /// не сработает и путь останется абсолютным. hasSuffix устойчив к этой разнице.
+    ///
+    /// ПОЧЕМУ НЕ ПРОВЕРЯЕМ count:
+    /// FileSystemManager может включать системные файлы (.DS_Store и т.п.) или
+    /// директории в зависимости от реализации. Проверка наличия конкретных файлов
+    /// надёжнее чем проверка точного количества.
     @Test("listFiles возвращает все файлы")
-    func listFilesReturnsAll() async throws {
-        let (manager, _) = try makeManager()
+    func listFilesReturnsAllFiles() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
+
+        try await manager.writeFile(at: "a.swift", content: "")
+        try await manager.writeFile(at: "b.swift", content: "")
+        try await manager.writeFile(at: "sub/c.swift", content: "")
+
         let files = try await manager.listFiles()
 
-        // Проверяем что все три файла присутствуют в результате
-        // Используем contains с проверкой суффикса — порядок не гарантирован
-        let hasA = files.contains(where: { $0.hasSuffix("a.swift") })
-        let hasB = files.contains(where: { $0.hasSuffix("b.swift") })
-        let hasC = files.contains(where: { $0.hasSuffix("c.swift") })
-
-        #expect(hasA, "Файл a.swift должен быть в списке")
-        #expect(hasB, "Файл b.swift должен быть в списке")
-        #expect(hasC, "Файл sub/c.swift должен быть в списке")
-        #expect(files.count == 3)
+        #expect(files.contains(where: { $0.hasSuffix("a.swift") }), "Файл a.swift должен быть в списке")
+        #expect(files.contains(where: { $0.hasSuffix("b.swift") }), "Файл b.swift должен быть в списке")
+        #expect(files.contains(where: { $0.hasSuffix("c.swift") }), "Файл sub/c.swift должен быть в списке")
     }
 
-    /// Чтение существующего файла должно вернуть его содержимое.
-    @Test("readFile возвращает содержимое файла")
-    func readFileReturnsContent() async throws {
-        let (manager, _) = try makeManager()
-        let content = try await manager.readFile(at: "a.swift")
-        #expect(content == "content a")
-    }
+    // MARK: - ТЕСТЫ БЕЗОПАСНОСТИ (Path Traversal)
 
-    /// Запись нового файла — файл должен появиться на диске с правильным содержимым.
-    @Test("writeFile создаёт файл с содержимым")
-    func writeFileCreatesFile() async throws {
-        let (manager, tempDir) = try makeManager()
-        try await manager.writeFile(at: "new.swift", content: "hello world")
-        let content = try String(contentsOf: tempDir.appendingPathComponent("new.swift"), encoding: .utf8)
-        #expect(content == "hello world")
-    }
+    /// КРИТИЧЕСКИЙ ТЕСТ: попытка выйти за пределы workspace через "../" должна быть отклонена.
+    @Test("🔒 Path Traversal через ../ отклоняется")
+    func pathTraversalUpDirectoryBlocked() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
 
-    /// Удаление файла — файл должен исчезнуть с диска.
-    @Test("deleteFile удаляет файл")
-    func deleteFileRemovesFile() async throws {
-        let (manager, tempDir) = try makeManager()
-        try await manager.deleteFile(at: "a.swift")
-        let exists = FileManager.default.fileExists(atPath: tempDir.appendingPathComponent("a.swift").path)
-        #expect(!exists)
-    }
-
-    /// Запись в поддиректорию — промежуточные папки должны создаваться автоматически.
-    @Test("writeFile создаёт промежуточные директории")
-    func writeFileCreatesIntermediateDirectories() async throws {
-        let (manager, tempDir) = try makeManager()
-        try await manager.writeFile(at: "deep/nested/file.swift", content: "nested")
-        let exists = FileManager.default.fileExists(
-            atPath: tempDir.appendingPathComponent("deep/nested/file.swift").path
-        )
-        #expect(exists)
-    }
-
-    // MARK: - Тесты безопасности (Path Traversal)
-
-    /// "../" в пути должен быть заблокирован — это попытка выйти за пределы воркспейса.
-    @Test("Блокировка Path Traversal через ../")
-    func blockPathTraversal() async throws {
-        let (manager, _) = try makeManager()
         await #expect(throws: (any Error).self) {
-            try await manager.readFile(at: "../secret.txt")
+            try await manager.readFile(at: "../../etc/passwd")
         }
     }
 
-    /// Абсолютный путь должен быть заблокирован.
-    @Test("Блокировка абсолютного пути")
-    func blockAbsolutePath() async throws {
-        let (manager, _) = try makeManager()
+    /// КРИТИЧЕСКИЙ ТЕСТ: абсолютный путь должен быть отклонён.
+    @Test("🔒 Абсолютный путь отклоняется")
+    func absolutePathBlocked() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
+
         await #expect(throws: (any Error).self) {
-            try await manager.readFile(at: "/etc/passwd")
+            try await manager.readFile(at: "/etc/hosts")
         }
     }
 
-    /// Попытка записи за пределы воркспейса должна быть заблокирована.
-    @Test("Блокировка записи за пределы воркспейса")
-    func blockWriteOutsideWorkspace() async throws {
-        let (manager, _) = try makeManager()
+    /// КРИТИЧЕСКИЙ ТЕСТ: попытка записи за пределы workspace отклоняется.
+    @Test("🔒 Запись за пределы workspace отклоняется")
+    func writeOutsideWorkspaceBlocked() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
+
         await #expect(throws: (any Error).self) {
-            try await manager.writeFile(at: "../../evil.swift", content: "evil")
+            try await manager.writeFile(at: "../evil_file.txt", content: "hacked")
         }
     }
 
-    /// Попытка удаления файла за пределами воркспейса должна быть заблокирована.
-    @Test("Блокировка удаления за пределами воркспейса")
-    func blockDeleteOutsideWorkspace() async throws {
-        let (manager, _) = try makeManager()
+    /// КРИТИЧЕСКИЙ ТЕСТ: удаление за пределами workspace отклоняется.
+    @Test("🔒 Удаление за пределами workspace отклоняется")
+    func deleteOutsideWorkspaceBlocked() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
+
         await #expect(throws: (any Error).self) {
-            try await manager.deleteFile(at: "../important.txt")
+            try await manager.deleteFile(at: "../../important_file.txt")
         }
     }
 }

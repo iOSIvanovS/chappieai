@@ -1,7 +1,10 @@
 // AppConfigTests.swift
-// ChappieCoreTests
+// ChappieCore/Tests/ChappieCoreTests
 //
-// Юнит-тесты для AppConfig — централизованной конфигурации приложения.
+// ВАЖНО: Этот файл синхронизирован с ChappieCoreTests/AppConfigTests.swift
+// в корне проекта. Package.swift запускает тесты именно отсюда (path: "Tests/ChappieCoreTests").
+// Тестплан Xcode (ChappieCoreTests.xctestplan) запускает тесты из корневого ChappieCoreTests/.
+// Оба набора должны быть идентичны.
 //
 // ЗАЧЕМ ТЕСТИРОВАТЬ КОНФИГ:
 // AppConfig — единственный источник истины для всех "магических чисел".
@@ -10,11 +13,6 @@
 //
 // ПРИНЦИП: Проверяем не конкретные значения, а разумные диапазоны.
 // Это позволяет менять параметры тюнинга без поломки тестов.
-//
-// ИСТОРИЯ ИЗМЕНЕНИЙ:
-// Тест maxHistoryMessagesIsReasonable переименован и обновлён:
-//   - maxHistoryMessages → maxMessagesInContext (поле было переименовано при рефакторинге)
-//   - Смысл теста сохранён: проверяем что лимит сообщений в разумном диапазоне
 
 import Testing
 import Foundation

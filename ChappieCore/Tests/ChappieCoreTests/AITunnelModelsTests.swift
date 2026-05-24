@@ -1,7 +1,10 @@
 // AITunnelModelsTests.swift
-// ChappieCoreTests
+// ChappieCore/Tests/ChappieCoreTests
 //
-// Юнит-тесты для Codable-моделей AITunnel.
+// ВАЖНО: Этот файл синхронизирован с ChappieCoreTests/AITunnelModelsTests.swift
+// в корне проекта. Package.swift запускает тесты именно отсюда (path: "Tests/ChappieCoreTests").
+// Тестплан Xcode (ChappieCoreTests.xctestplan) запускает тесты из корневого ChappieCoreTests/.
+// Оба набора должны быть идентичны.
 //
 // ЗАЧЕМ ТЕСТИРОВАТЬ МОДЕЛИ:
 // Модели — это контракт с внешним API. Если мы сломаем Codable (например, переименуем
@@ -23,7 +26,6 @@ struct AITunnelModelsTests {
     /// Кодирование .text → простая JSON-строка (не объект).
     @Test("AIMessageContent.text кодируется как строка")
     func messageContentTextEncodesAsString() throws {
-        let content = AIMessageContent.text("Hello, world!")
         let message = AIMessage(role: "user", content: "Hello, world!")
 
         let data = try JSONEncoder().encode(message)
