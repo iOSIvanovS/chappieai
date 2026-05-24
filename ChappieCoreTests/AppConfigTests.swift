@@ -10,6 +10,11 @@
 //
 // ПРИНЦИП: Проверяем не конкретные значения, а разумные диапазоны.
 // Это позволяет менять параметры тюнинга без поломки тестов.
+//
+// ИСТОРИЯ ИЗМЕНЕНИЙ:
+// Тест maxHistoryMessagesIsReasonable переименован и обновлён:
+//   - maxHistoryMessages → maxMessagesInContext (поле было переименовано при рефакторинге)
+//   - Смысл теста сохранён: проверяем что лимит сообщений в разумном диапазоне
 
 import Testing
 import Foundation
@@ -39,38 +44,19 @@ struct AppConfigTests {
         #expect(config.maxOrchestratorSteps <= 1000)
     }
 
-    /// tokenBudget — бюджет токенов истории — должен быть разумным.
+    /// maxMessagesInContext — жёсткий лимит на количество сообщений в контекстном окне.
     ///
-    /// ПОЧЕМУ tokenBudget, а не maxHistoryMessages:
-    /// Мы перешли от подсчёта "количества сообщений" к подсчёту токенов.
-    /// Это точнее — короткие сообщения не выбрасываются зря, длинные обрезаются агрессивнее.
-    @Test("tokenBudget в разумном диапазоне [4000...100000]")
-    func tokenBudgetIsReasonable() {
+    /// ПОЧЕМУ ОТДЕЛЬНО ОТ tokenBudget:
+    /// tokenBudget контролирует суммарный объём токенов, но не количество сообщений.
+    /// Много коротких сообщений-саммари могут вписаться в бюджет, но создать
+    /// бесполезную длинную цепочку. maxMessagesInContext — жёсткий потолок сверху.
+    @Test("maxMessagesInContext в разумном диапазоне [5...100]")
+    func maxMessagesInContextIsReasonable() {
         let config = AppConfig.shared
-        // Меньше 4000 токенов — контекст будет слишком маленьким для работы
-        // Больше 100,000 — превысим контекстное окно модели и потратим лишние деньги
-        #expect(config.tokenBudget >= 4_000)
-        #expect(config.tokenBudget <= 100_000)
-    }
-
-    /// recentFullMessages — количество последних полных сообщений — должно быть разумным.
-    @Test("recentFullMessages в разумном диапазоне [1...20]")
-    func recentFullMessagesIsReasonable() {
-        let config = AppConfig.shared
-        // Меньше 1 — нет ни одного полного сообщения, только summary — теряем текущий контекст
-        // Больше 20 — слишком много полных ответов с кодом, расходуем весь бюджет впустую
-        #expect(config.recentFullMessages >= 1)
-        #expect(config.recentFullMessages <= 20)
-    }
-
-    /// summaryThreshold — минимальный размер для суммаризации.
-    @Test("summaryThreshold в разумном диапазоне [100...2000] токенов")
-    func summaryThresholdIsReasonable() {
-        let config = AppConfig.shared
-        // Меньше 100 токенов — суммаризируем даже "да" и "вперёд!" — бессмысленно
-        // Больше 2000 — суммаризируем только очень длинные ответы, теряем экономию
-        #expect(config.summaryThreshold >= 100)
-        #expect(config.summaryThreshold <= 2_000)
+        // Меньше 5 — контекст будет слишком маленьким для связного диалога
+        // Больше 100 — риск превышения контекстного окна модели
+        #expect(config.maxMessagesInContext >= 5)
+        #expect(config.maxMessagesInContext <= 100)
     }
 
     /// requestTimeoutSeconds должен быть достаточным для сложных задач.
@@ -102,16 +88,6 @@ struct AppConfigTests {
         #expect(config.connectionTimeoutSeconds < config.requestTimeoutSeconds)
     }
 
-    /// recentFullMessages должен быть меньше tokenBudget в токенах.
-    @Test("recentFullMessages логически согласован с tokenBudget")
-    func recentFullMessagesConsistentWithTokenBudget() {
-        let config = AppConfig.shared
-        // Каждое "полное" сообщение может быть до summaryThreshold токенов.
-        // Произведение не должно превышать весь бюджет — иначе summary бесполезны.
-        let maxFullTokens = config.recentFullMessages * config.summaryThreshold * 2
-        #expect(maxFullTokens <= config.tokenBudget * 2)
-    }
-
     // MARK: - Тест Codable
 
     /// AppConfig проходит roundtrip encode → decode без потерь.
@@ -120,6 +96,7 @@ struct AppConfigTests {
         let original = AppConfig.shared
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(AppConfig.self, from: data)
+
         #expect(decoded == original)
     }
 

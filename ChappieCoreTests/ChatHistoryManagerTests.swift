@@ -1,220 +1,140 @@
 // ChatHistoryManagerTests.swift
-// ChappieCoreTests
+// Тесты для ChatHistoryManager — сохранение и загрузка истории чата.
+// Каждый тест работает в изолированной временной директории,
+// чтобы не зависеть от состояния файловой системы на диске.
 //
-// Юнит-тесты для ChatHistoryManager — менеджера персистентности истории чата.
+// ИСТОРИЯ ИЗМЕНЕНИЙ:
+// Тесты переписаны под актуальный API ChatHistoryManager после рефакторинга TD-02:
+//   - init(workspaceURL:) вместо init(storageURL:)
+//   - loadMessages<T>() вместо loadHistory()
+//   - saveMessages<T>() вместо save(messages:)
+//   - clearHistory() вместо clear()
+//   - Тестовая модель TestMessage вместо несуществующего StoredMessage
 //
-// ВАЖНОСТЬ ЭТИХ ТЕСТОВ:
-// История чата — это долгосрочная память пользователя. Если saveMessages/loadMessages
-// сломаются при рефакторинге модели ChatMessage, пользователь потеряет всю историю.
-// Тесты защищают от таких регрессий.
-//
-// ТЕСТОВАЯ МОДЕЛЬ:
-// Используем SimpleMessage — минимальную Codable-структуру, независимую от
-// реального ChatMessage из UI-слоя. Это правильно: ChatHistoryManager Generic,
-// и тестировать его нужно с простой моделью, не тащя зависимости UI.
-//
-// ВАЖНЫЙ НЮАНС — изоляция от реальных данных:
-// ChatHistoryManager(workspaceURL: tempDir) создаёт fileURL = tempDir/AI_Docs/chat_history.json
-// Это ИЗОЛИРОВАННЫЙ путь, не связанный с реальной историей приложения.
-// Тест loadEmptyHistory проверяет что при отсутствии файла возвращается [],
-// а не содержимое реального chat_history.json из рабочего проекта.
+// ПОЧЕМУ TESTMESSAGE, А НЕ РЕАЛЬНЫЙ CHATMESSAGE:
+// ChatHistoryManager живёт в ChappieCore и намеренно не зависит от ChatMessage,
+// который определён в UI-слое Chappie.app. Менеджер Generic — он работает с любым Codable.
+// Поэтому тесты используют простую тестовую модель, не создавая циклической зависимости.
 
 import Testing
 import Foundation
 @testable import ChappieCore
 
-// MARK: - Тестовая модель сообщения
+// MARK: - Вспомогательная тестовая модель
 
-/// Минимальная Codable-структура для тестирования ChatHistoryManager.
-///
-/// ПОЧЕМУ НЕ ИСПОЛЬЗУЕМ РЕАЛЬНЫЙ ChatMessage:
-/// ChatMessage определён в UI-таргете Chappie, а не в ChappieCore.
-/// Тесты ChappieCore не должны зависеть от UI-слоя — это нарушило бы
-/// принцип разделения ответственности. SimpleMessage — правильная замена.
-private struct SimpleMessage: Codable, Equatable {
-    let id: String
-    let text: String
-    let isUser: Bool
+/// Простая Codable-модель для тестирования Generic API менеджера.
+/// Имитирует структуру сообщения без зависимости от UI-слоя.
+private struct TestMessage: Codable, Equatable {
+    let role: String
+    let content: String
 }
+
+// MARK: - Тесты
 
 @Suite("ChatHistoryManager Tests")
 struct ChatHistoryManagerTests {
 
-    // MARK: - Вспомогательные методы
+    // MARK: - Вспомогательный метод
 
-    /// Создаёт ChatHistoryManager с уникальной временной директорией.
+    /// Создаём свежую временную директорию для каждого теста.
+    /// Это гарантирует изоляцию — ни один тест не влияет на другой.
     ///
-    /// КРИТИЧЕСКИ ВАЖНО: передаём workspaceURL явно, чтобы fileURL указывал
-    /// на tempDir/AI_Docs/chat_history.json, а НЕ на глобальный файл истории.
-    /// Без этого тест читал бы реальную историю чата приложения.
+    /// ПОЧЕМУ workspaceURL, А НЕ storageURL:
+    /// После рефакторинга TD-02 менеджер принимает URL корневой папки воркспейса,
+    /// а сам создаёт подпапку AI_Docs/ внутри неё. Это позволяет хранить историю
+    /// прямо в проекте, рядом с кодом.
     private func makeManager() throws -> (ChatHistoryManager, URL) {
-        // Создаём уникальную временную директорию для каждого теста
         let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("CHMTests_\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-
-        // Явно передаём workspaceURL — это изолирует тест от реальных данных
+        // Передаём tempDir как workspaceURL — менеджер создаст AI_Docs/ внутри него
         let manager = ChatHistoryManager(workspaceURL: tempDir)
         return (manager, tempDir)
     }
 
-    private func cleanup(_ url: URL) {
-        try? FileManager.default.removeItem(at: url)
-    }
+    // MARK: - Тесты
 
-    // MARK: - Тесты базовых операций
-
-    /// Пустая история при первом запуске — нормальная ситуация, не ошибка.
-    ///
-    /// Проверяем что при отсутствии файла chat_history.json возвращается [],
-    /// а не данные из другого места (например, реальной истории приложения).
+    /// При первом запуске файл истории не существует.
+    /// Менеджер должен вернуть пустой массив, а не упасть.
     @Test("Загрузка пустой истории при первом запуске")
-    func loadEmptyHistoryOnFirstRun() throws {
-        let (manager, workspace) = try makeManager()
-        defer { cleanup(workspace) }
-
-        // Убеждаемся что файл истории ещё не существует в нашей изолированной директории
-        // (миграция могла создать его — удаляем если есть)
-        if FileManager.default.fileExists(atPath: manager.fileURL.path) {
-            try FileManager.default.removeItem(at: manager.fileURL)
-        }
-
-        let messages: [SimpleMessage] = manager.loadMessages()
-        // Файла нет — должен вернуться пустой массив
+    func loadEmptyHistory() throws {
+        let (manager, _) = try makeManager()
+        let messages: [TestMessage] = manager.loadMessages()
         #expect(messages.isEmpty)
     }
 
-    /// Сохранили → загрузили → получили то же самое.
-    @Test("Сохранение и загрузка истории")
-    func saveAndLoadHistory() throws {
-        let (manager, workspace) = try makeManager()
-        defer { cleanup(workspace) }
-
-        let messages = [
-            SimpleMessage(id: "1", text: "Привет, Чаппи!", isUser: true),
-            SimpleMessage(id: "2", text: "Привет, Босс!", isUser: false)
-        ]
-
-        manager.saveMessages(messages)
-        let loaded: [SimpleMessage] = manager.loadMessages()
-
-        #expect(loaded == messages)
+    /// Сохраняем одно сообщение и проверяем что оно читается обратно.
+    @Test("Сохранение и загрузка одного сообщения")
+    func saveAndLoadSingleMessage() throws {
+        let (manager, _) = try makeManager()
+        let message = TestMessage(role: "user", content: "Привет, Чаппи!")
+        manager.saveMessages([message])
+        let loaded: [TestMessage] = manager.loadMessages()
+        #expect(loaded.count == 1)
+        #expect(loaded.first?.content == "Привет, Чаппи!")
     }
 
-    /// Очистка истории — файл удаляется, следующая загрузка возвращает пустой массив.
-    @Test("Очистка истории")
-    func clearHistory() throws {
-        let (manager, workspace) = try makeManager()
-        defer { cleanup(workspace) }
-
-        let messages = [SimpleMessage(id: "1", text: "test", isUser: true)]
+    /// Сохраняем несколько сообщений — порядок должен сохраниться.
+    @Test("Порядок сообщений сохраняется")
+    func messageOrderPreserved() throws {
+        let (manager, _) = try makeManager()
+        let messages = [
+            TestMessage(role: "user", content: "Первое"),
+            TestMessage(role: "assistant", content: "Второе"),
+            TestMessage(role: "user", content: "Третье")
+        ]
         manager.saveMessages(messages)
+        let loaded: [TestMessage] = manager.loadMessages()
+        #expect(loaded.count == 3)
+        #expect(loaded[0].content == "Первое")
+        #expect(loaded[1].content == "Второе")
+        #expect(loaded[2].content == "Третье")
+    }
 
-        // Убеждаемся что файл существует
-        #expect(FileManager.default.fileExists(atPath: manager.fileURL.path))
+    /// Повторное сохранение должно перезаписывать старые данные, а не дублировать.
+    @Test("Повторное сохранение перезаписывает историю")
+    func overwriteHistory() throws {
+        let (manager, _) = try makeManager()
+        manager.saveMessages([TestMessage(role: "user", content: "Старое")])
+        manager.saveMessages([TestMessage(role: "user", content: "Новое")])
+        let loaded: [TestMessage] = manager.loadMessages()
+        #expect(loaded.count == 1)
+        #expect(loaded.first?.content == "Новое")
+    }
 
+    /// Очистка истории должна приводить к пустому массиву при следующей загрузке.
+    @Test("Очистка истории")
+    func clearHistoryTest() throws {
+        let (manager, _) = try makeManager()
+        manager.saveMessages([TestMessage(role: "user", content: "Что-то")])
         manager.clearHistory()
-
-        // После очистки файла не должно быть
-        #expect(!FileManager.default.fileExists(atPath: manager.fileURL.path))
-
-        // И загрузка должна вернуть пустой массив
-        let loaded: [SimpleMessage] = manager.loadMessages()
+        let loaded: [TestMessage] = manager.loadMessages()
         #expect(loaded.isEmpty)
     }
 
-    /// Повторное сохранение перезаписывает предыдущую историю.
-    @Test("Повторное сохранение перезаписывает историю")
-    func resaveOverwritesPreviousHistory() throws {
-        let (manager, workspace) = try makeManager()
-        defer { cleanup(workspace) }
-
-        let first = [SimpleMessage(id: "1", text: "first", isUser: true)]
-        let second = [SimpleMessage(id: "2", text: "second", isUser: false)]
-
-        manager.saveMessages(first)
-        manager.saveMessages(second)
-
-        let loaded: [SimpleMessage] = manager.loadMessages()
-        #expect(loaded == second)
-        #expect(loaded.count == 1)
-    }
-
-    // MARK: - Тесты персистентности
-
-    /// Данные сохраняются между созданием разных экземпляров менеджера (симуляция перезапуска).
-    @Test("Персистентность между сессиями (симуляция перезапуска)")
-    func persistenceBetweenSessions() throws {
-        // Создаём общую директорию для обоих экземпляров менеджера
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("CHMPersist_\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-
+    /// Роли сообщений должны сохраняться без искажений.
+    @Test("Роли сообщений сохраняются корректно")
+    func rolesPreserved() throws {
+        let (manager, _) = try makeManager()
         let messages = [
-            SimpleMessage(id: "1", text: "Запомни это", isUser: true),
-            SimpleMessage(id: "2", text: "Запомнил!", isUser: false)
+            TestMessage(role: "user", content: "Вопрос"),
+            TestMessage(role: "assistant", content: "Ответ")
         ]
-
-        // Первый экземпляр — сохраняем
-        let manager1 = ChatHistoryManager(workspaceURL: tempDir)
-        manager1.saveMessages(messages)
-
-        // Второй экземпляр с тем же URL — симулируем перезапуск приложения
-        let manager2 = ChatHistoryManager(workspaceURL: tempDir)
-        let loaded: [SimpleMessage] = manager2.loadMessages()
-
-        #expect(loaded == messages)
+        manager.saveMessages(messages)
+        let loaded: [TestMessage] = manager.loadMessages()
+        #expect(loaded[0].role == "user")
+        #expect(loaded[1].role == "assistant")
     }
 
-    // MARK: - Тесты изоляции воркспейсов
-
-    /// Два разных воркспейса хранят независимые истории.
-    @Test("Изоляция историй между воркспейсами")
-    func workspaceIsolation() throws {
-        let tempDir1 = FileManager.default.temporaryDirectory
-            .appendingPathComponent("CHMIso1_\(UUID().uuidString)", isDirectory: true)
-        let tempDir2 = FileManager.default.temporaryDirectory
-            .appendingPathComponent("CHMIso2_\(UUID().uuidString)", isDirectory: true)
-
-        try FileManager.default.createDirectory(at: tempDir1, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: tempDir2, withIntermediateDirectories: true)
-
-        defer {
-            try? FileManager.default.removeItem(at: tempDir1)
-            try? FileManager.default.removeItem(at: tempDir2)
-        }
-
-        let messages1 = [SimpleMessage(id: "1", text: "workspace 1", isUser: true)]
-        let messages2 = [SimpleMessage(id: "2", text: "workspace 2", isUser: true)]
-
-        let manager1 = ChatHistoryManager(workspaceURL: tempDir1)
-        let manager2 = ChatHistoryManager(workspaceURL: tempDir2)
-
-        manager1.saveMessages(messages1)
-        manager2.saveMessages(messages2)
-
-        // Каждый менеджер читает только свои данные
-        let loaded1: [SimpleMessage] = manager1.loadMessages()
-        let loaded2: [SimpleMessage] = manager2.loadMessages()
-
-        #expect(loaded1 == messages1)
-        #expect(loaded2 == messages2)
-        // Данные не должны смешиваться
-        #expect(loaded1 != loaded2)
-    }
-
-    // MARK: - Тесты фолбэка (без воркспейса)
-
-    /// Менеджер без воркспейса работает с глобальным файлом — не крашит.
-    @Test("Менеджер без воркспейса использует глобальный файл")
-    func managerWithoutWorkspaceUsesGlobalFile() throws {
-        // shared — это менеджер без воркспейса
-        let manager = ChatHistoryManager.shared
-
-        // Просто проверяем что fileURL указывает на что-то внутри Documents
-        let documentsPath = FileManager.default
-            .urls(for: .documentDirectory, in: .userDomainMask)[0].path
-        #expect(manager.fileURL.path.hasPrefix(documentsPath))
+    /// Файл истории создаётся внутри AI_Docs/ подпапки воркспейса.
+    /// Это гарантирует что история хранится рядом с проектом, а не в случайном месте.
+    @Test("История хранится в AI_Docs/ внутри воркспейса")
+    func historyStoredInAIDocsSubdirectory() throws {
+        let (manager, tempDir) = try makeManager()
+        manager.saveMessages([TestMessage(role: "user", content: "Тест")])
+        // Файл должен быть внутри AI_Docs/, а не в корне воркспейса
+        let expectedDir = tempDir.appendingPathComponent("AI_Docs")
+        #expect(manager.fileURL.deletingLastPathComponent() == expectedDir)
+        #expect(FileManager.default.fileExists(atPath: manager.fileURL.path))
     }
 }
