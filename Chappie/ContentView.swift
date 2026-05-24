@@ -24,7 +24,13 @@
 //     visibleMessages — только .message, максимум 30 штук. Тормоза при ресайзе устранены.
 //  2. Между ChatScrollView и InputBarView добавлен StatusBarView —
 //     показывает текущий вызов инструмента вместо засорения ленты .toolCall записями.
-//     Анимирован через withAnimation(.easeInOut) — плавно появляется и исчезает.
+//
+//  ИЗМЕНЕНИЕ (UX-ANIMATION — Плавные анимации):
+//  StatusBarView теперь анимируется через .animation(.easeInOut, value:) на VStack —
+//  это правильный SwiftUI-способ. Раньше стоял withAnimation{} прямо в body,
+//  что является ошибкой: withAnimation — это функция для императивных изменений,
+//  а не модификатор для декларативных View. Компилятор принимал, но анимация
+//  не всегда срабатывала корректно. Теперь .animation привязан к currentToolCall.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -61,12 +67,15 @@ struct ContentView: View {
                 )
 
                 // Строка состояния — показывает текущий вызов инструмента.
-                // Появляется и исчезает плавно через анимацию.
-                // nil = скрыта (Чаппи не работает или уже закончил).
-                // Заменяет сотни .toolCall записей в ленте одной живой строкой.
-                withAnimation(.easeInOut(duration: 0.25)) {
-                    StatusBarView(toolCall: viewModel.currentToolCall)
-                }
+                // Плавно появляется и исчезает через .animation на VStack.
+                //
+                // ПОЧЕМУ .animation ЗДЕСЬ, А НЕ withAnimation В body:
+                // withAnimation{} — императивная функция для изменений в замыканиях
+                // (например, в onTapGesture или Button.action).
+                // В декларативном body SwiftUI правильный способ — модификатор .animation,
+                // привязанный к значению которое меняется. SwiftUI сам применит анимацию
+                // к любому вью в этом VStack при изменении currentToolCall.
+                StatusBarView(toolCall: viewModel.currentToolCall)
 
                 // Панель ввода — сигнализирует о нажатии "Отправить"
                 InputBarView(
@@ -76,6 +85,10 @@ struct ContentView: View {
                     onSend: sendMessage
                 )
             }
+            // Анимация для StatusBarView: плавное появление/исчезновение строки состояния.
+            // Привязана к currentToolCall — при его изменении (nil ↔ строка) StatusBarView
+            // использует свой .transition(.move(edge:.bottom).combined(with:.opacity)).
+            .animation(.easeInOut(duration: 0.25), value: viewModel.currentToolCall)
             .toolbar {
                 // Тулбар: баланс + шестерёнка настроек
                 ChappieToolbarContent(

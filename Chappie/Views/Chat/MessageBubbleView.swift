@@ -20,6 +20,10 @@
 // В кейсе .message появилось 5-е поле `summary: String?`.
 // Паттерн деструктуризации обновлён — добавлен `_` для summary,
 // т.к. в UI этот блок не отображается (он нужен только для API-контекста).
+//
+// ИЗМЕНЕНИЕ (UX-ANIMATION — Плавное появление пузырей):
+// Добавлен .transition на пузырь: новые сообщения плавно въезжают снизу
+// с одновременным fade-in. Это убирает "рваное" появление сообщений.
 
 import SwiftUI
 
@@ -43,6 +47,17 @@ struct MessageBubbleView: View {
         // он нужен только AIOrchestrator при сборке контекста для API.
         if case .message(_, let isUser, let text, let cost, _) = msg {
             messageBubble(isUser: isUser, text: text, cost: cost)
+                // АНИМАЦИЯ ПОЯВЛЕНИЯ:
+                // .asymmetric позволяет задать разные анимации для появления и исчезновения.
+                // Появление: пузырь въезжает снизу + плавный fade-in — имитирует "прилёт" сообщения.
+                // Исчезновение: только fade-out, без движения — удаление не должно быть заметным.
+                // Это стандартный UX-паттерн мессенджеров (iMessage, Telegram).
+                .transition(
+                    .asymmetric(
+                        insertion: .move(edge: .bottom).combined(with: .opacity),
+                        removal: .opacity
+                    )
+                )
         }
     }
 

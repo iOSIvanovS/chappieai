@@ -20,6 +20,17 @@
 //  и обрезанный до 30 элементов список. Это снимает нагрузку с рендера:
 //  ForEach больше не итерирует тысячи записей при каждом ресайзе окна.
 //  .toolCall полностью убраны из ленты — они отображаются в StatusBarView.
+//
+//  ИЗМЕНЕНИЕ (UX-ANIMATION — Плавные анимации):
+//  1. ForEach обёрнут в VStack с .animation(.spring(response:0.4), value: messages) —
+//     новые пузыри плавно "въезжают", а не появляются рывком.
+//  2. Переход спиннер ↔ стриминговый пузырь анимирован через withAnimation +
+//     .transition(.opacity) — исчезновение/появление без резкого скачка.
+//  3. Переход isThinking off → on анимирован аналогично.
+//
+//  ПОЧЕМУ .spring, А НЕ .easeInOut:
+//  Spring-анимация с response=0.4 даёт лёгкий "отскок" — это ощущение живости,
+//  характерное для нативных приложений Apple. easeInOut выглядит более "механически".
 
 import SwiftUI
 
@@ -49,14 +60,21 @@ struct ChatScrollView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
+                // .animation на VStack — это ключевой приём:
+                // SwiftUI видит изменение массива messages и плавно анимирует
+                // появление/исчезновение дочерних вью через их .transition.
+                // Без этого модификатора .transition в MessageBubbleView не работает.
                 VStack(spacing: 12) {
 
                     // Приветственный экран — показываем только если чат пуст.
                     if messages.isEmpty && !isThinking {
                         welcomeMessage
+                            // Приветствие тоже плавно исчезает когда появляется первое сообщение
+                            .transition(.opacity)
                     } else {
                         // ForEach теперь работает с максимум 30 элементами —
                         // ресайз окна больше не вызывает лагов.
+                        // Каждый MessageBubbleView имеет свой .transition (move + opacity).
                         ForEach(messages) { msg in
                             MessageBubbleView(msg: msg)
                         }
@@ -73,11 +91,24 @@ struct ChatScrollView: View {
                             // он либо думает, либо вызывает инструменты.
                             // Текущий инструмент отображается в StatusBarView ниже.
                             thinkingIndicator
+                                // Спиннер плавно появляется и исчезает через opacity.
+                                // .id("thinking") нужен чтобы SwiftUI понимал что это
+                                // разные вью при переходе спиннер ↔ пузырь — иначе
+                                // анимация не сработает (SwiftUI посчитает их одним элементом).
+                                .transition(.opacity)
+                                .id("thinking-spinner")
                         } else {
                             // Финальный ответ генерируется прямо сейчас.
                             // Показываем накопленный текст как "живой" пузырь.
                             // Курсор-мигалка даёт понять что текст ещё пишется.
                             streamingBubble
+                                // Пузырь появляется снизу — та же анимация что и обычные сообщения,
+                                // чтобы переход от спиннера к тексту был визуально единым.
+                                .transition(.asymmetric(
+                                    insertion: .move(edge: .bottom).combined(with: .opacity),
+                                    removal: .opacity
+                                ))
+                                .id("thinking-streaming")
                         }
                     }
 
@@ -86,6 +117,17 @@ struct ChatScrollView: View {
                         .id("BottomSpacer")
                 }
                 .padding()
+                // КЛЮЧЕВОЙ МОДИФИКАТОР АНИМАЦИИ:
+                // Привязываем анимацию к изменению массива messages.
+                // Когда messages меняется — SwiftUI плавно анимирует появление/исчезновение
+                // дочерних вью, используя их .transition. Spring даёт живой "отскок".
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: messages)
+                // Отдельная анимация для isThinking — чтобы спиннер и стриминговый пузырь
+                // тоже появлялись плавно, а не мгновенно.
+                .animation(.easeInOut(duration: 0.25), value: isThinking)
+                // Анимация для переключения спиннер ↔ пузырь внутри isThinking == true.
+                // Без этого переход между двумя состояниями был бы резким.
+                .animation(.easeInOut(duration: 0.3), value: streamingText.isEmpty)
             }
             .onAppear {
                 proxy.scrollTo("BottomSpacer", anchor: .bottom)
