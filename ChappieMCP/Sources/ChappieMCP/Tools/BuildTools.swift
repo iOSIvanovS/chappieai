@@ -16,12 +16,9 @@
 //
 // DESTINATION (ВАЖНО — история попыток):
 // ❌ "platform=macOS,arch=arm64"  — ломается на Intel-машинах
+// ❌ "platform=macOS,arch=x86_64" — иногда не находит на macOS 26 beta
 // ❌ "platform=macOS,name=Any Mac" — баг macOS 26 beta: в списке есть, но не находит
-// ✅ "platform=macOS,arch=x86_64"  — работает на Intel (наша машина x86_64)
-//
-// КАК ОПРЕДЕЛИЛИ АРХИТЕКТУРУ:
-// Из лога xcodebuild: "Available destinations: { platform:macOS, arch:x86_64, id:2AA64AD9... }"
-// Машина — Intel Mac (x86_64). Поэтому явно указываем arch=x86_64.
+// ✅ "platform=macOS"              — аналог "My Mac" в Xcode, Xcode сам выбирает arch
 //
 // ИСПРАВЛЕНИЕ ДЕДЛОКА PIPE (2025-07-11):
 // ПРОБЛЕМА: process.waitUntilExit() + readDataToEndOfFile() ПОСЛЕ него = ДЕДЛОК.
@@ -106,10 +103,10 @@ final class BuildTools: Sendable {
             "-project", "Chappie.xcodeproj",
             "-scheme", "Chappie",
             "-configuration", "Debug",
-            // arch=x86_64 — наша машина Intel (x86_64).
-            // Определено из лога: "Available destinations: { platform:macOS, arch:x86_64 }"
-            // "name=Any Mac" не работает на macOS 26 beta (баг Xcode).
-            "-destination", "platform=macOS,arch=x86_64",
+            // "platform=macOS" — аналог выбора "My Mac" в Xcode.
+            // Xcode сам определяет нужную архитектуру (x86_64 или arm64).
+            // Это самый универсальный вариант, работающий на любой машине.
+            "-destination", "platform=macOS",
             "build"
         ]
 
@@ -123,7 +120,7 @@ final class BuildTools: Sendable {
     /// Поэтому для запуска тестов используем схему "ChappieCoreTests" в xcodebuild.
     ///
     /// DESTINATION (2025-07-11):
-    /// arch=x86_64 — наша машина Intel. "name=Any Mac" не работает на macOS 26 beta.
+    /// "platform=macOS" — аналог "My Mac" в Xcode, работает на любой архитектуре.
     ///
     /// - Parameter target: имя тест-таргета (например "ChappieCoreTests").
     ///   nil = запускает все тесты через схему ChappieCoreTests.
@@ -133,8 +130,9 @@ final class BuildTools: Sendable {
         var args = [
             "-project", "Chappie.xcodeproj",
             "-scheme", "ChappieCoreTests",
-            // arch=x86_64 — Intel Mac. "name=Any Mac" не работает на macOS 26 beta.
-            "-destination", "platform=macOS,arch=x86_64",
+            // "platform=macOS" — аналог "My Mac" в Xcode.
+            // Xcode сам определяет архитектуру. Универсально для x86_64 и arm64.
+            "-destination", "platform=macOS",
             "test"
         ]
 
