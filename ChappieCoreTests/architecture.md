@@ -1,121 +1,158 @@
 <!--
   ChappieCoreTests/architecture.md
 
-  ДОКУМЕНТ АРХИТЕКТУРЫ — CHAPPIECORETESTS
+  ЕДИНЫЙ ДОКУМЕНТ АРХИТЕКТУРЫ — CHAPPICORETESTS
 
   Этот файл заменяет папку AI_Docs (architecture.md + project_map.md + semantic.json).
-  Обновляй при каждом значимом изменении в тестах.
+  Обновляй при каждом значимом изменении тестовой архитектуры.
+
+  Последнее обновление: рефакторинг AI_Docs/ → один файл architecture.md
 -->
 
 # ChappieCoreTests — Архитектура тестового таргета
 
-## 1. Назначение и структура
+## 1. Назначение
 
-**ChappieCoreTests** — тестовый таргет в `Chappie.xcodeproj`, покрывающий бизнес-логику `ChappieCore`.
+**ChappieCoreTests** — Unit Test Bundle для тестирования бизнес-логики `ChappieCore`.
+Запускается через Xcode тестплан `ChappieCoreTests.xctestplan` в корне проекта.
 
-### Структура файлов
+### Ключевые принципы
+
+- **Изоляция:** каждый тест создаёт собственную временную директорию через `FileManager.default.temporaryDirectory`
+- **Без глобального состояния:** `scope: .global` в тестах — запрещён, только `scope: .project` с изолированным воркспейсом
+- **UUID-суффиксы:** типы и ключи содержат UUID чтобы тесты не конфликтовали через общие файлы
+- **Swift Testing framework:** используем `import Testing`, `@Suite`, `@Test`, `#expect` (не XCTest)
+
+---
+
+## 2. Структура файлов
 
 ```
 ChappieCoreTests/
-├── architecture.md                     # Этот файл (заменяет папку AI_Docs/)
-├── AITunnelModelsTests.swift           # Codable roundtrip, SSE-чанки, кэш-контроль
-├── AppConfigTests.swift                # Значения конфига, Sendable, Codable
-├── ChatHistoryManagerTests.swift       # Персистентность, изоляция воркспейсов
-├── FileSystemManagerTests.swift        # Чтение/запись/удаление + Path Traversal защита
-└── MemoryManagerTests.swift            # Сохранение, чтение, удаление, поиск
+├── architecture.md                     # Этот файл
+├── ChappieCoreTests.xctestplan         # В корне проекта (не здесь!)
+├── AppConfigTests.swift                # Тесты конфигурации
+├── AITunnelModelsTests.swift           # Тесты Codable-моделей
+├── ChatHistoryManagerTests.swift       # Тесты менеджера истории чата
+├── FileSystemManagerTests.swift        # Тесты файловой системы + безопасности
+└── MemoryManagerTests.swift            # Тесты семантической памяти
 ```
 
----
+### ВАЖНО: Единственный источник тестов
 
-## 2. Как запускать тесты
+Тесты живут ТОЛЬКО в `ChappieCoreTests/` и запускаются через `ChappieCoreTests.xctestplan`.
 
-**Через Xcode (основной способ):**
-- Схема: `ChappieCoreTests`
-- Горячая клавиша: `⌘+U`
-- Тестплан: `ChappieCoreTests.xctestplan` (в корне проекта)
-
-**Важно:** `run_tests` инструмент Чаппи запускает `swift test` внутри ChappieCore пакета,
-а не Xcode тестплан. Для запуска тестов из этого таргета используй `⌘+U` в Xcode.
+Папка `ChappieCore/Tests/ChappieCoreTests/` — **не используется**. В `ChappieCore/Package.swift`
+намеренно нет `testTarget`, чтобы избежать дублирования и рассинхронизации.
 
 ---
 
-## 3. Архитектурные решения тестов
+## 3. Тестовые файлы
 
-### Изоляция — обязательна
+### `AppConfigTests.swift`
+Тестирует структуру `AppConfig` — единственный источник истины для параметров системы.
 
-Каждый тест создаёт **временную директорию** через `FileManager.default.temporaryDirectory`
-и удаляет её в `tearDown`. Это предотвращает:
-- Загрязнение реальной памяти Чаппи (`~/Documents/Chappie/semantic.json`)
-- Конфликты между параллельными тестами
-- Зависимость от порядка выполнения тестов
+| Тест | Что проверяет |
+|------|--------------|
+| `defaultValues` | Все дефолтные значения в разумных диапазонах |
+| `tokenBudget` | `tokenBudget > 0` |
+| `recentFullMessages` | `recentFullMessages > 0` |
+| `summaryThreshold` | `summaryThreshold > 0` |
+| `logicalConsistency` | `recentFullMessages * summaryThreshold <= tokenBudget` |
+| `sharedIsSingleton` | `AppConfig.shared === AppConfig.shared` |
 
-### Запрет на scope: .global в тестах
+### `AITunnelModelsTests.swift`
+Тестирует Codable-модели для работы с API AITunnel.
 
-**НЕЛЬЗЯ** использовать `scope: .global` в тестах `MemoryManager` — это пишет в
-реальный `~/Documents/Chappie/semantic.json` и загрязняет рабочую память Чаппи.
-Всегда использовать `scope: .project` с изолированным временным воркспейсом.
+| Тест | Что проверяет |
+|------|--------------|
+| `aIMessageEncodingDecoding` | Roundtrip AIMessage через JSON |
+| `aIMessageContentText` | `.text` кейс AIMessageContent |
+| `aIMessageContentBlocks` | `.blocks` кейс с cache_control |
+| `aICacheControl` | Сериализация AICacheControl |
+| `aIStreamChunkDecoding` | Парсинг SSE-чанков |
+| `chatMessageWithSummary` | ChatMessage с полем summary |
+| `aITunnelRequestStream` | AITunnelRequest с stream: true |
 
-### Структура тестового воркспейса
+### `ChatHistoryManagerTests.swift`
+Тестирует сохранение и загрузку истории чата.
 
-`makeTempWorkspace()` создаёт полноценную структуру:
+| Тест | Что проверяет |
+|------|--------------|
+| `loadEmptyHistoryOnFirstRun` | Пустой массив при отсутствии файла |
+| `saveAndLoadMessages` | Roundtrip сохранение/загрузка |
+| `appendMessages` | Добавление сообщений к существующим |
+| `clearHistory` | Очистка истории |
+| `persistenceAcrossSessions` | Данные сохраняются между экземплярами |
+| `workspaceIsolation` | Разные воркспейсы изолированы |
+
+### `FileSystemManagerTests.swift`
+Тестирует работу с файловой системой и защиту от Path Traversal.
+
+| Тест | Что проверяет |
+|------|--------------|
+| `readExistingFile` | Чтение существующего файла |
+| `writeAndReadFile` | Запись и чтение файла |
+| `deleteFile` | Удаление файла |
+| `pathTraversalProtection` | `../secret` → ошибка безопасности |
+| `listFilesReturnsAllFiles` | Список файлов в директории |
+| `readNonExistentFile` | Понятная ошибка при отсутствии файла |
+| `writeToSubdirectory` | Запись с автосозданием подпапки |
+
+**Особенность macOS:** `/tmp` — симлинк на `/private/tmp`. Поэтому проверки путей
+используют `hasSuffix` вместо точного совпадения.
+
+### `MemoryManagerTests.swift`
+Тестирует семантическую память ИИ-ассистента.
+
+| Тест | Что проверяет |
+|------|--------------|
+| `saveAndLoadRecord` | Сохранение и загрузка записи |
+| `deleteRecord` | Удаление записи |
+| `searchByType` | Поиск по типу записи |
+| `searchReturnsEmpty` | Поиск без результатов |
+| `emptyStorageRead` | Чтение из пустого хранилища |
+| `multipleRecords` | Несколько записей разных типов |
+| `scopeIsolation` | Изоляция между scope: .project таргетами |
+| `initializationIsIdempotent` | Повторная инициализация не затирает данные |
+
+**Изоляция тестов:** `makeTempWorkspace()` создаёт структуру:
 ```
 tempDir/
 └── TestApp/
     └── TestApp.swift  ← суффикс App.swift → classifyTarget() → .appTarget
 ```
-Это необходимо для корректной работы `MemoryManager.discoverTargets()` —
-без Swift-файлов метод возвращает пустой массив таргетов.
-
-### macOS /tmp симлинк
-
-macOS `/tmp` — это симлинк на `/private/tmp`. `FileManager` возвращает пути через
-`/private/tmp`, поэтому проверки путей в тестах используют `hasSuffix("filename")`
-вместо точного совпадения строк.
-
-### Единственный источник тестов
-
-Файлы тестов живут **только** в `ChappieCoreTests/` (корень проекта).
-В `ChappieCore/Tests/` тестов **нет** — `testTarget` убран из `Package.swift` намеренно,
-чтобы не дублировать тесты и не создавать рассинхронизацию.
+Это обеспечивает корректное обнаружение таргета без записи в реальную память Чаппи.
 
 ---
 
-## 4. Описание тест-файлов
+## 4. Правила написания тестов
 
-### `AITunnelModelsTests.swift`
-- Codable roundtrip для всех моделей (`AIMessage`, `AITunnelRequest`, `AIStreamChunk` и др.)
-- Проверка `AIMessageContent` полиморфного кодирования (строка vs блоки)
-- Проверка `AICacheControl` сериализации
-- Проверка `ChatMessage` с summary полем
-- Проверка `AIStreamChunk` парсинга SSE-чанков
+### Обязательные правила
 
-### `AppConfigTests.swift`
-- Дефолтные значения конфига (`tokenBudget`, `recentFullMessages`, `summaryThreshold` и др.)
-- Логическая согласованность: `recentFullMessages * summaryThreshold ≤ tokenBudget`
-- Проверка `Sendable` и `Codable` conformance
-- Проверка singleton `shared`
+1. **Никогда не использовать `scope: .global`** — пишет в реальную `~/Documents/Chappie/semantic.json`
+2. **UUID-суффиксы для типов** — `"testType_\(UUID().uuidString)"` чтобы тесты не конфликтовали
+3. **Временная директория** — всегда через `FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)`
+4. **Структура воркспейса** — создавать через `makeTempWorkspace()` с файлом `*App.swift`
 
-### `ChatHistoryManagerTests.swift`
-- Сохранение и загрузка истории
-- Добавление сообщений
-- Очистка истории
-- Персистентность между сессиями (через два разных экземпляра)
-- Изоляция между разными workspace
+### Запрещено
 
-### `FileSystemManagerTests.swift`
-- Чтение существующего файла
-- Запись и чтение файла
-- Удаление файла
-- **4 теста безопасности Path Traversal** (`../secret`, абсолютный путь и др.)
-- Список файлов в директории (с `hasSuffix` проверками из-за `/private/tmp`)
-- Чтение несуществующего файла → внятная ошибка
+- `XCTest` — используем только Swift Testing (`import Testing`)
+- `scope: .global` в тестах MemoryManager
+- Хардкоженные пути к реальным файлам проекта
 
-### `MemoryManagerTests.swift`
-- Сохранение и загрузка записи (`scope: .project`)
-- Поиск по типу
-- Удаление записи
-- Идемпотентность: два разных экземпляра с одним `workspaceURL` видят одни данные
-- UUID-суффиксы для типов чтобы тесты не конфликтовали
+---
+
+## 5. Запуск тестов
+
+### Через Xcode
+`⌘+U` по схеме `ChappieCoreTests` — запускает все тесты через `ChappieCoreTests.xctestplan`.
+
+### Через MCP (Чаппи сам)
+```
+run_tests(target: "ChappieCoreTests")
+```
+Запускает `xcodebuild test -testPlan ChappieCoreTests`.
 
 ---
 
@@ -124,5 +161,5 @@ macOS `/tmp` — это симлинк на `/private/tmp`. `FileManager` воз
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-05-24 | Initial creation (шаблон) | Chappie AI |
-| 2026-06-XX | Полная переработка: реальное описание тестов | Chappie AI |
+| 2026-06-XX | Полное наполнение: описание всех тестов, правила изоляции | Chappie AI |
 | 2026-06-XX | Рефакторинг: AI_Docs/ → один файл architecture.md | Chappie AI |
