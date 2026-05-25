@@ -7,8 +7,9 @@
 // блоки кода с подсветкой синтаксиса. Этот компонент закрывает этот пробел.
 //
 // ДИЗАЙН-ФИЛОСОФИЯ (Apple HIG + Xcode Intelligence Panel):
-// - Блоки кода: тёмный фон (#1E1E1E), как в Xcode Default Dark theme.
-//   Это создаёт чёткий визуальный контраст с обычным текстом.
+// - Блоки кода: адаптивный фон — тёмный (#1E1E1E) в Dark Mode,
+//   светлый (#FFFFFF / #F5F5F5) в Light Mode. Это соответствует поведению
+//   самого Xcode, который меняет тему редактора вместе с системной темой.
 // - Типографика: SF Pro Text 14pt с lineSpacing 5 — оптимально для чтения
 //   длинных технических ответов. Apple рекомендует 1.4–1.6× line-height.
 // - Инлайн-код: моноширный шрифт — как в GitHub/Notion.
@@ -25,12 +26,67 @@
 //   4. Инлайн-код: `code`
 //   5. Обычный текст с правильной типографикой
 //
+// АДАПТИВНОСТЬ ТЕМ:
+// Все цвета в CodeBlockView и SyntaxHighlightedText читаются через
+// @Environment(\.colorScheme) и выбирают нужную палитру.
+// Светлая тема = Xcode Default Light, тёмная = Xcode Default Dark.
+//
 // ВАЖНО (macOS 26):
 // Оператор `+` для Text deprecated в macOS 26 — вместо него нужно использовать
 // Text("\(Text(...).bold())") — строковую интерполяцию SwiftUI.
 // Метод buildInlineText() использует именно этот подход.
 
 import SwiftUI
+
+// MARK: - Цветовые темы синтаксиса
+
+/// Палитра цветов для подсветки синтаксиса.
+///
+/// Две темы: Light (Xcode Default Light) и Dark (Xcode Default Dark).
+/// Хранятся как структуры со статическими свойствами — просто и без зависимостей.
+private struct SyntaxTheme {
+
+    let background: Color
+    let headerBackground: Color
+    let border: Color
+    let labelColor: Color
+    let plainText: Color
+    let keyword: Color
+    let type_: Color
+    let string: Color
+    let number: Color
+    let comment: Color
+
+    // MARK: Xcode Default Dark
+    // Цвета взяты напрямую из темы Xcode 15 Default Dark.
+    static let dark = SyntaxTheme(
+        background:       Color(red: 0.118, green: 0.118, blue: 0.118), // #1E1E1E
+        headerBackground: Color(red: 0.145, green: 0.145, blue: 0.145), // #252525
+        border:           Color(red: 0.250, green: 0.250, blue: 0.250), // #404040
+        labelColor:       Color(red: 0.600, green: 0.600, blue: 0.600), // #999999
+        plainText:        Color(red: 0.970, green: 0.970, blue: 0.950), // #F7F7F2
+        keyword:          Color(red: 0.988, green: 0.373, blue: 0.639), // #FC5FA3
+        type_:            Color(red: 0.365, green: 0.847, blue: 1.000), // #5DD8FF
+        string:           Color(red: 0.988, green: 0.416, blue: 0.365), // #FC6A5D
+        number:           Color(red: 0.816, green: 0.749, blue: 0.412), // #D0BF69
+        comment:          Color(red: 0.424, green: 0.475, blue: 0.525)  // #6C7986
+    )
+
+    // MARK: Xcode Default Light
+    // Цвета взяты напрямую из темы Xcode 15 Default Light.
+    static let light = SyntaxTheme(
+        background:       Color(red: 1.000, green: 1.000, blue: 1.000), // #FFFFFF
+        headerBackground: Color(red: 0.953, green: 0.953, blue: 0.953), // #F3F3F3
+        border:           Color(red: 0.851, green: 0.851, blue: 0.851), // #D9D9D9
+        labelColor:       Color(red: 0.500, green: 0.500, blue: 0.500), // #808080
+        plainText:        Color(red: 0.000, green: 0.000, blue: 0.000), // #000000
+        keyword:          Color(red: 0.659, green: 0.055, blue: 0.565), // #A80E90 — фиолетовый
+        type_:            Color(red: 0.110, green: 0.384, blue: 0.655), // #1C6278 — тёмно-синий
+        string:           Color(red: 0.773, green: 0.102, blue: 0.086), // #C51A16 — тёмно-красный
+        number:           Color(red: 0.118, green: 0.400, blue: 0.188), // #1E6630 — тёмно-зелёный
+        comment:          Color(red: 0.408, green: 0.435, blue: 0.459)  // #686F75 — серый
+    )
+}
 
 // MARK: - Модель блоков
 
@@ -252,10 +308,6 @@ private struct InlineTextView: View {
         var result = AttributedString()
         var remaining = text
 
-        // Базовые атрибуты: шрифт, цвет
-        var baseContainer = AttributeContainer()
-        baseContainer.font = .system(size: fontSize)
-
         while !remaining.isEmpty {
 
             // --- Жирный: **text**
@@ -348,7 +400,8 @@ private struct InlineTextView: View {
 /// Рендерит блок кода в стиле Xcode Intelligence Panel.
 ///
 /// ДИЗАЙН (вдохновлён Xcode 26 Intelligence):
-/// - Тёмный фон: #1E1E1E (Xcode Default Dark)
+/// - Адаптивный фон: тёмный (#1E1E1E) в Dark Mode, белый (#FFFFFF) в Light Mode.
+///   Это соответствует поведению самого Xcode — тема редактора следует системной.
 /// - Заголовок: язык слева, кнопка копирования справа
 /// - Шрифт: SF Mono 12.5pt — стандарт Xcode
 /// - Горизонтальный скролл для длинных строк
@@ -360,9 +413,14 @@ struct CodeBlockView: View {
 
     @State private var copied = false
 
-    /// Фон блока кода — тёмный в обоих режимах.
-    /// Код всегда лучше читается на тёмном фоне (стандарт всех IDE).
-    private let codeBackground = Color(red: 0.118, green: 0.118, blue: 0.118) // #1E1E1E
+    // Читаем системную тему — это ключевой механизм адаптации.
+    // View автоматически перерисуется при смене темы.
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// Выбираем нужную тему на основе системной.
+    private var theme: SyntaxTheme {
+        colorScheme == .dark ? .dark : .light
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -371,7 +429,7 @@ struct CodeBlockView: View {
             HStack {
                 Text(language?.lowercased() ?? "code")
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Color(red: 0.6, green: 0.6, blue: 0.6))
+                    .foregroundStyle(theme.labelColor)
                     .padding(.leading, 12)
 
                 Spacer()
@@ -385,8 +443,8 @@ struct CodeBlockView: View {
                             .font(.system(size: 11))
                     }
                     .foregroundStyle(copied
-                        ? Color(red: 0.4, green: 0.8, blue: 0.4)
-                        : Color(red: 0.6, green: 0.6, blue: 0.6)
+                        ? Color(red: 0.3, green: 0.75, blue: 0.3)
+                        : theme.labelColor
                     )
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
@@ -395,10 +453,11 @@ struct CodeBlockView: View {
                 .animation(.easeInOut(duration: 0.2), value: copied)
             }
             .padding(.vertical, 4)
-            .background(Color(red: 0.145, green: 0.145, blue: 0.145))
+            .background(theme.headerBackground)
             .overlay(alignment: .bottom) {
+                // Тонкая разделительная линия между шапкой и телом блока
                 Rectangle()
-                    .fill(Color(red: 0.25, green: 0.25, blue: 0.25))
+                    .fill(theme.border)
                     .frame(height: 1)
             }
 
@@ -412,12 +471,12 @@ struct CodeBlockView: View {
                     .textSelection(.enabled)
                     .fixedSize(horizontal: true, vertical: false)
             }
-            .background(codeBackground)
+            .background(theme.background)
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color(red: 0.25, green: 0.25, blue: 0.25), lineWidth: 1)
+                .stroke(theme.border, lineWidth: 1)
         )
     }
 
@@ -436,30 +495,35 @@ struct CodeBlockView: View {
 
 /// Рендерит код с базовой подсветкой синтаксиса для Swift.
 ///
-/// ЦВЕТОВАЯ СХЕМА (Xcode Default Dark):
-/// - Ключевые слова: #FC5FA3 (розово-красный)
-/// - Типы/классы: #5DD8FF (голубой)
-/// - Строки: #FC6A5D (оранжево-красный)
-/// - Числа: #D0BF69 (золотистый)
-/// - Комментарии: #6C7986 (серый)
-/// - Обычный код: #F8F8F2 (почти белый)
+/// АДАПТАЦИЯ ТЕМЫ:
+/// Читает colorScheme из окружения и выбирает соответствующую палитру SyntaxTheme.
+/// Светлая тема = Xcode Default Light, тёмная = Xcode Default Dark.
 private struct SyntaxHighlightedText: View {
 
     let code: String
     let language: String?
 
+    // Читаем тему из окружения — передаётся автоматически от родительского CodeBlockView
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var theme: SyntaxTheme {
+        colorScheme == .dark ? .dark : .light
+    }
+
     var body: some View {
         if language?.lowercased() == "swift" {
             Text(highlightSwift(code))
         } else {
+            // Для неизвестных языков — просто цвет обычного текста из темы
             Text(code)
-                .foregroundStyle(Color(red: 0.97, green: 0.97, blue: 0.95))
+                .foregroundStyle(theme.plainText)
         }
     }
 
     private func highlightSwift(_ code: String) -> AttributedString {
         var result = AttributedString(code)
-        result.foregroundColor = Color(red: 0.97, green: 0.97, blue: 0.95)
+        // Базовый цвет — обычный текст из текущей темы
+        result.foregroundColor = theme.plainText
 
         let keywords = [
             "func", "var", "let", "class", "struct", "enum", "protocol",
@@ -474,16 +538,15 @@ private struct SyntaxHighlightedText: View {
             "@Published", "@StateObject", "@ObservedObject", "Task", "MainActor"
         ]
 
-        let keywordColor = Color(red: 0.988, green: 0.373, blue: 0.639)
         for keyword in keywords {
-            applyColor(keywordColor, toWord: keyword, in: &result)
+            applyColor(theme.keyword, toWord: keyword, in: &result)
         }
 
-        applyTypeHighlighting(color: Color(red: 0.365, green: 0.847, blue: 1.0), in: &result)
-        applyStringHighlighting(color: Color(red: 0.988, green: 0.416, blue: 0.365), in: &result)
-        applyNumberHighlighting(color: Color(red: 0.816, green: 0.749, blue: 0.412), in: &result)
+        applyTypeHighlighting(color: theme.type_, in: &result)
+        applyStringHighlighting(color: theme.string, in: &result)
+        applyNumberHighlighting(color: theme.number, in: &result)
         // Комментарии последними — перекрывают всё остальное внутри себя
-        applyCommentHighlighting(color: Color(red: 0.424, green: 0.475, blue: 0.525), in: &result)
+        applyCommentHighlighting(color: theme.comment, in: &result)
 
         return result
     }
@@ -611,7 +674,7 @@ private struct SyntaxHighlightedText: View {
 
 // MARK: - Preview
 
-#Preview("Markdown с кодом") {
+#Preview("Markdown с кодом — Dark") {
     ScrollView {
         MarkdownTextView(text: """
         Вот как это работает:
@@ -649,20 +712,40 @@ private struct SyntaxHighlightedText: View {
     }
     .frame(width: 600, height: 500)
     .background(Color(NSColor.windowBackgroundColor))
+    .preferredColorScheme(.dark)
 }
 
-#Preview("Только код") {
-    CodeBlockView(
-        code: """
-        func greet(name: String) -> String {
-            // Формируем приветствие
-            let greeting = "Привет, \\(name)!"
-            return greeting
+#Preview("Markdown с кодом — Light") {
+    ScrollView {
+        MarkdownTextView(text: """
+        Вот как это работает:
+
+        ## Архитектура
+
+        Используем паттерн **MVVM** с `@Observable` макросом.
+
+        ```swift
+        // Главная ViewModel
+        @Observable
+        @MainActor
+        final class ChappieViewModel {
+            var messages: [ChatMessage] = []
+            var isThinking: Bool = false
+
+            func send(prompt: String) async {
+                isThinking = true
+                defer { isThinking = false }
+                let result = try await orchestrator.process(prompt)
+                messages.append(.message(isUser: false, text: result))
+            }
         }
-        """,
-        language: "swift"
-    )
-    .padding()
-    .frame(width: 600)
+        ```
+
+        Также нужно настроить **конфигурацию** в `AppConfig.swift`.
+        """)
+        .padding()
+    }
+    .frame(width: 600, height: 500)
     .background(Color(NSColor.windowBackgroundColor))
+    .preferredColorScheme(.light)
 }
