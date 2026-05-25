@@ -119,36 +119,47 @@ ChappieMCP
 **Решение:** Группа `📚 Docs` добавлена в `project.pbxproj` как чисто навигационная PBXGroup.
 - UUID корневой группы: `87DOCS0000000000000000000`
 - Файлы: 5 PBXFileReference с UUID `87DOCS000000000000000000[1-5]`
-- Управляется кодом: `XcodeDocsGroupManager.swift` в ChappieCore
 - **НЕ участвует в сборке**, **НЕ копируется в бандл**
 
-**КРИТИЧНО:** Структура PBXGroup в project.pbxproj должна быть валидной.
-Прошлая ошибка: группа `📚 Docs` была вставлена ВНУТРЬ корневой группы неправильно —
-открывающий `{` корневой группы был перемешан с определением `87DOCS...`.
-Это вызывало `Failed to load container for document at url: ...` при открытии Xcode.
+**УПРАВЛЕНИЕ ГРУППОЙ — ТОЛЬКО ВРУЧНУЮ:**
+`XcodeDocsGroupManager.swift` был УДАЛЁН (2025-07-10).
+Причина: автоматическая запись `project.pbxproj` при каждом запуске приложения
+повреждала файл проекта и вызывала `"Failed to load container for document at url: ..."` в Xcode.
+Текстовая манипуляция pbxproj слишком хрупка для автоматизации.
 
-**Правильная структура PBXGroup:**
+**ПРАВИЛО:** При добавлении нового таргета — Чаппи ВРУЧНУЮ обновляет `project.pbxproj`
+через `write_file`, добавляя:
+1. Новую строку `PBXFileReference` в секцию `/* Begin PBXFileReference section */`
+2. Новую строку в `children = (` группы `87DOCS0000000000000000000`
+
+**Правильная структура PBXGroup в pbxproj:**
 ```
 87BAA46F2FBEED3A001DDBED = {          ← корневая группа (без имени)
     isa = PBXGroup;
     children = (
-        87DOCS0000000000000000000,    ← ссылка на группу Docs
+        87DOCS0000000000000000000,    ← ссылка на группу Docs (ID объекта)
         87BAA47A...,                  ← Chappie
         874865FB...,                  ← ChappieCoreTests
         ...
     );
 };
-87DOCS0000000000000000000 = {         ← определение группы Docs (ОТДЕЛЬНО)
+
+87DOCS0000000000000000000 = {         ← ОТДЕЛЬНЫЙ объект группы Docs
     isa = PBXGroup;
     name = "📚 Docs";
     children = ( ... );
 };
-87BAA4792FBEED3A001DDBED = {          ← Products (ОТДЕЛЬНО)
+
+87BAA4792FBEED3A001DDBED = {          ← ОТДЕЛЬНЫЙ объект Products
     isa = PBXGroup;
     name = Products;
     ...
 };
 ```
+
+**КРИТИЧНО:** Каждый PBXGroup — это ОТДЕЛЬНЫЙ объект в секции `/* Begin PBXGroup section */`.
+Нельзя вкладывать определение одного объекта внутрь `children = (` другого!
+`children` содержит только ID (ссылки), сами объекты определяются отдельно.
 
 ---
 
@@ -165,6 +176,7 @@ ChappieMCP
 
 | Date | Change |
 |------|--------|
+| 2025-07-10 | КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: удалён XcodeDocsGroupManager, группа 📚 Docs теперь статическая |
 | 2025-07-10 | TD-01: зафиксированы зависания build_project; TD-02: тесты требуют выбора таргета |
 | 2025-07-10 | Починен сломанный project.pbxproj (неправильная вложенность PBXGroup вызывала "Failed to load container") |
 | 2025-07-10 | Добавлена группа 📚 Docs в project.pbxproj для навигации по architecture.md файлам |
