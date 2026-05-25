@@ -1,12 +1,40 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ChappieCoreTests.xcscheme — схема для запуска тестов ChappieCoreTests.
+
+  ПОЧЕМУ ЗДЕСЬ НЕТ LaunchAction С ПРИЛОЖЕНИЕМ:
+  Раньше Xcode при ⌘+U пытался "запустить" что-то через LaunchAction.
+  Если там был указан Chappie.app — Xcode убивал текущий запущенный процесс
+  приложения перед запуском тестов. Это закрывало окно чата.
+
+  РЕШЕНИЕ: LaunchAction без BuildableProductRunnable.
+  Тесты — это xctest bundle, они не требуют запуска отдельного приложения.
+  Xcode запускает тест-хост (xctest runner) самостоятельно, без убийства Chappie.app.
+
+  ПРАВИЛЬНЫЙ WORKFLOW:
+  1. Переключить схему в тулбаре на "ChappieCoreTests"
+  2. Нажать ⌘+U — тесты запустятся, окно Чаппи останется открытым
+  3. Переключить схему обратно на "Chappie" для обычной работы
+-->
 <Scheme
    LastUpgradeVersion = "2650"
    version = "1.7">
+
+   <!--
+     BuildAction намеренно пуст — тесты собираются автоматически как зависимость TestAction.
+     Явное перечисление таргетов здесь привело бы к двойной сборке.
+   -->
    <BuildAction
       parallelizeBuildables = "YES"
       buildImplicitDependencies = "YES"
       buildArchitectures = "Automatic">
    </BuildAction>
+
+   <!--
+     TestAction — главная фаза этой схемы.
+     Используем xctestplan для гибкого управления конфигурациями тестов.
+     parallelizable = YES — тесты изолированы через UUID-суффиксы, параллельный запуск безопасен.
+   -->
    <TestAction
       buildConfiguration = "Debug"
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
@@ -32,6 +60,12 @@
          </TestableReference>
       </Testables>
    </TestAction>
+
+   <!--
+     LaunchAction БЕЗ BuildableProductRunnable — ключевое исправление.
+     Пустой LaunchAction говорит Xcode: "не запускай и не убивай никакое приложение".
+     Тест-раннер запустится сам в своём процессе, не трогая Chappie.app.
+   -->
    <LaunchAction
       buildConfiguration = "Debug"
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
@@ -41,9 +75,9 @@
       ignoresPersistentStateOnLaunch = "NO"
       debugDocumentVersioning = "YES"
       debugServiceExtension = "internal"
-      allowLocationSimulation = "YES"
-      queueDebuggingEnableBacktraceRecording = "Yes">
+      allowLocationSimulation = "YES">
    </LaunchAction>
+
    <ProfileAction
       buildConfiguration = "Release"
       shouldUseLaunchSchemeArgsEnv = "YES"
@@ -51,11 +85,14 @@
       useCustomWorkingDirectory = "NO"
       debugDocumentVersioning = "YES">
    </ProfileAction>
+
    <AnalyzeAction
       buildConfiguration = "Debug">
    </AnalyzeAction>
+
    <ArchiveAction
       buildConfiguration = "Release"
       revealArchiveInOrganizer = "YES">
    </ArchiveAction>
+
 </Scheme>

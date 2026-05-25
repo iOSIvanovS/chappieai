@@ -1,16 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Chappie.xcscheme — главная схема для сборки и запуска приложения.
+  Chappie.xcscheme — схема для сборки и запуска основного приложения.
 
-  ПОЧЕМУ ЗДЕСЬ НЕТ ТЕСТОВ:
-  Тесты живут только в ChappieCoreTests.xcscheme.
-  Когда TestAction был продублирован здесь (в Chappie.xcscheme), возникали два эффекта:
-    1. При ⌘+U Xcode видел два TestableReference на один таргет → показывал "(unknown) 0 Excluded Tests"
-    2. Запуск тестов перезапускал приложение (LaunchAction схемы Chappie) → закрывал окно чата
+  ПОЧЕМУ ЗДЕСЬ НЕТ TestAction:
+  Раньше здесь был пустой <TestAction> — он казался безвредным, но Xcode
+  всё равно регистрировал его в Test Navigator как "(unknown) 0 Excluded Tests".
+  Это создавало путаницу: пользователь видел два контейнера вместо одного.
+
+  Полное удаление TestAction из этой схемы устраняет проблему.
+  Все тесты запускаются ТОЛЬКО через схему ChappieCoreTests (⌘+U при активной схеме ChappieCoreTests).
 
   ПРАВИЛЬНЫЙ WORKFLOW:
-  - ⌘+R или треугольник в тулбаре → запускает Chappie.app (эта схема)
-  - ⌘+U по схеме ChappieCoreTests → запускает тесты (другая схема)
+  - Схема "Chappie" активна → ⌘+R запускает приложение, ⌘+U ничего не делает
+  - Схема "ChappieCoreTests" активна → ⌘+U запускает тесты (не убивает приложение)
   - Переключение схемы в тулбаре Xcode: Chappie ↔ ChappieCoreTests
 -->
 <Scheme
@@ -39,17 +41,6 @@
          </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
-
-   <!--
-     TestAction намеренно пуст — тесты запускаются только через ChappieCoreTests.xcscheme.
-     Пустой TestAction нужен чтобы Xcode не жаловался на отсутствие секции.
-   -->
-   <TestAction
-      buildConfiguration = "Debug"
-      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
-      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
-      shouldUseLaunchSchemeArgsEnv = "YES">
-   </TestAction>
 
    <!-- Фаза запуска: запускаем основное приложение Chappie.app -->
    <LaunchAction

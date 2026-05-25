@@ -6,7 +6,7 @@
   Этот файл заменяет папку AI_Docs (architecture.md + project_map.md + semantic.json).
   Обновляй при каждом значимом изменении тестовой архитектуры.
 
-  Последнее обновление: исправлен SDKROOT watchos→macosx, SWIFT_VERSION 5.0→6.0
+  Последнее обновление: исправлены xcscheme файлы — устранён (unknown) 0 Excluded Tests и закрытие окна
 -->
 
 # ChappieCoreTests — Архитектура тестового таргета
@@ -47,7 +47,33 @@ ChappieCoreTests/
 
 ---
 
-## 3. Тестовые файлы
+## 3. Правила xcscheme (КРИТИЧЕСКИ ВАЖНО — не нарушать!)
+
+### Проблемы которые были и как они решены:
+
+#### Проблема 1: `(unknown) 0 Excluded Tests` в Test Navigator
+**Причина:** В `Chappie.xcscheme` был пустой `<TestAction>` блок. Xcode регистрирует
+ЛЮБОЙ TestAction в Test Navigator — даже пустой — как анонимный контейнер "(unknown)".
+
+**Решение:** Полностью удалён `<TestAction>` из `Chappie.xcscheme`. Теперь там только
+`BuildAction` и `LaunchAction` для запуска приложения.
+
+#### Проблема 2: При ⌘+U закрывалось окно Чаппи
+**Причина:** В `ChappieCoreTests.xcscheme` в `<LaunchAction>` был `<BuildableProductRunnable>`
+указывающий на `Chappie.app`. Xcode перед запуском тестов убивал процесс этого приложения.
+
+**Решение:** `<LaunchAction>` в `ChappieCoreTests.xcscheme` теперь **без** `<BuildableProductRunnable>`.
+Пустой LaunchAction = "не запускай и не убивай никакое приложение". Тест-раннер xctest
+запускается в своём процессе, не трогая работающий Chappie.app.
+
+### Правильный workflow запуска тестов:
+1. Переключить схему в тулбаре Xcode на **"ChappieCoreTests"**
+2. Нажать **⌘+U** — тесты запустятся, окно Чаппи останется открытым
+3. Переключить схему обратно на **"Chappie"** для обычной работы
+
+---
+
+## 4. Тестовые файлы
 
 ### `AppConfigTests.swift`
 Тестирует структуру `AppConfig` — единственный источник истины для параметров системы.
@@ -126,7 +152,7 @@ tempDir/
 
 ---
 
-## 4. Правила написания тестов
+## 5. Правила написания тестов
 
 ### Обязательные правила
 
@@ -143,10 +169,11 @@ tempDir/
 
 ---
 
-## 5. Запуск тестов
+## 6. Запуск тестов
 
 ### Через Xcode (основной способ)
-`⌘+U` по схеме `ChappieCoreTests` — запускает все тесты через `ChappieCoreTests.xctestplan`.
+1. Переключить схему на **"ChappieCoreTests"** в тулбаре
+2. Нажать **⌘+U**
 
 ### ⚠️ ВАЖНО: run_tests(target:) НЕ РАБОТАЕТ для этого таргета
 
@@ -155,11 +182,11 @@ tempDir/
 `testTarget` — инструмент всегда возвращает "no tests found".
 
 **Это не баг тестов, это ограничение MCP-инструмента.**
-Тесты работают корректно через Xcode (⌘+U).
+Тесты работают корректно через Xcode (⌘+U при активной схеме ChappieCoreTests).
 
 ---
 
-## 6. Build Settings (исправлено 2026-05-25)
+## 7. Build Settings (исправлено 2026-05-25)
 
 Таргет `ChappieCoreTests` в `project.pbxproj` должен иметь:
 
@@ -184,3 +211,4 @@ SWIFT_VERSION = 6.0;                 // ← было 5.0
 | 2026-05-24 | Рефакторинг: AI_Docs/ → один файл architecture.md | Chappie AI |
 | 2026-05-25 | Исправлен SDKROOT watchos→macosx, SWIFT_VERSION 5.0→6.0 | Chappie AI |
 | 2026-05-25 | Задокументировано ограничение run_tests(target:) | Chappie AI |
+| 2026-05-25 | Исправлены xcscheme: удалён TestAction из Chappie.xcscheme, убран BuildableProductRunnable из LaunchAction в ChappieCoreTests.xcscheme | Chappie AI |
