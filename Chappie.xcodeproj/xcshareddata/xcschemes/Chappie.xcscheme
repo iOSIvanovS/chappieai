@@ -1,18 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Главная схема проекта Chappie.
-  
-  ПОЧЕМУ эта схема создана отдельно:
-  Ранее существовала только схема ChappieCoreTests.xcscheme — запуск тестов требовал
-  переключения таргета в Xcode. Теперь схема Chappie является главной: она собирает
-  приложение, запускает его, И запускает тесты через ChappieCoreTests.xctestplan.
-  Это позволяет делать ⌘+U прямо на схеме Chappie без переключений.
+  Chappie.xcscheme — главная схема для сборки и запуска приложения.
+
+  ПОЧЕМУ ЗДЕСЬ НЕТ ТЕСТОВ:
+  Тесты живут только в ChappieCoreTests.xcscheme.
+  Когда TestAction был продублирован здесь (в Chappie.xcscheme), возникали два эффекта:
+    1. При ⌘+U Xcode видел два TestableReference на один таргет → показывал "(unknown) 0 Excluded Tests"
+    2. Запуск тестов перезапускал приложение (LaunchAction схемы Chappie) → закрывал окно чата
+
+  ПРАВИЛЬНЫЙ WORKFLOW:
+  - ⌘+R или треугольник в тулбаре → запускает Chappie.app (эта схема)
+  - ⌘+U по схеме ChappieCoreTests → запускает тесты (другая схема)
+  - Переключение схемы в тулбаре Xcode: Chappie ↔ ChappieCoreTests
 -->
 <Scheme
    LastUpgradeVersion = "2650"
    version = "1.7">
 
-   <!-- Фаза сборки: собираем основное приложение Chappie -->
+   <!-- Фаза сборки: собираем только основное приложение Chappie.app -->
    <BuildAction
       parallelizeBuildables = "YES"
       buildImplicitDependencies = "YES"
@@ -36,34 +41,14 @@
    </BuildAction>
 
    <!--
-     Фаза тестирования: используем тот же xctestplan что и в ChappieCoreTests.xcscheme.
-     Благодаря этому ⌘+U на главной схеме запускает все тесты ChappieCoreTests
-     без необходимости переключаться на отдельную тест-схему.
+     TestAction намеренно пуст — тесты запускаются только через ChappieCoreTests.xcscheme.
+     Пустой TestAction нужен чтобы Xcode не жаловался на отсутствие секции.
    -->
    <TestAction
       buildConfiguration = "Debug"
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES">
-      <TestPlans>
-         <TestPlanReference
-            reference = "container:ChappieCoreTests.xctestplan"
-            default = "YES">
-         </TestPlanReference>
-      </TestPlans>
-      <Testables>
-         <TestableReference
-            skipped = "NO"
-            parallelizable = "YES">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "874865F92FC3029E00F5E876"
-               BuildableName = "ChappieCoreTests.xctest"
-               BlueprintName = "ChappieCoreTests"
-               ReferencedContainer = "container:Chappie.xcodeproj">
-            </BuildableReference>
-         </TestableReference>
-      </Testables>
    </TestAction>
 
    <!-- Фаза запуска: запускаем основное приложение Chappie.app -->
