@@ -11,29 +11,24 @@
 // в Swift 6. Это гарантирует, что все операции с файловой системой выполняются последовательно,
 // исключая состояния гонки при параллельных запросах от нескольких чатов или агентов.
 //
-// СТРУКТУРА ПАМЯТИ (НОВЫЙ ФОРМАТ после рефакторинга AI_Docs → один файл):
+// СТРУКТУРА ПАМЯТИ (ФИНАЛЬНЫЙ ФОРМАТ — без папки AI_Docs):
 //
 // ├── ~/Documents/Chappie/semantic.json  — глобальная семантическая память (кросс-проектная)
 // └── <WorkspaceRoot>/
+//     ├── architecture.md                — архитектура всего проекта (корень воркспейса)
 //     ├── Chappie/
-//     │   ├── architecture.md            — единый документ архитектуры таргета (НОВОЕ МЕСТО)
-//     │   └── AI_Docs/
-//     │       └── semantic.json          — семантическая память таргета (данные, не документация)
-//     └── ChappieCore/
-//         ├── architecture.md            — единый документ архитектуры таргета (НОВОЕ МЕСТО)
-//         └── AI_Docs/
-//             └── semantic.json          — семантическая память таргета
+//     │   ├── architecture.md            — архитектура таргета
+//     │   └── semantic.json              — семантическая память таргета
+//     ├── ChappieCore/
+//     │   ├── architecture.md
+//     │   └── semantic.json
+//     └── ...
 //
-// ПОЧЕМУ ТАКОЙ ГИБРИД:
-// - architecture.md лежит в корне таргета — легко найти, не нужно заходить в папку
-// - semantic.json остаётся в AI_Docs/ — это данные, которые программно читаются/пишутся
-//   через MemoryManager, и их лучше изолировать от исходного кода таргета
-//
-// СТАРЫЙ ФОРМАТ (до рефакторинга):
-// - Chappie/AI_Docs/architecture.md
-// - Chappie/AI_Docs/project_map.md
-// - Chappie/AI_Docs/semantic.json
-// Папки AI_Docs/ будут удалены пользователем после проверки новых файлов.
+// ПОЧЕМУ УБРАЛИ AI_Docs/:
+// Папка AI_Docs/ была промежуточным решением при рефакторинге. Теперь оба файла
+// (architecture.md и semantic.json) лежат прямо в корне таргета — проще, чище,
+// нет лишнего уровня вложенности. semantic.json — это данные памяти ИИ, а не
+// "документация", поэтому его место рядом с architecture.md, в корне таргета.
 
 import Foundation
 
@@ -74,22 +69,22 @@ public enum TargetKind: Sendable {
 
 /// Описание одного таргета воркспейса.
 ///
-/// НОВЫЙ ФОРМАТ (после рефакторинга AI_Docs → один файл):
-/// - architectureFileURL → <target>/architecture.md (в корне таргета, не в AI_Docs/)
-/// - semanticFileURL     → <target>/AI_Docs/semantic.json (данные остаются в AI_Docs/)
-/// - projectMapFileURL   → УДАЛЕНО (содержимое перенесено в architecture.md)
+/// ФИНАЛЬНЫЙ ФОРМАТ (без AI_Docs/):
+/// - architectureFileURL → <target>/architecture.md
+/// - semanticFileURL     → <target>/semantic.json
 ///
+/// Оба файла лежат прямо в корне таргета — нет лишнего уровня вложенности.
 /// Структура намеренно сделана Sendable для безопасной передачи между акторами в Swift 6.
 public struct WorkspaceTarget: Sendable {
     public let name: String
     public let directoryURL: URL
-    public let aiDocsURL: URL
+
+    /// Путь к файлу семантической памяти таргета: <target>/semantic.json.
+    /// ФИНАЛЬНОЕ МЕСТО: корень таргета (не AI_Docs/).
     public let semanticFileURL: URL
 
-    /// Путь к единому файлу архитектуры таргета.
-    /// НОВОЕ МЕСТО: <target>/architecture.md (в корне таргета, не в AI_Docs/).
-    /// Причина переноса: один файл вместо трёх (architecture.md + project_map.md + semantic.json).
-    /// Так проще найти и поддерживать актуальным.
+    /// Путь к единому файлу архитектуры таргета: <target>/architecture.md.
+    /// Лежит рядом с semantic.json в корне таргета.
     public let architectureFileURL: URL
 
     public let kind: TargetKind
@@ -99,13 +94,9 @@ public struct WorkspaceTarget: Sendable {
         self.directoryURL = directoryURL
         self.kind = kind
 
-        // AI_Docs/ содержит только semantic.json — программные данные памяти.
-        // Документация (architecture.md) теперь лежит в корне таргета.
-        self.aiDocsURL = directoryURL.appendingPathComponent("AI_Docs", isDirectory: true)
-        self.semanticFileURL = directoryURL.appendingPathComponent("AI_Docs/semantic.json")
-
-        // architecture.md лежит в корне таргета — единый документ архитектуры.
-        // Это новое место после рефакторинга (было: AI_Docs/architecture.md).
+        // Оба файла памяти лежат прямо в корне таргета — без подпапок.
+        // Это финальный формат после отказа от папки AI_Docs/.
+        self.semanticFileURL = directoryURL.appendingPathComponent("semantic.json")
         self.architectureFileURL = directoryURL.appendingPathComponent("architecture.md")
     }
 }
@@ -129,7 +120,7 @@ public struct TargetScanResult: Sendable {
 ///
 /// Архитектура хранения:
 /// - Глобальная память: ~/Documents/Chappie/semantic.json
-/// - Память таргетов: <Workspace>/<TargetName>/AI_Docs/semantic.json
+/// - Память таргетов: <Workspace>/<TargetName>/semantic.json
 /// - Документация: <Workspace>/<TargetName>/architecture.md
 ///
 /// Почему actor: MemoryManager работает с файловой системой из нескольких мест
@@ -177,13 +168,12 @@ public actor MemoryManager {
     /// Инициализирует файловую структуру памяти для всего воркспейса.
     ///
     /// Что делает:
-    /// 1. Очищает ошибочные папки AI_Docs внутри Xcode-пакетов (.xcodeproj, .xcworkspace, .playground).
-    /// 2. Создаёт глобальную папку ~/Documents/Chappie и файл semantic.json (если нет).
-    /// 3. Сканирует директории первого уровня в workspaceURL.
-    /// 4. Фильтрует служебные, скрытые папки и пакеты Xcode.
-    /// 5. Определяет тип каждого таргета (App или Library).
-    /// 6. Создаёт AI_Docs/semantic.json и architecture.md для каждого таргета (если нет).
-    /// 7. Мигрирует старый корневой AI_Docs/semantic.json в App-таргет (если был).
+    /// 1. Создаёт глобальную папку ~/Documents/Chappie и файл semantic.json (если нет).
+    /// 2. Сканирует директории первого уровня в workspaceURL.
+    /// 3. Фильтрует служебные, скрытые папки и пакеты Xcode.
+    /// 4. Определяет тип каждого таргета (App или Library).
+    /// 5. Создаёт semantic.json и architecture.md для каждого таргета (если нет).
+    /// 6. Очищает устаревшие папки AI_Docs/ (миграция со старого формата).
     ///
     /// Метод идемпотентен — повторный вызов не затирает существующие данные.
     public func initializeWorkspaceMemory() async {
@@ -192,23 +182,20 @@ public actor MemoryManager {
 
         print("[MemoryManager] Начало инициализации структуры памяти...")
 
-        // 1. Очищаем ошибочно созданные папки AI_Docs внутри служебных пакетов Xcode
-        cleanupInvalidAIDocs()
-
-        // 2. Глобальная память
+        // 1. Глобальная память
         setupGlobalMemory()
 
-        // 3. Сканирование и классификация таргетов воркспейса
+        // 2. Сканирование и классификация таргетов воркспейса
         let discovered = discoverTargets()
         self.targets = discovered
 
-        // 4. Создание AI_Docs/semantic.json и architecture.md для каждого таргета
+        // 3. Создание semantic.json и architecture.md для каждого таргета
         for target in targets {
-            await setupTargetFiles(for: target)
+            setupTargetFiles(for: target)
         }
 
-        // 5. Миграция старого корневого AI_Docs/semantic.json
-        migrateOldRootAIDocs()
+        // 4. Очищаем устаревшие папки AI_Docs/ если они остались от предыдущих версий
+        cleanupLegacyAIDocs()
 
         isInitialized = true
         print("[MemoryManager] ✅ Инициализация структуры завершена. Зарегистрировано таргетов: \(targets.count)")
@@ -384,34 +371,6 @@ public actor MemoryManager {
         await initializeWorkspaceMemory()
     }
 
-    /// Находит и удаляет ошибочные папки AI_Docs, созданные внутри служебных пакетов Xcode
-    /// (таких как .xcodeproj, .xcworkspace, .playground).
-    /// Зачем: Предыдущая версия ошибочно считала эти пакеты обычными папками-таргетами.
-    private func cleanupInvalidAIDocs() {
-        guard let contents = try? fileManager.contentsOfDirectory(
-            at: workspaceURL,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return
-        }
-
-        for url in contents {
-            // Проверяем, что это директория
-            guard (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else {
-                continue
-            }
-
-            // Если папка имеет расширение (например, Chappie.xcodeproj) — это служебный пакет Xcode
-            if !url.pathExtension.isEmpty {
-                let invalidAIDocsURL = url.appendingPathComponent("AI_Docs")
-                if fileManager.fileExists(atPath: invalidAIDocsURL.path) {
-                    try? fileManager.removeItem(at: invalidAIDocsURL)
-                }
-            }
-        }
-    }
-
     /// Создаёт глобальную папку ~/Documents/Chappie и файл semantic.json.
     /// Если файл уже существует — не трогает его, чтобы не затереть накопленные данные.
     private func setupGlobalMemory() {
@@ -433,13 +392,12 @@ public actor MemoryManager {
     /// Логика фильтрации:
     /// - Скрытые папки (начинаются с '.') — системные, не наши.
     /// - 'build', 'DerivedData', 'Pods', 'Frameworks' — артефакты сборки, не исходники.
-    /// - 'AI_Docs' в корне — старый формат, будет мигрирован отдельно.
     /// - '.git', '.swiftpm' — служебные папки VCS и SPM.
     /// - Директории с расширением (например, .xcodeproj, .xcworkspace) — пакеты Xcode, пропускаем!
     private func discoverTargets() -> [WorkspaceTarget] {
         // Папки, которые заведомо не являются таргетами исходного кода
         let excludedNames: Set<String> = [
-            "build", "DerivedData", "Pods", "Frameworks", "AI_Docs",
+            "build", "DerivedData", "Pods", "Frameworks",
             ".git", ".swiftpm"
         ]
 
@@ -518,26 +476,20 @@ public actor MemoryManager {
 
     /// Создаёт файлы памяти и документации для указанного таргета.
     ///
-    /// НОВЫЙ ФОРМАТ (после рефакторинга):
-    /// - AI_Docs/semantic.json — данные памяти (программно читается/пишется)
-    /// - architecture.md — документация архитектуры (в корне таргета, не в AI_Docs/)
+    /// ФИНАЛЬНЫЙ ФОРМАТ (без AI_Docs/):
+    /// - semantic.json   — данные памяти, прямо в корне таргета
+    /// - architecture.md — документация архитектуры, прямо в корне таргета
     ///
     /// Идемпотентность: если файлы уже существуют — не трогает их.
     /// Это защищает накопленные данные при повторных запусках приложения.
-    private func setupTargetFiles(for target: WorkspaceTarget) async {
-        // Создаём папку AI_Docs если её нет (нужна только для semantic.json)
-        if !fileManager.fileExists(atPath: target.aiDocsURL.path) {
-            try? fileManager.createDirectory(at: target.aiDocsURL, withIntermediateDirectories: true)
-        }
-
-        // semantic.json — пустой JSON-объект как начальное состояние
-        // Это программные данные памяти, они хранятся в AI_Docs/
+    private func setupTargetFiles(for target: WorkspaceTarget) {
+        // semantic.json — пустой JSON-объект как начальное состояние.
+        // Лежит прямо в корне таргета, рядом с architecture.md.
         if !fileManager.fileExists(atPath: target.semanticFileURL.path) {
             try? "{}".write(to: target.semanticFileURL, atomically: true, encoding: .utf8)
         }
 
         // architecture.md — единый документ архитектуры таргета.
-        // НОВОЕ МЕСТО: корень таргета, не AI_Docs/.
         // Создаём только если не существует — не затираем реальную документацию!
         if !fileManager.fileExists(atPath: target.architectureFileURL.path) {
             let architectureTemplate = makeArchitectureTemplate(for: target)
@@ -545,45 +497,68 @@ public actor MemoryManager {
         }
     }
 
-    /// Мигрирует старый корневой AI_Docs/semantic.json в App-таргет.
+    /// Удаляет устаревшие папки AI_Docs/ из всех таргетов воркспейса.
     ///
-    /// Зачем: предыдущая версия MemoryManager хранила память в корне воркспейса.
-    /// Новая архитектура хранит память внутри каждого таргета.
-    /// Миграция сохраняет накопленные данные и убирает устаревшую структуру.
-    private func migrateOldRootAIDocs() {
-        let oldAIDocsURL = workspaceURL.appendingPathComponent("AI_Docs")
-        let oldSemanticURL = oldAIDocsURL.appendingPathComponent("semantic.json")
+    /// Зачем: предыдущая версия MemoryManager хранила semantic.json в AI_Docs/.
+    /// Новая архитектура хранит его прямо в корне таргета.
+    /// При каждом запуске проверяем и удаляем AI_Docs/ если они ещё есть.
+    ///
+    /// ВАЖНО: Перед удалением мигрируем данные из AI_Docs/semantic.json в корневой semantic.json,
+    /// чтобы не потерять накопленные данные памяти.
+    private func cleanupLegacyAIDocs() {
+        for target in targets {
+            let legacyAIDocsURL = target.directoryURL.appendingPathComponent("AI_Docs")
 
-        // Если старого файла нет — мигрировать нечего
-        guard fileManager.fileExists(atPath: oldSemanticURL.path) else { return }
+            // Если папки AI_Docs нет — всё чисто, идём дальше
+            guard fileManager.fileExists(atPath: legacyAIDocsURL.path) else { continue }
 
-        // Читаем старые данные
-        let oldStorage = readStorage(at: oldSemanticURL)
-        guard !oldStorage.isEmpty else {
-            // Старый файл пуст — просто НЕ удаляем корневую AI_Docs (там может быть chat_history.json!)
+            // Пробуем мигрировать данные из старого semantic.json
+            let legacySemanticURL = legacyAIDocsURL.appendingPathComponent("semantic.json")
+            if fileManager.fileExists(atPath: legacySemanticURL.path) {
+                let oldStorage = readStorage(at: legacySemanticURL)
+                if !oldStorage.isEmpty {
+                    // Мигрируем только те ключи, которых ещё нет в новом файле
+                    var newStorage = readStorage(at: target.semanticFileURL)
+                    var didMigrate = false
+                    for (key, record) in oldStorage where newStorage[key] == nil {
+                        newStorage[key] = record
+                        didMigrate = true
+                    }
+                    if didMigrate {
+                        writeStorage(newStorage, to: target.semanticFileURL)
+                        print("[MemoryManager] 📦 Мигрированы данные из \(target.name)/AI_Docs/semantic.json")
+                    }
+                }
+            }
+
+            // Удаляем всю папку AI_Docs/ — она больше не нужна
+            do {
+                try fileManager.removeItem(at: legacyAIDocsURL)
+                print("[MemoryManager] 🗑️ Удалена устаревшая папка: \(target.name)/AI_Docs/")
+            } catch {
+                print("[MemoryManager] ⚠️ Не удалось удалить \(target.name)/AI_Docs/: \(error)")
+            }
+        }
+
+        // Также удаляем корневую AI_Docs/ воркспейса (если осталась от старых версий)
+        // ИСКЛЮЧЕНИЕ: НЕ удаляем если там есть chat_history.json — это активные данные!
+        let rootAIDocsURL = workspaceURL.appendingPathComponent("AI_Docs")
+        guard fileManager.fileExists(atPath: rootAIDocsURL.path) else { return }
+
+        let chatHistoryURL = rootAIDocsURL.appendingPathComponent("chat_history.json")
+        if fileManager.fileExists(atPath: chatHistoryURL.path) {
+            // chat_history.json всё ещё в старом месте — не трогаем папку
+            print("[MemoryManager] ⚠️ Корневая AI_Docs/ содержит chat_history.json — не удаляем")
             return
         }
 
-        // Определяем целевой таргет для миграции: App-таргет или первый доступный
-        guard let primaryTarget = appTarget() ?? targets.first else { return }
-
-        // Читаем текущее состояние целевого semantic.json
-        var targetStorage = readStorage(at: primaryTarget.semanticFileURL)
-
-        // Переносим только те ключи, которых ещё нет в целевом файле.
-        // Существующие данные имеют приоритет — не затираем то, что уже есть.
-        var didMigrate = false
-        for (key, record) in oldStorage where targetStorage[key] == nil {
-            targetStorage[key] = record
-            didMigrate = true
+        // Папка пустая или содержит только semantic.json — можно удалить
+        do {
+            try fileManager.removeItem(at: rootAIDocsURL)
+            print("[MemoryManager] 🗑️ Удалена корневая устаревшая папка AI_Docs/")
+        } catch {
+            print("[MemoryManager] ⚠️ Не удалось удалить корневую AI_Docs/: \(error)")
         }
-
-        if didMigrate {
-            writeStorage(targetStorage, to: primaryTarget.semanticFileURL)
-        }
-
-        // ВАЖНО: НЕ удаляем корневую AI_Docs/! Там лежит chat_history.json.
-        // Удаление папки AI_Docs/ будет сделано пользователем вручную после проверки.
     }
 
     // MARK: - Приватные вспомогательные методы
@@ -680,6 +655,7 @@ public actor MemoryManager {
         ```
         \(target.name)/
         ├── architecture.md     # Этот файл
+        ├── semantic.json       # Память ИИ (создаётся автоматически)
         └── ...                 # Исходные файлы
         ```
 

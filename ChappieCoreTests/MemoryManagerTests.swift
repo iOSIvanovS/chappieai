@@ -14,6 +14,11 @@
 // Это создаёт нежелательные побочные эффекты между тестами и засоряет реальную память.
 // Вместо этого тестируем через scope: .project с изолированным воркспейсом.
 //
+// ФИНАЛЬНЫЙ ФОРМАТ ХРАНЕНИЯ (без AI_Docs/):
+// - <target>/semantic.json    — данные памяти прямо в корне таргета
+// - <target>/architecture.md  — документация архитектуры прямо в корне таргета
+// Папка AI_Docs/ больше не создаётся — она удаляется при инициализации если осталась от старых версий.
+//
 // ПОЧЕМУ ТЕСТИРУЕМ ИМЕННО ЭТО:
 // MemoryManager — actor с файловой системой. Ошибки здесь приводят к потере
 // контекста ИИ или его засорению. Тесты защищают от регрессий при рефакторинге.
@@ -79,7 +84,7 @@ struct MemoryManagerTests {
         // Уникальный ключ с UUID — защита от конфликтов при параллельных тестах
         let uniqueKey = "test_key_\(UUID().uuidString)"
 
-        // Сохраняем в scope .project — пишет в TestApp/AI_Docs/semantic.json (изолировано!)
+        // Сохраняем в scope .project — пишет в TestApp/semantic.json (изолировано!)
         await manager.saveMemory(
             key: uniqueKey,
             type: "fact",
@@ -227,32 +232,79 @@ struct MemoryManagerTests {
 
     // MARK: - Тесты инициализации
 
-    /// Проверяем что initializeWorkspaceMemory создаёт нужные директории.
-    @Test("Инициализация создаёт директорию AI_Docs")
-    func initializationCreatesAIDocs() async throws {
+    /// Проверяем что initializeWorkspaceMemory создаёт semantic.json прямо в корне таргета.
+    ///
+    /// ФИНАЛЬНЫЙ ФОРМАТ: semantic.json лежит в <target>/semantic.json, НЕ в AI_Docs/.
+    /// Папка AI_Docs/ не должна создаваться вообще.
+    @Test("Инициализация создаёт semantic.json в корне таргета (без AI_Docs)")
+    func initializationCreatesSemanticInTargetRoot() async throws {
         let workspace = try makeTempWorkspace()
         defer { cleanup(workspace) }
 
         let manager = MemoryManager(workspaceURL: workspace)
         await manager.initializeWorkspaceMemory()
 
-        // AI_Docs внутри TestApp-таргета должен существовать после инициализации
-        let aiDocsDir = workspace
-            .appendingPathComponent("TestApp/AI_Docs", isDirectory: true)
-        #expect(FileManager.default.fileExists(atPath: aiDocsDir.path))
+        // semantic.json должен лежать прямо в корне TestApp/, НЕ в AI_Docs/
+        let semanticFile = workspace.appendingPathComponent("TestApp/semantic.json")
+        #expect(FileManager.default.fileExists(atPath: semanticFile.path),
+                "semantic.json должен существовать в корне таргета")
 
-        // semantic.json внутри AI_Docs должен существовать
-        let semanticFile = workspace
-            .appendingPathComponent("TestApp/AI_Docs/semantic.json")
-        #expect(FileManager.default.fileExists(atPath: semanticFile.path))
+        // AI_Docs/ НЕ должна создаваться — это устаревший формат
+        let aiDocsDir = workspace.appendingPathComponent("TestApp/AI_Docs")
+        #expect(!FileManager.default.fileExists(atPath: aiDocsDir.path),
+                "Папка AI_Docs/ не должна создаваться в новом формате")
+    }
+
+    /// Проверяем что устаревшая папка AI_Docs/ удаляется при инициализации.
+    ///
+    /// Симулируем старый формат: создаём TestApp/AI_Docs/semantic.json с данными.
+    /// После initializeWorkspaceMemory() папка AI_Docs/ должна исчезнуть,
+    /// а данные — мигрировать в TestApp/semantic.json.
+    @Test("Инициализация удаляет устаревшую AI_Docs и мигрирует данные")
+    func initializationCleansUpLegacyAIDocs() async throws {
+        let workspace = try makeTempWorkspace()
+        defer { cleanup(workspace) }
+
+        // Создаём устаревшую структуру AI_Docs/ с данными
+        let legacyAIDocsDir = workspace.appendingPathComponent("TestApp/AI_Docs")
+        try FileManager.default.createDirectory(at: legacyAIDocsDir, withIntermediateDirectories: true)
+
+        // Кладём туда semantic.json с реальными данными для миграции
+        let legacySemanticURL = legacyAIDocsDir.appendingPathComponent("semantic.json")
+        let legacyKey = "legacy_key_\(UUID().uuidString)"
+        let legacyData: [String: Any] = [
+            legacyKey: [
+                "type": "fact",
+                "timestamp": "2025-01-01T00:00:00Z",
+                "data": "\"legacy value\""
+            ]
+        ]
+        let legacyJSON = try JSONSerialization.data(withJSONObject: legacyData)
+        try legacyJSON.write(to: legacySemanticURL)
+
+        // Запускаем инициализацию — она должна:
+        // 1. Создать TestApp/semantic.json
+        // 2. Мигрировать данные из AI_Docs/semantic.json
+        // 3. Удалить папку AI_Docs/
+        let manager = MemoryManager(workspaceURL: workspace)
+        await manager.initializeWorkspaceMemory()
+
+        // AI_Docs/ должна исчезнуть
+        #expect(!FileManager.default.fileExists(atPath: legacyAIDocsDir.path),
+                "Папка AI_Docs/ должна быть удалена после инициализации")
+
+        // Данные должны быть доступны через новый путь
+        let result = await manager.readMemory(key: legacyKey)
+        #expect(result == "\"legacy value\"",
+                "Данные из AI_Docs/semantic.json должны мигрировать в корневой semantic.json")
     }
 
     /// Проверяем что повторная инициализация не затирает существующие данные.
     ///
     /// СТРАТЕГИЯ ТЕСТА:
-    /// Создаём manager1, инициализируем, сохраняем данные в scope .project (изолировано в TestApp/AI_Docs/).
+    /// Создаём manager1, инициализируем, сохраняем данные в scope .project (изолировано в TestApp/semantic.json).
     /// Затем создаём manager2 с тем же workspaceURL — симулирует перезапуск приложения.
-    /// manager2.initializeWorkspaceMemory() не должен затереть TestApp/AI_Docs/semantic.json.
+    /// manager2.initializeWorkspaceMemory() не должен затереть TestApp/semantic.json.
     /// Читаем через manager2 — данные должны сохраниться.
     @Test("Повторная инициализация не затирает данные (идемпотентность)")
     func initializationIsIdempotent() async throws {
