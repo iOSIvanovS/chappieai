@@ -24,6 +24,11 @@
 //   ├── ChappieCoreTests/architecture.md
 //   └── ChappieMCP/architecture.md
 //
+//   <WorkspaceRoot>/Chappie.xcodeproj/project.pbxproj
+//   └── Группа "📚 Docs" — навигационная группа в Xcode Navigator.
+//       Автоматически синхронизируется при каждом запуске через XcodeDocsGroupManager.
+//       Содержит ссылки на все architecture.md (корневой + по одному на каждый таргет).
+//
 // ПОЧЕМУ ОДИН ФАЙЛ ПАМЯТИ:
 // Раньше semantic.json создавался в каждом таргете воркспейса, что порождало:
 // - Дублирование данных между таргетами
@@ -37,6 +42,12 @@
 // Это ДОКУМЕНТАЦИЯ, а не данные. Чаппи читает и пишет его через инструменты
 // read_file/write_file как обычный текстовый файл. MemoryManager его не трогает
 // (только создаёт шаблон при первом обнаружении нового таргета).
+//
+// ГРУППА "📚 Docs" В XCODE:
+// После сканирования таргетов MemoryManager вызывает XcodeDocsGroupManager.sync(),
+// который обновляет pbxproj так, чтобы группа Docs содержала актуальный список
+// ссылок на architecture.md. Это позволяет открывать файлы прямо из Xcode Navigator.
+// Синхронизация идемпотентна — если состояние актуально, pbxproj не перезаписывается.
 
 import Foundation
 
@@ -121,6 +132,7 @@ public struct TargetScanResult: Sendable {
 /// Архитектура хранения:
 /// - Вся семантическая память: ~/Documents/Chappie/semantic.json (ОДИН файл)
 /// - Документация таргетов: <Workspace>/<TargetName>/architecture.md
+/// - Навигация в Xcode: группа "📚 Docs" в project.pbxproj (синхронизируется автоматически)
 ///
 /// Почему actor: MemoryManager работает с файловой системой из нескольких мест
 /// параллельно. Actor гарантирует сериализацию доступа и отсутствие гонок данных
@@ -174,6 +186,7 @@ public actor MemoryManager {
     /// 4. Определяет тип каждого таргета (App или Library).
     /// 5. Создаёт architecture.md для каждого нового таргета (если нет).
     /// 6. Очищает устаревшие папки AI_Docs/ и semantic.json в таргетах (миграция).
+    /// 7. Синхронизирует группу "📚 Docs" в Xcode Navigator через XcodeDocsGroupManager.
     ///
     /// Метод идемпотентен — повторный вызов не затирает существующие данные.
     public func initializeWorkspaceMemory() async {
@@ -196,6 +209,14 @@ public actor MemoryManager {
 
         // 4. Очищаем устаревшие артефакты: AI_Docs/ и semantic.json в корнях таргетов
         cleanupLegacyFiles()
+
+        // 5. Синхронизируем группу "📚 Docs" в Xcode Navigator.
+        //    Это гарантирует что при добавлении нового таргета (и его architecture.md)
+        //    ссылка сразу появится в Xcode Navigator без ручного вмешательства.
+        //    XcodeDocsGroupManager.sync() идемпотентен — если состояние актуально,
+        //    pbxproj не перезаписывается.
+        let docsManager = XcodeDocsGroupManager(workspaceURL: workspaceURL)
+        await docsManager.sync(targets: targets)
 
         isInitialized = true
         print("[MemoryManager] ✅ Инициализация завершена. Таргетов: \(targets.count). Память: ~/Documents/Chappie/semantic.json")
