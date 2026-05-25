@@ -96,13 +96,6 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		8748660E2FC305DF00F5E876 /* Frameworks */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			name = Frameworks;
-			sourceTree = "<group>";
-		};
 		87BAA46F2FBEED3A001DDBED = {
 			isa = PBXGroup;
 			children = (
@@ -110,7 +103,6 @@
 				87BAA47A2FBEED3A001DDBED /* Chappie */,
 				874865FB2FC3029E00F5E876 /* ChappieCoreTests */,
 				874866242FC35DF000F5E876 /* ChappieMCP */,
-				8748660E2FC305DF00F5E876 /* Frameworks */,
 				87BAA4792FBEED3A001DDBED /* Products */,
 			);
 			sourceTree = "<group>";
