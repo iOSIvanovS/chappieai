@@ -49,9 +49,7 @@
 		8748660D2FC304B500F5E876 /* ChappieCoreTests.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = ChappieCoreTests.xctestplan; sourceTree = "<group>"; };
 		874866232FC35DF000F5E876 /* ChappieMCP */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = ChappieMCP; sourceTree = BUILT_PRODUCTS_DIR; };
 		87BAA4782FBEED3A001DDBED /* Chappie.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Chappie.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		/* Ссылки на файлы architecture.md — только для навигации в Xcode Navigator.
-		   Не участвуют в сборке, не копируются в бандл.
-		   Управляются автоматически через XcodeDocsGroupManager при старте приложения. */
+		/* Ссылки на файлы архитектуры — только для навигации в Xcode, не участвуют в сборке */
 		87DOCS0001000000000000001 /* architecture.md (корень) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (корень)"; path = architecture.md; sourceTree = "<group>"; };
 		87DOCS0000000000000000002 /* architecture.md (Chappie) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (Chappie)"; path = Chappie/architecture.md; sourceTree = "<group>"; };
 		87DOCS0000000000000000003 /* architecture.md (ChappieCore) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (ChappieCore)"; path = ChappieCore/architecture.md; sourceTree = "<group>"; };
@@ -104,8 +102,8 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		/* Корневая группа проекта — содержит все таргеты, группу Docs и Products.
-		   Это главный контейнер Navigator в Xcode. */
+		/* Корневая группа проекта. Содержит ссылки на все дочерние группы.
+		   ВАЖНО: children содержит только ID объектов, сами объекты определяются отдельно ниже. */
 		87BAA46F2FBEED3A001DDBED = {
 			isa = PBXGroup;
 			children = (
@@ -113,14 +111,26 @@
 				87BAA47A2FBEED3A001DDBED /* Chappie */,
 				874865FB2FC3029E00F5E876 /* ChappieCoreTests */,
 				874866242FC35DF000F5E876 /* ChappieMCP */,
-				8748660D2FC304B500F5E876 /* ChappieCoreTests.xctestplan */,
 				87BAA4792FBEED3A001DDBED /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		/* Группа 📚 Docs — только для навигации. Не содержит Build Phase, не копируется в бандл.
-		   Позволяет открывать и редактировать все файлы architecture.md прямо из Xcode Navigator.
-		   Управляется автоматически через XcodeDocsGroupManager. */
+		/* Группа Products — содержит артефакты сборки (.app, .xctest, бинарники).
+		   Создаётся автоматически Xcode при добавлении таргетов. */
+		87BAA4792FBEED3A001DDBED /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				87BAA4782FBEED3A001DDBED /* Chappie.app */,
+				874865FA2FC3029E00F5E876 /* ChappieCoreTests.xctest */,
+				874866232FC35DF000F5E876 /* ChappieMCP */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		/* Группа 📚 Docs — только для навигации в Xcode Navigator.
+		   Не содержит Build Phase, не копируется в бандл.
+		   Позволяет открывать и редактировать все файлы architecture.md прямо из Xcode.
+		   При добавлении нового таргета — добавить сюда соответствующий architecture.md. */
 		87DOCS0000000000000000000 /* 📚 Docs */ = {
 			isa = PBXGroup;
 			children = (
@@ -131,18 +141,6 @@
 				87DOCS0000000000000000005 /* architecture.md (ChappieMCP) */,
 			);
 			name = "📚 Docs";
-			sourceTree = "<group>";
-		};
-		/* Группа Products — содержит ссылки на собранные артефакты (app, xctest, executable).
-		   Создаётся Xcode автоматически, мы её не трогаем. */
-		87BAA4792FBEED3A001DDBED /* Products */ = {
-			isa = PBXGroup;
-			children = (
-				87BAA4782FBEED3A001DDBED /* Chappie.app */,
-				874865FA2FC3029E00F5E876 /* ChappieCoreTests.xctest */,
-				874866232FC35DF000F5E876 /* ChappieMCP */,
-			);
-			name = Products;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -322,9 +320,6 @@
 		874865FF2FC3029E00F5E876 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				/* ChappieCoreTests Debug — тест-таргет для macOS.
-				   ИСПРАВЛЕНО: было SDKROOT=watchos — это приводило к тому,
-				   что xcodebuild не мог найти тесты при первом запуске (неверная платформа). */
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -353,7 +348,6 @@
 		874866002FC3029E00F5E876 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				/* ChappieCoreTests Release — та же платформа macOS. */
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -379,21 +373,6 @@
 			};
 			name = Release;
 		};
-		874866282FC35DF000F5E876 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = 7Z69B62G84;
-				ENABLE_HARDENED_RUNTIME = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.5;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = macosx;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 6.0;
-			};
-			name = Debug;
-		};
 		874866292FC35DF000F5E876 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -408,6 +387,16 @@
 				SWIFT_VERSION = 6.0;
 			};
 			name = Release;
+		};
+		879DC78B2FC4C01900168704 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COPY_PHASE_STRIP = NO;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				PRODUCT_NAME = ChappieMCP;
+			};
+			name = Debug;
 		};
 		87BAA4812FBEED3C001DDBED /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -470,6 +459,7 @@
 				SDKROOT = macosx;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
 			};
 			name = Debug;
 		};
@@ -526,6 +516,7 @@
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Release;
 		};
@@ -630,8 +621,8 @@
 		874866272FC35DF000F5E876 /* Build configuration list for PBXNativeTarget "ChappieMCP" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				874866282PC35DF000F5E876 /* Debug */,
 				874866292FC35DF000F5E876 /* Release */,
+				879DC78B2FC4C01900168704 /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -24,11 +24,6 @@
 //   ├── ChappieCoreTests/architecture.md
 //   └── ChappieMCP/architecture.md
 //
-//   <WorkspaceRoot>/Chappie.xcodeproj/project.pbxproj
-//   └── Группа "📚 Docs" — навигационная группа в Xcode Navigator.
-//       Автоматически синхронизируется при каждом запуске через XcodeDocsGroupManager.
-//       Содержит ссылки на все architecture.md (корневой + по одному на каждый таргет).
-//
 // ПОЧЕМУ ОДИН ФАЙЛ ПАМЯТИ:
 // Раньше semantic.json создавался в каждом таргете воркспейса, что порождало:
 // - Дублирование данных между таргетами
@@ -43,11 +38,14 @@
 // read_file/write_file как обычный текстовый файл. MemoryManager его не трогает
 // (только создаёт шаблон при первом обнаружении нового таргета).
 //
-// ГРУППА "📚 Docs" В XCODE:
-// После сканирования таргетов MemoryManager вызывает XcodeDocsGroupManager.sync(),
-// который обновляет pbxproj так, чтобы группа Docs содержала актуальный список
-// ссылок на architecture.md. Это позволяет открывать файлы прямо из Xcode Navigator.
-// Синхронизация идемпотентна — если состояние актуально, pbxproj не перезаписывается.
+// ГРУППА "📚 Docs" В XCODE — СТАТИЧЕСКАЯ:
+// Группа 📚 Docs в project.pbxproj управляется ВРУЧНУЮ мной (Чаппи) через write_file.
+// Программная автосинхронизация через XcodeDocsGroupManager была УДАЛЕНА (2025-07-10)
+// потому что она повреждала project.pbxproj при каждом запуске приложения, вызывая
+// "Failed to load container for document at url: ..." в Xcode.
+// Причина: сложная текстовая манипуляция pbxproj давала нестабильный результат.
+// ПРАВИЛО: при добавлении нового таргета — Чаппи вручную обновляет project.pbxproj
+// через write_file, добавляя PBXFileReference и запись в children группы 📚 Docs.
 
 import Foundation
 
@@ -132,7 +130,7 @@ public struct TargetScanResult: Sendable {
 /// Архитектура хранения:
 /// - Вся семантическая память: ~/Documents/Chappie/semantic.json (ОДИН файл)
 /// - Документация таргетов: <Workspace>/<TargetName>/architecture.md
-/// - Навигация в Xcode: группа "📚 Docs" в project.pbxproj (синхронизируется автоматически)
+/// - Навигация в Xcode: группа "📚 Docs" в project.pbxproj (управляется ВРУЧНУЮ Чаппи)
 ///
 /// Почему actor: MemoryManager работает с файловой системой из нескольких мест
 /// параллельно. Actor гарантирует сериализацию доступа и отсутствие гонок данных
@@ -186,7 +184,11 @@ public actor MemoryManager {
     /// 4. Определяет тип каждого таргета (App или Library).
     /// 5. Создаёт architecture.md для каждого нового таргета (если нет).
     /// 6. Очищает устаревшие папки AI_Docs/ и semantic.json в таргетах (миграция).
-    /// 7. Синхронизирует группу "📚 Docs" в Xcode Navigator через XcodeDocsGroupManager.
+    ///
+    /// НАМЕРЕННО НЕ ДЕЛАЕТ:
+    /// - НЕ трогает project.pbxproj (группа 📚 Docs управляется вручную Чаппи через write_file).
+    ///   Автоматическая запись pbxproj при каждом запуске вызывала повреждение файла проекта
+    ///   и ошибку "Failed to load container" в Xcode.
     ///
     /// Метод идемпотентен — повторный вызов не затирает существующие данные.
     public func initializeWorkspaceMemory() async {
@@ -210,13 +212,11 @@ public actor MemoryManager {
         // 4. Очищаем устаревшие артефакты: AI_Docs/ и semantic.json в корнях таргетов
         cleanupLegacyFiles()
 
-        // 5. Синхронизируем группу "📚 Docs" в Xcode Navigator.
-        //    Это гарантирует что при добавлении нового таргета (и его architecture.md)
-        //    ссылка сразу появится в Xcode Navigator без ручного вмешательства.
-        //    XcodeDocsGroupManager.sync() идемпотентен — если состояние актуально,
-        //    pbxproj не перезаписывается.
-        let docsManager = XcodeDocsGroupManager(workspaceURL: workspaceURL)
-        await docsManager.sync(targets: targets)
+        // ПРИМЕЧАНИЕ: XcodeDocsGroupManager.sync() намеренно УБРАН отсюда.
+        // Причина: автоматическая правка project.pbxproj при каждом запуске приложения
+        // давала нестабильный результат и повреждала файл проекта.
+        // Группа 📚 Docs теперь управляется статически — Чаппи правит pbxproj вручную
+        // через write_file когда добавляется или удаляется таргет.
 
         isInitialized = true
         print("[MemoryManager] ✅ Инициализация завершена. Таргетов: \(targets.count). Память: ~/Documents/Chappie/semantic.json")
