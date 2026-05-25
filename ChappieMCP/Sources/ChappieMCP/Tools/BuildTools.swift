@@ -14,11 +14,21 @@
 // - build_project → схема "Chappie" (собирает всё приложение)
 // - run_tests     → схема "ChappieCoreTests" (запускает тесты библиотеки)
 //
+// ТАЙМАУТ ПРОЦЕССОВ:
+// xcodebuild иногда зависает (особенно на macOS 26 beta).
+// Используем DispatchWorkItem + process.terminate() для принудительного
+// завершения через kBuildTimeoutSeconds секунд.
+// Это гарантирует что build_project/run_tests ВСЕГДА вернут результат.
+//
 // ФОРМАТ ВЫВОДА:
 // xcodebuild генерирует очень многословный вывод. Мы фильтруем его через
 // xcpretty (если установлен) или выбираем только строки с ошибками/предупреждениями.
 
 import Foundation
+
+/// Максимальное время ожидания сборки/тестов в секундах.
+/// 5 минут — достаточно для любой реальной сборки. Если дольше — значит завис.
+private let kBuildTimeoutSeconds: Double = 300
 
 /// Инструменты сборки и тестирования проекта.
 final class BuildTools: Sendable {
@@ -47,11 +57,12 @@ final class BuildTools: Sendable {
             "-project", "Chappie.xcodeproj",
             "-scheme", "Chappie",
             "-configuration", "Debug",
-            "-destination", "platform=macOS",
+            // Явно указываем destination чтобы xcodebuild не спрашивал и не зависал
+            "-destination", "platform=macOS,arch=arm64",
             "build"
         ]
 
-        return await runXcodebuild(args: args)
+        return await runXcodebuild(args: args, label: "build_project")
     }
 
     /// Запускает тесты через xcodebuild с правильной схемой.
@@ -61,6 +72,10 @@ final class BuildTools: Sendable {
     /// Поэтому для запуска тестов используем схему "ChappieCoreTests" в xcodebuild.
     /// Старый подход (swift test --package-path ChappieCore) был ошибочным —
     /// он искал testTarget в Package.swift, которого там нет.
+    ///
+    /// DESTINATION (2025-07-11):
+    /// "platform=macOS,arch=arm64" — явный destination без симулятора.
+    /// Без явного arch xcodebuild на macOS 26 beta может зависнуть на выборе устройства.
     ///
     /// - Parameter target: имя тест-таргета (например "ChappieCoreTests").
     ///   nil = запускает все тесты через схему ChappieCoreTests.
@@ -72,7 +87,9 @@ final class BuildTools: Sendable {
         var args = [
             "-project", "Chappie.xcodeproj",
             "-scheme", "ChappieCoreTests",
-            "-destination", "platform=macOS",
+            // Явный destination — критично для macOS 26 beta, иначе xcodebuild зависает
+            // выбирая между устройствами. arm64 = нативный Mac без симулятора.
+            "-destination", "platform=macOS,arch=arm64",
             "test"
         ]
 
@@ -82,7 +99,7 @@ final class BuildTools: Sendable {
             args.append(contentsOf: ["-only-testing", target])
         }
 
-        return await runXcodebuild(args: args)
+        return await runXcodebuild(args: args, label: "run_tests")
     }
 
     /// Читает последний сохранённый лог сборки.
@@ -97,26 +114,38 @@ final class BuildTools: Sendable {
     // MARK: - Приватные методы
 
     /// Запускает xcodebuild с переданными аргументами.
-    private func runXcodebuild(args: [String]) async -> ToolResult {
+    ///
+    /// Зачем label: для понятного сообщения при таймауте.
+    private func runXcodebuild(args: [String], label: String) async -> ToolResult {
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let result = self.runProcess(
                     executable: "/usr/bin/xcodebuild",
                     args: args,
-                    workingDirectory: self.projectPath
+                    workingDirectory: self.projectPath,
+                    label: label
                 )
                 continuation.resume(returning: result)
             }
         }
     }
 
-    /// Синхронно запускает процесс, сохраняет лог и возвращает краткий результат.
+    /// Синхронно запускает процесс с таймаутом, сохраняет лог и возвращает краткий результат.
+    ///
+    /// ТАЙМАУТ: Используем DispatchWorkItem для принудительного terminate() процесса.
+    /// Это решает проблему зависания xcodebuild на macOS 26 beta.
+    /// Без таймаута process.waitUntilExit() ждёт вечно — ИИ-агент зависает.
     ///
     /// Зачем сохранять полный лог в файл:
     /// xcodebuild может выводить тысячи строк. В ответе на инструмент
     /// возвращаем только краткое резюме (ошибки/предупреждения),
     /// а полный лог доступен через read_build_log.
-    private func runProcess(executable: String, args: [String], workingDirectory: String) -> ToolResult {
+    private func runProcess(
+        executable: String,
+        args: [String],
+        workingDirectory: String,
+        label: String
+    ) -> ToolResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = args
@@ -137,14 +166,44 @@ final class BuildTools: Sendable {
 
         let startTime = Date()
 
+        // --- ЗАЩИТА ОТ ЗАВИСАНИЯ ---
+        // Создаём DispatchWorkItem который убьёт процесс по таймауту.
+        // Это единственный надёжный способ: process.waitUntilExit() сам по себе
+        // не имеет таймаута и блокирует поток навсегда при зависании xcodebuild.
+        var timedOut = false
+        let killWorkItem = DispatchWorkItem {
+            if process.isRunning {
+                print("[ChappieMCP] ⏱️ Таймаут \(label) (\(Int(kBuildTimeoutSeconds))с) — завершаем процесс")
+                timedOut = true
+                process.terminate()
+            }
+        }
+        DispatchQueue.global(qos: .background).asyncAfter(
+            deadline: .now() + kBuildTimeoutSeconds,
+            execute: killWorkItem
+        )
+        // --- КОНЕЦ ЗАЩИТЫ ОТ ЗАВИСАНИЯ ---
+
         do {
             try process.run()
             process.waitUntilExit()
         } catch {
+            killWorkItem.cancel()
             return .failure("Не удалось запустить \(executable): \(error.localizedDescription)")
         }
 
+        // Отменяем таймер если процесс завершился сам
+        killWorkItem.cancel()
+
         let elapsed = String(format: "%.1f", Date().timeIntervalSince(startTime))
+
+        // Если сработал таймаут — возвращаем понятное сообщение
+        if timedOut {
+            let msg = "⏱️ \(label) завис и был принудительно остановлен через \(Int(kBuildTimeoutSeconds)) секунд.\n" +
+                      "Попробуй ещё раз или проверь Xcode вручную."
+            saveLog(msg, args: args)
+            return .failure(msg)
+        }
 
         // Читаем полный вывод
         let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()

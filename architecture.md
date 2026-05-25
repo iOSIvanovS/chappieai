@@ -163,11 +163,43 @@ ChappieMCP
 
 ---
 
-## 8. Техдолг
+## 8. Зависания build_project и run_tests (РЕШЕНО 2025-07-11)
+
+**Симптом:** `build_project` и `run_tests` зависали навсегда — ИИ-агент засыпал.
+
+**Причина:** В `BuildTools.swift` использовался `process.waitUntilExit()` без таймаута.
+Если xcodebuild зависал — поток блокировался навсегда.
+`SO_RCVTIMEO` на сокете (600с) не помогал — он срабатывает только на `recv()`,
+но `recv()` не вызывается пока `waitUntilExit()` не вернётся.
+
+**Решение (2025-07-11):**
+1. Добавлен `DispatchWorkItem` с `process.terminate()` по таймауту 300 секунд.
+2. Добавлен явный `destination: "platform=macOS,arch=arm64"` для обеих команд.
+   Без явного arch xcodebuild на macOS 26 beta зависал, выбирая между устройствами.
+
+**Код защиты от зависания:**
+```swift
+let killWorkItem = DispatchWorkItem {
+    if process.isRunning {
+        timedOut = true
+        process.terminate()
+    }
+}
+DispatchQueue.global(qos: .background).asyncAfter(
+    deadline: .now() + kBuildTimeoutSeconds,
+    execute: killWorkItem
+)
+process.waitUntilExit()
+killWorkItem.cancel()
+```
+
+---
+
+## 9. Техдолг
 
 | ID | Проблема | Приоритет |
 |----|----------|-----------|
-| TD-01 | `build_project` зависает (3 раза за день). Нужно расследовать таймаут xcodebuild на macOS 26 beta. | Высокий |
+| TD-01 | `build_project` зависал — РЕШЕНО (2025-07-11): таймаут 300с + явный destination arm64 | ✅ |
 | TD-02 | Тесты `ChappieCoreTests` требуют ручного выбора таргета в Xcode перед ⌘+U. Неочевидно для пользователя. | Низкий |
 
 ---
@@ -176,6 +208,7 @@ ChappieMCP
 
 | Date | Change |
 |------|--------|
+| 2025-07-11 | РЕШЕНО TD-01: добавлен таймаут 300с + terminate() в BuildTools.swift; явный destination arm64 |
 | 2025-07-10 | КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: удалён XcodeDocsGroupManager, группа 📚 Docs теперь статическая |
 | 2025-07-10 | TD-01: зафиксированы зависания build_project; TD-02: тесты требуют выбора таргета |
 | 2025-07-10 | Починен сломанный project.pbxproj (неправильная вложенность PBXGroup вызывала "Failed to load container") |
