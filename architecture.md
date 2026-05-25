@@ -112,9 +112,61 @@ ChappieMCP
 
 ---
 
+## 7. Группа 📚 Docs в Xcode Navigator
+
+**Проблема:** Файлы `architecture.md` лежат в корнях таргетов — Xcode их не показывает в Navigator автоматически.
+
+**Решение:** Группа `📚 Docs` добавлена в `project.pbxproj` как чисто навигационная PBXGroup.
+- UUID корневой группы: `87DOCS0000000000000000000`
+- Файлы: 5 PBXFileReference с UUID `87DOCS000000000000000000[1-5]`
+- Управляется кодом: `XcodeDocsGroupManager.swift` в ChappieCore
+- **НЕ участвует в сборке**, **НЕ копируется в бандл**
+
+**КРИТИЧНО:** Структура PBXGroup в project.pbxproj должна быть валидной.
+Прошлая ошибка: группа `📚 Docs` была вставлена ВНУТРЬ корневой группы неправильно —
+открывающий `{` корневой группы был перемешан с определением `87DOCS...`.
+Это вызывало `Failed to load container for document at url: ...` при открытии Xcode.
+
+**Правильная структура PBXGroup:**
+```
+87BAA46F2FBEED3A001DDBED = {          ← корневая группа (без имени)
+    isa = PBXGroup;
+    children = (
+        87DOCS0000000000000000000,    ← ссылка на группу Docs
+        87BAA47A...,                  ← Chappie
+        874865FB...,                  ← ChappieCoreTests
+        ...
+    );
+};
+87DOCS0000000000000000000 = {         ← определение группы Docs (ОТДЕЛЬНО)
+    isa = PBXGroup;
+    name = "📚 Docs";
+    children = ( ... );
+};
+87BAA4792FBEED3A001DDBED = {          ← Products (ОТДЕЛЬНО)
+    isa = PBXGroup;
+    name = Products;
+    ...
+};
+```
+
+---
+
+## 8. Техдолг
+
+| ID | Проблема | Приоритет |
+|----|----------|-----------|
+| TD-01 | `build_project` зависает (3 раза за день). Нужно расследовать таймаут xcodebuild на macOS 26 beta. | Высокий |
+| TD-02 | Тесты `ChappieCoreTests` требуют ручного выбора таргета в Xcode перед ⌘+U. Неочевидно для пользователя. | Низкий |
+
+---
+
 ## 📚 Changelog
 
 | Date | Change |
 |------|--------|
+| 2025-07-10 | TD-01: зафиксированы зависания build_project; TD-02: тесты требуют выбора таргета |
+| 2025-07-10 | Починен сломанный project.pbxproj (неправильная вложенность PBXGroup вызывала "Failed to load container") |
+| 2025-07-10 | Добавлена группа 📚 Docs в project.pbxproj для навигации по architecture.md файлам |
 | 2025-06 | TD-03: рефакторинг AI_Docs/ → один файл architecture.md на таргет; chat_history.json переехал в корень воркспейса; подрезание до 100 сообщений |
 | 2025-06 | Initial creation: рефакторинг AI_Docs/ → один файл architecture.md |

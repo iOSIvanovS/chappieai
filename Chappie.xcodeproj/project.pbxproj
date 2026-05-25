@@ -52,13 +52,14 @@
 		/* Ссылки на файлы architecture.md — только для навигации в Xcode Navigator.
 		   Не участвуют в сборке, не копируются в бандл.
 		   Управляются автоматически через XcodeDocsGroupManager при старте приложения. */
-		/* Ссылки на файлы архитектуры — только для навигации в Xcode, не участвуют в сборке */
-		/* Ссылки на файлы архитектуры — только для навигации в Xcode, не участвуют в сборке */
 		87DOCS0001000000000000001 /* architecture.md (корень) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (корень)"; path = architecture.md; sourceTree = "<group>"; };
 		87DOCS0000000000000000002 /* architecture.md (Chappie) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (Chappie)"; path = Chappie/architecture.md; sourceTree = "<group>"; };
 		87DOCS0000000000000000003 /* architecture.md (ChappieCore) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (ChappieCore)"; path = ChappieCore/architecture.md; sourceTree = "<group>"; };
 		87DOCS0000000000000000004 /* architecture.md (ChappieCoreTests) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (ChappieCoreTests)"; path = ChappieCoreTests/architecture.md; sourceTree = "<group>"; };
 		87DOCS0000000000000000005 /* architecture.md (ChappieMCP) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (ChappieMCP)"; path = ChappieMCP/architecture.md; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
 		874865FB2FC3029E00F5E876 /* ChappieCoreTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = ChappieCoreTests;
@@ -103,15 +104,23 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		/* Главная группа проекта — корень Navigator.
-		   Содержит: группу 📚 Docs, все таргеты, тестплан и папку Products. */
+		/* Корневая группа проекта — содержит все таргеты, группу Docs и Products.
+		   Это главный контейнер Navigator в Xcode. */
 		87BAA46F2FBEED3A001DDBED = {
 			isa = PBXGroup;
 			children = (
+				87DOCS0000000000000000000 /* 📚 Docs */,
+				87BAA47A2FBEED3A001DDBED /* Chappie */,
+				874865FB2FC3029E00F5E876 /* ChappieCoreTests */,
+				874866242FC35DF000F5E876 /* ChappieMCP */,
+				8748660D2FC304B500F5E876 /* ChappieCoreTests.xctestplan */,
+				87BAA4792FBEED3A001DDBED /* Products */,
+			);
+			sourceTree = "<group>";
+		};
 		/* Группа 📚 Docs — только для навигации. Не содержит Build Phase, не копируется в бандл.
-		   Позволяет открывать и редактировать все файлы architecture.md прямо из Xcode Navigator. */
-		/* Группа 📚 Docs — только для навигации. Не содержит Build Phase, не копируется в бандл.
-		   Позволяет открывать и редактировать все файлы architecture.md прямо из Xcode Navigator. */
+		   Позволяет открывать и редактировать все файлы architecture.md прямо из Xcode Navigator.
+		   Управляется автоматически через XcodeDocsGroupManager. */
 		87DOCS0000000000000000000 /* 📚 Docs */ = {
 			isa = PBXGroup;
 			children = (
@@ -124,6 +133,9 @@
 			name = "📚 Docs";
 			sourceTree = "<group>";
 		};
+		/* Группа Products — содержит ссылки на собранные артефакты (app, xctest, executable).
+		   Создаётся Xcode автоматически, мы её не трогаем. */
+		87BAA4792FBEED3A001DDBED /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				87BAA4782FBEED3A001DDBED /* Chappie.app */,
@@ -165,7 +177,7 @@
 			buildConfigurationList = 874866272FC35DF000F5E876 /* Build configuration list for PBXNativeTarget "ChappieMCP" */;
 			buildPhases = (
 				8748661F2FC35DF000F5E876 /* Sources */,
-				874866202PC35DF000F5E876 /* Frameworks */,
+				874866202FC35DF000F5E876 /* Frameworks */,
 				874866212FC35DF000F5E876 /* CopyFiles */,
 			);
 			buildRules = (
@@ -618,7 +630,7 @@
 		874866272FC35DF000F5E876 /* Build configuration list for PBXNativeTarget "ChappieMCP" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				874866282FC35DF000F5E876 /* Debug */,
+				874866282PC35DF000F5E876 /* Debug */,
 				874866292FC35DF000F5E876 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
