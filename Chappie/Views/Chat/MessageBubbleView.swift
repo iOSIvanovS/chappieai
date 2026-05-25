@@ -31,6 +31,12 @@
 //   - SF Pro Text 14pt, lineSpacing 5 (Apple HIG: 1.3–1.5× line-height)
 //   - Кнопка копирования в блоках кода
 //
+// ИЗМЕНЕНИЕ (UX-COST-IN-BUBBLE — Стоимость внутри пузыря):
+// Стоимость перенесена из-под пузыря ВНУТРЬ него — в правый нижний угол.
+// Используется ZStack(alignment: .bottomTrailing) + padding(.bottom, 18) под текстом.
+// Показывается только у сообщений Чаппи (isUser == false) с известной стоимостью.
+// Это стандартный UX-паттерн мессенджеров (WhatsApp, Telegram) — время/статус внутри.
+//
 // ДИЗАЙН ПУЗЫРЕЙ (Apple HIG + macOS 26):
 // Пользователь: акцентный цвет (синий), белый текст — "наши" сообщения
 // Чаппи: чистый фон с тонкой границей, как карточки в macOS 26 — нейтральный
@@ -78,73 +84,80 @@ struct MessageBubbleView: View {
             // Сообщения пользователя прижимаем вправо через левый Spacer
             if isUser { Spacer(minLength: 40) }
 
-            VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
-
-                if isUser {
-                    // ПУЗЫРЬ ПОЛЬЗОВАТЕЛЯ:
-                    // Простой Text — пользователь не пишет markdown.
-                    // Белый текст на акцентном фоне.
-                    Text(text)
-                        .font(.system(size: 14))
-                        .lineSpacing(4)
-                        .foregroundStyle(.white)
-                        .textSelection(.enabled)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(Color.accentColor)
-                        .clipShape(
-                            // Скруглённые углы: все 12pt, кроме нижнего правого — 4pt.
-                            // Этот приём из iMessage создаёт "хвост" пузыря без лишней графики.
-                            UnevenRoundedRectangle(
-                                topLeadingRadius: 12,
-                                bottomLeadingRadius: 12,
-                                bottomTrailingRadius: 4,
-                                topTrailingRadius: 12
-                            )
+            if isUser {
+                // ПУЗЫРЬ ПОЛЬЗОВАТЕЛЯ:
+                // Простой Text — пользователь не пишет markdown.
+                // Белый текст на акцентном фоне.
+                // Стоимость у пользовательских сообщений не показывается —
+                // стоимость относится к ответу Чаппи, а не к вопросу.
+                Text(text)
+                    .font(.system(size: 14))
+                    .lineSpacing(4)
+                    .foregroundStyle(.white)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(Color.accentColor)
+                    .clipShape(
+                        // Скруглённые углы: все 12pt, кроме нижнего правого — 4pt.
+                        // Этот приём из iMessage создаёт "хвост" пузыря без лишней графики.
+                        UnevenRoundedRectangle(
+                            topLeadingRadius: 12,
+                            bottomLeadingRadius: 12,
+                            bottomTrailingRadius: 4,
+                            topTrailingRadius: 12
                         )
-                } else {
-                    // ПУЗЫРЬ ЧАППИ:
-                    // MarkdownTextView — поддержка кода, заголовков, форматирования.
-                    // Нейтральный фон с тонкой границей — как карточки macOS 26.
+                    )
+            } else {
+                // ПУЗЫРЬ ЧАППИ:
+                // ZStack позволяет разместить стоимость поверх контента в правом нижнем углу.
+                // Это стандартный паттерн мессенджеров (WhatsApp, Telegram) — метаданные
+                // сообщения (время, статус, цена) располагаются внутри пузыря.
+                ZStack(alignment: .bottomTrailing) {
+
+                    // Основной контент: MarkdownTextView с поддержкой кода и форматирования.
                     MarkdownTextView(text: text, fontSize: 14)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(
-                            // Адаптивный фон: белый в Light mode, тёмно-серый в Dark mode.
-                            // Используем systemBackground — стандарт Apple для "поверхности".
-                            Color(NSColor.textBackgroundColor)
-                        )
-                        .clipShape(
-                            // Зеркальный вариант: нижний левый угол — 4pt ("хвост" слева).
-                            UnevenRoundedRectangle(
-                                topLeadingRadius: 12,
-                                bottomLeadingRadius: 4,
-                                bottomTrailingRadius: 12,
-                                topTrailingRadius: 12
-                            )
-                        )
-                        .overlay(
-                            // Тонкая граница — отделяет пузырь от фона окна.
-                            // Особенно важна в Light mode где фон пузыря близок к фону окна.
-                            UnevenRoundedRectangle(
-                                topLeadingRadius: 12,
-                                bottomLeadingRadius: 4,
-                                bottomTrailingRadius: 12,
-                                topTrailingRadius: 12
-                            )
-                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                        )
-                }
+                        // Нижний отступ резервирует место для строки стоимости,
+                        // чтобы она не перекрывала последнюю строку текста.
+                        // Отступ применяется только когда стоимость есть.
+                        .padding(.bottom, cost != nil ? 18 : 0)
 
-                // СТОИМОСТЬ ЗАПРОСА:
-                // Показываем только для сообщений Чаппи с известной стоимостью.
-                // Помогает контролировать расход токенов в реальном времени.
-                if let cost = cost, !isUser {
-                    Text(String(format: "🪙 %.2f ₽", cost))
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.tertiary)
-                        .padding(.leading, 4)
+                    // СТОИМОСТЬ ЗАПРОСА — правый нижний угол пузыря.
+                    // Показываем только для сообщений Чаппи с известной стоимостью.
+                    // Tertiary foreground — ненавязчивый цвет, не отвлекает от текста.
+                    if let cost = cost {
+                        Text(String(format: "🪙 %.2f ₽", cost))
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                    }
                 }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(
+                    // Адаптивный фон: белый в Light mode, тёмно-серый в Dark mode.
+                    // Используем textBackgroundColor — стандарт Apple для "поверхности".
+                    Color(NSColor.textBackgroundColor)
+                )
+                .clipShape(
+                    // Зеркальный вариант: нижний левый угол — 4pt ("хвост" слева).
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: 12,
+                        bottomLeadingRadius: 4,
+                        bottomTrailingRadius: 12,
+                        topTrailingRadius: 12
+                    )
+                )
+                .overlay(
+                    // Тонкая граница — отделяет пузырь от фона окна.
+                    // Особенно важна в Light mode где фон пузыря близок к фону окна.
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: 12,
+                        bottomLeadingRadius: 4,
+                        bottomTrailingRadius: 12,
+                        topTrailingRadius: 12
+                    )
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                )
             }
 
             // Сообщения Чаппи прижимаем влево через правый Spacer

@@ -31,6 +31,10 @@
 //  что является ошибкой: withAnimation — это функция для императивных изменений,
 //  а не модификатор для декларативных View. Компилятор принимал, но анимация
 //  не всегда срабатывала корректно. Теперь .animation привязан к currentToolCall.
+//
+//  ИЗМЕНЕНИЕ (UX-RUNNING-COST — Накопительная стоимость):
+//  ChatScrollView получает `viewModel.runningCost` для отображения нарастающей
+//  стоимости в правом нижнем углу стримингового пузыря.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -60,10 +64,12 @@ struct ContentView: View {
                 // Лента сообщений — получает уже отфильтрованный и обрезанный список.
                 // visibleMessages: только .message, максимум 30 штук.
                 // streamingText: для "живого" пузыря во время генерации ответа.
+                // runningCost: нарастающая стоимость — отображается в пузыре в реальном времени.
                 ChatScrollView(
                     messages: viewModel.visibleMessages,
                     isThinking: viewModel.isThinking,
-                    streamingText: viewModel.streamingText
+                    streamingText: viewModel.streamingText,
+                    runningCost: viewModel.runningCost
                 )
 
                 // Строка состояния — показывает текущий вызов инструмента.

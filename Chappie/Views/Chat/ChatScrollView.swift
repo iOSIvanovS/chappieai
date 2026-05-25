@@ -29,10 +29,11 @@
 //  Стриминговый пузырь теперь использует MarkdownTextView вместо Text() —
 //  код подсвечивается в реальном времени по мере нарастания токенов.
 //
-//  ИЗМЕНЕНИЕ (UX-RUNNING-COST — Накопительная стоимость):
-//  Добавлен параметр `runningCost: Double`.
-//  Отображается в правом нижнем углу стримингового пузыря нарастающим итогом.
-//  Анимируется через .contentTransition(.numericText) — числа "перекатываются".
+//  ИЗМЕНЕНИЕ (UX-RUNNING-COST — Накопительная стоимость в пузыре):
+//  Стоимость перенесена ВНУТРЬ пузыря — в правый нижний угол через overlay.
+//  Показывается ВСЕГДА (даже 0.00 ₽ в начале запроса).
+//  Нарастает с каждым API-вызовом оркестратора — эффект "счётчика такси".
+//  .contentTransition(.numericText) анимирует перекатывание цифр.
 
 import SwiftUI
 
@@ -218,15 +219,19 @@ struct ChatScrollView: View {
     /// При каждом токене SwiftUI перерисовывает View с новой строкой.
     /// .interpolate плавно анимирует изменение между кадрами — эффект "печатания".
     ///
-    /// СТОИМОСТЬ В ПРАВОМ НИЖНЕМ УГЛУ:
-    /// runningCost показывается всегда (даже 0.00 ₽ в начале) — это честно.
-    /// .contentTransition(.numericText) анимирует изменение числа — цифры "перекатываются".
-    /// Это создаёт эффект "счётчика такси" — пользователь видит как растёт цена.
+    /// СТОИМОСТЬ В ПРАВОМ НИЖНЕМ УГЛУ ПУЗЫРЯ:
+    /// Используем overlay с alignment: .bottomTrailing — стоимость прижата к правому
+    /// нижнему углу поверх контента. padding внутри overlay отступает от краёв пузыря.
+    /// Показываем ВСЕГДА — 0.00 ₽ сразу при появлении пузыря, затем нарастает.
+    /// .contentTransition(.numericText) анимирует "перекатывание" цифр.
     private var streamingBubble: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            VStack(alignment: .leading, spacing: 6) {
+            // ZStack позволяет наложить стоимость поверх текста в правом нижнем углу.
+            // Это избегает лишнего вертикального пространства под текстом.
+            ZStack(alignment: .bottomTrailing) {
+
+                // Основной контент пузыря: текст + мигающий курсор
                 HStack(alignment: .bottom, spacing: 0) {
-                    // MarkdownTextView для реалтайм-подсветки кода во время стриминга
                     MarkdownTextView(text: streamingText, fontSize: 14)
                         .contentTransition(.interpolate)
                         .animation(.linear(duration: 0.08), value: streamingText)
@@ -235,19 +240,18 @@ struct ChatScrollView: View {
                     BlinkingCursor()
                         .padding(.bottom, 1)
                 }
+                // Нижний отступ под текстом, чтобы стоимость не перекрывала последнюю строку.
+                // 18pt — высота строки стоимости (10pt шрифт + padding).
+                .padding(.bottom, 18)
 
-                // НАКОПИТЕЛЬНАЯ СТОИМОСТЬ:
-                // Прижата к правому краю через HStack со Spacer.
-                // .contentTransition(.numericText) — числа анимируются при изменении.
-                // Показываем всегда: 0.00 ₽ → 1.23 ₽ → 4.56 ₽ — нарастающий итог.
-                HStack {
-                    Spacer()
-                    Text(String(format: "🪙 %.2f ₽", runningCost))
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                        .contentTransition(.numericText(value: runningCost))
-                        .animation(.easeInOut(duration: 0.3), value: runningCost)
-                }
+                // НАКОПИТЕЛЬНАЯ СТОИМОСТЬ — правый нижний угол пузыря.
+                // Прижата через ZStack alignment: .bottomTrailing.
+                // Показывается с самого начала (0.00 ₽) и нарастает по мере работы.
+                Text(String(format: "🪙 %.2f ₽", runningCost))
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .contentTransition(.numericText(value: runningCost))
+                    .animation(.easeInOut(duration: 0.3), value: runningCost)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
