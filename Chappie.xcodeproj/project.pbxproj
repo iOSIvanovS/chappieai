@@ -49,6 +49,12 @@
 		8748660D2FC304B500F5E876 /* ChappieCoreTests.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = ChappieCoreTests.xctestplan; sourceTree = "<group>"; };
 		874866232FC35DF000F5E876 /* ChappieMCP */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = ChappieMCP; sourceTree = BUILT_PRODUCTS_DIR; };
 		87BAA4782FBEED3A001DDBED /* Chappie.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Chappie.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		/* Ссылки на файлы архитектуры — только для навигации в Xcode, не участвуют в сборке */
+		87DOCS0001000000000000001 /* architecture.md (корень) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (корень)"; path = architecture.md; sourceTree = "<group>"; };
+		87DOCS0002000000000000002 /* architecture.md (Chappie) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (Chappie)"; path = Chappie/architecture.md; sourceTree = "<group>"; };
+		87DOCS0003000000000000003 /* architecture.md (ChappieCore) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (ChappieCore)"; path = ChappieCore/architecture.md; sourceTree = "<group>"; };
+		87DOCS0004000000000000004 /* architecture.md (ChappieCoreTests) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (ChappieCoreTests)"; path = ChappieCoreTests/architecture.md; sourceTree = "<group>"; };
+		87DOCS0005000000000000005 /* architecture.md (ChappieMCP) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (ChappieMCP)"; path = ChappieMCP/architecture.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -99,12 +105,28 @@
 		87BAA46F2FBEED3A001DDBED = {
 			isa = PBXGroup;
 			children = (
+				/* Группа документации — все файлы architecture.md видны в Navigator */
+				87DOCS0000000000000000000 /* 📚 Docs */,
 				8748660D2FC304B500F5E876 /* ChappieCoreTests.xctestplan */,
 				87BAA47A2FBEED3A001DDBED /* Chappie */,
 				874865FB2FC3029E00F5E876 /* ChappieCoreTests */,
 				874866242FC35DF000F5E876 /* ChappieMCP */,
 				87BAA4792FBEED3A001DDBED /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		/* Группа 📚 Docs — только для навигации. Не содержит Build Phase, не копируется в бандл.
+		   Позволяет открывать и редактировать все файлы architecture.md прямо из Xcode Navigator. */
+		87DOCS0000000000000000000 /* 📚 Docs */ = {
+			isa = PBXGroup;
+			children = (
+				87DOCS0001000000000000001 /* architecture.md (корень) */,
+				87DOCS0002000000000000002 /* architecture.md (Chappie) */,
+				87DOCS0003000000000000003 /* architecture.md (ChappieCore) */,
+				87DOCS0004000000000000004 /* architecture.md (ChappieCoreTests) */,
+				87DOCS0005000000000000005 /* architecture.md (ChappieMCP) */,
+			);
+			name = "📚 Docs";
 			sourceTree = "<group>";
 		};
 		87BAA4792FBEED3A001DDBED /* Products */ = {
