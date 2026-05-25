@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Главная схема проекта Chappie.
+  
+  ПОЧЕМУ эта схема создана отдельно:
+  Ранее существовала только схема ChappieCoreTests.xcscheme — запуск тестов требовал
+  переключения таргета в Xcode. Теперь схема Chappie является главной: она собирает
+  приложение, запускает его, И запускает тесты через ChappieCoreTests.xctestplan.
+  Это позволяет делать ⌘+U прямо на схеме Chappie без переключений.
+-->
+<Scheme
+   LastUpgradeVersion = "2650"
+   version = "1.7">
+
+   <!-- Фаза сборки: собираем основное приложение Chappie -->
+   <BuildAction
+      parallelizeBuildables = "YES"
+      buildImplicitDependencies = "YES"
+      buildArchitectures = "Automatic">
+      <BuildActionEntries>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "87BAA4772FBEED3A001DDBED"
+               BuildableName = "Chappie.app"
+               BlueprintName = "Chappie"
+               ReferencedContainer = "container:Chappie.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+      </BuildActionEntries>
+   </BuildAction>
+
+   <!--
+     Фаза тестирования: используем тот же xctestplan что и в ChappieCoreTests.xcscheme.
+     Благодаря этому ⌘+U на главной схеме запускает все тесты ChappieCoreTests
+     без необходимости переключаться на отдельную тест-схему.
+   -->
+   <TestAction
+      buildConfiguration = "Debug"
+      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
+      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
+      shouldUseLaunchSchemeArgsEnv = "YES">
+      <TestPlans>
+         <TestPlanReference
+            reference = "container:ChappieCoreTests.xctestplan"
+            default = "YES">
+         </TestPlanReference>
+      </TestPlans>
+      <Testables>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "874865F92FC3029E00F5E876"
+               BuildableName = "ChappieCoreTests.xctest"
+               BlueprintName = "ChappieCoreTests"
+               ReferencedContainer = "container:Chappie.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+      </Testables>
+   </TestAction>
+
+   <!-- Фаза запуска: запускаем основное приложение Chappie.app -->
+   <LaunchAction
+      buildConfiguration = "Debug"
+      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
+      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
+      launchStyle = "0"
+      useCustomWorkingDirectory = "NO"
+      ignoresPersistentStateOnLaunch = "NO"
+      debugDocumentVersioning = "YES"
+      debugServiceExtension = "internal"
+      allowLocationSimulation = "YES"
+      queueDebuggingEnableBacktraceRecording = "Yes">
+      <BuildableProductRunnable
+         runnableDebuggingMode = "0">
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "87BAA4772FBEED3A001DDBED"
+            BuildableName = "Chappie.app"
+            BlueprintName = "Chappie"
+            ReferencedContainer = "container:Chappie.xcodeproj">
+         </BuildableReference>
+      </BuildableProductRunnable>
+   </LaunchAction>
+
+   <ProfileAction
+      buildConfiguration = "Release"
+      shouldUseLaunchSchemeArgsEnv = "YES"
+      savedToolIdentifier = ""
+      useCustomWorkingDirectory = "NO"
+      debugDocumentVersioning = "YES">
+      <BuildableProductRunnable
+         runnableDebuggingMode = "0">
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "87BAA4772FBEED3A001DDBED"
+            BuildableName = "Chappie.app"
+            BlueprintName = "Chappie"
+            ReferencedContainer = "container:Chappie.xcodeproj">
+         </BuildableReference>
+      </BuildableProductRunnable>
+   </ProfileAction>
+
+   <AnalyzeAction
+      buildConfiguration = "Debug">
+   </AnalyzeAction>
+
+   <ArchiveAction
+      buildConfiguration = "Release"
+      revealArchiveInOrganizer = "YES">
+   </ArchiveAction>
+
+</Scheme>

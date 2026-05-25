@@ -50,6 +50,8 @@
 		874866232FC35DF000F5E876 /* ChappieMCP */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = ChappieMCP; sourceTree = BUILT_PRODUCTS_DIR; };
 		87BAA4782FBEED3A001DDBED /* Chappie.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Chappie.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		/* Ссылки на файлы архитектуры — только для навигации в Xcode, не участвуют в сборке */
+		/* Ссылки на файлы архитектуры — только для навигации в Xcode, не участвуют в сборке */
+		/* Ссылки на файлы архитектуры — только для навигации в Xcode, не участвуют в сборке */
 		87DOCS0001000000000000001 /* architecture.md (корень) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (корень)"; path = architecture.md; sourceTree = "<group>"; };
 		87DOCS0000000000000000002 /* architecture.md (Chappie) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (Chappie)"; path = Chappie/architecture.md; sourceTree = "<group>"; };
 		87DOCS0000000000000000003 /* architecture.md (ChappieCore) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (ChappieCore)"; path = ChappieCore/architecture.md; sourceTree = "<group>"; };
@@ -104,18 +106,11 @@
 			children = (
 				/* Группа 📚 Docs — только для навигации. Не содержит Build Phase, не копируется в бандл.
 				   Позволяет открывать и редактировать все файлы architecture.md прямо из Xcode Navigator. */
-				87DOCS0000000000000000000 /* 📚 Docs */,
-				87BAA47A2FBEED3A001DDBED /* Chappie */,
-				874865FB2FC3029E00F5E876 /* ChappieCoreTests */,
-				874866242FC35DF000F5E876 /* ChappieMCP */,
-				87BAA4792FBEED3A001DDBED /* Products */,
-				8748660D2FC304B500F5E876 /* ChappieCoreTests.xctestplan */,
-			);
-			sourceTree = "<group>";
-		};
+		/* Группа 📚 Docs — только для навигации. Не содержит Build Phase, не копируется в бандл.
+		   Позволяет открывать и редактировать все файлы architecture.md прямо из Xcode Navigator. */
+		/* Группа 📚 Docs — только для навигации. Не содержит Build Phase, не копируется в бандл.
+		   Позволяет открывать и редактировать все файлы architecture.md прямо из Xcode Navigator. */
 		87DOCS0000000000000000000 /* 📚 Docs */ = {
-			/* Группа 📚 Docs — только для навигации. Не содержит Build Phase, не копируется в бандл.
-			   Позволяет открывать и редактировать все файлы architecture.md прямо из Xcode Navigator. */
 			isa = PBXGroup;
 			children = (
 				87DOCS0001000000000000001 /* architecture.md (корень) */,
@@ -127,7 +122,6 @@
 			name = "📚 Docs";
 			sourceTree = "<group>";
 		};
-		87BAA4792FBEED3A001DDBED /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				87BAA4782FBEED3A001DDBED /* Chappie.app */,
