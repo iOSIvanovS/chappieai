@@ -17,35 +17,18 @@
 //
 //  ИЗМЕНЕНИЕ (ТД-UX-PERF — Оптимизация производительности UI):
 //  ChatScrollView теперь принимает `visibleMessages` — уже отфильтрованный
-//  и обрезанный до 30 элементов список. Это снимает нагрузку с рендера:
-//  ForEach больше не итерирует тысячи записей при каждом ресайзе окна.
-//  .toolCall полностью убраны из ленты — они отображаются в StatusBarView.
+//  и обрезанный до 30 элементов список.
 //
 //  ИЗМЕНЕНИЕ (UX-ANIMATION — Плавные анимации):
-//  1. ForEach обёрнут в VStack с .animation(.spring(response:0.4), value: messages) —
-//     новые пузыри плавно "въезжают", а не появляются рывком.
-//  2. Переход спиннер ↔ стриминговый пузырь анимирован через withAnimation +
-//     .transition(.opacity) — исчезновение/появление без резкого скачка.
-//  3. Переход isThinking off → on анимирован аналогично.
+//  Spring-анимации для появления пузырей, easeInOut для спиннера.
 //
 //  ИЗМЕНЕНИЕ (UX-SMOOTH-ANIMATION — Плавное нарастание текста):
-//  1. Стриминговый пузырь теперь использует .contentTransition(.interpolate) —
-//     текст нарастает плавно, без мерцания при каждом новом токене.
-//  2. Анимация на streamingText добавлена отдельным .animation модификатором —
-//     это позволяет контролировать скорость нарастания независимо от других анимаций.
-//  3. Переход "стриминговый пузырь → финальное сообщение" теперь координируется
-//     с ViewModel через withAnimation в ChappieViewModel.send() — оба изменения
-//     (сброс streamingText + добавление .message) происходят в одной транзакции.
+//  .contentTransition(.interpolate) на стриминговом пузыре.
 //
-//  ПОЧЕМУ .spring, А НЕ .easeInOut:
-//  Spring-анимация с response=0.4 даёт лёгкий "отскок" — это ощущение живости,
-//  характерное для нативных приложений Apple. easeInOut выглядит более "механически".
-//
-//  ПОЧЕМУ .contentTransition(.interpolate) ДЛЯ СТРИМИНГОВОГО ТЕКСТА:
-//  При каждом новом токене SwiftUI перерисовывает Text с новой строкой.
-//  Без contentTransition это выглядит как мгновенная замена — резкое мерцание.
-//  .interpolate плавно "перетекает" от старого текста к новому за каждый кадр,
-//  создавая эффект плавного печатания. Это нативный macOS/iOS паттерн.
+//  ИЗМЕНЕНИЕ (UX-TYPOGRAPHY — Типографика):
+//  Стриминговый пузырь теперь использует MarkdownTextView вместо Text() —
+//  код подсвечивается в реальном времени по мере нарастания токенов.
+//  Приветственное сообщение обновлено под новую типографику.
 
 import SwiftUI
 
@@ -75,50 +58,30 @@ struct ChatScrollView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                // .animation на VStack — это ключевой приём:
-                // SwiftUI видит изменение массива messages и плавно анимирует
-                // появление/исчезновение дочерних вью через их .transition.
-                // Без этого модификатора .transition в MessageBubbleView не работает.
-                VStack(spacing: 12) {
+                VStack(spacing: 16) {
 
                     // Приветственный экран — показываем только если чат пуст.
                     if messages.isEmpty && !isThinking {
                         welcomeMessage
-                            // Приветствие тоже плавно исчезает когда появляется первое сообщение
                             .transition(.opacity)
                     } else {
-                        // ForEach теперь работает с максимум 30 элементами —
-                        // ресайз окна больше не вызывает лагов.
-                        // Каждый MessageBubbleView имеет свой .transition (move + opacity).
+                        // ForEach теперь работает с максимум 30 элементами.
                         ForEach(messages) { msg in
                             MessageBubbleView(msg: msg)
                         }
                     }
 
-                    // СТРИМИНГОВЫЙ БЛОК: показываем пока Чаппи думает/генерирует.
-                    // Три состояния:
-                    //   1. isThinking == false → ничего не показываем
-                    //   2. isThinking == true, streamingText == "" → спиннер (инструменты)
-                    //   3. isThinking == true, streamingText != "" → живой пузырь (генерация)
+                    // СТРИМИНГОВЫЙ БЛОК:
+                    // 1. isThinking == false → ничего
+                    // 2. isThinking == true, streamingText == "" → спиннер
+                    // 3. isThinking == true, streamingText != "" → живой пузырь
                     if isThinking {
                         if streamingText.isEmpty {
-                            // Чаппи ещё не начал генерировать финальный ответ —
-                            // он либо думает, либо вызывает инструменты.
-                            // Текущий инструмент отображается в StatusBarView ниже.
                             thinkingIndicator
-                                // Спиннер плавно появляется и исчезает через opacity.
-                                // .id("thinking-spinner") нужен чтобы SwiftUI понимал что это
-                                // разные вью при переходе спиннер ↔ пузырь — иначе
-                                // анимация не сработает (SwiftUI посчитает их одним элементом).
                                 .transition(.opacity)
                                 .id("thinking-spinner")
                         } else {
-                            // Финальный ответ генерируется прямо сейчас.
-                            // Показываем накопленный текст как "живой" пузырь.
-                            // Курсор-мигалка даёт понять что текст ещё пишется.
                             streamingBubble
-                                // Пузырь появляется снизу — та же анимация что и обычные сообщения,
-                                // чтобы переход от спиннера к тексту был визуально единым.
                                 .transition(.asymmetric(
                                     insertion: .move(edge: .bottom).combined(with: .opacity),
                                     removal: .opacity
@@ -127,21 +90,14 @@ struct ChatScrollView: View {
                         }
                     }
 
-                    // Невидимый якорь в самом низу ленты.
+                    // Невидимый якорь в самом низу ленты
                     Spacer(minLength: 0)
                         .id("BottomSpacer")
                 }
-                .padding()
-                // КЛЮЧЕВОЙ МОДИФИКАТОР АНИМАЦИИ:
-                // Привязываем анимацию к изменению массива messages.
-                // Когда messages меняется — SwiftUI плавно анимирует появление/исчезновение
-                // дочерних вью, используя их .transition. Spring даёт живой "отскок".
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: messages)
-                // Отдельная анимация для isThinking — чтобы спиннер и стриминговый пузырь
-                // тоже появлялись плавно, а не мгновенно.
                 .animation(.easeInOut(duration: 0.25), value: isThinking)
-                // Анимация для переключения спиннер ↔ пузырь внутри isThinking == true.
-                // Без этого переход между двумя состояниями был бы резким.
                 .animation(.easeInOut(duration: 0.3), value: streamingText.isEmpty)
             }
             .onAppear {
@@ -159,11 +115,7 @@ struct ChatScrollView: View {
                     }
                 }
             }
-            // Автоскролл при каждом новом токене стриминга.
-            // Без этого пузырь растёт вниз за пределы видимой области.
             .onChange(of: streamingText) { _, _ in
-                // Без анимации — токены приходят очень часто (десятки в секунду),
-                // анимация каждого скролла создала бы визуальный "дрожащий" эффект.
                 proxy.scrollTo("BottomSpacer", anchor: .bottom)
             }
         }
@@ -172,70 +124,124 @@ struct ChatScrollView: View {
     // MARK: - Вспомогательные подвью
 
     /// Приветственное сообщение для пустого чата.
+    ///
+    /// Дизайн: нейтральный пузырь слева — как первое сообщение от Чаппи.
+    /// Использует ту же стилизацию что и пузырь Чаппи в MessageBubbleView.
     private var welcomeMessage: some View {
-        HStack {
-            Text("Привет! Я — Чаппи. Выбери проект и скажи, что нужно сделать.")
-                .padding()
-                .background(Color(NSColor.windowBackgroundColor))
-                .cornerRadius(10)
-                .shadow(color: .black.opacity(0.15), radius: 3, x: 0, y: 2)
-            Spacer()
+        HStack(alignment: .bottom, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Привет! Я — Чаппи 👋")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Text("Выбери папку проекта в сайдбаре и скажи, что нужно сделать.")
+                    .font(.system(size: 14))
+                    .lineSpacing(4)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color(NSColor.textBackgroundColor))
+            .clipShape(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 12,
+                    bottomLeadingRadius: 4,
+                    bottomTrailingRadius: 12,
+                    topTrailingRadius: 12
+                )
+            )
+            .overlay(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 12,
+                    bottomLeadingRadius: 4,
+                    bottomTrailingRadius: 12,
+                    topTrailingRadius: 12
+                )
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            )
+
+            Spacer(minLength: 40)
         }
     }
 
     /// Спиннер — показывается пока Чаппи думает или вызывает инструменты.
+    ///
+    /// Минималистичный: только ProgressView в пузыре слева.
+    /// Текущий инструмент отображается в StatusBarView ниже.
     private var thinkingIndicator: some View {
         HStack {
             ProgressView()
-                .padding()
-                .background(Color(NSColor.windowBackgroundColor))
-                .cornerRadius(10)
-                .shadow(color: .black.opacity(0.15), radius: 3, x: 0, y: 2)
-            Spacer()
+                .controlSize(.small)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(Color(NSColor.textBackgroundColor))
+                .clipShape(
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: 12,
+                        bottomLeadingRadius: 4,
+                        bottomTrailingRadius: 12,
+                        topTrailingRadius: 12
+                    )
+                )
+                .overlay(
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: 12,
+                        bottomLeadingRadius: 4,
+                        bottomTrailingRadius: 12,
+                        topTrailingRadius: 12
+                    )
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                )
+
+            Spacer(minLength: 40)
         }
     }
 
     /// "Живой" пузырь с нарастающим текстом стримингового ответа.
     ///
-    /// ПОЧЕМУ МИГАЮЩИЙ КУРСОР:
-    /// Без визуального индикатора пользователь не понимает — текст уже закончился
-    /// или ещё пишется. Мигающий курсор — универсальный UX-паттерн для "печатает".
+    /// ПОЧЕМУ MarkdownTextView, А НЕ Text:
+    /// Чаппи может начать писать блок кода уже в середине стриминга.
+    /// MarkdownTextView обрабатывает незавершённые блоки корректно —
+    /// незакрытый ``` просто рендерится как текст до закрытия.
     ///
     /// ПОЧЕМУ .contentTransition(.interpolate):
-    /// При каждом токене SwiftUI перерисовывает Text. Без этого модификатора
-    /// каждая перерисовка выглядит как мгновенная замена текста — мерцание.
-    /// .interpolate плавно анимирует изменение текста между кадрами,
-    /// создавая эффект плавного нарастания. Это то самое ощущение "живого печатания".
+    /// При каждом токене SwiftUI перерисовывает View с новой строкой.
+    /// .interpolate плавно анимирует изменение между кадрами — эффект "печатания".
     private var streamingBubble: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .bottom, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .bottom, spacing: 0) {
-                    Text(streamingText)
-                        .foregroundStyle(Color.primary)
-                        .textSelection(.enabled)
-                        // ПЛАВНОЕ НАРАСТАНИЕ ТЕКСТА:
-                        // .contentTransition говорит SwiftUI как анимировать изменение
-                        // содержимого этого Text. .interpolate — плавная интерполяция
-                        // между старым и новым значением, создаёт эффект "печатания".
-                        // Без этого каждый токен — резкая замена текста (мерцание).
+                    // MarkdownTextView для реалтайм-подсветки кода во время стриминга
+                    MarkdownTextView(text: streamingText, fontSize: 14)
                         .contentTransition(.interpolate)
-                        // Анимация привязана к самому тексту — срабатывает при каждом
-                        // новом токене. linear(duration:0.08) — чуть быстрее чем токены
-                        // приходят (~100мс), поэтому анимация выглядит непрерывной.
                         .animation(.linear(duration: 0.08), value: streamingText)
 
-                    // Мигающий курсор — анимируется через repeatForever.
-                    // Вынесен в отдельный компонент чтобы его анимация была изолирована
-                    // и не вызывала перерисовку родительского пузыря.
+                    // Мигающий курсор — визуальный индикатор что текст ещё пишется
                     BlinkingCursor()
+                        .padding(.bottom, 1)
                 }
             }
-            .padding()
-            .background(Color(NSColor.windowBackgroundColor))
-            .cornerRadius(10)
-            .shadow(color: .black.opacity(0.15), radius: 3, x: 0, y: 2)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color(NSColor.textBackgroundColor))
+            .clipShape(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 12,
+                    bottomLeadingRadius: 4,
+                    bottomTrailingRadius: 12,
+                    topTrailingRadius: 12
+                )
+            )
+            .overlay(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 12,
+                    bottomLeadingRadius: 4,
+                    bottomTrailingRadius: 12,
+                    topTrailingRadius: 12
+                )
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            )
 
-            Spacer()
+            Spacer(minLength: 40)
         }
     }
 }
@@ -247,20 +253,18 @@ struct ChatScrollView: View {
 /// Вынесен в отдельную View, чтобы анимация была изолирована и не влияла
 /// на перерисовку родительского пузыря при каждом новом токене.
 private struct BlinkingCursor: View {
-    /// Состояние видимости курсора — переключается анимацией
     @State private var isVisible = true
 
     var body: some View {
         Text("▍")
+            .font(.system(size: 14))
             .foregroundStyle(Color.accentColor)
             .opacity(isVisible ? 1 : 0)
-            // repeatForever с autoreverse создаёт плавное мигание без резких скачков
             .animation(
                 .easeInOut(duration: 0.5).repeatForever(autoreverses: true),
                 value: isVisible
             )
             .onAppear {
-                // Запускаем анимацию сразу при появлении курсора
                 isVisible = false
             }
     }
@@ -271,13 +275,18 @@ private struct BlinkingCursor: View {
 #Preview("С историей и стримингом") {
     ChatScrollView(
         messages: [
-            .message(isUser: true, text: "Привет, Чаппи!"),
-            .message(isUser: false, text: "Привет, Босс! Готов к работе 🚀", cost: 0.42),
+            .message(isUser: true, text: "Покажи пример кода"),
+            .message(
+                isUser: false,
+                text: "Конечно! Вот пример:\n\n```swift\n// Пример ViewModel\n@Observable\nfinal class ViewModel {\n    var count = 0\n}\n```\n\nИспользуй **@Observable** для автоматического отслеживания.",
+                cost: 0.42
+            ),
         ],
         isThinking: true,
-        streamingText: "Прочитал файл. Вот что я нашёл: ContentView является чистым дирижёром..."
+        streamingText: "Также можно добавить `@MainActor` для **потокобезопасности**..."
     )
-    .frame(width: 600, height: 400)
+    .frame(width: 650, height: 500)
+    .background(Color(NSColor.windowBackgroundColor))
 }
 
 #Preview("Спиннер (инструменты)") {
@@ -288,7 +297,8 @@ private struct BlinkingCursor: View {
         isThinking: true,
         streamingText: ""
     )
-    .frame(width: 600, height: 300)
+    .frame(width: 650, height: 300)
+    .background(Color(NSColor.windowBackgroundColor))
 }
 
 #Preview("Пустой чат") {
@@ -297,5 +307,6 @@ private struct BlinkingCursor: View {
         isThinking: false,
         streamingText: ""
     )
-    .frame(width: 600, height: 300)
+    .frame(width: 650, height: 300)
+    .background(Color(NSColor.windowBackgroundColor))
 }

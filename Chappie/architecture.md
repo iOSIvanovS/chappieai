@@ -3,10 +3,7 @@
 
   ЕДИНЫЙ ДОКУМЕНТ АРХИТЕКТУРЫ — CHAPPIE APP (UI LAYER)
 
-  Этот файл заменяет папку AI_Docs (architecture.md + project_map.md + semantic.json).
-  Обновляй при каждом значимом архитектурном изменении.
-  
-  Последнее обновление: рефакторинг структуры AI_Docs → один файл architecture.md
+  Последнее обновление: UX-TYPOGRAPHY — Markdown + подсветка синтаксиса
 -->
 
 # Chappie App — Архитектура UI-слоя
@@ -39,15 +36,16 @@ Chappie/
 ├── Models/
 │   └── ChatMessage.swift               # enum ChatMessage: .message | .toolCall
 ├── ChappieMCP/                         # Xcode-таргет: исходники хелпера
-│   ├── main.swift                      # Точка входа хелпера, запускает MCPUnixServer
-│   ├── MCPHTTPServer.swift             # Unix Domain Socket сервер, диспетчер инструментов
-│   ├── GitTools.swift                  # git_status, git_add, git_commit, git_log, git_reset
-│   └── BuildTools.swift               # build_project, run_tests, read_build_log
+│   ├── main.swift
+│   ├── MCPHTTPServer.swift
+│   ├── GitTools.swift
+│   └── BuildTools.swift
 ├── Views/
 │   ├── Chat/
 │   │   ├── MessageBubbleView.swift     # Пузырёк одного сообщения (только .message)
 │   │   ├── ChatScrollView.swift        # Лента сообщений + спиннер + стриминговый пузырь
-│   │   └── StatusBarView.swift         # Строка состояния текущего инструмента (ТД-UX-PERF)
+│   │   ├── MarkdownTextView.swift      # Рендер Markdown + подсветка синтаксиса (UX-TYPOGRAPHY)
+│   │   └── StatusBarView.swift         # Строка состояния текущего инструмента
 │   ├── Input/
 │   │   └── InputBarView.swift          # Панель ввода: TextField + кнопка отправки
 │   ├── Sidebar/
@@ -55,9 +53,9 @@ Chappie/
 │   └── Toolbar/
 │       └── ToolbarContent.swift        # Тулбар: баланс + кнопка настроек
 ├── Settings/
-│   ├── KeychainManager.swift           # CRUD для Keychain (save/load/delete/exists)
-│   ├── SettingsManager.swift           # Хранение API-ключа в Keychain с автомиграцией
-│   └── SettingsView.swift              # Sheet настроек: ввод ключа, валидация, сохранение
+│   ├── KeychainManager.swift
+│   ├── SettingsManager.swift
+│   └── SettingsView.swift
 └── Assets.xcassets/
 ```
 
@@ -85,100 +83,36 @@ MCPToolBridge в ChappieCore → connect() → ToolDispatcher → GitTools/Build
 
 ### КРИТИЧЕСКИ ВАЖНО: Когда запускать хелпер
 
-**ПРОБЛЕМА (была):** `ChappieApp.onAppear` вызывал `MCPHelperLauncher.shared.launch()` без пути.
-В этот момент воркспейс ещё не восстановлен из bookmark.
-`FileManager.default.currentDirectoryPath` возвращал `/` (корень ФС).
-Хелпер запускался с воркспейсом `/` → git не находил репозиторий → все команды падали.
-
 **РЕШЕНИЕ:** Хелпер запускается ТОЛЬКО когда путь к воркспейсу известен:
-- `loadWorkspaceWithSecurityScope()` — после успешного восстановления bookmark → `launch(workspacePath: url.path)`
-- `setWorkspace()` — при ручном выборе папки → `restartWithWorkspace(url)`
-- `ChappieApp.onAppear` — НЕ запускает хелпер (убрано).
+- `loadWorkspaceWithSecurityScope()` — после успешного восстановления bookmark
+- `setWorkspace()` — при ручном выборе папки
+- `ChappieApp.onAppear` — НЕ запускает хелпер (убрано)
 
 ### App Sandbox
 
-**ПРОБЛЕМА (была):** `ENABLE_APP_SANDBOX = YES` в pbxproj блокировал `bind()` для дочернего процесса.
-**РЕШЕНИЕ:** `ENABLE_APP_SANDBOX = NO` в Debug и Release конфигурациях таргета Chappie.
-Сокет располагается в `/tmp/com.chappie.mcp.sock` — стандартное место для Unix Domain Sockets.
-
-### kSocketPath — default argument
-
-**ПРОБЛЕМА (была):** `private let kSocketPath = "..."` как default argument в `public init` — компилятор
-отклоняет: "internal let cannot be referenced from a default argument value".
-**РЕШЕНИЕ:** строковый литерал `"/tmp/com.chappie.mcp.sock"` прямо в default argument.
-
-### lazy vs @Observable
-
-**ПРОБЛЕМА (была):** `lazy var socketPath` в `@Observable` классе — компилятор падает:
-"init accessor cannot refer to property '_socketPath'".
-**ПРИЧИНА:** `@Observable` макрос генерирует init accessor для каждого хранимого свойства,
-и `lazy` несовместимо с этой генерацией.
-**РЕШЕНИЕ:** вычислять `socketPath` в `init()` и хранить как обычное `var`.
-
-### Расположение бинарника
-
-```
-Chappie.app/
-└── Contents/
-    ├── MacOS/
-    │   └── Chappie          # Основной бинарник
-    └── Helpers/
-        └── ChappieMCP       # Helper executable (Copy Files Build Phase)
-```
-
-### MCPHelperLauncher — ключевые решения
-
-| Решение | Причина |
-|---|---|
-| Singleton `shared` | Один хелпер на всё приложение, управление из любого места |
-| `@MainActor` | Process и @Observable свойства — только главный поток |
-| `terminationHandler` через `Task { @MainActor }` | Handler вызывается на фоновом потоке |
-| `applicationWillTerminate` через NSApplicationDelegate | SwiftUI App не даёт хука на завершение |
-| `SIGTERM` (код 15) — не считается крашем | Это наш собственный terminate() |
-| `Bundle.main.url(forAuxiliaryExecutable:)` + fallback | Стандартный API + ручной путь для надёжности |
-| Запуск только из ViewModel, не из ChappieApp | Путь к воркспейсу известен только в ViewModel |
+**РЕШЕНИЕ:** `ENABLE_APP_SANDBOX = NO` в Debug и Release. Сокет в `/tmp/com.chappie.mcp.sock`.
 
 ---
 
 ## 4. КРИТИЧЕСКИ ВАЖНО: Кто строит контекстное окно истории
 
-### Проблема (была до FIX-DOUBLE-CONTEXT)
-
-История сжималась **дважды** с **разными параметрами**:
-
-1. `ChappieViewModel.buildNetworkHistory()` — tokenBudget=**30,000**, recentFullCount=**6**, summaryThreshold=**200**
-2. `AIOrchestrator.buildContextWindow()` — tokenBudget=**12,000**, recentFullCount=**3**, summaryThreshold=**400**
-
-**Результат: 21,000+ токенов на запрос вместо ожидаемых 5,000-7,000.**
-
 ### Решение (FIX-DOUBLE-CONTEXT)
-
-**Единственный источник истины для логики сжатия — `AIOrchestrator.buildContextWindow()`.**
 
 | Компонент | Ответственность |
 |---|---|
 | `ChappieViewModel.buildRawNetworkHistory()` | ТОЛЬКО конвертация `ChatMessage` → `AIMessage`. Никакого сжатия! |
-| `AIOrchestrator.buildContextWindow()` | Токенный бюджет, замена на summary, обрезка. Читает параметры из `AppConfig`. |
-| `AppConfig.shared` | Единственное место где живут `tokenBudget`, `recentFullMessages`, `summaryThreshold`. |
+| `AIOrchestrator.buildContextWindow()` | Токенный бюджет, замена на summary, обрезка |
+| `AppConfig.shared` | Единственное место где живут параметры сжатия |
 
 ---
 
 ## 5. Оптимизация производительности UI (ТД-UX-PERF)
-
-### visibleMessages — фильтрация и лимит
 
 ```swift
 var visibleMessages: [ChatMessage] {
     let onlyMessages = messages.filter { if case .message = $0 { return true }; return false }
     return Array(onlyMessages.suffix(30))   // макс. 30 .message в ленте
 }
-```
-
-### currentToolCall — строка состояния
-
-```swift
-self.currentToolCall = "\(toolName) → \(shortPath)"  // во время работы
-self.currentToolCall = nil                             // после завершения
 ```
 
 ---
@@ -192,35 +126,87 @@ AIOrchestrator.process(onToken:)   → вызывает onToken(@Sendable (Strin
     ↓ Task { @MainActor in }
 ChappieViewModel.streamingText     → @Observable, SwiftUI перерисовывает пузырь
     ↓
-ChatScrollView.streamingBubble     → Text(streamingText) + BlinkingCursor
+ChatScrollView.streamingBubble     → MarkdownTextView(streamingText) + BlinkingCursor
 ```
 
 ---
 
-## 7. Безопасность: API-ключ в Keychain
+## 7. UX-TYPOGRAPHY — Markdown и подсветка синтаксиса
 
-- `KeychainManager` — статические методы `save/load/delete/exists` через `kSecClassGenericPassword`
-- `SettingsManager` — `@Observable`, читает из Keychain при `init()`, пишет при `apiKey.didSet`
-- **Автомиграция**: при первом запуске переносит ключ из UserDefaults в Keychain и удаляет оттуда
-- Сервис идентифицируется по `"com.chappie.app.apikey"`
+### Компоненты
+
+**`MarkdownTextView`** — главный компонент рендера markdown-текста.
+- Используется в пузырях Чаппи (не пользователя — тот не пишет markdown)
+- Используется в стриминговом пузыре (код подсвечивается в реальном времени)
+
+**`InlineTextView`** — рендер инлайн-разметки через AttributedString.
+- Обрабатывает: `**bold**`, `*italic*`, `` `code` ``
+- ПОЧЕМУ AttributedString: в macOS 26 оператор `+` для Text deprecated.
+  Единственный надёжный способ смешивать стили — AttributedString с явными атрибутами.
+
+**`CodeBlockView`** — блок кода в стиле Xcode Intelligence Panel.
+- Тёмный фон #1E1E1E (Xcode Default Dark)
+- Заголовок: язык слева, кнопка "Копировать" справа
+- Горизонтальный скролл для длинных строк
+- SF Mono 12.5pt, lineSpacing 4
+
+**`SyntaxHighlightedText`** — подсветка синтаксиса Swift через AttributedString.
+- Цветовая схема Xcode Default Dark (розовый для ключевых слов, голубой для типов и т.д.)
+- Без сторонних зависимостей — собственный линейный парсер
+
+### Дизайн пузырей (Apple HIG + macOS 26)
+
+**Пузырь пользователя:**
+- Акцентный цвет (синий), белый текст
+- `UnevenRoundedRectangle`: все углы 12pt, нижний правый 4pt ("хвост" справа)
+- Обычный `Text` — пользователь не пишет markdown
+
+**Пузырь Чаппи:**
+- `Color(NSColor.textBackgroundColor)` — адаптивный (белый/тёмный)
+- `UnevenRoundedRectangle`: все углы 12pt, нижний левый 4pt ("хвост" слева)
+- Тонкая граница `Color.primary.opacity(0.08)` — отделяет от фона окна
+- `MarkdownTextView` — полная поддержка markdown и кода
+
+**Типографика:**
+- Основной текст: SF Pro Text 14pt, lineSpacing 5 (≈1.35× line-height)
+- Код: SF Mono 12.5pt, lineSpacing 4
+- Apple HIG рекомендует 1.3–1.5× line-height для длинных текстов
+
+### Парсер Markdown
+
+Линейный парсер строк (не RegEx, не AST):
+1. Блоки кода: ` ```язык\n...\n``` `
+2. Горизонтальный разделитель: `---`
+3. Заголовки: `#`, `##`, `###`
+4. Пустые строки: разделители параграфов
+5. Обычные параграфы: соседние строки объединяются в один блок
 
 ---
 
-## 8. Технический долг (актуальный)
+## 8. Безопасность: API-ключ в Keychain
+
+- `KeychainManager` — статические методы через `kSecClassGenericPassword`
+- `SettingsManager` — `@Observable`, читает из Keychain при `init()`, пишет при `apiKey.didSet`
+- **Автомиграция**: при первом запуске переносит ключ из UserDefaults в Keychain
+
+---
+
+## 9. Технический долг (актуальный)
 
 | # | Описание | Приоритет | Статус |
 |---|---|---|---|
 | ТД-4 | ContentView-монолит → разбить на компоненты | 🟠 | ✅ Закрыт |
 | ТД-6 | ToolCall-сообщения → типизировать | 🟡 | ✅ Закрыт |
 | ТД-7 | Нет стриминга токенов | 🟡 | ✅ Закрыт |
-| ТД-UX-PERF | Тормоза UI, 200 МБ памяти из-за .toolCall в ленте | 🔴 | ✅ Закрыт |
+| ТД-UX-PERF | Тормоза UI, 200 МБ памяти | 🔴 | ✅ Закрыт |
 | ТД-SEC | API-ключ → Keychain | 🟠 | ✅ Закрыт |
 | ТД-TEST | Unit-тесты | 🟡 | ✅ Закрыт |
 | ТД-COST | Prompt caching + токенное окно | 🟡 | ✅ Закрыт |
-| FIX-DOUBLE-CONTEXT | Двойное сжатие истории → единый источник истины | 🔴 | ✅ Закрыт |
-| MCP-HELPER | ChappieMCP как дочерний процесс + MCPHelperLauncher | 🔴 | ✅ Закрыт |
-| MCP-WORKSPACE | Хелпер запускался с "/" → git не работал | 🔴 | ✅ Закрыт |
+| FIX-DOUBLE-CONTEXT | Двойное сжатие истории | 🔴 | ✅ Закрыт |
+| MCP-HELPER | ChappieMCP как дочерний процесс | 🔴 | ✅ Закрыт |
+| MCP-WORKSPACE | Хелпер запускался с "/" | 🔴 | ✅ Закрыт |
 | MCP-SANDBOX | ENABLE_APP_SANDBOX = YES блокировал bind() | 🔴 | ✅ Закрыт |
+| UX-TYPOGRAPHY | Markdown + подсветка синтаксиса + типографика | 🟠 | ✅ Закрыт |
 
 ---
 
@@ -229,14 +215,12 @@ ChatScrollView.streamingBubble     → Text(streamingText) + BlinkingCursor
 | Date | Change |
 |------|--------|
 | 2026-05-21 | Initial creation |
-| 2026-05-27 | Полная переработка: документ приведён в соответствие с реальным кодом |
-| 2026-05-27 | Этап 4: ТД-4 закрыт. ContentView разбит на компоненты |
-| 2026-05-27 | Этап 6: ChatMessage типизирован как enum. ТД-6 закрыт |
+| 2026-05-27 | ТД-4: ContentView разбит на компоненты |
+| 2026-05-27 | ТД-6: ChatMessage типизирован как enum |
 | 2026-05-28 | ТД-7: Стриминг токенов |
 | 2026-06-01 | ТД-UX-PERF: visibleMessages, currentToolCall, StatusBarView |
-| 2026-06-02 | FIX-DOUBLE-CONTEXT: buildRawNetworkHistory() — только конвертация без сжатия |
-| 2026-06-XX | MCP-HELPER: MCPHelperLauncher + ChappieAppDelegate + ChappieMCP Xcode target |
-| 2026-06-XX | MCP-SANDBOX: ENABLE_APP_SANDBOX = NO, /tmp/ сокет, lazy→init(), kSocketPath→литерал |
-| 2026-06-XX | MCP-WORKSPACE: хелпер запускается из loadWorkspaceWithSecurityScope(), не из onAppear |
-| 2026-06-XX | ТД-SEC: API-ключ перенесён в Keychain, KeychainManager, автомиграция |
+| 2026-06-02 | FIX-DOUBLE-CONTEXT: buildRawNetworkHistory() без сжатия |
+| 2026-06-XX | MCP-HELPER/SANDBOX/WORKSPACE |
+| 2026-06-XX | ТД-SEC: API-ключ в Keychain |
 | 2026-06-XX | Рефакторинг: AI_Docs/ → один файл architecture.md |
+| 2026-06-XX | UX-TYPOGRAPHY: MarkdownTextView, CodeBlockView, SyntaxHighlightedText, InlineTextView |
