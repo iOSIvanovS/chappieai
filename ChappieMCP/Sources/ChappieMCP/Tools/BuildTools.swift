@@ -4,10 +4,15 @@
 // Реализует инструменты сборки и тестирования проекта Chappie через xcodebuild.
 // Результаты сборки сохраняются в лог-файл для последующего чтения.
 //
-// ПОЧЕМУ xcodebuild, А НЕ swift build:
-// Проект Chappie — это Xcode-проект (.xcodeproj), а не чистый SPM-пакет.
-// xcodebuild умеет работать с .xcodeproj, подписывать, линковать фреймворки.
-// ChappieCore как SPM-пакет можно тестировать через swift test.
+// ПОЧЕМУ xcodebuild ДЛЯ ТЕСТОВ, А НЕ swift test:
+// ChappieCoreTests — это Xcode Unit Test Bundle (таргет в Chappie.xcodeproj),
+// а НЕ SPM testTarget в Package.swift. Поэтому swift test не знает о нём.
+// Единственный правильный способ запустить эти тесты — xcodebuild test
+// со схемой ChappieCoreTests и destination macOS.
+//
+// СХЕМЫ:
+// - build_project → схема "Chappie" (собирает всё приложение)
+// - run_tests     → схема "ChappieCoreTests" (запускает тесты библиотеки)
 //
 // ФОРМАТ ВЫВОДА:
 // xcodebuild генерирует очень многословный вывод. Мы фильтруем его через
@@ -46,29 +51,34 @@ final class BuildTools: Sendable {
             "build"
         ]
 
-        let result = await runXcodebuild(args: args)
-        return result
+        return await runXcodebuild(args: args)
     }
 
-    /// Запускает тесты.
-    /// - Parameter target: имя тест-таргета (nil = все тесты).
+    /// Запускает тесты через xcodebuild с правильной схемой.
+    ///
+    /// АРХИТЕКТУРНОЕ РЕШЕНИЕ (2025-07-10):
+    /// ChappieCoreTests — это Xcode Unit Test Bundle, НЕ SPM testTarget.
+    /// Поэтому для запуска тестов используем схему "ChappieCoreTests" в xcodebuild.
+    /// Старый подход (swift test --package-path ChappieCore) был ошибочным —
+    /// он искал testTarget в Package.swift, которого там нет.
+    ///
+    /// - Parameter target: имя тест-таргета (например "ChappieCoreTests").
+    ///   nil = запускает все тесты через схему ChappieCoreTests.
     func runTests(target: String?) async -> ToolResult {
-        print("[ChappieMCP] 🧪 Запуск тестов...")
+        print("[ChappieMCP] 🧪 Запуск тестов через xcodebuild схему ChappieCoreTests...")
 
-        // ChappieCore тестируется через swift test (SPM-пакет)
-        // Chappie.app тестируется через xcodebuild test
-        if let target, target.contains("ChappieCore") {
-            return await runSwiftTest()
-        }
-
+        // Всегда используем схему ChappieCoreTests — она единственная тестовая схема.
+        // Если в будущем появятся другие тестовые таргеты, добавить маппинг здесь.
         var args = [
             "-project", "Chappie.xcodeproj",
-            "-scheme", "Chappie",
+            "-scheme", "ChappieCoreTests",
             "-destination", "platform=macOS",
             "test"
         ]
 
-        if let target {
+        // Если передан конкретный таргет — ограничиваем тесты только им.
+        // Формат: "ChappieCoreTests/ClassName/methodName" или просто "ChappieCoreTests"
+        if let target, !target.isEmpty {
             args.append(contentsOf: ["-only-testing", target])
         }
 
@@ -93,20 +103,6 @@ final class BuildTools: Sendable {
                 let result = self.runProcess(
                     executable: "/usr/bin/xcodebuild",
                     args: args,
-                    workingDirectory: self.projectPath
-                )
-                continuation.resume(returning: result)
-            }
-        }
-    }
-
-    /// Запускает swift test для ChappieCore SPM-пакета.
-    private func runSwiftTest() async -> ToolResult {
-        return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let result = self.runProcess(
-                    executable: "/usr/bin/swift",
-                    args: ["test", "--package-path", self.projectPath + "/ChappieCore"],
                     workingDirectory: self.projectPath
                 )
                 continuation.resume(returning: result)
