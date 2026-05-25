@@ -28,7 +28,11 @@
 //  ИЗМЕНЕНИЕ (UX-TYPOGRAPHY — Типографика):
 //  Стриминговый пузырь теперь использует MarkdownTextView вместо Text() —
 //  код подсвечивается в реальном времени по мере нарастания токенов.
-//  Приветственное сообщение обновлено под новую типографику.
+//
+//  ИЗМЕНЕНИЕ (UX-RUNNING-COST — Накопительная стоимость):
+//  Добавлен параметр `runningCost: Double`.
+//  Отображается в правом нижнем углу стримингового пузыря нарастающим итогом.
+//  Анимируется через .contentTransition(.numericText) — числа "перекатываются".
 
 import SwiftUI
 
@@ -54,6 +58,13 @@ struct ChatScrollView: View {
     /// Когда появляются первые символы — заменяем спиннер на "живой" пузырь.
     /// После завершения стриминга ViewModel сбросит это в "" и добавит .message в историю.
     let streamingText: String
+
+    /// Накопительная стоимость текущего запроса — нарастающий итог.
+    ///
+    /// Обновляется после каждого внутреннего API-вызова оркестратора.
+    /// Отображается в правом нижнем углу стримингового пузыря.
+    /// 0.0 — в начале запроса (до первого ответа API).
+    let runningCost: Double
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -206,6 +217,11 @@ struct ChatScrollView: View {
     /// ПОЧЕМУ .contentTransition(.interpolate):
     /// При каждом токене SwiftUI перерисовывает View с новой строкой.
     /// .interpolate плавно анимирует изменение между кадрами — эффект "печатания".
+    ///
+    /// СТОИМОСТЬ В ПРАВОМ НИЖНЕМ УГЛУ:
+    /// runningCost показывается всегда (даже 0.00 ₽ в начале) — это честно.
+    /// .contentTransition(.numericText) анимирует изменение числа — цифры "перекатываются".
+    /// Это создаёт эффект "счётчика такси" — пользователь видит как растёт цена.
     private var streamingBubble: some View {
         HStack(alignment: .bottom, spacing: 8) {
             VStack(alignment: .leading, spacing: 6) {
@@ -218,6 +234,19 @@ struct ChatScrollView: View {
                     // Мигающий курсор — визуальный индикатор что текст ещё пишется
                     BlinkingCursor()
                         .padding(.bottom, 1)
+                }
+
+                // НАКОПИТЕЛЬНАЯ СТОИМОСТЬ:
+                // Прижата к правому краю через HStack со Spacer.
+                // .contentTransition(.numericText) — числа анимируются при изменении.
+                // Показываем всегда: 0.00 ₽ → 1.23 ₽ → 4.56 ₽ — нарастающий итог.
+                HStack {
+                    Spacer()
+                    Text(String(format: "🪙 %.2f ₽", runningCost))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .contentTransition(.numericText(value: runningCost))
+                        .animation(.easeInOut(duration: 0.3), value: runningCost)
                 }
             }
             .padding(.horizontal, 14)
@@ -283,7 +312,8 @@ private struct BlinkingCursor: View {
             ),
         ],
         isThinking: true,
-        streamingText: "Также можно добавить `@MainActor` для **потокобезопасности**..."
+        streamingText: "Также можно добавить `@MainActor` для **потокобезопасности**...",
+        runningCost: 1.23
     )
     .frame(width: 650, height: 500)
     .background(Color(NSColor.windowBackgroundColor))
@@ -295,7 +325,8 @@ private struct BlinkingCursor: View {
             .message(isUser: true, text: "Проанализируй проект"),
         ],
         isThinking: true,
-        streamingText: ""
+        streamingText: "",
+        runningCost: 0.0
     )
     .frame(width: 650, height: 300)
     .background(Color(NSColor.windowBackgroundColor))
@@ -305,7 +336,8 @@ private struct BlinkingCursor: View {
     ChatScrollView(
         messages: [],
         isThinking: false,
-        streamingText: ""
+        streamingText: "",
+        runningCost: 0.0
     )
     .frame(width: 650, height: 300)
     .background(Color(NSColor.windowBackgroundColor))

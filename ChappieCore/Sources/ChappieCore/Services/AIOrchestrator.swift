@@ -59,6 +59,11 @@
 //    ЗАПРЕЩЕНО: git_diff (загружает весь проект в контекст, стоит сотни рублей).
 //    ЗАПРЕЩЕНО: run_tests до build_project (двойная компиляция).
 //    ЗАПРЕЩЕНО: финальный коммит если тесты или сборка не зелёные.
+//
+// 9. НАКОПИТЕЛЬНАЯ СТОИМОСТЬ (UX-RUNNING-COST):
+//    Добавлен callback onCostUpdate — вызывается после каждого внутреннего API-запроса.
+//    Передаёт накопленную стоимость нарастающим итогом (не стоимость одного шага!).
+//    Это позволяет UI показывать цену в реальном времени прямо в стриминговом пузыре.
 
 import Foundation
 
@@ -152,7 +157,7 @@ public actor AIOrchestrator {
        ШАГ 4: build_project — компиляция. Если упала — ЧИНИТЬ, не идти дальше.
        ШАГ 5: run_tests — тесты ТОЛЬКО если сборка прошла успешно.
                Если упали — ЧИНИТЬ, не идти дальше.
-       ШАГ 6: git_add + git_commit — RESULT коммит ТОЛЬКО если всё зелёное.
+       ШАГ 6: git_add + git_commit — RESULT коммит ТОЛЬКО если всё зелёные.
                Сообщение коммита: "feat/fix: [описание что сделано]"
        ШАГ 7: Сообщить пользователю что можно жать треугольник в Xcode для перезапуска.
 
@@ -187,6 +192,8 @@ public actor AIOrchestrator {
     ///     Перед отправкой автоматически сжимается через buildContextWindow().
     ///   - onToolCall: Вызывается при каждом вызове инструмента — обновляет UI.
     ///   - onToken: Вызывается для каждого нового токена финального ответа.
+    ///   - onCostUpdate: Вызывается после каждого внутреннего API-запроса с накопленной
+    ///     стоимостью нарастающим итогом. Позволяет UI показывать цену в реальном времени.
     ///
     /// ВАЖНО О ДУБЛИРОВАНИИ:
     /// history должна содержать только завершённые пары user/assistant.
@@ -200,7 +207,8 @@ public actor AIOrchestrator {
         prompt: String,
         history: [AIMessage],
         onToolCall: @escaping @Sendable (String, String) -> Void,
-        onToken: (@Sendable (String) -> Void)? = nil
+        onToken: (@Sendable (String) -> Void)? = nil,
+        onCostUpdate: (@Sendable (Double) -> Void)? = nil
     ) async throws -> AIOrchestratorResult {
 
         // Собираем контекстное окно: два уровня фильтрации (количество + токены),
@@ -236,7 +244,15 @@ public actor AIOrchestrator {
                 onToken: onToken
             )
 
-            if let cost = streamResult.cost { totalCost += cost }
+            if let cost = streamResult.cost {
+                totalCost += cost
+
+                // НАКОПИТЕЛЬНАЯ СТОИМОСТЬ:
+                // Вызываем callback после каждого внутреннего шага с нарастающим итогом.
+                // UI получает обновление сразу — не нужно ждать финального ответа.
+                // Это создаёт эффект "счётчика такси" — пользователь видит как растёт цена.
+                onCostUpdate?(totalCost)
+            }
             if let balance = streamResult.balance { latestBalance = balance }
 
             // Добавляем ответ модели в историю сессии.

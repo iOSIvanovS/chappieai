@@ -40,6 +40,12 @@
 // Финальный переход "стриминг → сообщение" теперь анимирован:
 // streamingText сбрасывается и messages обновляется в одном withAnimation блоке.
 // Это устраняет резкий скачок когда Чаппи заканчивает печатать.
+//
+// ИЗМЕНЕНИЕ (UX-RUNNING-COST):
+// Добавлено свойство runningCost: Double — накопительная стоимость текущего запроса.
+// Нарастает с каждым внутренним API-вызовом оркестратора через callback onCostUpdate.
+// Отображается в стриминговом пузыре в реальном времени — эффект "счётчика такси".
+// Сбрасывается в 0 при начале нового запроса пользователя.
 
 import SwiftUI
 import ChappieCore
@@ -102,6 +108,19 @@ final class ChappieViewModel {
     /// Когда генерация завершается — streamingText сбрасывается, а полный текст
     /// добавляется в messages как обычное .message.
     var streamingText: String = ""
+
+    /// Накопительная стоимость текущего запроса в рублях — нарастающий итог.
+    ///
+    /// ЗАЧЕМ:
+    /// Оркестратор может выполнить N внутренних API-вызовов за один запрос пользователя
+    /// (вызовы инструментов, промежуточные ответы, финальный ответ).
+    /// Каждый такой вызов стоит денег. runningCost нарастает с каждым шагом через
+    /// callback onCostUpdate, чтобы пользователь видел реальную стоимость прямо сейчас.
+    /// Эффект "счётчика такси" — цена растёт на глазах во время работы Чаппи.
+    ///
+    /// Сбрасывается в 0 при начале нового запроса пользователя.
+    /// После завершения — финальное значение сохраняется в .message как cost.
+    var runningCost: Double = 0.0
 
     /// Текущий вызываемый инструмент — отображается в строке состояния.
     ///
@@ -211,6 +230,10 @@ final class ChappieViewModel {
         streamingText = ""
         currentToolCall = nil
 
+        // Сбрасываем накопительную стоимость для нового запроса.
+        // Пользователь должен видеть стоимость именно текущего запроса, а не сессии целиком.
+        runningCost = 0.0
+
         // Конвертируем историю в сетевой формат БЕЗ сжатия.
         // Сжатие и токенное окно — ответственность AIOrchestrator.
         let networkHistory = buildRawNetworkHistory()
@@ -235,12 +258,24 @@ final class ChappieViewModel {
                         Task { @MainActor in
                             self.streamingText += token
                         }
+                    },
+                    onCostUpdate: { cumulativeCost in
+                        // НАКОПИТЕЛЬНАЯ СТОИМОСТЬ:
+                        // Каждый раз получаем нарастающий итог от оркестратора.
+                        // Обновляем runningCost на главном потоке — SwiftUI перерисует пузырь.
+                        // Анимация числа (.animation на Text) создаёт плавный эффект счётчика.
+                        Task { @MainActor in
+                            self.runningCost = cumulativeCost
+                        }
                     }
                 )
 
                 // Разбираем ответ: извлекаем summary и очищаем текст от тега.
                 let rawResponse = self.cleanAIResponse(result.finalResponse)
                 let (displayText, summary) = self.extractAndCleanSummary(from: rawResponse)
+
+                // Финальная стоимость запроса — сохраняем в сообщение.
+                let finalCost = result.totalCost
 
                 // ПЛАВНЫЙ ФИНАЛЬНЫЙ ПЕРЕХОД:
                 // Проблема без анимации: streamingText сбрасывается в "" — стриминговый пузырь
@@ -258,7 +293,7 @@ final class ChappieViewModel {
                     self.messages.append(.message(
                         isUser: false,
                         text: displayText,
-                        cost: result.totalCost,
+                        cost: finalCost,
                         summary: summary
                     ))
                 }
