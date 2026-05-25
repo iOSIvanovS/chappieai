@@ -11,17 +11,29 @@
 // в Swift 6. Это гарантирует, что все операции с файловой системой выполняются последовательно,
 // исключая состояния гонки при параллельных запросах от нескольких чатов или агентов.
 //
-// СТРУКТУРА ПАМЯТИ:
+// СТРУКТУРА ПАМЯТИ (НОВЫЙ ФОРМАТ после рефакторинга AI_Docs → один файл):
+//
 // ├── ~/Documents/Chappie/semantic.json  — глобальная семантическая память (кросс-проектная)
 // └── <WorkspaceRoot>/
-//     ├── Chappie/AI_Docs/               — память таргета App
-//     │   ├── project_map.md             — карта файлов таргета (автогенерируется)
-//     │   ├── architecture.md            — архитектурные решения
-//     │   └── semantic.json              — семантическая память проекта
-//     └── ChappieCore/AI_Docs/           — память таргета Library
-//         ├── project_map.md
-//         ├── architecture.md
-//         └── semantic.json
+//     ├── Chappie/
+//     │   ├── architecture.md            — единый документ архитектуры таргета (НОВОЕ МЕСТО)
+//     │   └── AI_Docs/
+//     │       └── semantic.json          — семантическая память таргета (данные, не документация)
+//     └── ChappieCore/
+//         ├── architecture.md            — единый документ архитектуры таргета (НОВОЕ МЕСТО)
+//         └── AI_Docs/
+//             └── semantic.json          — семантическая память таргета
+//
+// ПОЧЕМУ ТАКОЙ ГИБРИД:
+// - architecture.md лежит в корне таргета — легко найти, не нужно заходить в папку
+// - semantic.json остаётся в AI_Docs/ — это данные, которые программно читаются/пишутся
+//   через MemoryManager, и их лучше изолировать от исходного кода таргета
+//
+// СТАРЫЙ ФОРМАТ (до рефакторинга):
+// - Chappie/AI_Docs/architecture.md
+// - Chappie/AI_Docs/project_map.md
+// - Chappie/AI_Docs/semantic.json
+// Папки AI_Docs/ будут удалены пользователем после проверки новых файлов.
 
 import Foundation
 
@@ -61,27 +73,40 @@ public enum TargetKind: Sendable {
 }
 
 /// Описание одного таргета воркспейса.
-/// Содержит путь к папке таргета и путь к его AI_Docs/semantic.json.
+///
+/// НОВЫЙ ФОРМАТ (после рефакторинга AI_Docs → один файл):
+/// - architectureFileURL → <target>/architecture.md (в корне таргета, не в AI_Docs/)
+/// - semanticFileURL     → <target>/AI_Docs/semantic.json (данные остаются в AI_Docs/)
+/// - projectMapFileURL   → УДАЛЕНО (содержимое перенесено в architecture.md)
+///
 /// Структура намеренно сделана Sendable для безопасной передачи между акторами в Swift 6.
 public struct WorkspaceTarget: Sendable {
     public let name: String
     public let directoryURL: URL
     public let aiDocsURL: URL
     public let semanticFileURL: URL
+
+    /// Путь к единому файлу архитектуры таргета.
+    /// НОВОЕ МЕСТО: <target>/architecture.md (в корне таргета, не в AI_Docs/).
+    /// Причина переноса: один файл вместо трёх (architecture.md + project_map.md + semantic.json).
+    /// Так проще найти и поддерживать актуальным.
     public let architectureFileURL: URL
-    public let projectMapFileURL: URL
+
     public let kind: TargetKind
 
     init(name: String, directoryURL: URL, kind: TargetKind) {
         self.name = name
         self.directoryURL = directoryURL
         self.kind = kind
-        // AI_Docs всегда находится внутри папки таргета — это инвариант системы.
-        // Такое решение изолирует память каждого таргета и предотвращает случайное смешивание контекстов.
+
+        // AI_Docs/ содержит только semantic.json — программные данные памяти.
+        // Документация (architecture.md) теперь лежит в корне таргета.
         self.aiDocsURL = directoryURL.appendingPathComponent("AI_Docs", isDirectory: true)
         self.semanticFileURL = directoryURL.appendingPathComponent("AI_Docs/semantic.json")
-        self.architectureFileURL = directoryURL.appendingPathComponent("AI_Docs/architecture.md")
-        self.projectMapFileURL = directoryURL.appendingPathComponent("AI_Docs/project_map.md")
+
+        // architecture.md лежит в корне таргета — единый документ архитектуры.
+        // Это новое место после рефакторинга (было: AI_Docs/architecture.md).
+        self.architectureFileURL = directoryURL.appendingPathComponent("architecture.md")
     }
 }
 
@@ -92,7 +117,7 @@ public struct TargetScanResult: Sendable {
     public let sourceFiles: [String]
     public let resourceFiles: [String]
     public let otherFiles: [String]
-    
+
     public var totalCount: Int {
         sourceFiles.count + resourceFiles.count + otherFiles.count
     }
@@ -104,7 +129,8 @@ public struct TargetScanResult: Sendable {
 ///
 /// Архитектура хранения:
 /// - Глобальная память: ~/Documents/Chappie/semantic.json
-/// - Память таргетов: <Workspace>/<TargetName>/AI_Docs/
+/// - Память таргетов: <Workspace>/<TargetName>/AI_Docs/semantic.json
+/// - Документация: <Workspace>/<TargetName>/architecture.md
 ///
 /// Почему actor: MemoryManager работает с файловой системой из нескольких мест
 /// параллельно. Actor гарантирует сериализацию доступа и отсутствие гонок данных
@@ -156,7 +182,7 @@ public actor MemoryManager {
     /// 3. Сканирует директории первого уровня в workspaceURL.
     /// 4. Фильтрует служебные, скрытые папки и пакеты Xcode.
     /// 5. Определяет тип каждого таргета (App или Library).
-    /// 6. Создаёт AI_Docs и шаблонные файлы для каждого таргета, автоматически сканируя файлы для project_map.md.
+    /// 6. Создаёт AI_Docs/semantic.json и architecture.md для каждого таргета (если нет).
     /// 7. Мигрирует старый корневой AI_Docs/semantic.json в App-таргет (если был).
     ///
     /// Метод идемпотентен — повторный вызов не затирает существующие данные.
@@ -176,9 +202,9 @@ public actor MemoryManager {
         let discovered = discoverTargets()
         self.targets = discovered
 
-        // 4. Создание AI_Docs и шаблонных файлов для каждого таргета с автозаполнением карт проектов
+        // 4. Создание AI_Docs/semantic.json и architecture.md для каждого таргета
         for target in targets {
-            await setupAIDocs(for: target)
+            await setupTargetFiles(for: target)
         }
 
         // 5. Миграция старого корневого AI_Docs/semantic.json
@@ -348,17 +374,6 @@ public actor MemoryManager {
         return appTarget()
     }
 
-    /// Пересканирует таргет и принудительно обновляет его project_map.md актуальными файлами.
-    public func refreshProjectMap(forTarget targetName: String) async {
-        await ensureInitialized()
-        guard let target = targets.first(where: { $0.name == targetName }) else { return }
-        
-        let scanResult = scanTargetDirectory(target)
-        let mapTemplate = makeProjectMapTemplate(for: target, scanResult: scanResult)
-        try? mapTemplate.write(to: target.projectMapFileURL, atomically: true, encoding: .utf8)
-        print("[MemoryManager] 🗺 Карта проекта принудительно обновлена для таргета '\(target.name)'")
-    }
-
     // MARK: - Приватные методы инициализации
 
     /// Ленивая авто-инициализация при первом обращении к памяти.
@@ -501,95 +516,33 @@ public actor MemoryManager {
         return .library
     }
 
-    /// Создаёт папку AI_Docs и шаблонные файлы внутри указанного таргета.
+    /// Создаёт файлы памяти и документации для указанного таргета.
+    ///
+    /// НОВЫЙ ФОРМАТ (после рефакторинга):
+    /// - AI_Docs/semantic.json — данные памяти (программно читается/пишется)
+    /// - architecture.md — документация архитектуры (в корне таргета, не в AI_Docs/)
     ///
     /// Идемпотентность: если файлы уже существуют — не трогает их.
     /// Это защищает накопленные данные при повторных запусках приложения.
-    private func setupAIDocs(for target: WorkspaceTarget) async {
-        // Создаём папку AI_Docs если её нет
+    private func setupTargetFiles(for target: WorkspaceTarget) async {
+        // Создаём папку AI_Docs если её нет (нужна только для semantic.json)
         if !fileManager.fileExists(atPath: target.aiDocsURL.path) {
             try? fileManager.createDirectory(at: target.aiDocsURL, withIntermediateDirectories: true)
         }
 
         // semantic.json — пустой JSON-объект как начальное состояние
+        // Это программные данные памяти, они хранятся в AI_Docs/
         if !fileManager.fileExists(atPath: target.semanticFileURL.path) {
             try? "{}".write(to: target.semanticFileURL, atomically: true, encoding: .utf8)
         }
 
-        // architecture.md — шаблон с Mermaid-диаграммой
+        // architecture.md — единый документ архитектуры таргета.
+        // НОВОЕ МЕСТО: корень таргета, не AI_Docs/.
+        // Создаём только если не существует — не затираем реальную документацию!
         if !fileManager.fileExists(atPath: target.architectureFileURL.path) {
             let architectureTemplate = makeArchitectureTemplate(for: target)
             try? architectureTemplate.write(to: target.architectureFileURL, atomically: true, encoding: .utf8)
         }
-
-        // project_map.md — шаблон карты проекта с РЕАЛЬНЫМИ найденными файлами!
-        // ПОЧЕМУ: Это предотвращает создание пустых бесполезных шаблонов и сразу дает ИИ контекст файлов.
-        if !fileManager.fileExists(atPath: target.projectMapFileURL.path) {
-            let scanResult = scanTargetDirectory(target)
-            let projectMapTemplate = makeProjectMapTemplate(for: target, scanResult: scanResult)
-            try? projectMapTemplate.write(to: target.projectMapFileURL, atomically: true, encoding: .utf8)
-        }
-    }
-
-    /// Сканирует директорию таргета и классифицирует файлы для карты проекта.
-    private func scanTargetDirectory(_ target: WorkspaceTarget) -> TargetScanResult {
-        var sourceFiles: [String] = []
-        var resourceFiles: [String] = []
-        var otherFiles: [String] = []
-        
-        let sourceExtensions: Set<String> = ["swift", "metal", "mlmodel", "xcdatamodeld"]
-        let resourceExtensions: Set<String> = [
-            "xcassets", "strings", "stringsdict", "storyboard",
-            "xib", "json", "png", "jpg", "jpeg", "pdf"
-        ]
-        
-        // Исключаем саму папку AI_Docs и другие служебные, чтобы избежать рекурсии
-        let excludedDirs: Set<String> = ["AI_Docs", ".git", "DerivedData", ".build"]
-        
-        guard let enumerator = fileManager.enumerator(
-            at: target.directoryURL,
-            includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return TargetScanResult(targetName: target.name, sourceFiles: [], resourceFiles: [], otherFiles: [])
-        }
-        
-        for case let fileURL as URL in enumerator {
-            guard let resourceValues = try? fileURL.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey]) else {
-                continue
-            }
-            
-            if resourceValues.isDirectory == true {
-                if excludedDirs.contains(fileURL.lastPathComponent) {
-                    enumerator.skipDescendants()
-                }
-                continue
-            }
-            
-            guard resourceValues.isRegularFile == true else { continue }
-            
-            // Вычисляем относительный путь
-            let relativePath = fileURL.path.replacingOccurrences(
-                of: target.directoryURL.path + "/",
-                with: ""
-            )
-            
-            let ext = fileURL.pathExtension.lowercased()
-            if sourceExtensions.contains(ext) {
-                sourceFiles.append(relativePath)
-            } else if resourceExtensions.contains(ext) {
-                resourceFiles.append(relativePath)
-            } else if !ext.isEmpty {
-                otherFiles.append(relativePath)
-            }
-        }
-        
-        return TargetScanResult(
-            targetName: target.name,
-            sourceFiles: sourceFiles.sorted(),
-            resourceFiles: resourceFiles.sorted(),
-            otherFiles: otherFiles.sorted()
-        )
     }
 
     /// Мигрирует старый корневой AI_Docs/semantic.json в App-таргет.
@@ -607,8 +560,7 @@ public actor MemoryManager {
         // Читаем старые данные
         let oldStorage = readStorage(at: oldSemanticURL)
         guard !oldStorage.isEmpty else {
-            // Старый файл пуст — просто удаляем старую папку
-            try? fileManager.removeItem(at: oldAIDocsURL)
+            // Старый файл пуст — просто НЕ удаляем корневую AI_Docs (там может быть chat_history.json!)
             return
         }
 
@@ -630,8 +582,8 @@ public actor MemoryManager {
             writeStorage(targetStorage, to: primaryTarget.semanticFileURL)
         }
 
-        //  Удаляем старую корневую папку AI_Docs для чистоты проекта
-        try? fileManager.removeItem(at: oldAIDocsURL)
+        // ВАЖНО: НЕ удаляем корневую AI_Docs/! Там лежит chat_history.json.
+        // Удаление папки AI_Docs/ будет сделано пользователем вручную после проверки.
     }
 
     // MARK: - Приватные вспомогательные методы
@@ -686,18 +638,30 @@ public actor MemoryManager {
         writeStorage(storage, to: url)
     }
 
-    // MARK: - Генераторы шаблонов
+    // MARK: - Генератор шаблона architecture.md
 
-    /// Генерирует красивый шаблон architecture.md с Mermaid-диаграммой для таргета.
+    /// Генерирует минимальный шаблон architecture.md для нового таргета.
     ///
-    /// Mermaid-граф включён потому что он рендерится прямо в GitHub/GitLab и в Xcode Preview,
-    /// что делает документацию живой и наглядной без дополнительных инструментов.
+    /// ПОЧЕМУ МИНИМАЛЬНЫЙ:
+    /// Реальные таргеты Chappie (Chappie, ChappieCore, ChappieMCP, ChappieCoreTests)
+    /// уже имеют подробные architecture.md созданные вручную/ИИ.
+    /// Этот шаблон нужен только для новых таргетов, которые Чаппи обнаружит в будущем.
     private func makeArchitectureTemplate(for target: WorkspaceTarget) -> String {
         let kindLabel = target.kind == .appTarget ? "App Target" : "Library Target"
         let date = ISO8601DateFormatter().string(from: Date())
 
         return """
-        # Architecture — \(target.name)
+        <!--
+          \(target.name)/architecture.md
+
+          ДОКУМЕНТ АРХИТЕКТУРЫ — \(target.name.uppercased())
+
+          Этот файл — единственный источник архитектурной документации для таргета.
+          Обновляй при каждом значимом архитектурном изменении.
+          Создан: \(date)
+        -->
+
+        # \(target.name) — Архитектура
 
         > **Target type:** \(kindLabel)
         > **Created:** \(date)
@@ -705,128 +669,35 @@ public actor MemoryManager {
 
         ---
 
-        ## Overview
+        ## 1. Назначение
 
-        _Describe the high-level purpose and responsibilities of this target here._
-
-        ---
-
-        ## Component Diagram
-
-        ```mermaid
-        graph TD
-            A[\(target.name)] --> B[Core Logic]
-            A --> C[UI Layer]
-            A --> D[Data Layer]
-            B --> E[Services]
-            C --> F[Views]
-            D --> G[Models]
-        ```
+        _Опиши цель и ответственность этого таргета._
 
         ---
 
-        ## Key Design Decisions
-
-        | Decision | Rationale | Date |
-        |----------|-----------|------|
-        | _Add decisions here_ | _Why was this chosen?_ | \(date) |
-
-        ---
-
-        ## Dependencies
-
-        _List external dependencies and their purpose._
-
-        ---
-
-        ## Notes
-
-        _Additional architectural notes, constraints, or future plans._
-        """
-    }
-
-    /// Генерирует красивый шаблон project_map.md — карту файлов и модулей таргета с РЕАЛЬНЫМ списком файлов.
-    private func makeProjectMapTemplate(for target: WorkspaceTarget, scanResult: TargetScanResult) -> String {
-        let kindLabel = target.kind == .appTarget ? "App Target" : "Library Target"
-        let date = ISO8601DateFormatter().string(from: Date())
-
-        var content = """
-        # Project Map — \(target.name)
-
-        > **Target type:** \(kindLabel)
-        > **Created:** \(date)
-        > **Managed by:** Chappie AI Assistant
-        > **Total files found:** \(scanResult.totalCount)
-
-        ---
-
-        ## Directory Structure
+        ## 2. Структура файлов
 
         ```
         \(target.name)/
-        ├── AI_Docs/
-        │   ├── semantic.json       # AI memory storage
-        │   ├── architecture.md     # Architecture documentation
-        │   └── project_map.md      # This file
-        └── ...                     # Source files
+        ├── architecture.md     # Этот файл
+        └── ...                 # Исходные файлы
         ```
 
         ---
 
-        """
+        ## 3. Ключевые архитектурные решения
 
-        if !scanResult.sourceFiles.isEmpty {
-            content += "## 🔵 Source Files (\(scanResult.sourceFiles.count))\n\n"
-            for file in scanResult.sourceFiles {
-                content += "- `\(file)`\n"
-            }
-            content += "\n"
-        }
-
-        if !scanResult.resourceFiles.isEmpty {
-            content += "## 🟡 Resource Files (\(scanResult.resourceFiles.count))\n\n"
-            for file in scanResult.resourceFiles {
-                content += "- `\(file)`\n"
-            }
-            content += "\n"
-        }
-
-        if !scanResult.otherFiles.isEmpty {
-            content += "## ⚪ Other Files (\(scanResult.otherFiles.count))\n\n"
-            for file in scanResult.otherFiles {
-                content += "- `\(file)`\n"
-            }
-            content += "\n"
-        }
-
-        content += """
-        ## Key Files Description
-
-        | File | Purpose | Owner |
-        |------|---------|-------|
-        | _Add key files here_ | _What does it do?_ | _Team/Person_ |
+        | Решение | Причина | Дата |
+        |---------|---------|------|
+        | _Добавь решения здесь_ | _Почему так?_ | \(date) |
 
         ---
 
-        ## Public API
-
-        _Document the public interface of this target here._
-
-        ---
-
-        ## Known Issues & TODOs
-
-        - [ ] _Add known issues or planned improvements here_
-
-        ---
-
-        ## Changelog
+        ## 📚 Changelog
 
         | Date | Change | Author |
         |------|--------|--------|
         | \(date) | Initial creation | Chappie AI |
         """
-
-        return content
     }
 }
