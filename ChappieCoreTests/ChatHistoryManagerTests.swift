@@ -7,6 +7,8 @@
 // TD-02: Тесты переписаны под init(workspaceURL:), Generic loadMessages/saveMessages.
 // TD-03: Обновлены под новое расположение файла (корень воркспейса, без AI_Docs/).
 //        Добавлен тест на автоматическое подрезание до maxStoredMessages (100).
+// 2026-05-25: Исправлено сравнение URL в historyStoredInWorkspaceRoot.
+//             deletingLastPathComponent() добавляет trailing slash — нужен .standardized.
 //
 // ПОЧЕМУ TESTMESSAGE, А НЕ РЕАЛЬНЫЙ CHATMESSAGE:
 // ChatHistoryManager живёт в ChappieCore и намеренно не зависит от ChatMessage,
@@ -124,12 +126,22 @@ struct ChatHistoryManagerTests {
 
     /// После рефакторинга TD-03 файл истории лежит прямо в корне воркспейса.
     /// Папка AI_Docs/ упразднена — проверяем новое расположение.
+    ///
+    /// ВАЖНО: используем .standardized для сравнения URL, потому что
+    /// deletingLastPathComponent() добавляет trailing slash ("/UUID/"),
+    /// а tempDir создаётся без него ("/UUID"). URL-сравнение строгое —
+    /// .standardized нормализует оба URL к единому виду без trailing slash.
     @Test("История хранится в корне воркспейса (без AI_Docs/)")
     func historyStoredInWorkspaceRoot() throws {
         let (manager, tempDir) = try makeManager()
         manager.saveMessages([TestMessage(role: "user", content: "Тест")])
-        // Файл должен лежать прямо в корне воркспейса, не в поддиректории
-        #expect(manager.fileURL.deletingLastPathComponent() == tempDir)
+
+        // Нормализуем оба URL через .standardized чтобы убрать разницу в trailing slash
+        let parentDir = manager.fileURL.deletingLastPathComponent().standardized
+        let expectedDir = tempDir.standardized
+
+        #expect(parentDir == expectedDir,
+                "Файл должен лежать прямо в корне воркспейса, не в поддиректории")
         #expect(manager.fileURL.lastPathComponent == "chat_history.json")
         #expect(FileManager.default.fileExists(atPath: manager.fileURL.path))
     }

@@ -455,6 +455,11 @@ public actor MemoryManager {
 
     /// Мигрирует данные из устаревшего semantic.json в глобальный файл памяти.
     /// Переносит только те ключи, которых ещё нет в глобальном файле (не перезаписывает актуальные данные).
+    ///
+    /// ВАЖНО: используем dateDecodingStrategy = .iso8601, потому что legacy-файлы
+    /// могут хранить дату как строку "2025-01-01T00:00:00Z" (ISO 8601), а не как
+    /// число (Unix timestamp). JSONDecoder по умолчанию ожидает числовой формат,
+    /// что приводило бы к ошибке декодирования и потере legacy-данных при миграции.
     private func migrateSemanticFile(from sourceURL: URL, label: String) {
         let oldStorage = readStorage(at: sourceURL)
         guard !oldStorage.isEmpty else { return }
@@ -482,10 +487,20 @@ public actor MemoryManager {
 
     /// Читает словарь записей памяти из JSON-файла.
     /// Возвращает пустой словарь при любой ошибке — безопасный дефолт.
+    ///
+    /// ВАЖНО: dateDecodingStrategy = .iso8601 обязателен для совместимости с legacy-форматом.
+    /// Старые файлы semantic.json хранят timestamp как ISO 8601 строку ("2025-01-01T00:00:00Z").
+    /// Новые файлы, записанные этим менеджером, тоже используют ISO 8601 (см. writeStorage).
+    /// Единый формат даты гарантирует корректную миграцию и чтение любых версий файла.
     private func readStorage(at url: URL) -> [String: MemoryRecord] {
         guard fileManager.fileExists(atPath: url.path),
-              let data = try? Data(contentsOf: url),
-              let storage = try? JSONDecoder().decode([String: MemoryRecord].self, from: data) else {
+              let data = try? Data(contentsOf: url) else {
+            return [:]
+        }
+        let decoder = JSONDecoder()
+        // ISO 8601 — единственный формат даты в semantic.json (и legacy, и новых файлах)
+        decoder.dateDecodingStrategy = .iso8601
+        guard let storage = try? decoder.decode([String: MemoryRecord].self, from: data) else {
             return [:]
         }
         return storage
@@ -494,6 +509,9 @@ public actor MemoryManager {
     /// Записывает словарь записей памяти в JSON-файл.
     /// Создаёт промежуточные директории при необходимости.
     /// Использует .atomic для защиты от повреждения файла при сбое записи.
+    ///
+    /// ВАЖНО: dateEncodingStrategy = .iso8601 согласован с readStorage.
+    /// Все даты пишутся как строки "2025-01-01T00:00:00Z" — человекочитаемо и совместимо.
     private func writeStorage(_ storage: [String: MemoryRecord], to url: URL) {
         let dir = url.deletingLastPathComponent()
         if !fileManager.fileExists(atPath: dir.path) {
@@ -501,6 +519,8 @@ public actor MemoryManager {
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        // ISO 8601 согласован с readStorage — читаем и пишем в одном формате
+        encoder.dateEncodingStrategy = .iso8601
         if let data = try? encoder.encode(storage) {
             try? data.write(to: url, options: .atomic)
         }
