@@ -163,21 +163,46 @@ ChappieMCP
 
 ---
 
-## 8. Зависания build_project и run_tests (РЕШЕНО 2025-07-11)
+## 8. Зависания build_project и run_tests — КОРНЕВАЯ ПРИЧИНА И РЕШЕНИЕ
 
-**Симптом:** `build_project` и `run_tests` зависали навсегда — ИИ-агент засыпал.
+### Причина 1: Дедлок Pipe (ИСПРАВЛЕНО 2025-07-11)
 
-**Причина:** В `BuildTools.swift` использовался `process.waitUntilExit()` без таймаута.
-Если xcodebuild зависал — поток блокировался навсегда.
-`SO_RCVTIMEO` на сокете (600с) не помогал — он срабатывает только на `recv()`,
-но `recv()` не вызывается пока `waitUntilExit()` не вернётся.
+**Симптом:** `build_project` и `run_tests` зависали навсегда.
 
-**Решение (2025-07-11):**
-1. Добавлен `DispatchWorkItem` с `process.terminate()` по таймауту 300 секунд.
-2. Добавлен явный `destination: "platform=macOS,arch=arm64"` для обеих команд.
-   Без явного arch xcodebuild на macOS 26 beta зависал, выбирая между устройствами.
+**Корневая причина — дедлок Pipe:**
+```
+process.waitUntilExit()          ← ждёт завершения процесса
+// ... после этого ...
+pipe.readDataToEndOfFile()       ← читаем вывод
+```
+Pipe имеет буфер ~64KB. xcodebuild пишет МНОГО вывода (1000+ строк).
+Когда буфер заполняется — xcodebuild блокируется в ожидании чтения.
+Но мы читаем ПОСЛЕ waitUntilExit(). **Взаимная блокировка навсегда.**
 
-**Код защиты от зависания:**
+**Решение:** читать stdout/stderr в отдельных DispatchQueue **параллельно** с waitUntilExit():
+```swift
+// Запускаем параллельное чтение ДО process.run()
+readGroup.enter()
+DispatchQueue.global(qos: .utility).async {
+    stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+    readGroup.leave()
+}
+// ... аналогично для stderr ...
+
+try process.run()
+process.waitUntilExit()   // теперь не зависает — Pipe читается параллельно
+readGroup.wait()           // ждём завершения чтения
+```
+
+### Причина 2: Нет явного destination (ИСПРАВЛЕНО 2025-07-11)
+
+Без явного `arch` xcodebuild на macOS 26 beta зависал, выбирая между устройствами.
+
+**Решение:** добавлен явный `-destination "platform=macOS,arch=arm64"` для обеих команд.
+
+### Причина 3: Таймаут как последняя линия защиты
+
+Даже после исправления дедлока — таймаут 300с остаётся как страховка:
 ```swift
 let killWorkItem = DispatchWorkItem {
     if process.isRunning {
@@ -189,8 +214,6 @@ DispatchQueue.global(qos: .background).asyncAfter(
     deadline: .now() + kBuildTimeoutSeconds,
     execute: killWorkItem
 )
-process.waitUntilExit()
-killWorkItem.cancel()
 ```
 
 ---
@@ -199,7 +222,7 @@ killWorkItem.cancel()
 
 | ID | Проблема | Приоритет |
 |----|----------|-----------|
-| TD-01 | `build_project` зависал — РЕШЕНО (2025-07-11): таймаут 300с + явный destination arm64 | ✅ |
+| TD-01 | `build_project` зависал — РЕШЕНО (2025-07-11): дедлок Pipe исправлен, параллельное чтение, таймаут 300с + явный destination arm64 | ✅ |
 | TD-02 | Тесты `ChappieCoreTests` требуют ручного выбора таргета в Xcode перед ⌘+U. Неочевидно для пользователя. | Низкий |
 
 ---
@@ -208,6 +231,7 @@ killWorkItem.cancel()
 
 | Date | Change |
 |------|--------|
+| 2025-07-11 | РЕШЕНО TD-01 корень: исправлен дедлок Pipe в BuildTools.swift — параллельное чтение stdout/stderr через DispatchQueue |
 | 2025-07-11 | РЕШЕНО TD-01: добавлен таймаут 300с + terminate() в BuildTools.swift; явный destination arm64 |
 | 2025-07-10 | КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: удалён XcodeDocsGroupManager, группа 📚 Docs теперь статическая |
 | 2025-07-10 | TD-01: зафиксированы зависания build_project; TD-02: тесты требуют выбора таргета |
