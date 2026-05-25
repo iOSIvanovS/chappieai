@@ -4,12 +4,9 @@
 // чтобы не зависеть от состояния файловой системы на диске.
 //
 // ИСТОРИЯ ИЗМЕНЕНИЙ:
-// Тесты переписаны под актуальный API ChatHistoryManager после рефакторинга TD-02:
-//   - init(workspaceURL:) вместо init(storageURL:)
-//   - loadMessages<T>() вместо loadHistory()
-//   - saveMessages<T>() вместо save(messages:)
-//   - clearHistory() вместо clear()
-//   - Тестовая модель TestMessage вместо несуществующего StoredMessage
+// TD-02: Тесты переписаны под init(workspaceURL:), Generic loadMessages/saveMessages.
+// TD-03: Обновлены под новое расположение файла (корень воркспейса, без AI_Docs/).
+//        Добавлен тест на автоматическое подрезание до maxStoredMessages (100).
 //
 // ПОЧЕМУ TESTMESSAGE, А НЕ РЕАЛЬНЫЙ CHATMESSAGE:
 // ChatHistoryManager живёт в ChappieCore и намеренно не зависит от ChatMessage,
@@ -39,20 +36,17 @@ struct ChatHistoryManagerTests {
     /// Создаём свежую временную директорию для каждого теста.
     /// Это гарантирует изоляцию — ни один тест не влияет на другой.
     ///
-    /// ПОЧЕМУ workspaceURL, А НЕ storageURL:
-    /// После рефакторинга TD-02 менеджер принимает URL корневой папки воркспейса,
-    /// а сам создаёт подпапку AI_Docs/ внутри неё. Это позволяет хранить историю
-    /// прямо в проекте, рядом с кодом.
+    /// После рефакторинга TD-03 менеджер кладёт файл прямо в корень воркспейса
+    /// (без поддиректории AI_Docs/ — она упразднена).
     private func makeManager() throws -> (ChatHistoryManager, URL) {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        // Передаём tempDir как workspaceURL — менеджер создаст AI_Docs/ внутри него
         let manager = ChatHistoryManager(workspaceURL: tempDir)
         return (manager, tempDir)
     }
 
-    // MARK: - Тесты
+    // MARK: - Базовые тесты
 
     /// При первом запуске файл истории не существует.
     /// Менеджер должен вернуть пустой массив, а не упасть.
@@ -126,15 +120,70 @@ struct ChatHistoryManagerTests {
         #expect(loaded[1].role == "assistant")
     }
 
-    /// Файл истории создаётся внутри AI_Docs/ подпапки воркспейса.
-    /// Это гарантирует что история хранится рядом с проектом, а не в случайном месте.
-    @Test("История хранится в AI_Docs/ внутри воркспейса")
-    func historyStoredInAIDocsSubdirectory() throws {
+    // MARK: - Тест расположения файла (TD-03)
+
+    /// После рефакторинга TD-03 файл истории лежит прямо в корне воркспейса.
+    /// Папка AI_Docs/ упразднена — проверяем новое расположение.
+    @Test("История хранится в корне воркспейса (без AI_Docs/)")
+    func historyStoredInWorkspaceRoot() throws {
         let (manager, tempDir) = try makeManager()
         manager.saveMessages([TestMessage(role: "user", content: "Тест")])
-        // Файл должен быть внутри AI_Docs/, а не в корне воркспейса
-        let expectedDir = tempDir.appendingPathComponent("AI_Docs")
-        #expect(manager.fileURL.deletingLastPathComponent() == expectedDir)
+        // Файл должен лежать прямо в корне воркспейса, не в поддиректории
+        #expect(manager.fileURL.deletingLastPathComponent() == tempDir)
+        #expect(manager.fileURL.lastPathComponent == "chat_history.json")
         #expect(FileManager.default.fileExists(atPath: manager.fileURL.path))
+    }
+
+    // MARK: - Тест автоматического подрезания (TD-03)
+
+    /// При сохранении более maxStoredMessages сообщений старые должны отбрасываться.
+    /// Сохраняются только последние N — самые свежие и актуальные.
+    @Test("Автоматическое подрезание до maxStoredMessages")
+    func autoTrimToMaxStoredMessages() throws {
+        let (manager, _) = try makeManager()
+        let limit = ChatHistoryManager.maxStoredMessages
+
+        // Создаём limit + 10 сообщений — намеренно превышаем лимит
+        let messages = (0..<(limit + 10)).map { i in
+            TestMessage(role: "user", content: "Сообщение \(i)")
+        }
+        manager.saveMessages(messages)
+
+        let loaded: [TestMessage] = manager.loadMessages()
+
+        // После сохранения должно остаться ровно limit сообщений
+        #expect(loaded.count == limit)
+
+        // Должны сохраниться ПОСЛЕДНИЕ сообщения (самые свежие)
+        // Первые 10 должны быть отброшены
+        #expect(loaded.first?.content == "Сообщение 10")
+        #expect(loaded.last?.content == "Сообщение \(limit + 9)")
+    }
+
+    /// Если сообщений меньше лимита — подрезание не происходит, все сохраняются.
+    @Test("Без подрезания если сообщений меньше лимита")
+    func noTrimWhenUnderLimit() throws {
+        let (manager, _) = try makeManager()
+        let count = ChatHistoryManager.maxStoredMessages - 10
+        let messages = (0..<count).map { i in
+            TestMessage(role: "user", content: "Сообщение \(i)")
+        }
+        manager.saveMessages(messages)
+        let loaded: [TestMessage] = manager.loadMessages()
+        // Все сообщения должны сохраниться без изменений
+        #expect(loaded.count == count)
+    }
+
+    /// Ровно на границе лимита — подрезания нет, все сохраняются.
+    @Test("Ровно на границе лимита — подрезания нет")
+    func exactlyAtLimitNoBoundaryTrim() throws {
+        let (manager, _) = try makeManager()
+        let limit = ChatHistoryManager.maxStoredMessages
+        let messages = (0..<limit).map { i in
+            TestMessage(role: "user", content: "Сообщение \(i)")
+        }
+        manager.saveMessages(messages)
+        let loaded: [TestMessage] = manager.loadMessages()
+        #expect(loaded.count == limit)
     }
 }
