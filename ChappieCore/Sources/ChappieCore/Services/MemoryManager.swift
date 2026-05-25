@@ -11,24 +11,32 @@
 // в Swift 6. Это гарантирует, что все операции с файловой системой выполняются последовательно,
 // исключая состояния гонки при параллельных запросах от нескольких чатов или агентов.
 //
-// СТРУКТУРА ПАМЯТИ (ФИНАЛЬНЫЙ ФОРМАТ — без папки AI_Docs):
+// ФИНАЛЬНАЯ СТРУКТУРА ПАМЯТИ:
 //
-// ├── ~/Documents/Chappie/semantic.json  — глобальная семантическая память (кросс-проектная)
-// └── <WorkspaceRoot>/
-//     ├── architecture.md                — архитектура всего проекта (корень воркспейса)
-//     ├── Chappie/
-//     │   ├── architecture.md            — архитектура таргета
-//     │   └── semantic.json              — семантическая память таргета
-//     ├── ChappieCore/
-//     │   ├── architecture.md
-//     │   └── semantic.json
-//     └── ...
+//   ~/Documents/Chappie/semantic.json   — ЕДИНСТВЕННЫЙ файл семантической памяти.
+//                                         Глобальный. scope: .project и scope: .global
+//                                         оба пишут/читают сюда.
 //
-// ПОЧЕМУ УБРАЛИ AI_Docs/:
-// Папка AI_Docs/ была промежуточным решением при рефакторинге. Теперь оба файла
-// (architecture.md и semantic.json) лежат прямо в корне таргета — проще, чище,
-// нет лишнего уровня вложенности. semantic.json — это данные памяти ИИ, а не
-// "документация", поэтому его место рядом с architecture.md, в корне таргета.
+//   <WorkspaceRoot>/
+//   ├── architecture.md                 — архитектура всего проекта (корень воркспейса)
+//   ├── Chappie/architecture.md         — архитектура таргета
+//   ├── ChappieCore/architecture.md
+//   ├── ChappieCoreTests/architecture.md
+//   └── ChappieMCP/architecture.md
+//
+// ПОЧЕМУ ОДИН ФАЙЛ ПАМЯТИ:
+// Раньше semantic.json создавался в каждом таргете воркспейса, что порождало:
+// - Дублирование данных между таргетами
+// - Путаницу: в каком таргете искать нужную запись?
+// - Лишние файлы в git-репозитории
+// Один глобальный файл — единственный источник истины для семантической памяти.
+// Параметры scope/targetName сохранены в API для обратной совместимости, но оба
+// режима теперь работают с одним и тем же файлом.
+//
+// РОЛЬ architecture.md:
+// Это ДОКУМЕНТАЦИЯ, а не данные. Чаппи читает и пишет его через инструменты
+// read_file/write_file как обычный текстовый файл. MemoryManager его не трогает
+// (только создаёт шаблон при первом обнаружении нового таргета).
 
 import Foundation
 
@@ -50,8 +58,8 @@ public struct MemoryRecord: Codable, Sendable {
 }
 
 /// Область видимости памяти.
-/// .project — память конкретного проекта/таргета.
-/// .global  — глобальная память ассистента, не привязанная к проекту.
+/// ВАЖНО: Оба варианта теперь работают с одним файлом ~/Documents/Chappie/semantic.json.
+/// Enum сохранён для обратной совместимости API (ToolExecutionService передаёт scope из инструментов).
 public enum MemoryScope: String, Codable, Sendable {
     case project
     case global
@@ -61,7 +69,6 @@ public enum MemoryScope: String, Codable, Sendable {
 
 /// Тип таргета в воркспейсе.
 /// Различаем App-таргет (содержит *App.swift) и библиотечные таргеты.
-/// Это важно, потому что запись по умолчанию идёт в App-таргет.
 public enum TargetKind: Sendable {
     case appTarget   // Основной таргет приложения
     case library     // Библиотека или модуль
@@ -69,22 +76,17 @@ public enum TargetKind: Sendable {
 
 /// Описание одного таргета воркспейса.
 ///
-/// ФИНАЛЬНЫЙ ФОРМАТ (без AI_Docs/):
-/// - architectureFileURL → <target>/architecture.md
-/// - semanticFileURL     → <target>/semantic.json
+/// WorkspaceTarget хранит только путь к architecture.md — единственному файлу,
+/// которым управляет MemoryManager для каждого таргета.
+/// semantic.json больше НЕ является частью таргета — он глобальный.
 ///
-/// Оба файла лежат прямо в корне таргета — нет лишнего уровня вложенности.
 /// Структура намеренно сделана Sendable для безопасной передачи между акторами в Swift 6.
 public struct WorkspaceTarget: Sendable {
     public let name: String
     public let directoryURL: URL
 
-    /// Путь к файлу семантической памяти таргета: <target>/semantic.json.
-    /// ФИНАЛЬНОЕ МЕСТО: корень таргета (не AI_Docs/).
-    public let semanticFileURL: URL
-
     /// Путь к единому файлу архитектуры таргета: <target>/architecture.md.
-    /// Лежит рядом с semantic.json в корне таргета.
+    /// Это единственный файл, которым MemoryManager управляет в директории таргета.
     public let architectureFileURL: URL
 
     public let kind: TargetKind
@@ -94,9 +96,7 @@ public struct WorkspaceTarget: Sendable {
         self.directoryURL = directoryURL
         self.kind = kind
 
-        // Оба файла памяти лежат прямо в корне таргета — без подпапок.
-        // Это финальный формат после отказа от папки AI_Docs/.
-        self.semanticFileURL = directoryURL.appendingPathComponent("semantic.json")
+        // architecture.md лежит прямо в корне таргета — без подпапок.
         self.architectureFileURL = directoryURL.appendingPathComponent("architecture.md")
     }
 }
@@ -119,9 +119,8 @@ public struct TargetScanResult: Sendable {
 /// Центральный менеджер памяти ИИ-ассистента Chappie.
 ///
 /// Архитектура хранения:
-/// - Глобальная память: ~/Documents/Chappie/semantic.json
-/// - Память таргетов: <Workspace>/<TargetName>/semantic.json
-/// - Документация: <Workspace>/<TargetName>/architecture.md
+/// - Вся семантическая память: ~/Documents/Chappie/semantic.json (ОДИН файл)
+/// - Документация таргетов: <Workspace>/<TargetName>/architecture.md
 ///
 /// Почему actor: MemoryManager работает с файловой системой из нескольких мест
 /// параллельно. Actor гарантирует сериализацию доступа и отсутствие гонок данных
@@ -146,8 +145,9 @@ public actor MemoryManager {
     /// если ChappieViewModel не вызвал initializeWorkspaceMemory() явно.
     private var isInitialized: Bool = false
 
-    /// URL глобального файла памяти: ~/Documents/Chappie/semantic.json.
+    /// URL единственного файла семантической памяти: ~/Documents/Chappie/semantic.json.
     /// Вычисляется один раз — файловая система не меняется в процессе работы.
+    /// Используется для ВСЕХ операций чтения/записи памяти независимо от scope.
     private var globalFileURL: URL {
         let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
         return docs.appendingPathComponent("Chappie/semantic.json")
@@ -168,12 +168,12 @@ public actor MemoryManager {
     /// Инициализирует файловую структуру памяти для всего воркспейса.
     ///
     /// Что делает:
-    /// 1. Создаёт глобальную папку ~/Documents/Chappie и файл semantic.json (если нет).
+    /// 1. Создаёт папку ~/Documents/Chappie и файл semantic.json (если нет).
     /// 2. Сканирует директории первого уровня в workspaceURL.
     /// 3. Фильтрует служебные, скрытые папки и пакеты Xcode.
     /// 4. Определяет тип каждого таргета (App или Library).
-    /// 5. Создаёт semantic.json и architecture.md для каждого таргета (если нет).
-    /// 6. Очищает устаревшие папки AI_Docs/ (миграция со старого формата).
+    /// 5. Создаёт architecture.md для каждого нового таргета (если нет).
+    /// 6. Очищает устаревшие папки AI_Docs/ и semantic.json в таргетах (миграция).
     ///
     /// Метод идемпотентен — повторный вызов не затирает существующие данные.
     public func initializeWorkspaceMemory() async {
@@ -182,167 +182,73 @@ public actor MemoryManager {
 
         print("[MemoryManager] Начало инициализации структуры памяти...")
 
-        // 1. Глобальная память
+        // 1. Глобальная память — единственный файл semantic.json
         setupGlobalMemory()
 
         // 2. Сканирование и классификация таргетов воркспейса
         let discovered = discoverTargets()
         self.targets = discovered
 
-        // 3. Создание semantic.json и architecture.md для каждого таргета
+        // 3. Создание architecture.md для каждого нового таргета (только если не существует)
         for target in targets {
             setupTargetFiles(for: target)
         }
 
-        // 4. Очищаем устаревшие папки AI_Docs/ если они остались от предыдущих версий
-        cleanupLegacyAIDocs()
+        // 4. Очищаем устаревшие артефакты: AI_Docs/ и semantic.json в корнях таргетов
+        cleanupLegacyFiles()
 
         isInitialized = true
-        print("[MemoryManager] ✅ Инициализация структуры завершена. Зарегистрировано таргетов: \(targets.count)")
+        print("[MemoryManager] ✅ Инициализация завершена. Таргетов: \(targets.count). Память: ~/Documents/Chappie/semantic.json")
     }
 
     // MARK: - Публичные методы чтения/записи
 
     /// Сохраняет запись в памяти по ключу.
     ///
-    /// - scope == .project: пишет в semantic.json основного App-таргета.
-    ///   Если передан targetName — пишет строго в указанный таргет.
-    ///   Если App-таргет не найден — в первый доступный таргет воркспейса.
-    /// - scope == .global: пишет в ~/Documents/Chappie/semantic.json.
-    ///
-    /// Ленивая инициализация: если initializeWorkspaceMemory() не был вызван явно,
-    /// он будет вызван автоматически при первом обращении.
+    /// УПРОЩЁННАЯ ЛОГИКА: scope и targetName игнорируются для определения файла.
+    /// Все записи идут в ~/Documents/Chappie/semantic.json — единственный файл памяти.
+    /// Параметры scope/targetName сохранены в сигнатуре для совместимости с ToolExecutionService.
     public func saveMemory(key: String, type: String, jsonString: String, scope: MemoryScope = .project, targetName: String? = nil) async {
         await ensureInitialized()
-
-        switch scope {
-        case .project:
-            let target: WorkspaceTarget?
-            if let targetName = targetName {
-                // Если имя таргета передано явно, ищем строго его
-                target = targets.first { $0.name == targetName }
-            } else {
-                // По умолчанию берем App-таргет или первый доступный
-                target = appTarget() ?? targets.first
-            }
-
-            guard let url = target?.semanticFileURL else {
-                // Нет ни одного таргета — пишем в глобальную память как запасной вариант
-                writeRecord(key: key, type: type, data: jsonString, to: globalFileURL)
-                return
-            }
-            writeRecord(key: key, type: type, data: jsonString, to: url)
-
-        case .global:
-            writeRecord(key: key, type: type, data: jsonString, to: globalFileURL)
-        }
+        // Пишем всегда в один глобальный файл — никаких таргет-специфичных файлов
+        writeRecord(key: key, type: type, data: jsonString, to: globalFileURL)
     }
 
     /// Читает запись по ключу.
     ///
-    /// Порядок поиска:
-    /// 1. Если указан targetName — ищет строго в этом таргете, затем в глобальной памяти.
-    /// 2. Если targetName не указан — ищет в App-таргете воркспейса, затем в остальных таргетах воркспейса, затем в глобальной памяти.
-    ///
-    /// Такой порядок обеспечивает приоритет проектно-специфичных данных
-    /// над глобальными, что соответствует принципу наименьшего удивления.
+    /// УПРОЩЁННАЯ ЛОГИКА: targetName игнорируется для определения файла.
+    /// Все записи читаются из ~/Documents/Chappie/semantic.json.
+    /// Параметр targetName сохранён в сигнатуре для совместимости с ToolExecutionService.
     public func readMemory(key: String, targetName: String? = nil) async -> String? {
         await ensureInitialized()
-
-        if let targetName = targetName {
-            // Если указан конкретный таргет, ищем строго в нем
-            if let target = targets.first(where: { $0.name == targetName }) {
-                let storage = readStorage(at: target.semanticFileURL)
-                if let record = storage[key] {
-                    return record.data
-                }
-            }
-        } else {
-            // Стандартный поиск: App-таргет → остальные таргеты
-            let orderedTargets = orderedTargetsForRead()
-            for target in orderedTargets {
-                let storage = readStorage(at: target.semanticFileURL)
-                if let record = storage[key] {
-                    return record.data
-                }
-            }
-        }
-
-        // Глобальная память — последний рубеж
-        let globalStorage = readStorage(at: globalFileURL)
-        return globalStorage[key]?.data
+        let storage = readStorage(at: globalFileURL)
+        return storage[key]?.data
     }
 
-    /// Ищет все записи указанного типа во всех таргетах и в глобальной памяти.
+    /// Ищет все записи указанного типа.
     ///
-    /// Если указан targetName — ограничивает поиск этим таргетом и глобальной памятью.
-    /// Результаты объединяются: если один ключ встречается в нескольких местах,
-    /// побеждает последнее найденное значение (глобальная память имеет низший приоритет,
-    /// она добавляется первой и может быть перезаписана таргетными данными).
+    /// УПРОЩЁННАЯ ЛОГИКА: targetName игнорируется.
+    /// Поиск всегда в ~/Documents/Chappie/semantic.json.
     public func searchMemory(type: String, targetName: String? = nil) async -> [String: String] {
         await ensureInitialized()
-
+        let storage = readStorage(at: globalFileURL)
         var results: [String: String] = [:]
-
-        // Сначала глобальная (низший приоритет)
-        let globalStorage = readStorage(at: globalFileURL)
-        for (k, v) in globalStorage where v.type == type {
+        for (k, v) in storage where v.type == type {
             results[k] = v.data
         }
-
-        if let targetName = targetName {
-            // Если указан конкретный таргет, ищем строго в нем (перезаписывая глобальные)
-            if let target = targets.first(where: { $0.name == targetName }) {
-                let storage = readStorage(at: target.semanticFileURL)
-                for (k, v) in storage where v.type == type {
-                    results[k] = v.data
-                }
-            }
-        } else {
-            // Иначе ищем во всех таргетах
-            for target in targets {
-                let storage = readStorage(at: target.semanticFileURL)
-                for (k, v) in storage where v.type == type {
-                    results[k] = v.data
-                }
-            }
-        }
-
         return results
     }
 
-    /// Удаляет запись по ключу из всех таргетов воркспейса (или конкретного) и из глобальной памяти.
+    /// Удаляет запись по ключу из ~/Documents/Chappie/semantic.json.
     ///
-    /// Удаление из всех мест необходимо для консистентности:
-    /// если запись была скопирована или мигрирована, она должна исчезнуть везде.
+    /// УПРОЩЁННАЯ ЛОГИКА: targetName игнорируется.
+    /// Удаление всегда из ~/Documents/Chappie/semantic.json.
     public func deleteMemory(key: String, targetName: String? = nil) async {
         await ensureInitialized()
-
-        if let targetName = targetName {
-            // Если указан конкретный таргет, удаляем строго из него
-            if let target = targets.first(where: { $0.name == targetName }) {
-                var storage = readStorage(at: target.semanticFileURL)
-                if storage.keys.contains(key) {
-                    storage.removeValue(forKey: key)
-                    writeStorage(storage, to: target.semanticFileURL)
-                }
-            }
-        } else {
-            // Иначе удаляем из всех таргетов
-            for target in targets {
-                var storage = readStorage(at: target.semanticFileURL)
-                if storage.keys.contains(key) {
-                    storage.removeValue(forKey: key)
-                    writeStorage(storage, to: target.semanticFileURL)
-                }
-            }
-        }
-
-        // Удаляем из глобальной памяти
-        var globalStorage = readStorage(at: globalFileURL)
-        if globalStorage.keys.contains(key) {
-            globalStorage.removeValue(forKey: key)
-            writeStorage(globalStorage, to: globalFileURL)
+        var storage = readStorage(at: globalFileURL)
+        if storage.keys.contains(key) {
+            storage.removeValue(forKey: key)
+            writeStorage(storage, to: globalFileURL)
         }
     }
 
@@ -364,14 +270,12 @@ public actor MemoryManager {
     // MARK: - Приватные методы инициализации
 
     /// Ленивая авто-инициализация при первом обращении к памяти.
-    /// Гарантирует, что структура файлов всегда готова перед операциями чтения/записи,
-    /// даже если ChappieViewModel не вызвал initializeWorkspaceMemory() явно.
     private func ensureInitialized() async {
         guard !isInitialized else { return }
         await initializeWorkspaceMemory()
     }
 
-    /// Создаёт глобальную папку ~/Documents/Chappie и файл semantic.json.
+    /// Создаёт папку ~/Documents/Chappie и файл semantic.json.
     /// Если файл уже существует — не трогает его, чтобы не затереть накопленные данные.
     private func setupGlobalMemory() {
         let globalDir = globalFileURL.deletingLastPathComponent()
@@ -395,7 +299,6 @@ public actor MemoryManager {
     /// - '.git', '.swiftpm' — служебные папки VCS и SPM.
     /// - Директории с расширением (например, .xcodeproj, .xcworkspace) — пакеты Xcode, пропускаем!
     private func discoverTargets() -> [WorkspaceTarget] {
-        // Папки, которые заведомо не являются таргетами исходного кода
         let excludedNames: Set<String> = [
             "build", "DerivedData", "Pods", "Frameworks",
             ".git", ".swiftpm"
@@ -404,7 +307,7 @@ public actor MemoryManager {
         guard let contents = try? fileManager.contentsOfDirectory(
             at: workspaceURL,
             includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles] // Автоматически пропускает папки начинающиеся с '.'
+            options: [.skipsHiddenFiles]
         ) else {
             return []
         }
@@ -412,34 +315,24 @@ public actor MemoryManager {
         var discovered: [WorkspaceTarget] = []
 
         for url in contents {
-            // Проверяем, что это директория
             guard (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else {
                 continue
             }
 
             let name = url.lastPathComponent
 
-            // Пропускаем исключённые папки
             guard !excludedNames.contains(name) else { continue }
-
-            // Дополнительная защита от скрытых папок (на случай если .skipsHiddenFiles не сработал)
             guard !name.hasPrefix(".") else { continue }
 
-            // КРИТИЧЕСКАЯ ФИЛЬТРАЦИЯ ДЛЯ ДЕТЕРМИНИЗМА:
-            // Пропускаем директории с расширением в имени (например, .xcodeproj, .xcworkspace, .playground).
-            // Это пакеты Xcode, а не папки с исходным кодом проекта.
-            guard url.pathExtension.isEmpty else {
-                continue
-            }
+            // Пропускаем пакеты Xcode (.xcodeproj, .xcworkspace и т.д.)
+            guard url.pathExtension.isEmpty else { continue }
 
-            // Определяем тип таргета
             let kind = classifyTarget(at: url)
             let target = WorkspaceTarget(name: name, directoryURL: url, kind: kind)
             discovered.append(target)
         }
 
-        // Сортируем: App-таргет первым, затем библиотеки по алфавиту.
-        // Это важно для readMemory — App-таргет должен проверяться первым.
+        // Сортируем: App-таргет первым, затем библиотеки по алфавиту
         discovered.sort { lhs, rhs in
             if lhs.kind == .appTarget && rhs.kind != .appTarget { return true }
             if lhs.kind != .appTarget && rhs.kind == .appTarget { return false }
@@ -450,10 +343,7 @@ public actor MemoryManager {
     }
 
     /// Определяет тип таргета: App или Library.
-    ///
-    /// App-таргет содержит файл с суффиксом 'App.swift' (например, ChappieApp.swift).
-    /// Такой файл является точкой входа приложения в SwiftUI (@main).
-    /// Поиск рекурсивный — файл может быть в подпапке таргета.
+    /// App-таргет содержит файл с суффиксом 'App.swift' — точку входа SwiftUI (@main).
     private func classifyTarget(at url: URL) -> TargetKind {
         guard let enumerator = fileManager.enumerator(
             at: url,
@@ -464,9 +354,7 @@ public actor MemoryManager {
         }
 
         for case let fileURL as URL in enumerator {
-            let filename = fileURL.lastPathComponent
-            // Ищем файл вида *App.swift — признак @main точки входа SwiftUI приложения
-            if filename.hasSuffix("App.swift") {
+            if fileURL.lastPathComponent.hasSuffix("App.swift") {
                 return .appTarget
             }
         }
@@ -474,90 +362,91 @@ public actor MemoryManager {
         return .library
     }
 
-    /// Создаёт файлы памяти и документации для указанного таргета.
+    /// Создаёт architecture.md для таргета если его ещё нет.
     ///
-    /// ФИНАЛЬНЫЙ ФОРМАТ (без AI_Docs/):
-    /// - semantic.json   — данные памяти, прямо в корне таргета
-    /// - architecture.md — документация архитектуры, прямо в корне таргета
-    ///
-    /// Идемпотентность: если файлы уже существуют — не трогает их.
-    /// Это защищает накопленные данные при повторных запусках приложения.
+    /// ТОЛЬКО architecture.md — никакого semantic.json в таргете!
+    /// Вся семантическая память хранится в ~/Documents/Chappie/semantic.json.
     private func setupTargetFiles(for target: WorkspaceTarget) {
-        // semantic.json — пустой JSON-объект как начальное состояние.
-        // Лежит прямо в корне таргета, рядом с architecture.md.
-        if !fileManager.fileExists(atPath: target.semanticFileURL.path) {
-            try? "{}".write(to: target.semanticFileURL, atomically: true, encoding: .utf8)
-        }
-
-        // architecture.md — единый документ архитектуры таргета.
-        // Создаём только если не существует — не затираем реальную документацию!
+        // Создаём architecture.md только если не существует — не затираем реальную документацию!
         if !fileManager.fileExists(atPath: target.architectureFileURL.path) {
-            let architectureTemplate = makeArchitectureTemplate(for: target)
-            try? architectureTemplate.write(to: target.architectureFileURL, atomically: true, encoding: .utf8)
+            let template = makeArchitectureTemplate(for: target)
+            try? template.write(to: target.architectureFileURL, atomically: true, encoding: .utf8)
+            print("[MemoryManager] 📄 Создан шаблон: \(target.name)/architecture.md")
         }
     }
 
-    /// Удаляет устаревшие папки AI_Docs/ из всех таргетов воркспейса.
+    /// Удаляет устаревшие артефакты предыдущих версий:
+    /// - AI_Docs/ папки в таргетах (мигрирует данные из AI_Docs/semantic.json в глобальный файл)
+    /// - semantic.json в корнях таргетов (мигрирует данные в глобальный файл)
     ///
-    /// Зачем: предыдущая версия MemoryManager хранила semantic.json в AI_Docs/.
-    /// Новая архитектура хранит его прямо в корне таргета.
-    /// При каждом запуске проверяем и удаляем AI_Docs/ если они ещё есть.
-    ///
-    /// ВАЖНО: Перед удалением мигрируем данные из AI_Docs/semantic.json в корневой semantic.json,
-    /// чтобы не потерять накопленные данные памяти.
-    private func cleanupLegacyAIDocs() {
+    /// Миграция данных: перед удалением переносим все записи в ~/Documents/Chappie/semantic.json.
+    /// Это гарантирует что накопленная память не потеряется при обновлении формата.
+    private func cleanupLegacyFiles() {
         for target in targets {
+            // 1. Мигрируем и удаляем AI_Docs/ (если осталась от очень старых версий)
             let legacyAIDocsURL = target.directoryURL.appendingPathComponent("AI_Docs")
-
-            // Если папки AI_Docs нет — всё чисто, идём дальше
-            guard fileManager.fileExists(atPath: legacyAIDocsURL.path) else { continue }
-
-            // Пробуем мигрировать данные из старого semantic.json
-            let legacySemanticURL = legacyAIDocsURL.appendingPathComponent("semantic.json")
-            if fileManager.fileExists(atPath: legacySemanticURL.path) {
-                let oldStorage = readStorage(at: legacySemanticURL)
-                if !oldStorage.isEmpty {
-                    // Мигрируем только те ключи, которых ещё нет в новом файле
-                    var newStorage = readStorage(at: target.semanticFileURL)
-                    var didMigrate = false
-                    for (key, record) in oldStorage where newStorage[key] == nil {
-                        newStorage[key] = record
-                        didMigrate = true
-                    }
-                    if didMigrate {
-                        writeStorage(newStorage, to: target.semanticFileURL)
-                        print("[MemoryManager] 📦 Мигрированы данные из \(target.name)/AI_Docs/semantic.json")
-                    }
+            if fileManager.fileExists(atPath: legacyAIDocsURL.path) {
+                let legacySemanticURL = legacyAIDocsURL.appendingPathComponent("semantic.json")
+                if fileManager.fileExists(atPath: legacySemanticURL.path) {
+                    migrateSemanticFile(from: legacySemanticURL, label: "\(target.name)/AI_Docs/semantic.json")
+                }
+                do {
+                    try fileManager.removeItem(at: legacyAIDocsURL)
+                    print("[MemoryManager] 🗑️ Удалена устаревшая папка: \(target.name)/AI_Docs/")
+                } catch {
+                    print("[MemoryManager] ⚠️ Не удалось удалить \(target.name)/AI_Docs/: \(error)")
                 }
             }
 
-            // Удаляем всю папку AI_Docs/ — она больше не нужна
-            do {
-                try fileManager.removeItem(at: legacyAIDocsURL)
-                print("[MemoryManager] 🗑️ Удалена устаревшая папка: \(target.name)/AI_Docs/")
-            } catch {
-                print("[MemoryManager] ⚠️ Не удалось удалить \(target.name)/AI_Docs/: \(error)")
+            // 2. Мигрируем и удаляем semantic.json из корня таргета
+            //    (он появился как промежуточный формат и теперь тоже устарел)
+            let targetSemanticURL = target.directoryURL.appendingPathComponent("semantic.json")
+            if fileManager.fileExists(atPath: targetSemanticURL.path) {
+                migrateSemanticFile(from: targetSemanticURL, label: "\(target.name)/semantic.json")
+                do {
+                    try fileManager.removeItem(at: targetSemanticURL)
+                    print("[MemoryManager] 🗑️ Удалён устаревший файл: \(target.name)/semantic.json")
+                } catch {
+                    print("[MemoryManager] ⚠️ Не удалось удалить \(target.name)/semantic.json: \(error)")
+                }
             }
         }
 
-        // Также удаляем корневую AI_Docs/ воркспейса (если осталась от старых версий)
-        // ИСКЛЮЧЕНИЕ: НЕ удаляем если там есть chat_history.json — это активные данные!
+        // 3. Также чистим корневую AI_Docs/ воркспейса если осталась
         let rootAIDocsURL = workspaceURL.appendingPathComponent("AI_Docs")
-        guard fileManager.fileExists(atPath: rootAIDocsURL.path) else { return }
-
-        let chatHistoryURL = rootAIDocsURL.appendingPathComponent("chat_history.json")
-        if fileManager.fileExists(atPath: chatHistoryURL.path) {
-            // chat_history.json всё ещё в старом месте — не трогаем папку
-            print("[MemoryManager] ⚠️ Корневая AI_Docs/ содержит chat_history.json — не удаляем")
-            return
+        if fileManager.fileExists(atPath: rootAIDocsURL.path) {
+            let legacySemanticURL = rootAIDocsURL.appendingPathComponent("semantic.json")
+            if fileManager.fileExists(atPath: legacySemanticURL.path) {
+                migrateSemanticFile(from: legacySemanticURL, label: "root/AI_Docs/semantic.json")
+            }
+            // Удаляем только если там нет chat_history.json — это активные данные!
+            let chatHistoryURL = rootAIDocsURL.appendingPathComponent("chat_history.json")
+            if !fileManager.fileExists(atPath: chatHistoryURL.path) {
+                do {
+                    try fileManager.removeItem(at: rootAIDocsURL)
+                    print("[MemoryManager] 🗑️ Удалена корневая устаревшая папка AI_Docs/")
+                } catch {
+                    print("[MemoryManager] ⚠️ Не удалось удалить корневую AI_Docs/: \(error)")
+                }
+            }
         }
+    }
 
-        // Папка пустая или содержит только semantic.json — можно удалить
-        do {
-            try fileManager.removeItem(at: rootAIDocsURL)
-            print("[MemoryManager] 🗑️ Удалена корневая устаревшая папка AI_Docs/")
-        } catch {
-            print("[MemoryManager] ⚠️ Не удалось удалить корневую AI_Docs/: \(error)")
+    /// Мигрирует данные из устаревшего semantic.json в глобальный файл памяти.
+    /// Переносит только те ключи, которых ещё нет в глобальном файле (не перезаписывает актуальные данные).
+    private func migrateSemanticFile(from sourceURL: URL, label: String) {
+        let oldStorage = readStorage(at: sourceURL)
+        guard !oldStorage.isEmpty else { return }
+
+        var globalStorage = readStorage(at: globalFileURL)
+        var migratedCount = 0
+        for (key, record) in oldStorage where globalStorage[key] == nil {
+            globalStorage[key] = record
+            migratedCount += 1
+        }
+        if migratedCount > 0 {
+            writeStorage(globalStorage, to: globalFileURL)
+            print("[MemoryManager] 📦 Мигрировано \(migratedCount) записей из \(label)")
         }
     }
 
@@ -568,19 +457,10 @@ public actor MemoryManager {
         targets.first { $0.kind == .appTarget }
     }
 
-    /// Возвращает таргеты в порядке приоритета для чтения:
-    /// App-таргет первым, затем остальные.
-    /// Порядок уже задан при сортировке в discoverTargets(), но метод явно выражает намерение.
-    private func orderedTargetsForRead() -> [WorkspaceTarget] {
-        // targets уже отсортированы: App-таргет первый
-        return targets
-    }
-
     // MARK: - Низкоуровневые операции с файлами
 
-    /// Читает словарь записей памяти из JSON-файла по указанному URL.
-    /// Возвращает пустой словарь при любой ошибке — это безопасный дефолт,
-    /// не ломающий работу при отсутствии или повреждении файла.
+    /// Читает словарь записей памяти из JSON-файла.
+    /// Возвращает пустой словарь при любой ошибке — безопасный дефолт.
     private func readStorage(at url: URL) -> [String: MemoryRecord] {
         guard fileManager.fileExists(atPath: url.path),
               let data = try? Data(contentsOf: url),
@@ -590,7 +470,7 @@ public actor MemoryManager {
         return storage
     }
 
-    /// Записывает словарь записей памяти в JSON-файл по указанному URL.
+    /// Записывает словарь записей памяти в JSON-файл.
     /// Создаёт промежуточные директории при необходимости.
     /// Использует .atomic для защиты от повреждения файла при сбое записи.
     private func writeStorage(_ storage: [String: MemoryRecord], to url: URL) {
@@ -606,7 +486,6 @@ public actor MemoryManager {
     }
 
     /// Записывает одну запись в хранилище по указанному URL.
-    /// Выделено в отдельный метод для переиспользования в saveMemory.
     private func writeRecord(key: String, type: String, data: String, to url: URL) {
         var storage = readStorage(at: url)
         storage[key] = MemoryRecord(type: type, data: data)
@@ -617,10 +496,8 @@ public actor MemoryManager {
 
     /// Генерирует минимальный шаблон architecture.md для нового таргета.
     ///
-    /// ПОЧЕМУ МИНИМАЛЬНЫЙ:
-    /// Реальные таргеты Chappie (Chappie, ChappieCore, ChappieMCP, ChappieCoreTests)
-    /// уже имеют подробные architecture.md созданные вручную/ИИ.
-    /// Этот шаблон нужен только для новых таргетов, которые Чаппи обнаружит в будущем.
+    /// Шаблон нужен только для новых таргетов, которые Чаппи обнаружит в будущем.
+    /// Реальные таргеты Chappie уже имеют подробные architecture.md.
     private func makeArchitectureTemplate(for target: WorkspaceTarget) -> String {
         let kindLabel = target.kind == .appTarget ? "App Target" : "Library Target"
         let date = ISO8601DateFormatter().string(from: Date())
@@ -655,7 +532,6 @@ public actor MemoryManager {
         ```
         \(target.name)/
         ├── architecture.md     # Этот файл
-        ├── semantic.json       # Память ИИ (создаётся автоматически)
         └── ...                 # Исходные файлы
         ```
 

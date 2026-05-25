@@ -4,20 +4,19 @@
 // Юнит-тесты для MemoryManager — центрального компонента системы памяти Чаппи.
 //
 // СТРАТЕГИЯ ТЕСТИРОВАНИЯ:
-// Каждый тест создаёт полноценную изолированную структуру воркспейса во временной директории.
-// Это важно: MemoryManager.discoverTargets() сканирует подпапки workspaceURL в поисках таргетов.
-// Если воркспейс пустой — targets = [] и saveMemory(scope: .project) падает в .global fallback.
-// Поэтому мы создаём реалистичную структуру: подпапку таргета с *App.swift внутри.
+// Каждый тест создаёт изолированную структуру воркспейса во временной директории.
+// MemoryManager.discoverTargets() сканирует подпапки workspaceURL — поэтому создаём
+// минимальную структуру с *App.swift для корректного обнаружения таргета.
 //
-// ПОЧЕМУ НЕ ИСПОЛЬЗУЕМ scope: .global В БОЛЬШИНСТВЕ ТЕСТОВ:
-// scope: .global пишет в ~/Documents/Chappie/semantic.json — реальный файл системы.
-// Это создаёт нежелательные побочные эффекты между тестами и засоряет реальную память.
-// Вместо этого тестируем через scope: .project с изолированным воркспейсом.
+// КЛЮЧЕВОЕ ИЗМЕНЕНИЕ АРХИТЕКТУРЫ (2026-06):
+// semantic.json теперь ОДИН — ~/Documents/Chappie/semantic.json.
+// Никаких semantic.json в таргетах воркспейса — только architecture.md.
+// scope и targetName в API сохранены для совместимости, но игнорируются при выборе файла.
 //
-// ФИНАЛЬНЫЙ ФОРМАТ ХРАНЕНИЯ (без AI_Docs/):
-// - <target>/semantic.json    — данные памяти прямо в корне таргета
-// - <target>/architecture.md  — документация архитектуры прямо в корне таргета
-// Папка AI_Docs/ больше не создаётся — она удаляется при инициализации если осталась от старых версий.
+// ПРОБЛЕМА ИЗОЛЯЦИИ ТЕСТОВ:
+// Все тесты теперь пишут в один глобальный ~/Documents/Chappie/semantic.json.
+// Для изоляции используем UUID-суффиксы в ключах — это гарантирует уникальность
+// и отсутствие конфликтов между тестами и реальными данными памяти.
 //
 // ПОЧЕМУ ТЕСТИРУЕМ ИМЕННО ЭТО:
 // MemoryManager — actor с файловой системой. Ошибки здесь приводят к потере
@@ -34,29 +33,24 @@ struct MemoryManagerTests {
 
     // MARK: - Вспомогательные методы
 
-    /// Создаёт полноценную структуру тестового воркспейса во временной директории.
-    ///
-    /// ПОЧЕМУ НУЖНА ПОЛНОЦЕННАЯ СТРУКТУРА:
-    /// MemoryManager.discoverTargets() сканирует подпапки workspaceURL.
-    /// Пустая директория даёт targets = [] и поломанное поведение saveMemory/readMemory.
-    /// Создаём минимально необходимую структуру: подпапку с *App.swift → classifyTarget() → .appTarget.
+    /// Создаёт структуру тестового воркспейса во временной директории.
     ///
     /// Структура:
     ///   tempDir/
     ///   └── TestApp/
-    ///       └── TestApp.swift   ← содержит "App.swift" суффикс → classifyTarget() вернёт .appTarget
+    ///       └── TestApp.swift   ← суффикс App.swift → classifyTarget() вернёт .appTarget
+    ///
+    /// Воркспейс нужен для discoverTargets() — без него targets = [] и MemoryManager
+    /// не сможет создать architecture.md (хотя это не влияет на работу памяти).
     private func makeTempWorkspace() throws -> URL {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("ChappieCoreTests_\(UUID().uuidString)", isDirectory: true)
 
-        // Создаём корень воркспейса
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
-        // Создаём подпапку таргета с файлом *App.swift — это минимум для classifyTarget() → .appTarget
         let targetDir = tempDir.appendingPathComponent("TestApp", isDirectory: true)
         try FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
 
-        // Файл с суффиксом App.swift — сигнал для classifyTarget()
         let appFile = targetDir.appendingPathComponent("TestApp.swift")
         try "@main struct TestApp: App { var body: some Scene { WindowGroup { } } }"
             .write(to: appFile, atomically: true, encoding: .utf8)
@@ -69,10 +63,19 @@ struct MemoryManagerTests {
         try? FileManager.default.removeItem(at: url)
     }
 
+    /// Удаляет тестовые ключи из глобального semantic.json после теста.
+    /// Это необходимо потому что все тесты пишут в один реальный глобальный файл.
+    private func cleanupMemoryKeys(_ keys: [String], workspace: URL) async {
+        let manager = MemoryManager(workspaceURL: workspace)
+        for key in keys {
+            await manager.deleteMemory(key: key)
+        }
+    }
+
     // MARK: - Тесты сохранения и чтения
 
-    /// Проверяем базовый сценарий: сохранили — прочитали через scope: .project.
-    /// Используем изолированный воркспейс — никакого влияния на реальную память.
+    /// Проверяем базовый сценарий: сохранили — прочитали.
+    /// Оба scope теперь пишут в один глобальный файл — поведение одинаковое.
     @Test("Сохранение и загрузка записи")
     func saveAndLoadRecord() async throws {
         let workspace = try makeTempWorkspace()
@@ -81,18 +84,16 @@ struct MemoryManagerTests {
         let manager = MemoryManager(workspaceURL: workspace)
         await manager.initializeWorkspaceMemory()
 
-        // Уникальный ключ с UUID — защита от конфликтов при параллельных тестах
+        // UUID-ключ — защита от конфликтов с реальными данными памяти
         let uniqueKey = "test_key_\(UUID().uuidString)"
+        defer { Task { await self.cleanupMemoryKeys([uniqueKey], workspace: workspace) } }
 
-        // Сохраняем в scope .project — пишет в TestApp/semantic.json (изолировано!)
         await manager.saveMemory(
             key: uniqueKey,
             type: "fact",
-            jsonString: "{\"value\": \"hello\"}",
-            scope: .project
+            jsonString: "{\"value\": \"hello\"}"
         )
 
-        // readMemory без targetName → ищет в App-таргете (TestApp) → должен найти
         let result = await manager.readMemory(key: uniqueKey)
         #expect(result == "{\"value\": \"hello\"}")
     }
@@ -106,7 +107,6 @@ struct MemoryManagerTests {
         let manager = MemoryManager(workspaceURL: workspace)
         await manager.initializeWorkspaceMemory()
 
-        // Заведомо несуществующий ключ — UUID гарантирует уникальность
         let result = await manager.readMemory(key: "nonexistent_\(UUID().uuidString)")
         #expect(result == nil)
     }
@@ -121,13 +121,40 @@ struct MemoryManagerTests {
         await manager.initializeWorkspaceMemory()
 
         let uniqueKey = "overwrite_\(UUID().uuidString)"
+        defer { Task { await self.cleanupMemoryKeys([uniqueKey], workspace: workspace) } }
 
-        await manager.saveMemory(key: uniqueKey, type: "fact", jsonString: "\"old\"", scope: .project)
-        await manager.saveMemory(key: uniqueKey, type: "fact", jsonString: "\"new\"", scope: .project)
+        await manager.saveMemory(key: uniqueKey, type: "fact", jsonString: "\"old\"")
+        await manager.saveMemory(key: uniqueKey, type: "fact", jsonString: "\"new\"")
 
         let result = await manager.readMemory(key: uniqueKey)
-        // Должно вернуть новое значение, не старое
         #expect(result == "\"new\"")
+    }
+
+    // MARK: - Тесты scope (оба scope — один файл)
+
+    /// Проверяем что scope: .project и scope: .global пишут в один файл.
+    /// Запись через .project должна читаться через .global и наоборот.
+    @Test("scope .project и .global используют один файл")
+    func bothScopesUseSameFile() async throws {
+        let workspace = try makeTempWorkspace()
+        defer { cleanup(workspace) }
+
+        let manager = MemoryManager(workspaceURL: workspace)
+        await manager.initializeWorkspaceMemory()
+
+        let key1 = "scope_project_\(UUID().uuidString)"
+        let key2 = "scope_global_\(UUID().uuidString)"
+        defer { Task { await self.cleanupMemoryKeys([key1, key2], workspace: workspace) } }
+
+        // Пишем через .project, читаем без указания scope
+        await manager.saveMemory(key: key1, type: "fact", jsonString: "\"from project\"", scope: .project)
+        let r1 = await manager.readMemory(key: key1)
+        #expect(r1 == "\"from project\"", "Запись через scope .project должна читаться")
+
+        // Пишем через .global, читаем без указания scope
+        await manager.saveMemory(key: key2, type: "fact", jsonString: "\"from global\"", scope: .global)
+        let r2 = await manager.readMemory(key: key2)
+        #expect(r2 == "\"from global\"", "Запись через scope .global должна читаться")
     }
 
     // MARK: - Тесты удаления
@@ -143,16 +170,13 @@ struct MemoryManagerTests {
 
         let uniqueKey = "delete_\(UUID().uuidString)"
 
-        await manager.saveMemory(key: uniqueKey, type: "fact", jsonString: "\"data\"", scope: .project)
+        await manager.saveMemory(key: uniqueKey, type: "fact", jsonString: "\"data\"")
 
-        // Убеждаемся что запись существует
         let before = await manager.readMemory(key: uniqueKey)
         #expect(before != nil)
 
-        // Удаляем
         await manager.deleteMemory(key: uniqueKey)
 
-        // Теперь должно быть nil
         let after = await manager.readMemory(key: uniqueKey)
         #expect(after == nil)
     }
@@ -168,18 +192,16 @@ struct MemoryManagerTests {
         let manager = MemoryManager(workspaceURL: workspace)
         await manager.initializeWorkspaceMemory()
 
-        // Уникальный суффикс чтобы не смешиваться с записями других тестов
         let suffix = UUID().uuidString
+        let keys = ["rule1_\(suffix)", "fact1_\(suffix)", "rule2_\(suffix)"]
+        defer { Task { await self.cleanupMemoryKeys(keys, workspace: workspace) } }
 
-        // Сохраняем записи разных типов в scope .project
-        await manager.saveMemory(key: "rule1_\(suffix)", type: "rule_\(suffix)", jsonString: "\"rule data\"", scope: .project)
-        await manager.saveMemory(key: "fact1_\(suffix)", type: "fact_\(suffix)", jsonString: "\"fact data\"", scope: .project)
-        await manager.saveMemory(key: "rule2_\(suffix)", type: "rule_\(suffix)", jsonString: "\"rule data 2\"", scope: .project)
+        await manager.saveMemory(key: "rule1_\(suffix)", type: "rule_\(suffix)", jsonString: "\"rule data\"")
+        await manager.saveMemory(key: "fact1_\(suffix)", type: "fact_\(suffix)", jsonString: "\"fact data\"")
+        await manager.saveMemory(key: "rule2_\(suffix)", type: "rule_\(suffix)", jsonString: "\"rule data 2\"")
 
-        // Ищем только наш уникальный тип "rule"
         let rules = await manager.searchMemory(type: "rule_\(suffix)")
 
-        // Должно быть ровно 2 записи нашего уникального типа
         #expect(rules.count == 2)
         #expect(rules["rule1_\(suffix)"] != nil)
         #expect(rules["rule2_\(suffix)"] != nil)
@@ -195,7 +217,6 @@ struct MemoryManagerTests {
         let manager = MemoryManager(workspaceURL: workspace)
         await manager.initializeWorkspaceMemory()
 
-        // UUID гарантирует что такого типа точно не существует
         let results = await manager.searchMemory(type: "nonexistent_\(UUID().uuidString)")
         #expect(results.isEmpty)
     }
@@ -212,18 +233,17 @@ struct MemoryManagerTests {
         await manager.initializeWorkspaceMemory()
 
         let suffix = UUID().uuidString
+        let keys = (1...5).map { "key_\($0)_\(suffix)" }
+        defer { Task { await self.cleanupMemoryKeys(keys, workspace: workspace) } }
 
-        // Сохраняем 5 разных записей с уникальными ключами
         for i in 1...5 {
             await manager.saveMemory(
                 key: "key_\(i)_\(suffix)",
                 type: "fact",
-                jsonString: "\"value_\(i)\"",
-                scope: .project
+                jsonString: "\"value_\(i)\""
             )
         }
 
-        // Проверяем что каждая читается правильно
         for i in 1...5 {
             let result = await manager.readMemory(key: "key_\(i)_\(suffix)")
             #expect(result == "\"value_\(i)\"")
@@ -232,34 +252,71 @@ struct MemoryManagerTests {
 
     // MARK: - Тесты инициализации
 
-    /// Проверяем что initializeWorkspaceMemory создаёт semantic.json прямо в корне таргета.
-    ///
-    /// ФИНАЛЬНЫЙ ФОРМАТ: semantic.json лежит в <target>/semantic.json, НЕ в AI_Docs/.
-    /// Папка AI_Docs/ не должна создаваться вообще.
-    @Test("Инициализация создаёт semantic.json в корне таргета (без AI_Docs)")
-    func initializationCreatesSemanticInTargetRoot() async throws {
+    /// Проверяем что initializeWorkspaceMemory НЕ создаёт semantic.json в таргете.
+    /// semantic.json должен быть ТОЛЬКО в ~/Documents/Chappie/ — не в воркспейсе.
+    @Test("Инициализация НЕ создаёт semantic.json в таргете воркспейса")
+    func initializationDoesNotCreateSemanticInTarget() async throws {
         let workspace = try makeTempWorkspace()
         defer { cleanup(workspace) }
 
         let manager = MemoryManager(workspaceURL: workspace)
         await manager.initializeWorkspaceMemory()
 
-        // semantic.json должен лежать прямо в корне TestApp/, НЕ в AI_Docs/
-        let semanticFile = workspace.appendingPathComponent("TestApp/semantic.json")
-        #expect(FileManager.default.fileExists(atPath: semanticFile.path),
-                "semantic.json должен существовать в корне таргета")
+        // semantic.json НЕ должен создаваться в таргете — только глобальный
+        let semanticInTarget = workspace.appendingPathComponent("TestApp/semantic.json")
+        #expect(!FileManager.default.fileExists(atPath: semanticInTarget.path),
+                "semantic.json НЕ должен создаваться в таргете воркспейса")
 
-        // AI_Docs/ НЕ должна создаваться — это устаревший формат
+        // AI_Docs/ тоже не должна создаваться
         let aiDocsDir = workspace.appendingPathComponent("TestApp/AI_Docs")
         #expect(!FileManager.default.fileExists(atPath: aiDocsDir.path),
-                "Папка AI_Docs/ не должна создаваться в новом формате")
+                "Папка AI_Docs/ не должна создаваться")
+
+        // architecture.md должен создаться (это единственный файл в таргете)
+        let architectureFile = workspace.appendingPathComponent("TestApp/architecture.md")
+        #expect(FileManager.default.fileExists(atPath: architectureFile.path),
+                "architecture.md должен создаться в корне таргета")
+    }
+
+    /// Проверяем что устаревший semantic.json в корне таргета мигрируется и удаляется.
+    ///
+    /// Симулируем промежуточный формат: TestApp/semantic.json с данными.
+    /// После initializeWorkspaceMemory() файл должен исчезнуть,
+    /// а данные — мигрировать в ~/Documents/Chappie/semantic.json.
+    @Test("Инициализация мигрирует и удаляет semantic.json из корня таргета")
+    func initializationMigratesTargetSemanticJson() async throws {
+        let workspace = try makeTempWorkspace()
+        defer { cleanup(workspace) }
+
+        // Создаём устаревший semantic.json в корне таргета
+        let targetSemanticURL = workspace.appendingPathComponent("TestApp/semantic.json")
+        let legacyKey = "legacy_target_\(UUID().uuidString)"
+        let legacyData: [String: Any] = [
+            legacyKey: [
+                "type": "fact",
+                "timestamp": "2025-01-01T00:00:00Z",
+                "data": "\"legacy target value\""
+            ]
+        ]
+        let legacyJSON = try JSONSerialization.data(withJSONObject: legacyData)
+        try legacyJSON.write(to: targetSemanticURL)
+
+        // Запускаем инициализацию
+        let manager = MemoryManager(workspaceURL: workspace)
+        await manager.initializeWorkspaceMemory()
+        defer { Task { await self.cleanupMemoryKeys([legacyKey], workspace: workspace) } }
+
+        // semantic.json в таргете должен исчезнуть
+        #expect(!FileManager.default.fileExists(atPath: targetSemanticURL.path),
+                "semantic.json в таргете должен быть удалён после миграции")
+
+        // Данные должны быть доступны через глобальную память
+        let result = await manager.readMemory(key: legacyKey)
+        #expect(result == "\"legacy target value\"",
+                "Данные из таргетного semantic.json должны мигрировать в глобальный файл")
     }
 
     /// Проверяем что устаревшая папка AI_Docs/ удаляется при инициализации.
-    ///
-    /// Симулируем старый формат: создаём TestApp/AI_Docs/semantic.json с данными.
-    /// После initializeWorkspaceMemory() папка AI_Docs/ должна исчезнуть,
-    /// а данные — мигрировать в TestApp/semantic.json.
     @Test("Инициализация удаляет устаревшую AI_Docs и мигрирует данные")
     func initializationCleansUpLegacyAIDocs() async throws {
         let workspace = try makeTempWorkspace()
@@ -269,72 +326,57 @@ struct MemoryManagerTests {
         let legacyAIDocsDir = workspace.appendingPathComponent("TestApp/AI_Docs")
         try FileManager.default.createDirectory(at: legacyAIDocsDir, withIntermediateDirectories: true)
 
-        // Кладём туда semantic.json с реальными данными для миграции
         let legacySemanticURL = legacyAIDocsDir.appendingPathComponent("semantic.json")
-        let legacyKey = "legacy_key_\(UUID().uuidString)"
+        let legacyKey = "legacy_aidocs_\(UUID().uuidString)"
         let legacyData: [String: Any] = [
             legacyKey: [
                 "type": "fact",
                 "timestamp": "2025-01-01T00:00:00Z",
-                "data": "\"legacy value\""
+                "data": "\"legacy aidocs value\""
             ]
         ]
         let legacyJSON = try JSONSerialization.data(withJSONObject: legacyData)
         try legacyJSON.write(to: legacySemanticURL)
 
-        // Запускаем инициализацию — она должна:
-        // 1. Создать TestApp/semantic.json
-        // 2. Мигрировать данные из AI_Docs/semantic.json
-        // 3. Удалить папку AI_Docs/
         let manager = MemoryManager(workspaceURL: workspace)
         await manager.initializeWorkspaceMemory()
+        defer { Task { await self.cleanupMemoryKeys([legacyKey], workspace: workspace) } }
 
         // AI_Docs/ должна исчезнуть
         #expect(!FileManager.default.fileExists(atPath: legacyAIDocsDir.path),
                 "Папка AI_Docs/ должна быть удалена после инициализации")
 
-        // Данные должны быть доступны через новый путь
+        // Данные должны быть доступны через глобальную память
         let result = await manager.readMemory(key: legacyKey)
-        #expect(result == "\"legacy value\"",
-                "Данные из AI_Docs/semantic.json должны мигрировать в корневой semantic.json")
+        #expect(result == "\"legacy aidocs value\"",
+                "Данные из AI_Docs/semantic.json должны мигрировать в глобальный файл")
     }
 
-    /// Проверяем что повторная инициализация не затирает существующие данные.
+    /// Проверяем что повторная инициализация не влияет на существующие данные памяти.
     ///
-    /// СТРАТЕГИЯ ТЕСТА:
-    /// Создаём manager1, инициализируем, сохраняем данные в scope .project (изолировано в TestApp/semantic.json).
-    /// Затем создаём manager2 с тем же workspaceURL — симулирует перезапуск приложения.
-    /// manager2.initializeWorkspaceMemory() не должен затереть TestApp/semantic.json.
-    /// Читаем через manager2 — данные должны сохраниться.
+    /// Данные записаны в ~/Documents/Chappie/semantic.json.
+    /// Повторный вызов initializeWorkspaceMemory() не должен их затронуть.
     @Test("Повторная инициализация не затирает данные (идемпотентность)")
     func initializationIsIdempotent() async throws {
         let workspace = try makeTempWorkspace()
         defer { cleanup(workspace) }
 
-        // Уникальный ключ чтобы не конфликтовать с другими тестами
         let uniqueKey = "persist_\(UUID().uuidString)"
 
-        // Первый экземпляр — сохраняем данные в изолированный project scope
+        // Первый экземпляр — сохраняем данные
         let manager1 = MemoryManager(workspaceURL: workspace)
         await manager1.initializeWorkspaceMemory()
-        await manager1.saveMemory(
-            key: uniqueKey,
-            type: "fact",
-            jsonString: "\"persist\"",
-            scope: .project
-        )
+        await manager1.saveMemory(key: uniqueKey, type: "fact", jsonString: "\"persist\"")
+        defer { Task { await self.cleanupMemoryKeys([uniqueKey], workspace: workspace) } }
 
-        // Проверяем что данные сохранились через тот же экземпляр
         let check = await manager1.readMemory(key: uniqueKey)
         #expect(check == "\"persist\"", "Данные должны быть доступны сразу после сохранения")
 
         // Второй экземпляр с тем же workspaceURL — симулируем перезапуск
-        // initializeWorkspaceMemory() не должен перезаписывать существующий semantic.json
-        // (защита реализована через `if !fileManager.fileExists(atPath: target.semanticFileURL.path)`)
         let manager2 = MemoryManager(workspaceURL: workspace)
         await manager2.initializeWorkspaceMemory()
 
-        // Данные должны сохраниться — файл не перезаписывается при инициализации
+        // Данные в глобальном файле должны сохраниться
         let result = await manager2.readMemory(key: uniqueKey)
         #expect(result == "\"persist\"", "Данные должны пережить повторную инициализацию")
     }
