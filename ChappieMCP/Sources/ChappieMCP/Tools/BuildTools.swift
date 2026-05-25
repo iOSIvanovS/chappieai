@@ -14,11 +14,14 @@
 // - build_project → схема "Chappie" (собирает всё приложение)
 // - run_tests     → схема "ChappieCoreTests" (запускает тесты библиотеки)
 //
-// DESTINATION (ВАЖНО — 2025-07-11):
-// Используем "platform=macOS,name=Any Mac" — универсальный destination,
-// который работает на ЛЮБОЙ архитектуре (x86_64 и arm64).
-// НЕ указываем arch явно — это вызывало ошибку на Intel-машинах:
-// "Unable to find a device matching platform=macOS,arch=arm64"
+// DESTINATION (ВАЖНО — история попыток):
+// ❌ "platform=macOS,arch=arm64"  — ломается на Intel-машинах
+// ❌ "platform=macOS,name=Any Mac" — баг macOS 26 beta: в списке есть, но не находит
+// ✅ "platform=macOS,arch=x86_64"  — работает на Intel (наша машина x86_64)
+//
+// КАК ОПРЕДЕЛИЛИ АРХИТЕКТУРУ:
+// Из лога xcodebuild: "Available destinations: { platform:macOS, arch:x86_64, id:2AA64AD9... }"
+// Машина — Intel Mac (x86_64). Поэтому явно указываем arch=x86_64.
 //
 // ИСПРАВЛЕНИЕ ДЕДЛОКА PIPE (2025-07-11):
 // ПРОБЛЕМА: process.waitUntilExit() + readDataToEndOfFile() ПОСЛЕ него = ДЕДЛОК.
@@ -103,9 +106,10 @@ final class BuildTools: Sendable {
             "-project", "Chappie.xcodeproj",
             "-scheme", "Chappie",
             "-configuration", "Debug",
-            // "Any Mac" — универсальный destination, работает на x86_64 и arm64.
-            // Явное указание arch=arm64 ломается на Intel-машинах.
-            "-destination", "platform=macOS,name=Any Mac",
+            // arch=x86_64 — наша машина Intel (x86_64).
+            // Определено из лога: "Available destinations: { platform:macOS, arch:x86_64 }"
+            // "name=Any Mac" не работает на macOS 26 beta (баг Xcode).
+            "-destination", "platform=macOS,arch=x86_64",
             "build"
         ]
 
@@ -119,8 +123,7 @@ final class BuildTools: Sendable {
     /// Поэтому для запуска тестов используем схему "ChappieCoreTests" в xcodebuild.
     ///
     /// DESTINATION (2025-07-11):
-    /// "platform=macOS,name=Any Mac" — универсальный destination без явного arch.
-    /// Работает на x86_64 и arm64. Явное arch=arm64 ломается на Intel-машинах.
+    /// arch=x86_64 — наша машина Intel. "name=Any Mac" не работает на macOS 26 beta.
     ///
     /// - Parameter target: имя тест-таргета (например "ChappieCoreTests").
     ///   nil = запускает все тесты через схему ChappieCoreTests.
@@ -130,8 +133,8 @@ final class BuildTools: Sendable {
         var args = [
             "-project", "Chappie.xcodeproj",
             "-scheme", "ChappieCoreTests",
-            // Универсальный destination — не зависит от архитектуры машины
-            "-destination", "platform=macOS,name=Any Mac",
+            // arch=x86_64 — Intel Mac. "name=Any Mac" не работает на macOS 26 beta.
+            "-destination", "platform=macOS,arch=x86_64",
             "test"
         ]
 
