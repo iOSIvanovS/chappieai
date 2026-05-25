@@ -14,6 +14,12 @@
 // - build_project → схема "Chappie" (собирает всё приложение)
 // - run_tests     → схема "ChappieCoreTests" (запускает тесты библиотеки)
 //
+// DESTINATION (ВАЖНО — 2025-07-11):
+// Используем "platform=macOS,name=Any Mac" — универсальный destination,
+// который работает на ЛЮБОЙ архитектуре (x86_64 и arm64).
+// НЕ указываем arch явно — это вызывало ошибку на Intel-машинах:
+// "Unable to find a device matching platform=macOS,arch=arm64"
+//
 // ИСПРАВЛЕНИЕ ДЕДЛОКА PIPE (2025-07-11):
 // ПРОБЛЕМА: process.waitUntilExit() + readDataToEndOfFile() ПОСЛЕ него = ДЕДЛОК.
 // Pipe имеет буфер ~64KB. Если xcodebuild пишет больше — он блокируется в ожидании
@@ -23,10 +29,8 @@
 // ИСПРАВЛЕНИЕ SWIFT 6 CONCURRENCY (2025-07-11):
 // ПРОБЛЕМА: var stdoutData/stderrData захватывались в @Sendable-замыкания разных
 // потоков → "Mutation of captured var in concurrently-executing code".
-// РЕШЕНИЕ: Используем NSLock для синхронизации записи, а переменные объявляем
-// как nonisolated(unsafe) внутри локального вспомогательного класса-контейнера.
-// Проще всего — использовать пару (Data, NSLock) через вспомогательный класс
-// DataBox, который является reference type и потокобезопасен через lock.
+// РЕШЕНИЕ: Используем класс DataBox (@unchecked Sendable) с NSLock.
+// Замыкания захватывают ССЫЛКУ на объект (разрешено), а не мутируют var.
 //
 // ТАЙМАУТ ПРОЦЕССОВ:
 // xcodebuild иногда зависает (особенно на macOS 26 beta).
@@ -99,8 +103,9 @@ final class BuildTools: Sendable {
             "-project", "Chappie.xcodeproj",
             "-scheme", "Chappie",
             "-configuration", "Debug",
-            // Явно указываем destination чтобы xcodebuild не спрашивал и не зависал
-            "-destination", "platform=macOS,arch=arm64",
+            // "Any Mac" — универсальный destination, работает на x86_64 и arm64.
+            // Явное указание arch=arm64 ломается на Intel-машинах.
+            "-destination", "platform=macOS,name=Any Mac",
             "build"
         ]
 
@@ -114,8 +119,8 @@ final class BuildTools: Sendable {
     /// Поэтому для запуска тестов используем схему "ChappieCoreTests" в xcodebuild.
     ///
     /// DESTINATION (2025-07-11):
-    /// "platform=macOS,arch=arm64" — явный destination без симулятора.
-    /// Без явного arch xcodebuild на macOS 26 beta может зависнуть на выборе устройства.
+    /// "platform=macOS,name=Any Mac" — универсальный destination без явного arch.
+    /// Работает на x86_64 и arm64. Явное arch=arm64 ломается на Intel-машинах.
     ///
     /// - Parameter target: имя тест-таргета (например "ChappieCoreTests").
     ///   nil = запускает все тесты через схему ChappieCoreTests.
@@ -125,8 +130,8 @@ final class BuildTools: Sendable {
         var args = [
             "-project", "Chappie.xcodeproj",
             "-scheme", "ChappieCoreTests",
-            // Явный destination — критично для macOS 26 beta
-            "-destination", "platform=macOS,arch=arm64",
+            // Универсальный destination — не зависит от архитектуры машины
+            "-destination", "platform=macOS,name=Any Mac",
             "test"
         ]
 
@@ -206,8 +211,6 @@ final class BuildTools: Sendable {
 
         // --- ЗАЩИТА ОТ ЗАВИСАНИЯ ---
         // DispatchWorkItem убьёт процесс по таймауту если xcodebuild завис.
-        // nonisolated(unsafe) здесь не нужен — timedOut читается только ПОСЛЕ
-        // завершения процесса и killWorkItem, никакой гонки нет.
         var timedOut = false
         let killWorkItem = DispatchWorkItem {
             if process.isRunning {
@@ -224,16 +227,12 @@ final class BuildTools: Sendable {
 
         // --- ПАРАЛЛЕЛЬНОЕ ЧТЕНИЕ PIPE (ИСПРАВЛЕНИЕ ДЕДЛОКА) ---
         // DataBox — reference type с NSLock, безопасен для захвата в @Sendable-замыкания.
-        // Замыкания вызывают box.set() — это мутация объекта, а не переменной,
-        // что разрешено в Swift 6 для @unchecked Sendable классов.
         let stdoutBox = DataBox()
         let stderrBox = DataBox()
         let readGroup = DispatchGroup()
 
         readGroup.enter()
         DispatchQueue.global(qos: .utility).async {
-            // readDataToEndOfFile() блокирует поток до закрытия Pipe.
-            // Pipe закрывается когда процесс завершается — это нормально.
             stdoutBox.set(stdoutPipe.fileHandleForReading.readDataToEndOfFile())
             readGroup.leave()
         }
@@ -247,8 +246,6 @@ final class BuildTools: Sendable {
 
         do {
             try process.run()
-            // waitUntilExit() ждёт завершения процесса.
-            // Параллельные потоки читают из Pipe, предотвращая блокировку процесса.
             process.waitUntilExit()
         } catch {
             killWorkItem.cancel()
@@ -263,7 +260,6 @@ final class BuildTools: Sendable {
 
         let elapsed = String(format: "%.1f", Date().timeIntervalSince(startTime))
 
-        // Если сработал таймаут — возвращаем понятное сообщение
         if timedOut {
             let msg = "⏱️ \(label) завис и был принудительно остановлен через \(Int(kBuildTimeoutSeconds)) секунд.\n" +
                       "Попробуй ещё раз или проверь Xcode вручную."
@@ -271,12 +267,10 @@ final class BuildTools: Sendable {
             return .failure(msg)
         }
 
-        // Читаем результат из потокобезопасных контейнеров
         let stdout = String(data: stdoutBox.get(), encoding: .utf8) ?? ""
         let stderr = String(data: stderrBox.get(), encoding: .utf8) ?? ""
         let fullOutput = stdout + (stderr.isEmpty ? "" : "\n--- STDERR ---\n" + stderr)
 
-        // Сохраняем полный лог в файл
         saveLog(fullOutput, args: args)
 
         let exitCode = process.terminationStatus
