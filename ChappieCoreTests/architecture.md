@@ -6,7 +6,7 @@
   Этот файл заменяет папку AI_Docs (architecture.md + project_map.md + semantic.json).
   Обновляй при каждом значимом изменении тестовой архитектуры.
 
-  Последнее обновление: рефакторинг AI_Docs/ → один файл architecture.md
+  Последнее обновление: исправлен SDKROOT watchos→macosx, SWIFT_VERSION 5.0→6.0
 -->
 
 # ChappieCoreTests — Архитектура тестового таргета
@@ -145,14 +145,33 @@ tempDir/
 
 ## 5. Запуск тестов
 
-### Через Xcode
+### Через Xcode (основной способ)
 `⌘+U` по схеме `ChappieCoreTests` — запускает все тесты через `ChappieCoreTests.xctestplan`.
 
-### Через MCP (Чаппи сам)
+### ⚠️ ВАЖНО: run_tests(target:) НЕ РАБОТАЕТ для этого таргета
+
+Инструмент `run_tests(target: "ChappieCoreTests")` вызывает `swift test` в `ChappieCore/`
+(Swift Package), а не `xcodebuild test`. Поскольку в `Package.swift` намеренно нет
+`testTarget` — инструмент всегда возвращает "no tests found".
+
+**Это не баг тестов, это ограничение MCP-инструмента.**
+Тесты работают корректно через Xcode (⌘+U).
+
+---
+
+## 6. Build Settings (исправлено 2026-05-25)
+
+Таргет `ChappieCoreTests` в `project.pbxproj` должен иметь:
+
 ```
-run_tests(target: "ChappieCoreTests")
+SDKROOT = macosx;                    // ← было watchos (БАГИ!)
+MACOSX_DEPLOYMENT_TARGET = 26.5;     // ← было WATCHOS_DEPLOYMENT_TARGET
+SUPPORTED_PLATFORMS = macosx;
+SWIFT_VERSION = 6.0;                 // ← было 5.0
 ```
-Запускает `xcodebuild test -testPlan ChappieCoreTests`.
+
+**Почему это важно:** при `SDKROOT = watchos` xcodebuild не мог найти тесты при первом
+запуске — Xcode видел таргет как watchOS и не мог его запустить на Mac без симулятора.
 
 ---
 
@@ -161,5 +180,7 @@ run_tests(target: "ChappieCoreTests")
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-05-24 | Initial creation (шаблон) | Chappie AI |
-| 2026-06-XX | Полное наполнение: описание всех тестов, правила изоляции | Chappie AI |
-| 2026-06-XX | Рефакторинг: AI_Docs/ → один файл architecture.md | Chappie AI |
+| 2026-05-24 | Полное наполнение: описание всех тестов, правила изоляции | Chappie AI |
+| 2026-05-24 | Рефакторинг: AI_Docs/ → один файл architecture.md | Chappie AI |
+| 2026-05-25 | Исправлен SDKROOT watchos→macosx, SWIFT_VERSION 5.0→6.0 | Chappie AI |
+| 2026-05-25 | Задокументировано ограничение run_tests(target:) | Chappie AI |

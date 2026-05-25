@@ -50,8 +50,6 @@
 		874866232FC35DF000F5E876 /* ChappieMCP */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = ChappieMCP; sourceTree = BUILT_PRODUCTS_DIR; };
 		87BAA4782FBEED3A001DDBED /* Chappie.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Chappie.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		/* Ссылки на файлы архитектуры — только для навигации в Xcode, не участвуют в сборке */
-		/* Ссылки на файлы архитектуры — только для навигации в Xcode, не участвуют в сборке */
-		/* Ссылки на файлы архитектуры — только для навигации в Xcode, не участвуют в сборке */
 		87DOCS0001000000000000001 /* architecture.md (корень) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (корень)"; path = architecture.md; sourceTree = "<group>"; };
 		87DOCS0000000000000000002 /* architecture.md (Chappie) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (Chappie)"; path = Chappie/architecture.md; sourceTree = "<group>"; };
 		87DOCS0000000000000000003 /* architecture.md (ChappieCore) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (ChappieCore)"; path = ChappieCore/architecture.md; sourceTree = "<group>"; };
@@ -104,12 +102,20 @@
 		87BAA46F2FBEED3A001DDBED = {
 			isa = PBXGroup;
 			children = (
-				/* Группа документации — все файлы architecture.md видны в Navigator */
-		/* Группа 📚 Docs — только для навигации. Не содержит Build Phase, не копируется в бандл.
-		   Позволяет открывать и редактировать все файлы architecture.md прямо из Xcode Navigator. */
-		/* Группа 📚 Docs — только для навигации. Не содержит Build Phase, не копируется в бандл.
-		   Позволяет открывать и редактировать все файлы architecture.md прямо из Xcode Navigator. */
+				/* Группа 📚 Docs — только для навигации. Не содержит Build Phase, не копируется в бандл.
+				   Позволяет открывать и редактировать все файлы architecture.md прямо из Xcode Navigator. */
+				87DOCS0000000000000000000 /* 📚 Docs */,
+				87BAA47A2FBEED3A001DDBED /* Chappie */,
+				874865FB2FC3029E00F5E876 /* ChappieCoreTests */,
+				874866242FC35DF000F5E876 /* ChappieMCP */,
+				87BAA4792FBEED3A001DDBED /* Products */,
+				8748660D2FC304B500F5E876 /* ChappieCoreTests.xctestplan */,
+			);
+			sourceTree = "<group>";
+		};
 		87DOCS0000000000000000000 /* 📚 Docs */ = {
+			/* Группа 📚 Docs — только для навигации. Не содержит Build Phase, не копируется в бандл.
+			   Позволяет открывать и редактировать все файлы architecture.md прямо из Xcode Navigator. */
 			isa = PBXGroup;
 			children = (
 				87DOCS0001000000000000001 /* architecture.md (корень) */,
@@ -121,6 +127,7 @@
 			name = "📚 Docs";
 			sourceTree = "<group>";
 		};
+		87BAA4792FBEED3A001DDBED /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				87BAA4782FBEED3A001DDBED /* Chappie.app */,
@@ -162,7 +169,7 @@
 			buildConfigurationList = 874866272FC35DF000F5E876 /* Build configuration list for PBXNativeTarget "ChappieMCP" */;
 			buildPhases = (
 				8748661F2FC35DF000F5E876 /* Sources */,
-				874866202FC35DF000F5E876 /* Frameworks */,
+				874866202PC35DF000F5E876 /* Frameworks */,
 				874866212FC35DF000F5E876 /* CopyFiles */,
 			);
 			buildRules = (
@@ -307,6 +314,10 @@
 		874865FF2FC3029E00F5E876 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				/* ChappieCoreTests — тест-таргет для macOS.
+				   ИСПРАВЛЕНО: было SDKROOT=watchos, WATCHOS_DEPLOYMENT_TARGET=26.5 — это приводило
+				   к тому, что xcodebuild не мог найти тесты при первом запуске (неверная платформа).
+				   Теперь явно указана macOS как целевая платформа. */
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -315,11 +326,12 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = tmf.ChappieCoreTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
-				SDKROOT = watchos;
+				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SUPPORTED_PLATFORMS = macosx;
 				SUPPORTS_MACCATALYST = NO;
@@ -327,14 +339,15 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				WATCHOS_DEPLOYMENT_TARGET = 26.5;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Debug;
 		};
 		874866002FC3029E00F5E876 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				/* ChappieCoreTests Release — та же платформа macOS.
+				   ИСПРАВЛЕНО: было SDKROOT=watchos — тесты не находились при запуске. */
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -343,20 +356,20 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = tmf.ChappieCoreTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
-				SDKROOT = watchos;
+				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SUPPORTED_PLATFORMS = macosx;
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 				VALIDATE_PRODUCT = YES;
-				WATCHOS_DEPLOYMENT_TARGET = 26.5;
 			};
 			name = Release;
 		};
