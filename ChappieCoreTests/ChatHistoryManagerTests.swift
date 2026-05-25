@@ -8,7 +8,9 @@
 // TD-03: Обновлены под новое расположение файла (корень воркспейса, без AI_Docs/).
 //        Добавлен тест на автоматическое подрезание до maxStoredMessages (100).
 // 2026-05-25: Исправлено сравнение URL в historyStoredInWorkspaceRoot.
-//             deletingLastPathComponent() добавляет trailing slash — нужен .standardized.
+//             На macOS 26 deletingLastPathComponent() добавляет trailing slash,
+//             и .standardized не нормализует это. Решение: сравниваем .path
+//             с явным удалением trailing slash через trimmingCharacters.
 //
 // ПОЧЕМУ TESTMESSAGE, А НЕ РЕАЛЬНЫЙ CHATMESSAGE:
 // ChatHistoryManager живёт в ChappieCore и намеренно не зависит от ChatMessage,
@@ -26,6 +28,17 @@ import Foundation
 private struct TestMessage: Codable, Equatable {
     let role: String
     let content: String
+}
+
+// MARK: - Вспомогательная функция нормализации пути
+
+/// Убирает trailing slash из пути для надёжного сравнения.
+/// На macOS 26 deletingLastPathComponent() добавляет "/" в конце URL.path,
+/// что ломает строгое сравнение строк. Эта функция устраняет несоответствие.
+private func normalizePath(_ path: String) -> String {
+    // Убираем trailing slash, но не трогаем корневой "/" (для путей типа "/")
+    guard path.count > 1 else { return path }
+    return path.hasSuffix("/") ? String(path.dropLast()) : path
 }
 
 // MARK: - Тесты
@@ -127,20 +140,21 @@ struct ChatHistoryManagerTests {
     /// После рефакторинга TD-03 файл истории лежит прямо в корне воркспейса.
     /// Папка AI_Docs/ упразднена — проверяем новое расположение.
     ///
-    /// ВАЖНО: используем .standardized для сравнения URL, потому что
-    /// deletingLastPathComponent() добавляет trailing slash ("/UUID/"),
-    /// а tempDir создаётся без него ("/UUID"). URL-сравнение строгое —
-    /// .standardized нормализует оба URL к единому виду без trailing slash.
+    /// ПОЧЕМУ СРАВНИВАЕМ ЧЕРЕЗ normalizePath(), А НЕ ЧЕРЕЗ URL:
+    /// На macOS 26 метод deletingLastPathComponent() добавляет trailing slash к .path
+    /// ("/UUID/" вместо "/UUID"), и даже .standardized не нормализует это различие.
+    /// URL-сравнение строгое — "/UUID/" != "/UUID".
+    /// Функция normalizePath() явно убирает trailing slash перед сравнением.
     @Test("История хранится в корне воркспейса (без AI_Docs/)")
     func historyStoredInWorkspaceRoot() throws {
         let (manager, tempDir) = try makeManager()
         manager.saveMessages([TestMessage(role: "user", content: "Тест")])
 
-        // Нормализуем оба URL через .standardized чтобы убрать разницу в trailing slash
-        let parentDir = manager.fileURL.deletingLastPathComponent().standardized
-        let expectedDir = tempDir.standardized
+        // Получаем строковые пути и нормализуем trailing slash
+        let parentPath = normalizePath(manager.fileURL.deletingLastPathComponent().path)
+        let expectedPath = normalizePath(tempDir.path)
 
-        #expect(parentDir == expectedDir,
+        #expect(parentPath == expectedPath,
                 "Файл должен лежать прямо в корне воркспейса, не в поддиректории")
         #expect(manager.fileURL.lastPathComponent == "chat_history.json")
         #expect(FileManager.default.fileExists(atPath: manager.fileURL.path))
