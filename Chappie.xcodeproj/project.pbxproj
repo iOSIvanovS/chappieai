@@ -49,7 +49,8 @@
 		8748660D2FC304B500F5E876 /* ChappieCoreTests.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = ChappieCoreTests.xctestplan; sourceTree = "<group>"; };
 		874866232FC35DF000F5E876 /* ChappieMCP */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = ChappieMCP; sourceTree = BUILT_PRODUCTS_DIR; };
 		87BAA4782FBEED3A001DDBED /* Chappie.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Chappie.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		/* Ссылки на файлы архитектуры — только для навигации в Xcode, не участвуют в сборке */
+		/* Ссылки на файлы architecture.md — только для навигации в Xcode Navigator.
+		   Не участвуют в сборке, не копируются в бандл. Управляются XcodeDocsGroupManager. */
 		/* Ссылки на файлы архитектуры — только для навигации в Xcode, не участвуют в сборке */
 		/* Ссылки на файлы архитектуры — только для навигации в Xcode, не участвуют в сборке */
 		87DOCS0001000000000000001 /* architecture.md (корень) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (корень)"; path = architecture.md; sourceTree = "<group>"; };
@@ -101,11 +102,14 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		/* Главная группа проекта — корень Navigator.
+		   Содержит: группу 📚 Docs, все таргеты и папку Products. */
 		87BAA46F2FBEED3A001DDBED = {
 			isa = PBXGroup;
 			children = (
 				/* Группа 📚 Docs — только для навигации. Не содержит Build Phase, не копируется в бандл.
-				   Позволяет открывать и редактировать все файлы architecture.md прямо из Xcode Navigator. */
+				   Позволяет открывать и редактировать все файлы architecture.md прямо из Xcode Navigator.
+				   Управляется автоматически через XcodeDocsGroupManager при старте приложения. */
 		/* Группа 📚 Docs — только для навигации. Не содержит Build Phase, не копируется в бандл.
 		   Позволяет открывать и редактировать все файлы architecture.md прямо из Xcode Navigator. */
 		/* Группа 📚 Docs — только для навигации. Не содержит Build Phase, не копируется в бандл.
@@ -163,7 +167,7 @@
 			buildConfigurationList = 874866272FC35DF000F5E876 /* Build configuration list for PBXNativeTarget "ChappieMCP" */;
 			buildPhases = (
 				8748661F2FC35DF000F5E876 /* Sources */,
-				874866202PC35DF000F5E876 /* Frameworks */,
+				874866202FC35DF000F5E876 /* Frameworks */,
 				874866212FC35DF000F5E876 /* CopyFiles */,
 			);
 			buildRules = (
@@ -308,7 +312,7 @@
 		874865FF2FC3029E00F5E876 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				/* ChappieCoreTests — тест-таргет для macOS.
+				/* ChappieCoreTests Debug — тест-таргет для macOS.
 				   ИСПРАВЛЕНО: было SDKROOT=watchos, WATCHOS_DEPLOYMENT_TARGET=26.5 — это приводило
 				   к тому, что xcodebuild не мог найти тесты при первом запуске (неверная платформа).
 				   Теперь явно указана macOS как целевая платформа. */
@@ -340,8 +344,7 @@
 		874866002FC3029E00F5E876 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				/* ChappieCoreTests Release — та же платформа macOS.
-				   ИСПРАВЛЕНО: было SDKROOT=watchos — тесты не находились при запуске. */
+				/* ChappieCoreTests Release — та же платформа macOS. */
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
