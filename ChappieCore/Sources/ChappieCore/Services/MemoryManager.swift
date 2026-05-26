@@ -49,6 +49,11 @@
 // Это ДОКУМЕНТАЦИЯ, а не данные. Чаппи читает и пишет его через инструменты
 // read_file/write_file как обычный текстовый файл. MemoryManager его не трогает
 // (только создаёт шаблон при первом обнаружении нового таргета).
+//
+// ИМЕНА ПРОЕКТОВ В ПРОМПТЕ (IT-08 финал):
+// buildSystemPrompt() теперь принимает MemoryContext с projectInfos: [ProjectInfo].
+// Каждый блок проектной памяти получает заголовок с именем: "📁 Память проекта: Chappie".
+// Это делает промпт читаемым и понятным для модели.
 
 import Foundation
 
@@ -249,13 +254,11 @@ public actor MemoryManager {
     ///
     /// - Parameters:
     ///   - basePrompt: Базовый system prompt (захардкоженные правила)
-    ///   - threadId: UUID активного треда (для тредовой памяти), nil = без тредовой памяти
-    ///   - projectIds: UUID проектов в треде (для проектной памяти)
+    ///   - memoryContext: Контекст треда — threadId + projectInfos (UUID + имя каждого проекта)
     /// - Returns: Полный system prompt с подмешанной памятью
     public func buildSystemPrompt(
         basePrompt: String,
-        threadId: UUID?,
-        projectIds: [UUID]
+        memoryContext: MemoryContext
     ) async -> String {
         // Если SwiftData бэкенд не подключён — возвращаем базовый промпт как есть.
         // Это нормальная ситуация при первом запуске или в тестах.
@@ -267,13 +270,13 @@ public actor MemoryManager {
         // Собираем список scope для загрузки
         var scopes: [String] = ["global"]
 
-        // Добавляем scope каждого проекта
-        for projectId in projectIds {
-            scopes.append(projectId.uuidString)
+        // Добавляем scope каждого проекта по его UUID
+        for info in memoryContext.projectInfos {
+            scopes.append(info.id.uuidString)
         }
 
         // Добавляем scope треда если задан
-        if let threadId = threadId {
+        if let threadId = memoryContext.threadId {
             scopes.append(threadId.uuidString)
         }
 
@@ -303,20 +306,25 @@ public actor MemoryManager {
         }
 
         // --- БЛОК 2: Проектная память ---
-        // Для каждого проекта — отдельный блок
-        for projectId in projectIds {
-            let projectEntries = entriesByScope[projectId.uuidString] ?? []
+        // Для каждого проекта — отдельный блок с именем проекта в заголовке.
+        //
+        // ПОЧЕМУ ИМЕНА (IT-08 финал):
+        // Раньше заголовок был безымянным "📁 Память проекта".
+        // Теперь: "📁 Память проекта: Chappie" — модель понимает КАКОЙ проект.
+        // Особенно важно при нескольких проектах в одном треде (параллельная разработка).
+        for info in memoryContext.projectInfos {
+            let projectEntries = entriesByScope[info.id.uuidString] ?? []
             guard !projectEntries.isEmpty else { continue }
 
-            // Форматируем блок через MemoryEntity helper
-            let tempEntity = MemoryEntity(scope: projectId.uuidString, entries: projectEntries)
-            if let block = tempEntity.formatForPrompt(title: "📁 Память проекта") {
+            let tempEntity = MemoryEntity(scope: info.id.uuidString, entries: projectEntries)
+            // Заголовок содержит имя проекта — информативно и однозначно
+            if let block = tempEntity.formatForPrompt(title: "📁 Память проекта: \(info.name)") {
                 memoryBlocks.append(block)
             }
         }
 
         // --- БЛОК 3: Тредовая память ---
-        if let threadId = threadId {
+        if let threadId = memoryContext.threadId {
             let threadEntries = entriesByScope[threadId.uuidString] ?? []
             if !threadEntries.isEmpty {
                 let tempEntity = MemoryEntity(scope: threadId.uuidString, entries: threadEntries)
@@ -336,6 +344,30 @@ public actor MemoryManager {
         let memorySection = ([memorySectionHeader] + memoryBlocks).joined(separator: "\n\n")
 
         return basePrompt + "\n\n" + memorySection
+    }
+
+    // MARK: - Обратная совместимость: старая сигнатура buildSystemPrompt (IT-08 legacy)
+
+    /// Старая сигнатура buildSystemPrompt — сохранена для обратной совместимости.
+    ///
+    /// ПОЧЕМУ ОСТАВЛЕНА:
+    /// Некоторые тесты и старый код могут вызывать buildSystemPrompt с отдельными параметрами.
+    /// Этот метод создаёт MemoryContext из переданных параметров и делегирует новому методу.
+    ///
+    /// ОГРАНИЧЕНИЕ: projectIds без имён — заголовки блоков будут безымянными.
+    /// Используй buildSystemPrompt(basePrompt:memoryContext:) для полноценных заголовков.
+    public func buildSystemPrompt(
+        basePrompt: String,
+        threadId: UUID?,
+        projectIds: [UUID]
+    ) async -> String {
+        // Создаём MemoryContext без имён — заголовки будут "📁 Память проекта: <UUID>"
+        // Это лучше чем ничего, но для правильных имён нужна новая сигнатура.
+        let projectInfos = projectIds.map { id in
+            MemoryContext.ProjectInfo(id: id, name: id.uuidString)
+        }
+        let context = MemoryContext(threadId: threadId, projectInfos: projectInfos)
+        return await buildSystemPrompt(basePrompt: basePrompt, memoryContext: context)
     }
 
     // MARK: - UUID-based методы памяти (IT-08, основной путь)

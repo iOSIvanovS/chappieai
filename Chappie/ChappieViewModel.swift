@@ -29,22 +29,21 @@
 //
 // ТРЁХУРОВНЕВАЯ ПАМЯТЬ (IT-03, IT-08):
 // MemoryStore (SwiftData) подключается к MemoryManager через setMemoryStore().
-// AIOrchestrator.process() получает MemoryContext (threadId + projectIds).
+// AIOrchestrator.process() получает MemoryContext (threadId + projectInfos).
 // Перед каждым запросом MemoryManager.buildSystemPrompt() автоматически подмешивает
 // глобальную + проектную + тредовую память в system prompt.
 //
-// ТРЁХУРОВНЕВАЯ ПАМЯТЬ — UUID-BASED (IT-08):
+// ТРЁХУРОВНЕВАЯ ПАМЯТЬ — UUID-BASED + ИМЕНА (IT-08 финал):
+// MemoryContext теперь содержит projectInfos: [ProjectInfo] (UUID + имя каждого проекта).
+// buildSystemPrompt() использует имена для заголовков: "📁 Память проекта: Chappie".
 // ToolExecutionService работает с ActiveMemoryContext (threadId UUID + [ProjectInfo{id,name}]).
-// syncActiveMemoryContext() собирает реальные UUID из activeThread и activeProjects и
-// передаёт их в ToolExecutionService через setActiveMemoryContext().
-// Это позволяет инструментам memorize/recall/search_memory/delete_memory корректно
-// маппировать scope="thread" → UUID треда, targetName="Chappie" → UUID проекта.
+// syncActiveMemoryContext() собирает реальные UUID+имена из activeProjects и activeThread.
 //
 // СИСТЕМА ТРЕДОВ (IT-05):
 // Каждый тред — это отдельная история сообщений в SwiftData.
 // При выборе треда загружается его история из ThreadStore.
 // При отправке сообщения — история сохраняется в активный тред.
-// activeMemoryContext заполняется из активного треда (threadId + projectIds).
+// activeMemoryContext заполняется из активного треда (threadId + projectInfos).
 // ChatHistoryManager продолжает работать параллельно как legacy-фолбэк.
 //
 // ПЛАШКИ ПРОЕКТОВ (IT-06):
@@ -173,13 +172,14 @@ final class ChappieViewModel {
         AppConfig(settings: activeThreadSettings)
     }
 
-    // MARK: - Контекст памяти для system prompt (IT-03, IT-05)
+    // MARK: - Контекст памяти для system prompt (IT-03, IT-05, IT-08 финал)
 
     /// Контекст треда для подмешивания трёхуровневой памяти в system prompt.
     ///
-    /// АРХИТЕКТУРНОЕ РЕШЕНИЕ (IT-03 + IT-05):
-    /// MemoryContext содержит threadId и projectIds — всё что нужно MemoryManager
-    /// для сборки полного system prompt с памятью.
+    /// АРХИТЕКТУРНОЕ РЕШЕНИЕ (IT-03 + IT-05 + IT-08 финал):
+    /// MemoryContext содержит threadId и projectInfos (UUID + имя каждого проекта).
+    /// Это всё что нужно MemoryManager для сборки полного system prompt с памятью.
+    /// Имена проектов используются в заголовках блоков: "📁 Память проекта: Chappie".
     ///
     /// Заполняется из активного треда при выборе/смене треда (IT-05).
     /// До IT-05 = .empty — только базовый промпт без памяти.
@@ -509,12 +509,13 @@ final class ChappieViewModel {
             // Обновляем activeThread если это он изменился
             if activeThread?.id == updatedThread.id {
                 self.activeThread = updatedThread
-                self.activeMemoryContext = MemoryContext(
-                    threadId: updatedThread.id,
-                    projectIds: updatedThread.projectIds
-                )
+
                 // Перезагружаем список проектов для ProjectChipsView
                 await loadProjectsForThread(updatedThread)
+
+                // IT-08 финал: синхронизируем MemoryContext с именами проектов.
+                // ПОЧЕМУ ПОСЛЕ loadProjectsForThread: нужен актуальный activeProjects с именами.
+                buildAndSyncMemoryContext()
 
                 // IT-08: синхронизируем ActiveMemoryContext в ToolExecutionService.
                 // ПОЧЕМУ ЗДЕСЬ: после add/remove через инструменты Чаппи список проектов
@@ -524,6 +525,31 @@ final class ChappieViewModel {
         } catch {
             print("[ChappieViewModel] ⚠️ Ошибка обновления после изменения проектов: \(error)")
         }
+    }
+
+    // MARK: - Сборка и синхронизация контекста памяти (IT-08 финал)
+
+    /// Собирает MemoryContext с именами проектов и сохраняет в activeMemoryContext.
+    ///
+    /// ЗАЧЕМ ОТДЕЛЬНЫЙ МЕТОД (IT-08 финал):
+    /// activeMemoryContext используется в process() → buildSystemPrompt().
+    /// buildSystemPrompt() теперь использует имена проектов для заголовков блоков.
+    /// Этот метод гарантирует что activeMemoryContext всегда содержит актуальные UUID+имена.
+    ///
+    /// КОГДА ВЫЗЫВАТЬ:
+    /// - После selectThread() — загружены проекты нового треда
+    /// - После addProject() / removeProject() — список изменился
+    /// - После reloadAfterProjectChange() — Чаппи изменил проекты через инструменты
+    private func buildAndSyncMemoryContext() {
+        // Собираем ProjectInfo с UUID и именем из activeProjects (ProjectMetadata)
+        let projectInfos = activeProjects.map { project in
+            MemoryContext.ProjectInfo(id: project.id, name: project.displayName)
+        }
+
+        self.activeMemoryContext = MemoryContext(
+            threadId: activeThread?.id,
+            projectInfos: projectInfos
+        )
     }
 
     // MARK: - Синхронизация ActiveMemoryContext в ToolExecutionService (IT-08)
@@ -595,10 +621,8 @@ final class ChappieViewModel {
                       let updated = loaded.first(where: { $0.id == current.id }) {
                 // Обновляем метаданные текущего треда (мог переименоваться)
                 self.activeThread = updated
-                self.activeMemoryContext = MemoryContext(
-                    threadId: updated.id,
-                    projectIds: updated.projectIds
-                )
+                // Синхронизируем MemoryContext с именами проектов
+                buildAndSyncMemoryContext()
             } else {
                 // Выбираем первый тред (самый свежий)
                 await selectThread(loaded[0])
@@ -618,20 +642,13 @@ final class ChappieViewModel {
     /// 1. Устанавливаем activeThread
     /// 2. Загружаем настройки треда → activeThreadSettings
     /// 3. Загружаем историю сообщений → messages
-    /// 4. Обновляем activeMemoryContext (threadId + projectIds)
-    /// 5. Загружаем проекты треда → activeProjects (IT-06)
+    /// 4. Загружаем проекты треда → activeProjects (IT-06)
+    /// 5. Собираем MemoryContext с именами проектов → activeMemoryContext (IT-08 финал)
     /// 6. Синхронизируем ActiveMemoryContext в ToolExecutionService (IT-08)
     func selectThread(_ thread: ThreadMetadata) async {
         guard let store = threadStore else { return }
 
         self.activeThread = thread
-
-        // Обновляем контекст памяти — теперь MemoryManager будет подмешивать
-        // тредовую и проектную память для этого треда
-        self.activeMemoryContext = MemoryContext(
-            threadId: thread.id,
-            projectIds: thread.projectIds
-        )
 
         do {
             // Загружаем настройки треда (глубина контекста, токенный бюджет)
@@ -661,10 +678,13 @@ final class ChappieViewModel {
         // Делаем это ПОСЛЕ загрузки истории — не блокируем основной поток
         await loadProjectsForThread(thread)
 
-        // IT-08: синхронизируем ActiveMemoryContext после загрузки проектов.
+        // IT-08 финал: собираем MemoryContext с именами проектов ПОСЛЕ загрузки проектов.
+        // ПОЧЕМУ ПОСЛЕ loadProjectsForThread: нужен актуальный activeProjects с именами.
+        // buildAndSyncMemoryContext() использует activeProjects для MemoryContext.projectInfos.
+        buildAndSyncMemoryContext()
+
+        // IT-08: синхронизируем ActiveMemoryContext в ToolExecutionService.
         // ПОЧЕМУ ПОСЛЕ loadProjectsForThread: нам нужен актуальный activeProjects с UUID.
-        // setActiveMemoryContext() передаёт реальные UUID в ToolExecutionService для
-        // корректного маппинга scope="thread" и targetName="ProjectName".
         await syncActiveMemoryContext()
     }
 
@@ -698,7 +718,8 @@ final class ChappieViewModel {
                     self.isLoadingThread = false
                     // Сбрасываем проекты — новый тред начинается без проектов
                     self.activeProjects = []
-                    // IT-08: синхронизируем пустой контекст — новый тред без проектов
+                    // IT-08 финал: синхронизируем пустой контекст — новый тред без проектов
+                    buildAndSyncMemoryContext()
                     await syncActiveMemoryContext()
                 }
 
@@ -801,7 +822,7 @@ final class ChappieViewModel {
     /// 2. Проверяем, не добавлен ли уже этот проект (по имени папки)
     /// 3. Если нет — создаём ProjectEntity в ProjectStore
     /// 4. Добавляем UUID проекта в ThreadEntity.projectBindingsJSON через ThreadStore
-    /// 5. Обновляем activeProjects и activeMemoryContext
+    /// 5. Обновляем activeProjects, activeMemoryContext (с именами!) и syncActiveMemoryContext
     ///
     /// ПОЧЕМУ BOOKMARK, А НЕ ПУТЬ:
     /// macOS sandbox требует security-scoped bookmark для постоянного доступа к папке.
@@ -859,16 +880,14 @@ final class ChappieViewModel {
                 let refreshed = try await tStore.loadThreads()
                 self.threads = refreshed
 
-                // Обновляем activeThread и activeMemoryContext
+                // Обновляем activeThread и перезагружаем проекты
                 if let updatedThread = refreshed.first(where: { $0.id == thread.id }) {
                     self.activeThread = updatedThread
-                    self.activeMemoryContext = MemoryContext(
-                        threadId: updatedThread.id,
-                        projectIds: updatedThread.projectIds
-                    )
                     // Перезагружаем проекты треда
                     await loadProjectsForThread(updatedThread)
-                    // IT-08: синхронизируем ActiveMemoryContext с реальными UUID после добавления
+                    // IT-08 финал: синхронизируем MemoryContext с именами после добавления
+                    buildAndSyncMemoryContext()
+                    // IT-08: синхронизируем ActiveMemoryContext с реальными UUID
                     await syncActiveMemoryContext()
                 }
 
@@ -902,16 +921,14 @@ final class ChappieViewModel {
                 let refreshed = try await tStore.loadThreads()
                 self.threads = refreshed
 
-                // Обновляем activeThread и activeMemoryContext
+                // Обновляем activeThread и перезагружаем проекты
                 if let updatedThread = refreshed.first(where: { $0.id == thread.id }) {
                     self.activeThread = updatedThread
-                    self.activeMemoryContext = MemoryContext(
-                        threadId: updatedThread.id,
-                        projectIds: updatedThread.projectIds
-                    )
                     // Перезагружаем проекты треда
                     await loadProjectsForThread(updatedThread)
-                    // IT-08: синхронизируем ActiveMemoryContext с реальными UUID после удаления
+                    // IT-08 финал: синхронизируем MemoryContext с именами после удаления
+                    buildAndSyncMemoryContext()
+                    // IT-08: синхронизируем ActiveMemoryContext с реальными UUID
                     await syncActiveMemoryContext()
                 }
 
@@ -987,6 +1004,7 @@ final class ChappieViewModel {
 
         let networkHistory = buildRawNetworkHistory()
         let config = activeConfig
+        // Используем activeMemoryContext — он содержит projectInfos с именами (IT-08 финал)
         let memoryContext = activeMemoryContext
 
         // Захватываем ID активного треда ДО входа в Task.

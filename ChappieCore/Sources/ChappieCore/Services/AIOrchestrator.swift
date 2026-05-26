@@ -95,6 +95,12 @@
 //     через setActiveMemoryContext() от ChappieViewModel.syncActiveMemoryContext().
 //     resolveScope() маппирует scope="thread" → UUID треда, targetName="Name" → UUID проекта.
 //     Конфликт инструкций между уровнями памяти — останавливаемся, объясняем пользователю.
+//
+// 15. ИМЕНА ПРОЕКТОВ В SYSTEM PROMPT (IT-08 финал):
+//     MemoryContext теперь содержит projectInfos: [(id: UUID, name: String)] вместо [UUID].
+//     buildSystemPrompt() показывает имя проекта в заголовке блока памяти:
+//     "📁 Память проекта: Chappie" вместо безымянного "📁 Память проекта".
+//     ChappieViewModel заполняет projectInfos из activeProjects (ProjectMetadata).
 
 import Foundation
 
@@ -103,30 +109,58 @@ import Foundation
 /// Описание контекста треда — передаётся в process() для сборки system prompt с памятью.
 ///
 /// ЗАЧЕМ ОТДЕЛЬНАЯ СТРУКТУРА:
-/// process() уже принимает prompt, history, config. Добавлять ещё два параметра
-/// (threadId, projectIds) делает сигнатуру громоздкой. MemoryContext — чистый value type,
-/// который инкапсулирует всё что нужно для сборки промпта.
+/// process() уже принимает prompt, history, config. Добавлять ещё несколько параметров
+/// (threadId, projectIds, projectNames) делает сигнатуру громоздкой.
+/// MemoryContext — чистый value type, инкапсулирующий всё что нужно для сборки промпта.
+///
+/// ПОЧЕМУ projectInfos, А НЕ ПРОСТО projectIds (IT-08 финал):
+/// buildSystemPrompt() должен знать имена проектов чтобы показывать их в заголовках блоков.
+/// "📁 Память проекта: Chappie" — информативнее чем безымянное "📁 Память проекта".
+/// UUID нужен для поиска в SwiftData, имя — для отображения в промпте.
 ///
 /// ОПЦИОНАЛЬНОСТЬ:
 /// Если memoryContext не передан (nil) — используется только захардкоженный базовый промпт.
 /// Это обратная совместимость: старый код без тредов продолжает работать.
 public struct MemoryContext: Sendable {
+
+    /// Информация об одном проекте в контексте памяти: UUID + отображаемое имя.
+    ///
+    /// ПОЧЕМУ UUID + ИМЯ:
+    /// UUID нужен для поиска MemoryEntity в SwiftData.
+    /// Имя нужно для заголовка блока памяти в system prompt.
+    public struct ProjectInfo: Sendable {
+        public let id: UUID
+        public let name: String
+
+        public init(id: UUID, name: String) {
+            self.id = id
+            self.name = name
+        }
+    }
+
     /// UUID активного треда (для тредовой памяти).
     /// nil = нет активного треда, тредовая память не подмешивается.
     public let threadId: UUID?
 
-    /// UUID проектов, открытых в этом треде (для проектной памяти).
-    /// Пустой массив = нет проектов, проектная память не подмешивается.
-    public let projectIds: [UUID]
+    /// Информация о проектах в треде: UUID + имя каждого.
+    ///
+    /// МИГРАЦИЯ С projectIds:
+    /// Старый API принимал projectIds: [UUID] без имён.
+    /// Новый API принимает projectInfos: [ProjectInfo] — с именами для промпта.
+    /// Вычисляемое свойство projectIds обеспечивает обратную совместимость.
+    public let projectInfos: [ProjectInfo]
 
-    public init(threadId: UUID? = nil, projectIds: [UUID] = []) {
+    /// UUID всех проектов — для обратной совместимости с кодом использующим [UUID].
+    public var projectIds: [UUID] { projectInfos.map { $0.id } }
+
+    public init(threadId: UUID? = nil, projectInfos: [ProjectInfo] = []) {
         self.threadId = threadId
-        self.projectIds = projectIds
+        self.projectInfos = projectInfos
     }
 
     /// Дефолтный контекст — без треда и проектов.
     /// Используется как фолбэк до IT-05 (UI тредов).
-    public static let empty = MemoryContext(threadId: nil, projectIds: [])
+    public static let empty = MemoryContext(threadId: nil, projectInfos: [])
 }
 
 // MARK: - AIOrchestratorResult
@@ -316,10 +350,12 @@ public actor AIOrchestrator {
         // Перед каждым запросом собираем актуальный system prompt с подмешанной памятью.
         // buildSystemPrompt() читает из MemoryStore (SwiftData) + legacy файл.
         // Если MemoryStore не подключён — возвращает только базовый промпт (фолбэк).
+        //
+        // ПЕРЕДАЁМ ПОЛНЫЙ MemoryContext с именами проектов (IT-08 финал):
+        // buildSystemPrompt() использует имена для заголовков блоков памяти.
         let systemPrompt = await memoryManager.buildSystemPrompt(
             basePrompt: baseSystemPrompt,
-            threadId: memoryContext.threadId,
-            projectIds: memoryContext.projectIds
+            memoryContext: memoryContext
         )
 
         var sessionHistory = buildContextWindow(from: history, currentPrompt: prompt, config: config)
