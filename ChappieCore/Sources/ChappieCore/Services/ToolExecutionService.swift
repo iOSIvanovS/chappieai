@@ -45,6 +45,21 @@
 // SENDABLE-ЗАМЫКАНИЯ:
 // Замыкания помечены @Sendable — обязательно для Swift 6 при передаче через actor-границы.
 // ViewModel захватывает только Sendable-типы (UUID, String) в этих замыканиях.
+//
+// АРХИТЕКТУРНОЕ РЕШЕНИЕ — ЗАЩИТА ФАЙЛОВЫХ ИНСТРУМЕНТОВ (PROJECT GUARD):
+// Файловые инструменты (list_files, read_file, write_file, delete_file, git_*, build_*)
+// должны быть доступны ТОЛЬКО когда к треду привязан хотя бы один проект.
+// Это защищает от случайного использования инструментов в "свободном чате" без контекста.
+//
+// КАК РАБОТАЕТ PROJECT GUARD:
+// ViewModel вызывает setActiveProjectNames() при каждой смене треда или изменении проектов.
+// execute() проверяет hasActiveProjects перед выполнением файловых инструментов.
+// Инструменты памяти (memorize, recall и т.д.) и управления проектами — работают всегда.
+//
+// ПОЧЕМУ NAMES, А НЕ IDs:
+// ToolExecutionService не знает о UUID проектов (они в ChappieCore/ProjectStore, но
+// доступны только через ViewModel). Нам достаточно знать ЕСТЬ ли проекты — для guard.
+// Имена также используются в сообщении об ошибке, чтобы Чаппи понял контекст.
 
 import Foundation
 
@@ -59,6 +74,30 @@ public actor ToolExecutionService {
     /// Мост к ChappieMCP серверу для git и xcodebuild инструментов.
     /// Создаётся один раз с путём к сокету от MCPHelperLauncher.
     private let mcpBridge: MCPToolBridge
+
+    // MARK: - Защита файловых инструментов (PROJECT GUARD)
+
+    /// Имена проектов, привязанных к активному треду.
+    ///
+    /// ЗАЧЕМ ХРАНИТЬ ИМЕНА:
+    /// Для проверки hasActiveProjects достаточно знать количество.
+    /// Имена нужны для информативного сообщения об ошибке — Чаппи понимает
+    /// что нужно сначала добавить проект, прежде чем работать с файлами.
+    ///
+    /// КОГДА ОБНОВЛЯЕТСЯ:
+    /// ViewModel вызывает setActiveProjectNames() при:
+    ///   - выборе треда (selectThread)
+    ///   - добавлении проекта (addProject / add_project_to_thread)
+    ///   - удалении проекта (removeProject / remove_project_from_thread)
+    private var activeProjectNames: [String] = []
+
+    /// Есть ли хотя бы один проект в активном треде.
+    ///
+    /// ИСПОЛЬЗУЕТСЯ В:
+    /// execute() — как guard перед выполнением файловых/git/build инструментов.
+    private var hasActiveProjects: Bool {
+        !activeProjectNames.isEmpty
+    }
 
     // MARK: - Обработчики проектов (IT-07)
 
@@ -103,6 +142,31 @@ public actor ToolExecutionService {
         self.memoryManager = memoryManager
         // Создаём bridge с явным путём — он будет использовать именно этот сокет
         self.mcpBridge = MCPToolBridge(socketPath: socketPath)
+    }
+
+    // MARK: - Обновление активных проектов (PROJECT GUARD)
+
+    /// Обновляет список имён проектов активного треда.
+    ///
+    /// КОГДА ВЫЗЫВАТЬ:
+    /// Из ChappieViewModel при каждом изменении проектов активного треда:
+    ///   - selectThread() — после загрузки проектов треда
+    ///   - reloadAfterProjectChange() — после add/remove через инструменты Чаппи
+    ///   - addProject(url:) / removeProject(id:) — после ручного изменения через UI
+    ///
+    /// ПОЧЕМУ НЕ АВТОМАТИЧЕСКИ:
+    /// ToolExecutionService — actor, изолирован от MainActor ViewModel.
+    /// Прямая подписка на @Observable-свойства невозможна через actor-границу.
+    /// Явный вызов setActiveProjectNames() — простое и предсказуемое решение.
+    ///
+    /// - Parameter names: Имена проектов привязанных к активному треду (пустой = нет проектов)
+    public func setActiveProjectNames(_ names: [String]) {
+        self.activeProjectNames = names
+        if names.isEmpty {
+            print("[ToolExecutionService] 🔒 Файловые инструменты заблокированы (нет проектов в треде)")
+        } else {
+            print("[ToolExecutionService] 🔓 Файловые инструменты разблокированы: \(names.joined(separator: ", "))")
+        }
     }
 
     // MARK: - Регистрация обработчиков проектов (IT-07)
@@ -369,11 +433,38 @@ public actor ToolExecutionService {
     /// Зачем возвращать строку: API Claude ожидает результат вызова инструмента
     /// в виде строки — она добавляется в историю чата как сообщение с ролью "tool".
     ///
+    /// PROJECT GUARD:
+    /// Перед выполнением файловых/git/build инструментов проверяем наличие проектов.
+    /// Если проектов нет — возвращаем информативную ошибку, а не выполняем операцию.
+    /// Инструменты памяти и управления проектами не требуют привязанного проекта.
+    ///
     /// - Parameter call: Объект вызова инструмента с именем и JSON-аргументами.
     /// - Returns: Результат выполнения в виде строки (успех или описание ошибки).
     public func execute(call: AIToolCall) async -> String {
         let name = call.function.name
         let argsData = call.function.arguments.data(using: .utf8) ?? Data()
+
+        // Набор инструментов, требующих привязанного проекта.
+        // ПОЧЕМУ SET: O(1) поиск по имени — эффективнее массива при частых вызовах.
+        let projectRequiredTools: Set<String> = [
+            "list_files", "read_file", "write_file", "delete_file",
+            "git_status", "git_diff", "git_add", "git_commit",
+            "git_log", "git_reset",
+            "build_project", "run_tests", "read_build_log"
+        ]
+
+        // PROJECT GUARD: блокируем файловые/git/build инструменты без проекта в треде.
+        // Это критично для безопасности — Чаппи не должен читать/писать файлы
+        // когда пользователь ведёт "свободный чат" без привязанного проекта.
+        if projectRequiredTools.contains(name) && !hasActiveProjects {
+            return """
+            ❌ Инструмент '\(name)' недоступен: к текущему треду не привязан ни один проект.
+
+            Чтобы использовать файловые инструменты и git-команды, нужно сначала добавить проект к треду:
+            • Нажми кнопку '+' в строке проектов над чатом, или
+            • Скажи мне: "Добавь проект [имя папки]" — я вызову add_project_to_thread.
+            """
+        }
 
         do {
             switch name {
