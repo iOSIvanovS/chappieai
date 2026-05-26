@@ -41,6 +41,7 @@ ChappieCore/Sources/ChappieCore/
     ├── FileSystemManager.swift         # Чтение/запись файлов (с защитой Path Traversal)
     ├── MCPToolBridge.swift             # Unix Domain Socket клиент к ChappieMCP
     ├── MemoryManager.swift             # Семантическая память + инициализация воркспейса
+    ├── MemoryStore.swift               # [IT-01] SwiftData CRUD для трёхуровневой памяти
     ├── ToolExecutionService.swift      # Диспетчер вызовов инструментов от модели
     ├── ThreadStore.swift               # [IT-01] CRUD операции над тредами через SwiftData
     ├── ProjectStore.swift              # [IT-01] CRUD операции над проектами через SwiftData
@@ -59,27 +60,33 @@ ChappieCore/Sources/ChappieCore/
 - Единый стриминговый цикл (не два запроса probe+stream)
 - Умное контекстное окно: tokenBudget + maxMessagesInContext
 - Сжатие старых сообщений через `<summary>` тег
-- Защита от зацикливания: `executedToolSignatures`
+- Защита от зацикливания: подряд-блокировка (lastToolSignature)
 - **[IT-02]** Принимает `config: AppConfig` как параметр (с дефолтом `AppConfig.shared`)
+- **[IT-03]** Принимает `memoryContext: MemoryContext` для трёхуровневой памяти
 
 ### MemoryManager
 Управляет файловой структурой памяти воркспейса.
 
-**Что делает при инициализации:**
-1. Создаёт `~/Documents/Chappie/semantic.json` (глобальная память)
-2. Сканирует таргеты воркспейса (папки без расширения в корне)
-3. Создаёт `architecture.md` для новых таргетов (шаблон)
-4. Удаляет устаревшие `AI_Docs/` и `semantic.json` в таргетах (миграция)
+**[IT-03] Методы:**
+- `buildSystemPrompt(basePrompt:threadId:projectIds:)` — собирает полный трёхуровневый system prompt
+- `setMemoryStore(_:)` — подключает SwiftData бэкенд (вызывается из ViewModel)
 
-**[IT-03] Новые методы:**
-- `loadGlobalMemory()` — читает MemoryEntity с scope="global"
-- `loadProjectMemory(projectId:)` — читает MemoryEntity для проекта
-- `loadThreadMemory(threadId:)` — читает MemoryEntity для треда
-- `buildSystemPrompt(threadId:projectIds:)` — собирает полный трёхуровневый system prompt
+**[УСТАРЕВАЕТ после IT-08]:**
+- `saveMemory/readMemory/searchMemory/deleteMemory` — legacy методы, пишут в файл
+
+### MemoryStore [IT-01]
+Actor. CRUD операции над памятью через SwiftData.
+- `saveEntry(key:type:jsonString:scope:)` — UPSERT запись
+- `readEntry(key:scope:)` — читает одну запись
+- `readAllEntries(scope:)` — все записи scope
+- `searchEntries(type:scope:)` — поиск по типу в одном scope
+- `readEntriesForScopes(_:)` — массовая загрузка для buildSystemPrompt()
+- `deleteEntry(key:scope:)` — удалить запись
+- `deleteScope(_:)` — удалить весь scope (при удалении треда/проекта)
+- `importEntries(_:intoScope:)` — массовый импорт (MigrationService)
 
 ### FileSystemManager
-"Руки" ИИ-агента в файловой системе. Защита от Path Traversal (CWE-22):
-`validateAndResolvePath()` → `standardized` + `resolvingSymlinksInPath()` → `hasPrefix(workspacePath)`
+"Руки" ИИ-агента в файловой системе. Защита от Path Traversal (CWE-22).
 
 ### MCPToolBridge
 Unix Domain Socket клиент. Отправляет JSON-запросы к `ChappieMCP` хелперу.
@@ -87,54 +94,113 @@ Unix Domain Socket клиент. Отправляет JSON-запросы к `Ch
 
 ### ThreadStore [IT-01]
 Actor. CRUD операции над тредами через SwiftData.
-- `createThread(title:)` → `ThreadEntity`
-- `loadThreads()` → `[ThreadEntity]` (сортировка по updatedAt)
-- `saveMessages(_ messages: [ChatMessage], toThread:)` — сериализует через JSONEncoder
-- `loadMessages(fromThread:)` → `[ChatMessage]` — десериализует через JSONDecoder
-- `deleteThread(_:)`
 
 ### ProjectStore [IT-01]
 Actor. CRUD операции над проектами через SwiftData.
-- `addProject(displayName:bookmarkData:)` → `ProjectEntity`
-- `loadProjects()` → `[ProjectEntity]`
-- `deleteProject(_:)`
 
 ### MigrationService [IT-04]
 Идемпотентный сервис миграции. Проверяет `UserDefaults["migration_v1_done"]`.
-- Читает `chat_history.json`, создаёт тред "Основной", переносит историю
-- Читает `semantic.json`, переносит в MemoryEntity с scope="global"
-- Старые файлы НЕ удаляет — оставляет как backup
 
 ---
 
-## 4. Структура памяти
+## 4. Трёхуровневая память (IT-03, IT-08)
 
-### Текущая (файловая, УСТАРЕВАЕТ):
+### Уровни и scope
 
-| Уровень | Файл | Управляется |
-|---------|------|-------------|
-| Глобальная | `~/Documents/Chappie/semantic.json` | `MemoryManager` |
-| Документация таргета | `<Target>/architecture.md` | Чаппи вручную через `write_file` |
-| История чата | `<WorkspaceRoot>/chat_history.json` | `ChatHistoryManager` |
+| Уровень | scope в SwiftData | Кто пишет | Кто читает |
+|---------|-------------------|-----------|------------|
+| Глобальная | `"global"` | memorize(scope="global") | buildSystemPrompt() |
+| Проектная | `"<projectId UUID>"` | memorize(targetName="Chappie") | buildSystemPrompt() |
+| Тредовая | `"<threadId UUID>"` | memorize(scope="thread") | buildSystemPrompt() |
 
-### Новая (SwiftData + JSON, REFACTOR-THREADS):
-
-| Уровень | SwiftData Entity | scope |
-|---------|-----------------|-------|
-| Глобальная | `MemoryEntity` | `"global"` |
-| Проектная | `MemoryEntity` | `"<projectId>"` |
-| Тредовая | `MemoryEntity` | `"<threadId>"` |
-| История треда | `ThreadEntity.messagesJSON` | — |
-
-**Документация таргетов (`architecture.md`) остаётся файловой** — это не память AI,
-это документация кода для разработчика и Чаппи как разработчика.
-
----
-
-## 5. Агентный цикл (детали)
+### Модель связей (IT-08)
 
 ```
-process(prompt:history:config:onToolCall:onToken:)
+Тред ←→ Проект  (многие-ко-многим, без владения)
+Global ←→ всё   (кросс-проектные знания)
+```
+
+Тред НЕ владеет проектами. Проекты НЕ владеют тредами.
+Один проект может быть в нескольких тредах.
+Один тред может вести несколько проектов параллельно.
+
+### Инструменты памяти — новый API (IT-08)
+
+**memorize:**
+```
+scope="global"                → MemoryStore.saveEntry(scope: "global")
+scope="thread"                → MemoryStore.saveEntry(scope: threadId.uuidString)
+targetName="Chappie"          → найти проект по имени → saveEntry(scope: projectId.uuidString)
+```
+
+**Обязательные правила:**
+- `scope="project"` — УБРАН (неоднозначен при нескольких проектах в треде)
+- Для проектной памяти ОБЯЗАТЕЛЕН явный `targetName`
+- Если targetName не найден среди проектов треда — ошибка с подсказкой
+
+### Разрешение конфликтов памяти (IT-08)
+
+Если инструкции в разных уровнях памяти (global/project/thread) противоречат друг другу —
+Чаппи ОСТАНАВЛИВАЕТСЯ, объясняет конфликт пользователю и ждёт решения.
+Правило захардкожено в baseSystemPrompt оркестратора.
+
+---
+
+## 5. IT-08 — Переработка инструментов памяти (В ПЛАНЕ)
+
+### Что меняется
+
+**ToolExecutionService.swift:**
+- Заменить `activeProjectNames: [String]` на `activeMemoryContext: ActiveMemoryContext`
+- Метод `setActiveProjectNames()` → `setActiveMemoryContext()`
+- Инструменты памяти переписать: вызывают MemoryStore через `memoryHandler`
+- Добавить `memoryHandler: @Sendable (MemoryOperation) async -> String`
+
+**MemoryStore.swift:**
+- Добавить `searchEntries(type:scopes:)` — поиск по нескольким scope одновременно
+
+**MemoryManager.swift:**
+- Убрать legacy-блок из `buildSystemPrompt()` (только SwiftData)
+- Deprecate `saveMemory/readMemory/searchMemory/deleteMemory`
+
+**AIOrchestrator.swift (baseSystemPrompt):**
+- Добавить правило CONFLICT RESOLUTION
+- Обновить правило MEMORY STRUCTURE — новый API scope
+
+**ChappieViewModel.swift:**
+- `setActiveProjectNames()` → `setActiveMemoryContext()` с полными UUID
+- Зарегистрировать `memoryHandler`
+
+### ActiveMemoryContext (новая структура)
+
+```swift
+/// Контекст активного треда для инструментов памяти.
+/// Хранится в ToolExecutionService, обновляется при смене треда/проектов.
+public struct ActiveMemoryContext: Sendable {
+    let threadId: UUID?
+    let projects: [(id: UUID, name: String)]  // UUID для scope, name для маппинга
+    static let empty = ActiveMemoryContext(threadId: nil, projects: [])
+}
+```
+
+### Итерации IT-08
+
+| # | Шаг | Описание |
+|---|---|---|
+| IT-08-1 | ActiveMemoryContext | Заменить activeProjectNames → ActiveMemoryContext |
+| IT-08-2 | MemoryHandler | Добавить memoryHandler в ToolExecutionService + ViewModel |
+| IT-08-3 | Инструменты памяти | Переписать memorize/recall/search/delete через MemoryStore |
+| IT-08-4 | Промпт | Обновить baseSystemPrompt: конфликты + новый API scope |
+| IT-08-5 | Очистка | Убрать legacy из buildSystemPrompt(), deprecate старые методы |
+
+---
+
+## 6. Агентный цикл (детали)
+
+```
+process(prompt:history:config:memoryContext:onToolCall:onToken:)
+    ↓
+buildSystemPrompt()           ← MemoryManager: base + global + project + thread
     ↓
 buildContextWindow()          ← дедупликация + tokenBudget + maxMessages
     ↓
@@ -150,19 +216,7 @@ while stepCount < maxSteps:
 
 ---
 
-## 6. Контекстное окно (AppConfig параметры)
-
-### Текущие (захардкожены):
-
-| Параметр | Значение | Назначение |
-|----------|----------|------------|
-| `tokenBudget` | 6,000 | Мягкий лимит токенов |
-| `maxMessagesInContext` | 12 | Жёсткий лимит сообщений |
-| `recentFullMessages` | 3 | Последние N — всегда полностью |
-| `summaryThreshold` | 400 | Длиннее → заменить на summary |
-| `maxOrchestratorSteps` | 20 | Защита от бесконечного цикла |
-
-### После IT-02 (динамические):
+## 7. Контекстное окно (AppConfig параметры)
 
 | Параметр | Источник | Диапазон |
 |----------|----------|----------|
@@ -174,132 +228,62 @@ while stepCount < maxSteps:
 
 **Дефолт:** `AppConfig.shared` — 20 сообщений, 10,000 токенов.
 
-**Механизм двойного отсечения (наследуется без изменений):**
-1. Жёсткий лимит по количеству (`maxMessagesInContext`) — применяется первым
-2. Мягкий лимит по токенам (`tokenBudget`) — применяется вторым
-3. Summary-сжатие старых длинных сообщений — под капотом, не меняется
-
 ---
 
-## 7. SwiftData модели (IT-01)
-
-### Принцип JSON-сериализации
-
-Вместо хранения Swift-моделей напрямую в SwiftData (проблемы миграции схемы),
-мы храним только примитивы и `Data`. Все сложные объекты — через JSONEncoder/JSONDecoder.
-Это даёт свободу эволюции моделей без болезненных SwiftData-миграций.
+## 8. SwiftData схема
 
 ```swift
-// ThreadEntity — только примитивы и Data
-@Model final class ThreadEntity {
-    var id: UUID
-    var title: String
-    var createdAt: Date
-    var updatedAt: Date
-    var messagesJSON: Data          // [ChatMessage] через JSONEncoder
-    var settingsJSON: Data          // ThreadSettings через JSONEncoder
-    var projectBindingsJSON: Data   // [UUID] через JSONEncoder
-}
+ThreadEntity (SwiftData)
+├── id: UUID
+├── title: String
+├── createdAt: Date
+├── updatedAt: Date
+├── messagesJSON: Data          ← [ChatMessage] через JSONEncoder
+├── settingsJSON: Data          ← ThreadSettings через JSONEncoder
+└── projectBindingsJSON: Data   ← [UUID] — список ID проектов в треде
 
-// ProjectEntity — только примитивы и Data
-@Model final class ProjectEntity {
-    var id: UUID
-    var displayName: String
-    var bookmarkData: Data          // security-scoped bookmark
-    var createdAt: Date
-    var settingsJSON: Data          // ProjectSettings через JSONEncoder
-}
+ProjectEntity (SwiftData)
+├── id: UUID
+├── displayName: String
+├── bookmarkData: Data          ← security-scoped bookmark
+├── createdAt: Date
+└── settingsJSON: Data          ← ProjectSettings через JSONEncoder
 
-// MemoryEntity — только примитивы и Data
-@Model final class MemoryEntity {
-    var id: UUID
-    var scope: String               // "global" | "<projectId>" | "<threadId>"
-    var entriesJSON: Data           // [MemoryEntry] через JSONEncoder
-}
+MemoryEntity (SwiftData)
+├── id: UUID
+├── scope: String               ← "global" | "<projectId>" | "<threadId>"
+└── entriesJSON: Data           ← [MemoryEntry] через JSONEncoder
 ```
+
+**Принцип JSON-сериализации:**
+Только примитивы и Data в SwiftData. Все сложные объекты через JSONEncoder/JSONDecoder.
+Свобода эволюции моделей без болезненных SwiftData-миграций.
 
 ---
 
-## 8. Стратегия кэширования промптов (Prompt Caching)
+## 9. Кэширование промптов
 
-### Правильный подход: TOP-LEVEL cache_control
-
-AITunnel — OpenAI-совместимый шлюз с поддержкой Anthropic Prompt Caching.
-**Единственный правильный способ включить кэширование — top-level `cache_control` в теле запроса.**
-
+**TOP-LEVEL cache_control** — единственный правильный способ:
 ```json
 {
-  "model": "claude-sonnet-4-6",
   "cache_control": { "type": "ephemeral", "ttl": "1h" },
-  "messages": [
-    { "role": "system", "content": "просто строка" },
-    { "role": "user", "content": "просто строка" }
-  ]
+  "messages": [...]
 }
 ```
 
-**Как это работает:**
-- AITunnel включает sticky routing: повторные запросы с тем же диалогом идут к тому же провайдеру.
-- Шлюз сам двигает брейкпоинт по мере роста диалога — нам ничего делать не нужно.
-- Идентификация диалога — по хешу первых сообщений (system + первое user).
-- TTL 1h — кэш живёт через перерывы в сессии (оптимально для разработки).
+**ЗАПРЕЩЕНО:** per-block cache_control внутри content (ломает парсинг шлюза).
 
-**Реализация:**
-- Поле `cache_control: AICacheControl?` добавлено в `AITunnelRequest`.
-- Дефолт инициализатора — `.oneHour` (`{"type": "ephemeral", "ttl": "1h"}`).
-- `AICacheControl.oneHour` и `AICacheControl.fiveMinutes` — статические фабричные методы.
-
-### ❌ ЗАПРЕЩЕНО: per-block cache_control внутри сообщений
-
-```json
-{
-  "messages": [
-    {
-      "role": "system",
-      "content": [
-        { "type": "text", "text": "...", "cache_control": {"type": "ephemeral"} }
-      ]
-    }
-  ]
-}
-```
-
-**Почему запрещено:**
-- Поле `content` в сообщениях для AITunnel ОБЯЗАНО быть строкой, не массивом.
-- Массив объектов вместо строки ломает парсинг на стороне шлюза.
-- Симптомы: `URLError(.cancelled)`, ошибка "Упс, ошибка: cancelled" в UI сразу при отправке.
-
-### Инцидент (зафиксирован)
-
-Gemini при исправлении ошибки `.cancelled` убрал весь Prompt Caching полностью.
-Причина ошибки была в per-block формате (массив вместо строки в content).
-Правильное решение — top-level cache_control, а не отказ от кэширования.
-
-### Статистика кэша в ответах
-
-AITunnel возвращает статистику в нестандартном формате:
-```json
-{
-  "usage": {
-    "prompt_tokens_details": {
-      "cached_tokens": 2384,
-      "cache_write_tokens": 2414
-    }
-  }
-}
-```
-
-`AIUsage.effectiveCacheRead` и `AIUsage.effectiveCacheCreation` унифицируют оба формата
-(стандартный Anthropic + AITunnel) в единый интерфейс.
+TTL варианты Anthropic: **5 минут** и **1 час** (других нет).
+TTL 1h оптимален для разработки — сессии короче часа.
 
 ---
 
-## 9. Технический долг
+## 10. Технический долг
 
 | # | Описание | Приоритет | Статус |
 |---|----------|-----------|--------|
+| IT-08 | Переработка инструментов памяти (SwiftData + умный scope) | 🔴 | 🔲 В плане |
 | ТД-TEST | Unit-тесты для XcodeDocsGroupManager | 🟡 | 🔲 Открыт |
-| REFACTOR-THREADS | Мультитредовость + SwiftData | 🔴 | ✅ IT-01..IT-07 завершён |
 
 ---
 
@@ -307,11 +291,9 @@ AITunnel возвращает статистику в нестандартном
 
 | Date | Change |
 |------|--------|
-| 2026-05-21 | Initial creation |
+| 2025-07-XX | IT-08 ЗАПЛАНИРОВАН: ActiveMemoryContext, memoryHandler, умный scope-маппинг, конфликт-резолюция |
+| 2025-07-XX | REFACTOR-THREADS IT-01..IT-07 завершён |
+| 2025-07-XX | TOP-LEVEL-CACHE: добавлено поле cache_control в AITunnelRequest, TTL 1h |
+| 2025-07-XX | ИНЦИДЕНТ: Gemini убрал кэширование при фиксе cancelled. Восстановлено через top-level cache_control |
 | 2026-06-XX | Рефакторинг: AI_Docs/ → один файл architecture.md |
-| 2026-06-XX | XcodeDocsGroupManager: автосинхронизация группы 📚 Docs в pbxproj |
-| 2025-07-XX | REFACTOR-THREADS: зафиксирована полная архитектура SwiftData + JSON-сериализация |
-| 2025-07-XX | REFACTOR-THREADS: динамический AppConfig (tokenBudget = maxMessages × 500) |
-| 2025-07-XX | REFACTOR-THREADS: трёхуровневая память (global + project + thread) |
-| 2025-07-XX | ИНЦИДЕНТ: Gemini убрал кэширование при фиксе cancelled. Восстановлено через top-level cache_control. |
-| 2025-07-XX | TOP-LEVEL-CACHE: добавлено поле cache_control в AITunnelRequest, TTL 1h по умолчанию. |
+| 2026-05-21 | Initial creation |
