@@ -59,8 +59,22 @@
 //  ЕДИНЫЙ СТРИМИНГОВЫЙ ЦИКЛ (без probe):
 //  streamRequestWithTools() — единственный метод, используемый в агентном цикле.
 //  Накапливает tool_calls из дельт SSE-потока и возвращает AIStreamResult.
+//
+//  ОБРАБОТКА ОТМЕНЫ ЗАДАЧИ (FIX-CANCELLED):
+//  URLSession бросает URLError(.cancelled) / CancellationError когда Swift Task отменяется
+//  в момент стриминга. Это происходит при быстром повторном нажатии отправки или
+//  при пересоздании View. Такая ошибка НЕ является ошибкой пользователя — она
+//  должна тихо проглатываться, а не показываться как "Упс, ошибка: cancelled".
+//  Решение: в streamRequestWithTools() перебрасываем CancellationError дальше
+//  (Swift Task machinery сам её обрабатывает), а URLError(.cancelled) оборачиваем
+//  в ChappieError.cancelled для явного распознавания в ViewModel.
 
 import Foundation
+
+// MARK: - ChappieError расширение (cancelled)
+
+// ПРИМЕЧАНИЕ: ChappieError.cancelled добавлен в ChappieError.swift.
+// Здесь только документируем что этот кейс используется в AITunnelClient.
 
 /// Лёгкий и быстрый сетевой клиент для выполнения запросов к API AITunnel.
 public struct AITunnelClient: Sendable {
@@ -138,6 +152,11 @@ public struct AITunnelClient: Sendable {
     ///   - Первый чанк: id="call_abc", function.name="write_file", function.arguments="{"
     ///   - Последующие: id=nil, function.name=nil, function.arguments="path..."
     /// Накапливаем аргументы по index и собираем полные AIToolCall объекты.
+    ///
+    /// ОБРАБОТКА ОТМЕНЫ (FIX-CANCELLED):
+    /// CancellationError — пробрасываем дальше, Swift Task machinery обрабатывает сам.
+    /// URLError(.cancelled) — оборачиваем в ChappieError.cancelled для ViewModel.
+    /// Оба случая НЕ должны показываться пользователю как "Упс, ошибка".
     public func streamRequestWithTools(
         systemPrompt: String,
         chatHistory: [AIMessage],
@@ -156,7 +175,27 @@ public struct AITunnelClient: Sendable {
         )
 
         let request = try buildURLRequest(body: requestBody)
-        let (asyncBytes, response) = try await urlSession.bytes(for: request)
+
+        // Оборачиваем URLSession в do/catch для явной обработки отмены.
+        // ПОЧЕМУ ЗДЕСЬ, А НЕ В PERFORMREQUEST:
+        // bytes(for:) используется для стриминга — это другой путь, не performRequest().
+        // Отмена Task во время чтения asyncBytes.lines бросает CancellationError или
+        // URLError(.cancelled) — нужно поймать именно здесь.
+        let asyncBytes: URLSession.AsyncBytes
+        let response: URLResponse
+        do {
+            (asyncBytes, response) = try await urlSession.bytes(for: request)
+        } catch is CancellationError {
+            // Task был отменён до начала стриминга — пробрасываем дальше.
+            // Swift Task machinery сам обработает отмену корректно.
+            throw CancellationError()
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            // URLSession сообщил об отмене — это эквивалент CancellationError.
+            // Оборачиваем в ChappieError.cancelled чтобы ViewModel могла
+            // тихо проглотить эту ошибку без показа "Упс, ошибка: cancelled".
+            throw ChappieError.cancelled
+        }
+
         try validateHTTPResponse(response, data: nil)
 
         var accumulatedText = ""
@@ -164,54 +203,65 @@ public struct AITunnelClient: Sendable {
         var finalCost: Double? = nil
         var finalBalance: Double? = nil
 
-        // Читаем SSE-поток построчно
-        for try await line in asyncBytes.lines {
-            guard !line.isEmpty, line.hasPrefix("data: ") else { continue }
+        // Читаем SSE-поток построчно.
+        // ВАЖНО: do/catch здесь нужен потому что отмена Task может произойти
+        // В ЛЮБОЙ МОМЕНТ чтения строк — не только при установке соединения.
+        do {
+            for try await line in asyncBytes.lines {
+                guard !line.isEmpty, line.hasPrefix("data: ") else { continue }
 
-            let jsonString = String(line.dropFirst(6))
-            if jsonString == "[DONE]" { break }
+                let jsonString = String(line.dropFirst(6))
+                if jsonString == "[DONE]" { break }
 
-            guard let chunkData = jsonString.data(using: .utf8),
-                  let chunk = try? JSONDecoder().decode(AIStreamChunk.self, from: chunkData) else {
-                continue
-            }
+                guard let chunkData = jsonString.data(using: .utf8),
+                      let chunk = try? JSONDecoder().decode(AIStreamChunk.self, from: chunkData) else {
+                    continue
+                }
 
-            // Извлекаем финансовую статистику из последнего чанка
-            if let usage = chunk.usage {
-                finalCost = usage.cost_rub
-                finalBalance = usage.balance
-                // Логируем статистику кэша через вычисляемые свойства effectiveCacheRead/Creation
-                logCacheStats(usage: usage)
-            }
+                // Извлекаем финансовую статистику из последнего чанка
+                if let usage = chunk.usage {
+                    finalCost = usage.cost_rub
+                    finalBalance = usage.balance
+                    // Логируем статистику кэша через вычисляемые свойства effectiveCacheRead/Creation
+                    logCacheStats(usage: usage)
+                }
 
-            guard let choice = chunk.choices.first else { continue }
-            let delta = choice.delta
+                guard let choice = chunk.choices.first else { continue }
+                let delta = choice.delta
 
-            // Текстовые токены — передаём в UI
-            if let token = delta.content, !token.isEmpty {
-                accumulatedText += token
-                onToken?(token)
-            }
+                // Текстовые токены — передаём в UI
+                if let token = delta.content, !token.isEmpty {
+                    accumulatedText += token
+                    onToken?(token)
+                }
 
-            // Накопление tool_calls по индексам
-            if let streamToolCalls = delta.tool_calls {
-                for streamToolCall in streamToolCalls {
-                    let idx = streamToolCall.index
+                // Накопление tool_calls по индексам
+                if let streamToolCalls = delta.tool_calls {
+                    for streamToolCall in streamToolCalls {
+                        let idx = streamToolCall.index
 
-                    if var existing = toolCallBuffers[idx] {
-                        if let argChunk = streamToolCall.function?.arguments {
-                            existing.arguments += argChunk
-                            toolCallBuffers[idx] = existing
+                        if var existing = toolCallBuffers[idx] {
+                            if let argChunk = streamToolCall.function?.arguments {
+                                existing.arguments += argChunk
+                                toolCallBuffers[idx] = existing
+                            }
+                        } else {
+                            let id = streamToolCall.id ?? "call_\(idx)"
+                            let name = streamToolCall.function?.name ?? ""
+                            let args = streamToolCall.function?.arguments ?? ""
+                            toolCallBuffers[idx] = (id: id, name: name, arguments: args)
                         }
-                    } else {
-                        let id = streamToolCall.id ?? "call_\(idx)"
-                        let name = streamToolCall.function?.name ?? ""
-                        let args = streamToolCall.function?.arguments ?? ""
-                        toolCallBuffers[idx] = (id: id, name: name, arguments: args)
                     }
                 }
             }
+        } catch is CancellationError {
+            // Task был отменён во время чтения потока — пробрасываем дальше.
+            throw CancellationError()
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            // URLSession отменён во время чтения потока.
+            throw ChappieError.cancelled
         }
+        // Все остальные ошибки (сетевые, парсинг) — пробрасываем без изменений.
 
         // Собираем полные AIToolCall из буферов
         let assembledToolCalls: [AIToolCall]? = toolCallBuffers.isEmpty ? nil :
@@ -272,7 +322,7 @@ public struct AITunnelClient: Sendable {
     /// СТРАТЕГИЯ ТРЁХ BREAKPOINT'ОВ (CACHE-MSG-2):
     ///
     /// 1. СИСТЕМНЫЙ ПРОМПТ — первый и главный breakpoint.
-    ///    Никогда не меняется между запросами. ~2384 токена стабильно.
+    ///    Стабильный, никогда не меняется. ~2384 токена стабильно кэшируются.
     ///
     /// 2. ПОСЛЕДНИЙ USER-ЭЛЕМЕНТ — второй breakpoint (CACHE-MSG).
     ///    Кэширует system + всю историю до последнего user-сообщения.

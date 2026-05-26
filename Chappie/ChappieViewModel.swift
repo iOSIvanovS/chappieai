@@ -71,6 +71,13 @@
 //   а) loadWorkspaceWithSecurityScope() — восстановление при старте → launch(workspacePath:)
 //   б) setWorkspace() — ручной выбор папки → restartWithWorkspace()
 // ChappieApp.onAppear больше НЕ вызывает launch() — там путь ещё неизвестен.
+//
+// ОБРАБОТКА ОТМЕНЫ ЗАПРОСА (FIX-CANCELLED):
+// URLSession бросает URLError(.cancelled) когда Swift Task отменяется во время стриминга.
+// AITunnelClient оборачивает это в ChappieError.cancelled.
+// send() ловит CancellationError и ChappieError.cancelled ОТДЕЛЬНО от других ошибок —
+// тихо завершает работу без показа "Упс, ошибка: cancelled" пользователю.
+// Это нормальное поведение: пользователь нажал отправить повторно или View пересоздался.
 
 import SwiftUI
 import ChappieCore
@@ -501,10 +508,33 @@ final class ChappieViewModel {
                 )
                 // Перезагружаем список проектов для ProjectChipsView
                 await loadProjectsForThread(updatedThread)
+
+                // Синхронизируем PROJECT GUARD в ToolExecutionService.
+                // ПОЧЕМУ ЗДЕСЬ: после add/remove через инструменты Чаппи список проектов
+                // изменился — нужно обновить hasActiveProjects в ToolExecutionService.
+                await syncProjectGuard()
             }
         } catch {
             print("[ChappieViewModel] ⚠️ Ошибка обновления после изменения проектов: \(error)")
         }
+    }
+
+    // MARK: - Синхронизация PROJECT GUARD (FIX-CANCELLED)
+
+    /// Синхронизирует список активных проектов в ToolExecutionService.
+    ///
+    /// ЗАЧЕМ:
+    /// ToolExecutionService.hasActiveProjects используется как guard для файловых инструментов.
+    /// При каждом изменении activeProjects нужно обновить этот список в сервисе.
+    ///
+    /// КОГДА ВЫЗЫВАТЬ:
+    /// - После selectThread() — загружены проекты нового треда
+    /// - После addProject() / removeProject() — список изменился
+    /// - После reloadAfterProjectChange() — Чаппи изменил проекты через инструменты
+    private func syncProjectGuard() async {
+        guard let ts = toolService else { return }
+        let names = activeProjects.map { $0.displayName }
+        await ts.setActiveProjectNames(names)
     }
 
     // MARK: - Управление тредами (IT-05)
@@ -561,6 +591,7 @@ final class ChappieViewModel {
     /// 3. Загружаем историю сообщений → messages
     /// 4. Обновляем activeMemoryContext (threadId + projectIds)
     /// 5. Загружаем проекты треда → activeProjects (IT-06)
+    /// 6. Синхронизируем PROJECT GUARD в ToolExecutionService (FIX-CANCELLED)
     func selectThread(_ thread: ThreadMetadata) async {
         guard let store = threadStore else { return }
 
@@ -600,6 +631,10 @@ final class ChappieViewModel {
         // Загружаем проекты треда (IT-06)
         // Делаем это ПОСЛЕ загрузки истории — не блокируем основной поток
         await loadProjectsForThread(thread)
+
+        // Синхронизируем PROJECT GUARD после загрузки проектов.
+        // ПОЧЕМУ ПОСЛЕ loadProjectsForThread: нам нужен актуальный activeProjects.
+        await syncProjectGuard()
     }
 
     /// Флаг: идёт загрузка треда — не сохранять в legacy ChatHistoryManager.
@@ -632,6 +667,8 @@ final class ChappieViewModel {
                     self.isLoadingThread = false
                     // Сбрасываем проекты — новый тред начинается без проектов
                     self.activeProjects = []
+                    // Синхронизируем PROJECT GUARD — новый тред без проектов
+                    await syncProjectGuard()
                 }
 
                 print("[ChappieViewModel] ✅ Создан новый тред")
@@ -800,6 +837,8 @@ final class ChappieViewModel {
                     )
                     // Перезагружаем проекты треда
                     await loadProjectsForThread(updatedThread)
+                    // Синхронизируем PROJECT GUARD после добавления проекта
+                    await syncProjectGuard()
                 }
 
                 print("[ChappieViewModel] ✅ Проект '\(displayName)' добавлен в тред '\(thread.title)'")
@@ -841,6 +880,8 @@ final class ChappieViewModel {
                     )
                     // Перезагружаем проекты треда
                     await loadProjectsForThread(updatedThread)
+                    // Синхронизируем PROJECT GUARD после удаления проекта
+                    await syncProjectGuard()
                 }
 
                 print("[ChappieViewModel] 🗑 Проект убран из треда '\(thread.title)'")
@@ -886,9 +927,15 @@ final class ChappieViewModel {
 
     /// Отправляет запрос пользователя в ИИ-оркестратор и запускает многошаговый цикл.
     ///
+    /// ОБРАБОТКА ОТМЕНЫ (FIX-CANCELLED):
+    /// Task может быть отменён если пользователь быстро нажимает отправить повторно
+    /// или если View пересоздаётся. В этом случае URLSession бросает URLError(.cancelled),
+    /// AITunnelClient оборачивает его в ChappieError.cancelled.
+    /// Мы ловим CancellationError и ChappieError.cancelled ОТДЕЛЬНО — тихо завершаем
+    /// без показа ошибки пользователю. Это нормальное поведение, не баг.
+    ///
     /// СОХРАНЕНИЕ В ТРЕД (IT-05):
     /// После добавления ответа в messages — сохраняем историю в активный тред через ThreadStore.
-    /// Это дополняет существующее сохранение через ChatHistoryManager (legacy).
     func send(prompt: String) {
         guard !prompt.isEmpty else { return }
         guard let orchestrator = orchestrator else {
@@ -978,7 +1025,27 @@ final class ChappieViewModel {
                     }
                 }
 
+            } catch is CancellationError {
+                // Task был отменён — это нормальное поведение, не показываем ошибку.
+                // Например: пользователь быстро нажал отправить повторно.
+                // Просто тихо завершаем — сбрасываем состояние UI.
+                print("[ChappieViewModel] ℹ️ Запрос отменён (CancellationError) — тихое завершение")
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+                    self.streamingText = ""
+                    self.currentToolCall = nil
+                }
+
+            } catch ChappieError.cancelled {
+                // URLSession.cancelled — аналогично CancellationError.
+                // AITunnelClient оборачивает URLError(.cancelled) в ChappieError.cancelled.
+                print("[ChappieViewModel] ℹ️ Запрос отменён (URLError.cancelled) — тихое завершение")
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+                    self.streamingText = ""
+                    self.currentToolCall = nil
+                }
+
             } catch {
+                // Реальная ошибка — показываем пользователю.
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
                     self.streamingText = ""
                     self.currentToolCall = nil
@@ -1100,6 +1167,12 @@ final class ChappieViewModel {
         // В обычном сценарии — регистрация происходит в setModelContainer().
         if let pStore = projectStore, let tStore = threadStore {
             registerProjectToolHandlers(toolService: ts, projectStore: pStore, threadStore: tStore)
+        }
+
+        // FIX-CANCELLED: синхронизируем PROJECT GUARD с текущими проектами.
+        // При пересоздании сервисов (setWorkspace) activeProjects уже может быть заполнен.
+        Task {
+            await syncProjectGuard()
         }
     }
 
