@@ -220,54 +220,77 @@ while stepCount < maxSteps:
 
 ---
 
-## 8. ⚠️ КРИТИЧЕСКОЕ ПРАВИЛО: формат запросов к AITunnel
+## 8. Стратегия кэширования промптов (Prompt Caching)
 
-### Проблема (зафиксирована после инцидента с Gemini)
+### Правильный подход: TOP-LEVEL cache_control
 
-**AITunnel — OpenAI-совместимый шлюз**, а НЕ нативный Anthropic API.
-Это означает: поле `content` в сообщениях ОБЯЗАНО быть **строкой**, не массивом объектов.
-
-### ❌ ЗАПРЕЩЕНО (ломает шлюз):
+AITunnel — OpenAI-совместимый шлюз с поддержкой Anthropic Prompt Caching.
+**Единственный правильный способ включить кэширование — top-level `cache_control` в теле запроса.**
 
 ```json
 {
-  "role": "system",
-  "content": [
+  "model": "claude-sonnet-4-6",
+  "cache_control": { "type": "ephemeral", "ttl": "1h" },
+  "messages": [
+    { "role": "system", "content": "просто строка" },
+    { "role": "user", "content": "просто строка" }
+  ]
+}
+```
+
+**Как это работает:**
+- AITunnel включает sticky routing: повторные запросы с тем же диалогом идут к тому же провайдеру.
+- Шлюз сам двигает брейкпоинт по мере роста диалога — нам ничего делать не нужно.
+- Идентификация диалога — по хешу первых сообщений (system + первое user).
+- TTL 1h — кэш живёт через перерывы в сессии (оптимально для разработки).
+
+**Реализация:**
+- Поле `cache_control: AICacheControl?` добавлено в `AITunnelRequest`.
+- Дефолт инициализатора — `.oneHour` (`{"type": "ephemeral", "ttl": "1h"}`).
+- `AICacheControl.oneHour` и `AICacheControl.fiveMinutes` — статические фабричные методы.
+
+### ❌ ЗАПРЕЩЕНО: per-block cache_control внутри сообщений
+
+```json
+{
+  "messages": [
     {
-      "type": "text",
-      "text": "...",
-      "cache_control": {"type": "ephemeral"}
+      "role": "system",
+      "content": [
+        { "type": "text", "text": "...", "cache_control": {"type": "ephemeral"} }
+      ]
     }
   ]
 }
 ```
 
-Это **Anthropic-нативный формат** с `cache_control`. Когда Cloudflare/nginx на стороне
-AITunnel получает массив вместо строки — он давится при парсинге и закрывает QUIC/HTTP3
-соединение. Клиент получает `URLError(.cancelled)` → `ChappieError.cancelled`.
+**Почему запрещено:**
+- Поле `content` в сообщениях для AITunnel ОБЯЗАНО быть строкой, не массивом.
+- Массив объектов вместо строки ломает парсинг на стороне шлюза.
+- Симптомы: `URLError(.cancelled)`, ошибка "Упс, ошибка: cancelled" в UI сразу при отправке.
 
-### ✅ ПРАВИЛЬНО (OpenAI-совместимый формат):
+### Инцидент (зафиксирован)
 
+Gemini при исправлении ошибки `.cancelled` убрал весь Prompt Caching полностью.
+Причина ошибки была в per-block формате (массив вместо строки в content).
+Правильное решение — top-level cache_control, а не отказ от кэширования.
+
+### Статистика кэша в ответах
+
+AITunnel возвращает статистику в нестандартном формате:
 ```json
 {
-  "role": "system",
-  "content": "просто строка с текстом промпта"
+  "usage": {
+    "prompt_tokens_details": {
+      "cached_tokens": 2384,
+      "cache_write_tokens": 2414
+    }
+  }
 }
 ```
 
-### Правило для `buildMessages()` в `AITunnelClient.swift`:
-
-- `AIMessage.content` — ВСЕГДА `String?`, НИКОГДА не массив content-блоков.
-- Кэширование промптов — НЕ через `cache_control` в теле запроса.
-  Шлюз AITunnel кэширует на своей стороне автоматически.
-- Если захочется добавить prompt caching — сначала проверить документацию AITunnel,
-  поддерживает ли шлюз Anthropic-специфичные расширения. Скорее всего — нет.
-
-### Симптомы нарушения этого правила:
-- Сообщения вообще не уходят на бэкенд
-- `URLError(.cancelled)` сразу при отправке запроса
-- Ошибка "Упс, ошибка: cancelled" в UI без видимой причины
-- QUIC/HTTP3 соединение закрывается на стороне шлюза
+`AIUsage.effectiveCacheRead` и `AIUsage.effectiveCacheCreation` унифицируют оба формата
+(стандартный Anthropic + AITunnel) в единый интерфейс.
 
 ---
 
@@ -290,4 +313,5 @@ AITunnel получает массив вместо строки — он дав
 | 2025-07-XX | REFACTOR-THREADS: зафиксирована полная архитектура SwiftData + JSON-сериализация |
 | 2025-07-XX | REFACTOR-THREADS: динамический AppConfig (tokenBudget = maxMessages × 500) |
 | 2025-07-XX | REFACTOR-THREADS: трёхуровневая память (global + project + thread) |
-| 2025-07-XX | ИНЦИДЕНТ: зафиксировано критическое правило формата AITunnel (раздел 8) |
+| 2025-07-XX | ИНЦИДЕНТ: Gemini убрал кэширование при фиксе cancelled. Восстановлено через top-level cache_control. |
+| 2025-07-XX | TOP-LEVEL-CACHE: добавлено поле cache_control в AITunnelRequest, TTL 1h по умолчанию. |

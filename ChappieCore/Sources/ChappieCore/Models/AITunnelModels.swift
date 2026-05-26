@@ -24,24 +24,46 @@
 //    - AITunnel: prompt_tokens_details.cache_write_tokens, prompt_tokens_details.cached_tokens
 //  Добавлена структура AIPromptTokensDetails для парсинга вложенного объекта.
 //  Вычисляемые свойства в AIUsage обеспечивают единый интерфейс для logCacheStats.
+//
+//  ИЗМЕНЕНИЕ (TOP-LEVEL-CACHE — Автоматическое кэширование через top-level cache_control):
+//  Добавлено поле `cache_control: AICacheControl?` в AITunnelRequest.
+//  Это top-level поле (рядом с model, messages) — AITunnel шлюз сам управляет
+//  брейкпоинтом по мере роста диалога. Никаких per-block cache_control в сообщениях.
+//  TTL 1 час — оптимально для длинных сессий разработки.
 
 import Foundation
 
 // MARK: - Prompt Caching: Content Blocks
 
-/// Управляющий тег кэширования — сигнализирует Anthropic API, что этот блок нужно закэшировать.
+/// Управляющий тег кэширования — используется как top-level поле в AITunnelRequest.
 ///
-/// ПОЧЕМУ EPHEMERAL:
-/// Единственный поддерживаемый тип кэша на данный момент. "Эфемерный" означает
-/// кэш живёт 5 минут с момента последнего использования. Для нашего сценария
-/// (активная разработка, запросы идут часто) это идеально.
+/// ПОЧЕМУ TOP-LEVEL, А НЕ PER-BLOCK:
+/// AITunnel — OpenAI-совместимый шлюз. Поле `content` в сообщениях ОБЯЗАНО быть строкой.
+/// Если передать массив объектов с cache_control внутри сообщений — шлюз ломает соединение.
+/// Правильный способ — top-level cache_control в теле запроса. Шлюз сам двигает
+/// брейкпоинт по мере роста диалога (sticky routing).
+///
+/// ПОЧЕМУ TTL 1 ЧАС:
+/// Сессии разработки с Чаппи длятся часами. Дефолтный TTL 5 минут означает, что
+/// системный промпт (тысячи токенов) пересчитывается каждые 5 минут простоя.
+/// С TTL 1 час кэш живёт через перерывы и экономит до 90% стоимости системного промпта.
 public struct AICacheControl: Codable, Sendable {
-    /// Тип кэша. На момент написания Anthropic поддерживает только "ephemeral".
+    /// Тип кэша. На момент написания поддерживается только "ephemeral".
     public let type: String
+    /// Время жизни кэша. "1h" = 1 час, nil = 5 минут (по умолчанию).
+    public let ttl: String?
 
-    public init(type: String = "ephemeral") {
+    /// Стандартный кэш на 5 минут (для per-block использования, если потребуется).
+    public init(type: String = "ephemeral", ttl: String? = nil) {
         self.type = type
+        self.ttl = ttl
     }
+
+    /// Фабричный метод: кэш на 1 час — оптимально для длинных сессий разработки.
+    public static let oneHour = AICacheControl(type: "ephemeral", ttl: "1h")
+
+    /// Фабричный метод: кэш на 5 минут (по умолчанию).
+    public static let fiveMinutes = AICacheControl(type: "ephemeral", ttl: nil)
 }
 
 /// Один блок контента в сообщении — текст с опциональным тегом кэширования.
@@ -51,10 +73,8 @@ public struct AICacheControl: Codable, Sendable {
 /// протокол: `content` может быть массивом объектов `[{type, text, cache_control?}]`.
 /// Только через этот формат можно пометить контент для кэширования.
 ///
-/// КОГДА ИСПОЛЬЗУЕМ:
-/// - Системный промпт → всегда помечаем `cache_control`, т.к. он огромный и постоянный.
-/// - Последнее сообщение пользователя → помечаем, т.к. история до него уже в кэше.
-/// - Остальные сообщения → оставляем строкой (не нужно кэшировать промежуточные шаги).
+/// ВАЖНО: Эта структура сохранена для совместимости с декодированием ответов API.
+/// В запросах мы НЕ используем per-block cache_control — только top-level в AITunnelRequest.
 public struct AIContentBlock: Codable, Sendable {
     /// Тип блока. Для текста всегда "text".
     public let type: String
@@ -83,16 +103,13 @@ public struct AIContentBlock: Codable, Sendable {
 /// Полиморфный контент сообщения: либо простая строка, либо массив блоков.
 ///
 /// ЗАЧЕМ ENUM:
-/// API принимает оба формата. Для большинства сообщений (история, ответы инструментов)
-/// достаточно строки — она компактнее и не требует лишней обёртки.
-/// Для системного промпта и последнего сообщения пользователя нужны блоки с cache_control.
-///
-/// Кастомный Encodable позволяет нам прозрачно сериализовать оба варианта
-/// в правильный JSON без дублирования логики в каждом месте использования.
+/// API принимает оба формата. Для всех сообщений используем строку — она компактнее
+/// и гарантированно совместима с AITunnel шлюзом. Массив блоков сохранён для
+/// декодирования ответов, которые теоретически могут прийти в расширенном формате.
 public enum AIMessageContent: Sendable {
-    /// Простая строка — для обычных сообщений без кэширования.
+    /// Простая строка — для всех сообщений в запросах к AITunnel.
     case text(String)
-    /// Массив блоков — для сообщений с поддержкой кэширования.
+    /// Массив блоков — для декодирования ответов в расширенном формате.
     case blocks([AIContentBlock])
 }
 
@@ -100,11 +117,12 @@ extension AIMessageContent: Encodable {
     public func encode(to encoder: Encoder) throws {
         switch self {
         case .text(let string):
-            // Кодируем как обычную строку — стандартный OpenAI-формат
+            // Кодируем как обычную строку — стандартный OpenAI-формат, совместимый с AITunnel
             var container = encoder.singleValueContainer()
             try container.encode(string)
         case .blocks(let blocks):
-            // Кодируем как массив объектов — расширенный Anthropic-формат с cache_control
+            // Кодируем как массив объектов — расширенный Anthropic-формат.
+            // ВНИМАНИЕ: НЕ использовать в запросах к AITunnel — шлюз не принимает массивы.
             var container = encoder.singleValueContainer()
             try container.encode(blocks)
         }
@@ -130,7 +148,19 @@ extension AIMessageContent: Decodable {
 
 /// Тело POST-запроса к API AI-провайдера.
 ///
-/// Поле `stream` добавлено для поддержки SSE-стриминга:
+/// ПОЛЕ cache_control (TOP-LEVEL CACHING):
+/// Это ключевое поле для автоматического кэширования промптов через AITunnel.
+/// Размещается на верхнем уровне запроса (рядом с model, messages) — это НЕ то же самое,
+/// что per-block cache_control внутри сообщений.
+///
+/// Как это работает:
+/// 1. Мы передаём `cache_control: {"type": "ephemeral", "ttl": "1h"}` в теле запроса.
+/// 2. AITunnel включает sticky routing: повторные запросы с тем же диалогом идут
+///    к тому же провайдеру (Anthropic), где уже есть кэш.
+/// 3. Шлюз сам двигает брейкпоинт по мере роста диалога — нам ничего делать не нужно.
+/// 4. Экономия: системный промпт Чаппи (~3000+ токенов) стоит 10% при cache hit.
+///
+/// ПОЛЕ stream:
 /// - `stream = false` (по умолчанию) → обычный блокирующий ответ
 /// - `stream = true`  → сервер возвращает поток `data: {...}\n\n` чанков
 public struct AITunnelRequest: Encodable, Sendable {
@@ -141,19 +171,28 @@ public struct AITunnelRequest: Encodable, Sendable {
     /// Включает SSE-стриминг (Server-Sent Events).
     /// При true сервер начинает отдавать токены немедленно по мере генерации.
     public let stream: Bool
+    /// Top-level кэш-контроль для автоматического кэширования промптов.
+    ///
+    /// ПОЧЕМУ TOP-LEVEL, А НЕ ВНУТРИ СООБЩЕНИЙ:
+    /// AITunnel требует именно этот формат для автоматического multi-turn кэширования.
+    /// Per-block cache_control внутри content[] ломает OpenAI-совместимый шлюз.
+    /// С TTL 1h кэш живёт через перерывы в сессии.
+    public let cache_control: AICacheControl?
 
     public init(
         model: String,
         messages: [AIMessage],
         temperature: Double? = nil,
         tools: [AITool]? = nil,
-        stream: Bool = false
+        stream: Bool = false,
+        cacheControl: AICacheControl? = .oneHour
     ) {
         self.model = model
         self.messages = messages
         self.temperature = temperature
         self.tools = tools
         self.stream = stream
+        self.cache_control = cacheControl
     }
 }
 
@@ -171,9 +210,14 @@ public struct AITunnelRequest: Encodable, Sendable {
 /// ИЗМЕНЕНИЕ (SINGLE-STREAM):
 /// Добавлен инициализатор с параметром `toolCalls: [AIToolCall]` — используется
 /// в AIOrchestrator при создании сообщения из стримингового буфера с tool_calls.
+///
+/// ПРАВИЛО ДЛЯ AITunnel:
+/// Поле content в сообщениях ВСЕГДА должно быть строкой (.text), НИКОГДА .blocks.
+/// Кэширование — через top-level cache_control в AITunnelRequest, не здесь.
 public struct AIMessage: Codable, Sendable {
     public var role: String
     /// Полиморфный контент: строка или массив блоков с cache_control.
+    /// В запросах к AITunnel — ВСЕГДА строка. Блоки — только для декодирования ответов.
     public var content: AIMessageContent?
     public var tool_calls: [AIToolCall]?
     public var tool_call_id: String?
@@ -208,9 +252,11 @@ public struct AIMessage: Codable, Sendable {
         self.name = name
     }
 
-    /// Инициализатор с блоками — для создания кэшируемых сообщений.
-    /// Используется в AITunnelClient при формировании системного промпта
-    /// и последнего сообщения пользователя.
+    /// Инициализатор с блоками — сохранён для совместимости, но НЕ использовать в запросах.
+    ///
+    /// ВНИМАНИЕ: Этот инициализатор создаёт сообщение с .blocks контентом.
+    /// Такой формат НЕ совместим с AITunnel шлюзом при отправке запросов.
+    /// Использовать только для тестирования или если AITunnel явно поддержит per-block кэш.
     public init(
         role: String,
         contentBlocks: [AIContentBlock],
