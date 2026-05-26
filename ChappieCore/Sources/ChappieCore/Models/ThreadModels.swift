@@ -10,9 +10,17 @@
 // При чтении — JSONDecoder. Это полностью избавляет от проблем миграции схемы SwiftData:
 // при эволюции модели меняем только Codable-структуры, SwiftData-схема остаётся прежней.
 //
+// АРХИТЕКТУРНОЕ РЕШЕНИЕ — ОТСУТСТВИЕ ЗАВИСИМОСТИ ОТ ChatMessage:
+// ChatMessage определён в Chappie (UI-таргет). ChappieCore не должен зависеть от UI-слоя —
+// это нарушение принципа инверсии зависимостей. Поэтому:
+// - ThreadEntity хранит messagesJSON: Data (сырые байты)
+// - ThreadStore работает с Data напрямую через Generic-методы (как ChatHistoryManager)
+// - Сериализацию/десериализацию ChatMessage делает ChappieViewModel (UI-слой)
+// Это та же архитектура, что уже используется в ChatHistoryManager<T: Codable>.
+//
 // ЗАВИСИМОСТИ:
-// - ChatMessage (Chappie/Models/ChatMessage.swift) — используется в ThreadEntity.messagesJSON
 // - SwiftData — только в ThreadEntity (финальный класс с @Model)
+// - Foundation — UUID, Date, JSONEncoder/JSONDecoder
 
 import Foundation
 import SwiftData
@@ -56,11 +64,11 @@ public final class ThreadEntity {
     // MARK: - JSON-сериализованные данные
 
     /// История сообщений треда, сериализованная через JSONEncoder.
-    /// Тип оригинала: [ChatMessage] (из Chappie/Models/ChatMessage.swift).
     ///
-    /// ПОЧЕМУ DATA, А НЕ [ChatMessage]:
-    /// ChatMessage — enum с ассоциированными значениями. SwiftData не умеет хранить
-    /// такие типы напрямую. Сериализация в Data решает эту проблему полностью.
+    /// ТОНКОСТЬ: Тип сообщений — ChatMessage из UI-таргета Chappie.
+    /// ChappieCore не знает о ChatMessage (нарушение зависимостей).
+    /// Поэтому здесь хранится сырой JSON — UI-слой сам сериализует/десериализует.
+    /// Аналогично тому, как работает ChatHistoryManager<T: Codable>.
     public var messagesJSON: Data
 
     /// Настройки треда, сериализованные через JSONEncoder.
@@ -95,9 +103,10 @@ public final class ThreadEntity {
         self.createdAt = Date()
         self.updatedAt = Date()
 
-        // Сериализуем пустую историю, настройки и привязки проектов.
+        // Сериализуем пустую историю (пустой JSON-массив), настройки и привязки проектов.
         // Используем безопасную сериализацию с фолбэком на пустой Data.
-        self.messagesJSON = (try? JSONEncoder().encode([ChatMessage]())) ?? Data()
+        // Пустой JSON-массив: "[]" в UTF-8
+        self.messagesJSON = "[]".data(using: .utf8) ?? Data()
         self.settingsJSON = (try? JSONEncoder().encode(settings)) ?? Data()
         self.projectBindingsJSON = (try? JSONEncoder().encode(projectIds)) ?? Data()
     }
@@ -147,41 +156,5 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
     public init(maxMessagesInContext: Int = 20) {
         // Зажимаем значение в допустимый диапазон на случай некорректных данных из JSON
         self.maxMessagesInContext = max(10, min(100, maxMessagesInContext))
-    }
-}
-
-// MARK: - ChatMessage (расширение для JSON-сериализации в ThreadEntity)
-
-// ChatMessage уже является Codable (реализован в Chappie/Models/ChatMessage.swift).
-// Здесь мы добавляем удобные методы для сериализации/десериализации массива сообщений
-// в контексте ThreadEntity — чтобы не дублировать этот код в ThreadStore.
-
-extension Array where Element == ChatMessage {
-
-    /// Сериализует массив сообщений в Data для хранения в ThreadEntity.messagesJSON.
-    ///
-    /// Возвращает Data пустого массива при ошибке кодирования.
-    /// Ошибка кодирования ChatMessage — это баг в модели, логируем для диагностики.
-    public func toJSON() -> Data {
-        do {
-            return try JSONEncoder().encode(self)
-        } catch {
-            print("[ThreadModels] ⚠️ Ошибка сериализации сообщений: \(error)")
-            return (try? JSONEncoder().encode([ChatMessage]())) ?? Data()
-        }
-    }
-
-    /// Десериализует массив сообщений из Data (из ThreadEntity.messagesJSON).
-    ///
-    /// Возвращает пустой массив при ошибке — это безопасный фолбэк.
-    /// Ошибка декодирования может означать повреждение данных или изменение модели.
-    public static func fromJSON(_ data: Data) -> [ChatMessage] {
-        guard !data.isEmpty else { return [] }
-        do {
-            return try JSONDecoder().decode([ChatMessage].self, from: data)
-        } catch {
-            print("[ThreadModels] ⚠️ Ошибка десериализации сообщений: \(error)")
-            return []
-        }
     }
 }
