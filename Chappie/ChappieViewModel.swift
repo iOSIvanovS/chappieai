@@ -34,6 +34,13 @@
 // глобальную + проектную + тредовую память в system prompt.
 // До IT-05 (UI тредов) — activeMemoryContext = .empty (только базовый промпт).
 //
+// МИГРАЦИЯ LEGACY-ДАННЫХ (IT-04):
+// При первом запуске новой версии MigrationService переносит:
+//   - chat_history.json → ThreadEntity "Основной" в SwiftData
+//   - ~/Documents/Chappie/semantic.json → MemoryEntity scope="global" в SwiftData
+// Миграция идемпотентна: флаг "migration_v1_done" в UserDefaults предотвращает повтор.
+// Вызывается в setModelContainer() после создания ThreadStore и MemoryStore.
+//
 // АРХИТЕКТУРА ЗАПУСКА ХЕЛПЕРА (MCPHelperLauncher):
 // ПРОБЛЕМА: если запускать MCPHelperLauncher.shared.launch() без пути (из ChappieApp.onAppear),
 // хелпер получает FileManager.currentDirectoryPath = "/" как воркспейс.
@@ -128,7 +135,7 @@ final class ChappieViewModel {
     private var orchestrator: AIOrchestrator?
     private var chatHistoryManager: ChatHistoryManager
 
-    // MARK: - SwiftData (IT-03)
+    // MARK: - SwiftData (IT-03 + IT-04)
 
     /// Контейнер SwiftData — передаётся из ChappieApp через setModelContainer().
     ///
@@ -142,6 +149,12 @@ final class ChappieViewModel {
     /// Создаётся в setModelContainer() после получения ModelContainer.
     /// Сразу подключается к MemoryManager через setMemoryStore().
     private var memoryStore: MemoryStore?
+
+    /// ThreadStore — SwiftData бэкенд для тредов.
+    ///
+    /// Создаётся в setModelContainer(). Используется MigrationService (IT-04)
+    /// и будет использоваться UI тредов (IT-05).
+    private var threadStore: ThreadStore?
 
     // MARK: - Инициализация
 
@@ -159,7 +172,7 @@ final class ChappieViewModel {
         loadWorkspaceWithSecurityScope()
     }
 
-    // MARK: - Подключение SwiftData (IT-03)
+    // MARK: - Подключение SwiftData (IT-03 + IT-04)
 
     /// Подключает ModelContainer к ViewModel — вызывается из ContentView.onAppear.
     ///
@@ -167,27 +180,40 @@ final class ChappieViewModel {
     /// ModelContainer создаётся в ChappieApp (App-уровень) и недоступен при init ViewModel.
     /// Стандартная практика: передавать через метод после инициализации.
     ///
-    /// ЧТО ПРОИСХОДИТ:
+    /// ЧТО ПРОИСХОДИТ (IT-03 + IT-04):
     /// 1. Создаётся MemoryStore с переданным контейнером
-    /// 2. MemoryStore подключается к MemoryManager через setMemoryStore()
-    /// 3. После этого buildSystemPrompt() начинает читать из SwiftData
+    /// 2. Создаётся ThreadStore с переданным контейнером
+    /// 3. MemoryStore подключается к MemoryManager через setMemoryStore()
+    /// 4. После этого buildSystemPrompt() начинает читать из SwiftData
+    /// 5. Запускается MigrationService — переносит legacy-данные в SwiftData (один раз)
     func setModelContainer(_ container: ModelContainer) {
         guard self.modelContainer == nil else { return } // Идемпотентность — не пересоздаём
 
         self.modelContainer = container
 
-        // Создаём MemoryStore и подключаем к MemoryManager
+        // Создаём сторы SwiftData
         let store = MemoryStore(modelContainer: container)
         self.memoryStore = store
 
-        // Подключаем к MemoryManager если он уже создан (воркспейс был восстановлен)
+        let tStore = ThreadStore(modelContainer: container)
+        self.threadStore = tStore
+
+        // Подключаем MemoryStore к MemoryManager если он уже создан
+        // (воркспейс был восстановлен до вызова setModelContainer)
         if let mm = memoryManager {
             Task {
                 await mm.setMemoryStore(store)
             }
         }
 
-        print("[ChappieViewModel] ✅ ModelContainer подключён, MemoryStore создан")
+        print("[ChappieViewModel] ✅ ModelContainer подключён, MemoryStore и ThreadStore созданы")
+
+        // Запускаем миграцию legacy-данных (IT-04).
+        // ВАЖНО: запускаем асинхронно, не блокируем UI.
+        // MigrationService сам проверит флаг — если уже мигрировали, ничего не сделает.
+        Task {
+            await runMigrationIfNeeded(threadStore: tStore, memoryStore: store)
+        }
     }
 
     // MARK: - Управление API-ключом
@@ -421,6 +447,56 @@ final class ChappieViewModel {
             fileSystem: fs,
             memoryManager: mm
         )
+    }
+
+    // MARK: - Миграция legacy-данных (IT-04)
+
+    /// Запускает миграцию legacy-данных в SwiftData (один раз при первом запуске).
+    ///
+    /// ПОЧЕМУ ОТДЕЛЬНЫЙ МЕТОД:
+    /// Миграция требует знания URL файлов — chatHistoryURL зависит от workspaceURL,
+    /// который может быть ещё неизвестен в момент вызова setModelContainer().
+    ///
+    /// РЕШЕНИЕ:
+    /// Если workspaceURL известен — используем его для поиска chat_history.json.
+    /// Если нет — используем фолбэк путь из ChatHistoryManager.shared.
+    /// semantic.json всегда в ~/Documents/Chappie/ — независимо от воркспейса.
+    ///
+    /// - Parameters:
+    ///   - threadStore: ThreadStore для создания треда с историей
+    ///   - memoryStore: MemoryStore для сохранения памяти
+    private func runMigrationIfNeeded(threadStore: ThreadStore, memoryStore: MemoryStore) async {
+        let migrationService = MigrationService(
+            threadStore: threadStore,
+            memoryStore: memoryStore
+        )
+
+        // Определяем URL файла истории чата.
+        // Приоритет: воркспейс → глобальный фолбэк
+        let chatHistoryURL: URL
+        if let workspaceURL = workspaceURL {
+            chatHistoryURL = workspaceURL.appendingPathComponent("chat_history.json")
+        } else {
+            // Фолбэк: используем путь из ChatHistoryManager.shared
+            chatHistoryURL = ChatHistoryManager.shared.fileURL
+        }
+
+        // semantic.json всегда в ~/Documents/Chappie/
+        let docsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let semanticURL = docsURL
+            .appendingPathComponent("Chappie")
+            .appendingPathComponent("semantic.json")
+
+        // Запускаем миграцию — она идемпотентна, проверит флаг сама
+        let didMigrate = await migrationService.migrate(
+            messageType: ChatMessage.self,
+            chatHistoryURL: chatHistoryURL,
+            semanticMemoryURL: semanticURL
+        )
+
+        if didMigrate {
+            print("[ChappieViewModel] ✅ Миграция IT-04 выполнена успешно")
+        }
     }
 
     // MARK: - Очистка текста ответа
