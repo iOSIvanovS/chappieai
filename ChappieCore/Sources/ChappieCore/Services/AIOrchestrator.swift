@@ -69,10 +69,47 @@
 //     process() теперь принимает config: AppConfig как параметр (с дефолтом AppConfig.shared).
 //     Это позволяет разным тредам иметь разные параметры контекста.
 //     ChappieViewModel создаёт AppConfig из настроек активного треда и передаёт его сюда.
-//     Хранимый self.config используется только для параметров не связанных с тредом
-//     (requestTimeoutSeconds, connectionTimeoutSeconds).
+//
+// 11. ТРЁХУРОВНЕВАЯ ПАМЯТЬ В SYSTEM PROMPT (IT-03, REFACTOR-THREADS):
+//     process() принимает memoryContext: MemoryContext — описание треда и проектов.
+//     Перед каждым запросом MemoryManager.buildSystemPrompt() собирает полный промпт
+//     с подмешанной глобальной + проектной + тредовой памятью.
+//     Захардкоженный systemPrompt остаётся как BASE_PROMPT — основа для buildSystemPrompt().
 
 import Foundation
+
+// MARK: - MemoryContext (контекст треда для подмешивания памяти)
+
+/// Описание контекста треда — передаётся в process() для сборки system prompt с памятью.
+///
+/// ЗАЧЕМ ОТДЕЛЬНАЯ СТРУКТУРА:
+/// process() уже принимает prompt, history, config. Добавлять ещё два параметра
+/// (threadId, projectIds) делает сигнатуру громоздкой. MemoryContext — чистый value type,
+/// который инкапсулирует всё что нужно для сборки промпта.
+///
+/// ОПЦИОНАЛЬНОСТЬ:
+/// Если memoryContext не передан (nil) — используется только захардкоженный базовый промпт.
+/// Это обратная совместимость: старый код без тредов продолжает работать.
+public struct MemoryContext: Sendable {
+    /// UUID активного треда (для тредовой памяти).
+    /// nil = нет активного треда, тредовая память не подмешивается.
+    public let threadId: UUID?
+
+    /// UUID проектов, открытых в этом треде (для проектной памяти).
+    /// Пустой массив = нет проектов, проектная память не подмешивается.
+    public let projectIds: [UUID]
+
+    public init(threadId: UUID? = nil, projectIds: [UUID] = []) {
+        self.threadId = threadId
+        self.projectIds = projectIds
+    }
+
+    /// Дефолтный контекст — без треда и проектов.
+    /// Используется как фолбэк до IT-05 (UI тредов).
+    public static let empty = MemoryContext(threadId: nil, projectIds: [])
+}
+
+// MARK: - AIOrchestratorResult
 
 /// Результат работы оркестратора за одну сессию.
 public struct AIOrchestratorResult: Sendable {
@@ -87,6 +124,8 @@ public struct AIOrchestratorResult: Sendable {
     }
 }
 
+// MARK: - AIOrchestrator
+
 /// Оркестратор ИИ-агента — главный управляющий компонент ChappieCore.
 ///
 /// Реализует агентный цикл (agentic loop): итеративный процесс
@@ -98,23 +137,29 @@ public actor AIOrchestrator {
     private let toolService: ToolExecutionService
     private let fileSystem: FileSystemManager
 
-    /// Дефолтный конфиг — используется если process() вызван без явного конфига.
+    /// MemoryManager для сборки system prompt с трёхуровневой памятью.
     ///
-    /// АРХИТЕКТУРНОЕ РЕШЕНИЕ (IT-02):
-    /// Конфиг больше не хранится как единственный источник истины в акторе.
-    /// Каждый вызов process() получает свой конфиг из настроек треда.
-    /// self.defaultConfig — только фолбэк для обратной совместимости.
+    /// АРХИТЕКТУРНОЕ РЕШЕНИЕ (IT-03):
+    /// Оркестратор держит ссылку на MemoryManager, чтобы перед каждым запросом
+    /// вызывать buildSystemPrompt(). Это единственное место где собирается промпт.
+    private let memoryManager: MemoryManager
+
+    /// Дефолтный конфиг — используется если process() вызван без явного конфига.
     private let defaultConfig: AppConfig
 
-    // MARK: - Системный промпт
+    // MARK: - Базовый системный промпт
 
-    /// Системный промпт — главная инструкция для модели.
+    /// Базовый системный промпт — захардкоженные правила Чаппи.
     ///
-    /// АРХИТЕКТУРНОЕ РЕШЕНИЕ: Все критически важные правила захардкожены здесь,
-    /// а не передаются извне. Причина: эти правила — инфраструктурные гарантии системы.
+    /// АРХИТЕКТУРНОЕ РЕШЕНИЕ (IT-03):
+    /// Это BASE_PROMPT — основа. Перед каждым запросом MemoryManager.buildSystemPrompt()
+    /// расширяет его блоками памяти (глобальной, проектной, тредовой).
+    ///
+    /// ПОЧЕМУ ЗАХАРДКОЖЕНО:
+    /// Все критически важные правила захардкожены здесь, а не передаются извне.
     /// Память (semantic.json) может не загрузиться, история чата сжимается —
-    /// только хардкод в системном промпте является 100% надёжной гарантией.
-    private let systemPrompt = """
+    /// только хардкод является 100% надёжной гарантией соблюдения правил.
+    private let baseSystemPrompt = """
     Ты — Чаппи, гениальный Senior macOS/iOS ИИ-разработчик.
     Проект написан на Swift 6 с полным контролем конкурентности, SwiftUI, и таргетом macOS 26+.
     Ты являешься единым, всемогущим Ядром системы на базе первоклассной модели Claude Sonnet 4.6.
@@ -188,11 +233,13 @@ public actor AIOrchestrator {
         aiClient: AITunnelClient,
         toolService: ToolExecutionService,
         fileSystem: FileSystemManager,
+        memoryManager: MemoryManager,
         config: AppConfig = .shared
     ) {
         self.aiClient = aiClient
         self.toolService = toolService
         self.fileSystem = fileSystem
+        self.memoryManager = memoryManager
         self.defaultConfig = config
     }
 
@@ -203,21 +250,14 @@ public actor AIOrchestrator {
     /// - Parameters:
     ///   - prompt: Текст текущего сообщения пользователя (НОВОЕ сообщение, не из истории).
     ///   - history: Полная история ЗАВЕРШЁННЫХ сообщений (без текущего prompt!).
-    ///     Перед отправкой автоматически сжимается через buildContextWindow().
     ///   - config: Конфиг треда — определяет глубину контекста и токенный бюджет.
     ///     По умолчанию AppConfig.shared (20 сообщений, 10,000 токенов).
-    ///     АРХИТЕКТУРНОЕ РЕШЕНИЕ (IT-02): конфиг передаётся извне, а не берётся из self.
-    ///     Это позволяет каждому треду иметь свои параметры без изменения оркестратора.
+    ///   - memoryContext: Контекст треда для сборки system prompt с памятью.
+    ///     По умолчанию MemoryContext.empty — только базовый промпт без памяти.
     ///   - onToolCall: Вызывается при каждом вызове инструмента — обновляет UI.
     ///   - onToken: Вызывается для каждого нового токена финального ответа.
     ///   - onCostUpdate: Вызывается после каждого внутреннего API-запроса с накопленной
     ///     стоимостью нарастающим итогом.
-    ///
-    /// ВАЖНО О ДУБЛИРОВАНИИ:
-    /// history должна содержать только завершённые пары user/assistant.
-    /// prompt — это НОВЫЙ запрос, он добавляется в конец контекстного окна отдельно.
-    /// Если вызывающий код случайно включил prompt в history — мы защищаемся от этого
-    /// в buildContextWindow() проверкой на дубликат последнего сообщения.
     ///
     /// - Returns: Результат сессии: финальный ответ (с тегом <summary>), стоимость и баланс.
     /// - Throws: `ChappieError.unknown` если превышен лимит шагов из AppConfig.
@@ -225,13 +265,22 @@ public actor AIOrchestrator {
         prompt: String,
         history: [AIMessage],
         config: AppConfig = .shared,
+        memoryContext: MemoryContext = .empty,
         onToolCall: @escaping @Sendable (String, String) -> Void,
         onToken: (@Sendable (String) -> Void)? = nil,
         onCostUpdate: (@Sendable (Double) -> Void)? = nil
     ) async throws -> AIOrchestratorResult {
 
-        // Собираем контекстное окно используя конфиг ТРЕДА, а не дефолтный конфиг.
-        // Это ключевое изменение IT-02: каждый тред может иметь разную глубину контекста.
+        // ТРЁХУРОВНЕВАЯ ПАМЯТЬ (IT-03):
+        // Перед каждым запросом собираем актуальный system prompt с подмешанной памятью.
+        // buildSystemPrompt() читает из MemoryStore (SwiftData) + legacy файл.
+        // Если MemoryStore не подключён — возвращает только базовый промпт (фолбэк).
+        let systemPrompt = await memoryManager.buildSystemPrompt(
+            basePrompt: baseSystemPrompt,
+            threadId: memoryContext.threadId,
+            projectIds: memoryContext.projectIds
+        )
+
         var sessionHistory = buildContextWindow(from: history, currentPrompt: prompt, config: config)
 
         var totalCost: Double = 0.0
@@ -247,14 +296,6 @@ public actor AIOrchestrator {
 
             let tools = await toolService.availableTools
 
-            // ЕДИНЫЙ СТРИМИНГОВЫЙ ЗАПРОС:
-            // streamRequestWithTools() делает ОДИН запрос и возвращает AIStreamResult с:
-            //   - text: накопленный текстовый ответ
-            //   - toolCalls: собранные из SSE-дельт вызовы инструментов
-            //   - cost/balance: финансовая статистика
-            //
-            // Текстовые токены уже переданы в UI через onToken во время стриминга.
-            // Нам остаётся только решить: есть tool_calls → продолжаем цикл, нет → финал.
             let streamResult = try await aiClient.streamRequestWithTools(
                 systemPrompt: systemPrompt,
                 chatHistory: sessionHistory,
@@ -264,17 +305,10 @@ public actor AIOrchestrator {
 
             if let cost = streamResult.cost {
                 totalCost += cost
-
-                // НАКОПИТЕЛЬНАЯ СТОИМОСТЬ:
-                // Вызываем callback после каждого внутреннего шага с нарастающим итогом.
-                // UI получает обновление сразу — не нужно ждать финального ответа.
-                // Это создаёт эффект "счётчика такси" — пользователь видит как растёт цена.
                 onCostUpdate?(totalCost)
             }
             if let balance = streamResult.balance { latestBalance = balance }
 
-            // Добавляем ответ модели в историю сессии.
-            // Если были tool_calls — создаём сообщение с ними для корректной истории API.
             let assistantMessage = AIMessage(
                 role: "assistant",
                 content: streamResult.text.isEmpty ? nil : streamResult.text,
@@ -283,7 +317,6 @@ public actor AIOrchestrator {
             sessionHistory.append(assistantMessage)
 
             if let toolCalls = streamResult.toolCalls, !toolCalls.isEmpty {
-                // Промежуточный шаг — выполняем инструменты и продолжаем цикл
                 try await executeToolCalls(
                     toolCalls,
                     sessionHistory: &sessionHistory,
@@ -293,8 +326,6 @@ public actor AIOrchestrator {
                 continue
 
             } else {
-                // Финальный ответ — токены уже ушли в UI через onToken.
-                // Возвращаем накопленный текст как результат сессии.
                 let finalResponse = streamResult.text.isEmpty
                     ? "Нет ответа от модели."
                     : streamResult.text
@@ -317,18 +348,6 @@ public actor AIOrchestrator {
 
     /// Собирает оптимальное контекстное окно из полной истории чата.
     ///
-    /// ИСПРАВЛЕНИЕ БАГА ЗАДВОЕНИЯ:
-    /// Ранее последнее сообщение в history (user) и currentPrompt были одним и тем же,
-    /// что приводило к отправке двух одинаковых user-сообщений подряд.
-    ///
-    /// ПРИЧИНА БАГА: ChatHistoryManager.loadHistory() возвращает ВСЕ сообщения включая текущий запрос.
-    /// При вызове process(prompt:history:) история уже содержала prompt как последний элемент.
-    ///
-    /// ИСПРАВЛЕНИЕ: Перед сборкой окна проверяем, не является ли последнее сообщение
-    /// в истории дубликатом currentPrompt. Если да — исключаем его из истории.
-    /// Это безопасная защита: даже если вызывающий код правильно передаёт историю
-    /// без текущего запроса, проверка просто не срабатывает.
-    ///
     /// ДВА УРОВНЯ ОГРАНИЧЕНИЙ (работают последовательно):
     ///
     /// 1. maxMessagesInContext — жёсткий лимит по количеству сообщений (из config треда).
@@ -336,19 +355,6 @@ public actor AIOrchestrator {
     ///
     /// 2. tokenBudget — мягкий лимит по объёму токенов (maxMessages × 500).
     ///    Применяется ВТОРЫМ. Обрезает длинные сообщения если даже N штук не влезают.
-    ///
-    /// АЛГОРИТМ:
-    /// 1. Дедупликация: убираем последнее сообщение если оно == currentPrompt.
-    /// 2. Берём последние maxMessagesInContext сообщений.
-    /// 3. Последние recentFullMessages — полностью (текущий контекст задачи).
-    /// 4. Более старые — сжимаем через summary если доступен.
-    /// 5. Идём назад пока не исчерпан tokenBudget.
-    /// 6. Добавляем currentPrompt как последнее сообщение.
-    ///
-    /// - Parameters:
-    ///   - history: Полная история завершённых сообщений
-    ///   - currentPrompt: Текущий запрос пользователя (добавляется в конец)
-    ///   - config: Конфиг треда — определяет tokenBudget и maxMessagesInContext
     private func buildContextWindow(
         from history: [AIMessage],
         currentPrompt: String,
@@ -359,31 +365,21 @@ public actor AIOrchestrator {
         let summaryThreshold = config.summaryThreshold
         let maxMessages = config.maxMessagesInContext
 
-        // Диагностика ПЕРЕД сжатием
         let totalTokensBefore = history.reduce(0) { $0 + estimateTokens($1) }
         print("[AIOrchestrator] 📥 История: \(history.count) сообщений, ~\(totalTokensBefore) токенов | Бюджет: \(budget) (\(maxMessages) сообщений × 500)")
 
-        // ШАГ 1: ДЕДУПЛИКАЦИЯ — убираем последнее сообщение если оно совпадает с currentPrompt.
-        //
-        // ПОЧЕМУ ЭТО ПРОИСХОДИТ:
-        // ChatHistoryManager.loadHistory() возвращает ВСЕ сообщения включая только что
-        // отправленный пользователем запрос. Этот же запрос передаётся как prompt.
-        // Результат: history.last.content == currentPrompt → задвоение.
-        //
-        // РЕШЕНИЕ: Проверяем последнее user-сообщение в истории. Если его текст совпадает
-        // с currentPrompt — отбрасываем его. currentPrompt добавится в конце отдельно.
+        // ШАГ 1: ДЕДУПЛИКАЦИЯ
         let deduplicatedHistory: [AIMessage]
         if let lastMessage = history.last,
            lastMessage.role == "user",
            lastMessage.contentString == currentPrompt {
-            // Последнее сообщение — дубликат текущего запроса. Убираем его.
             deduplicatedHistory = Array(history.dropLast())
             print("[AIOrchestrator] 🔧 Дедупликация: убрано задвоенное последнее сообщение")
         } else {
             deduplicatedHistory = history
         }
 
-        // ШАГ 2: Жёсткий лимит по количеству (из конфига треда)
+        // ШАГ 2: Жёсткий лимит по количеству
         let cappedHistory = deduplicatedHistory.count > maxMessages
             ? Array(deduplicatedHistory.suffix(maxMessages))
             : deduplicatedHistory
@@ -400,7 +396,6 @@ public actor AIOrchestrator {
             olderMessages = Array(cappedHistory.prefix(cappedHistory.count - recentCount))
         }
 
-        // Свежие сообщения всегда включаются — считаем их токены как базовую нагрузку
         var usedTokens = recentMessages.reduce(0) { $0 + estimateTokens($1) }
 
         // ШАГ 4: Идём по старым сообщениям с конца (ближайшие — важнее)
@@ -413,17 +408,13 @@ public actor AIOrchestrator {
                 selectedOlder.insert(compressed, at: 0)
                 usedTokens += tokens
             } else {
-                // Токенный бюджет исчерпан — отбрасываем остаток.
-                // СОЗНАТЕЛЬНОЕ РЕШЕНИЕ: лучше потерять давнюю историю, чем свежий контекст.
                 break
             }
         }
 
-        // Собираем финальное окно: старые (сжатые) + свежие (полные) + текущий запрос
         var contextWindow = selectedOlder + recentMessages
         contextWindow.append(AIMessage(role: "user", content: currentPrompt))
 
-        // Диагностика ПОСЛЕ сжатия
         let totalTokensAfter = contextWindow.reduce(0) { $0 + estimateTokens($1) }
         print("[AIOrchestrator] 📤 Отправляю: \(contextWindow.count) сообщений, ~\(totalTokensAfter) токенов (сжато с \(totalTokensBefore) → \(totalTokensAfter))")
 
@@ -464,9 +455,6 @@ public actor AIOrchestrator {
     }
 
     /// Оценивает количество токенов в сообщении.
-    ///
-    /// ФОРМУЛА: UTF-8 байты / 4 × 1.5
-    /// Корректно работает для смешанного русско-английского текста с кодом.
     private func estimateTokens(_ message: AIMessage) -> Int {
         let text = message.contentString ?? ""
         let utf8ByteCount = text.utf8.count
@@ -476,7 +464,6 @@ public actor AIOrchestrator {
 
     // MARK: - Приватные методы агентного цикла
 
-    /// Выполняет список tool_calls: проверяет на повторы, уведомляет UI, запускает сервис.
     private func executeToolCalls(
         _ toolCalls: [AIToolCall],
         sessionHistory: inout [AIMessage],
@@ -491,7 +478,6 @@ public actor AIOrchestrator {
             let resultString: String
 
             if executedToolSignatures.contains(signature) {
-                // Защита от зацикливания: модель пытается повторить уже выполненный вызов
                 resultString = """
                 СИСТЕМНАЯ ОШИБКА: Ты уже вызывал инструмент `\(toolName)` с точно такими же аргументами в этой сессии.
                 ЗАПРЕЩЕНО ПОВТОРЯТЬ ОДНО И ТО ЖЕ ДЕЙСТВИЕ. ИСПОЛЬЗУЙ ДРУГОЙ ПОДХОД.
@@ -512,7 +498,6 @@ public actor AIOrchestrator {
         }
     }
 
-    /// Извлекает путь к файлу из JSON-аргументов для красивого отображения в UI.
     private func extractTargetPath(from arguments: String) -> String {
         guard let data = arguments.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {

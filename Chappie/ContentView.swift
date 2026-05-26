@@ -16,28 +16,20 @@
 //  - Views/Toolbar/ToolbarContent.swift   — контент тулбара
 //  - Settings/SettingsView.swift          — экран настроек
 //
-//  ИЗМЕНЕНИЕ (ТД-7 — Стриминг):
-//  ChatScrollView теперь получает `streamingText` из ViewModel.
+//  ИЗМЕНЕНИЕ (IT-03 — Трёхуровневая память):
+//  ContentView получает ModelContainer из SwiftUI-окружения (.modelContainer в ChappieApp)
+//  и передаёт его в ChappieViewModel через setModelContainer().
+//  Это связывает SwiftData с MemoryManager для автоматического подмешивания памяти
+//  в system prompt перед каждым запросом к ИИ.
 //
-//  ИЗМЕНЕНИЕ (ТД-UX-PERF — Оптимизация производительности UI):
-//  1. ChatScrollView получает `viewModel.visibleMessages` вместо `viewModel.messages`.
-//     visibleMessages — только .message, максимум 30 штук. Тормоза при ресайзе устранены.
-//  2. Между ChatScrollView и InputBarView добавлен StatusBarView —
-//     показывает текущий вызов инструмента вместо засорения ленты .toolCall записями.
-//
-//  ИЗМЕНЕНИЕ (UX-ANIMATION — Плавные анимации):
-//  StatusBarView теперь анимируется через .animation(.easeInOut, value:) на VStack —
-//  это правильный SwiftUI-способ. Раньше стоял withAnimation{} прямо в body,
-//  что является ошибкой: withAnimation — это функция для императивных изменений,
-//  а не модификатор для декларативных View. Компилятор принимал, но анимация
-//  не всегда срабатывала корректно. Теперь .animation привязан к currentToolCall.
-//
-//  ИЗМЕНЕНИЕ (UX-RUNNING-COST — Накопительная стоимость):
-//  ChatScrollView получает `viewModel.runningCost` для отображения нарастающей
-//  стоимости в правом нижнем углу стримингового пузыря.
+//  ПОЧЕМУ ЧЕРЕЗ onAppear, А НЕ ЧЕРЕЗ INIT:
+//  @Environment(\.modelContext) недоступен в init — SwiftUI инжектирует его только
+//  в body. onAppear — первый момент когда View "вмонтирована" в иерархию и
+//  окружение доступно. Используем modelContext.container для передачи в ViewModel.
 
 import SwiftUI
 import UniformTypeIdentifiers
+import SwiftData
 
 // MARK: - Content View
 
@@ -47,9 +39,16 @@ struct ContentView: View {
     @State private var prompt: String = ""
     @State private var showSettings: Bool = false
 
+    /// ModelContext из SwiftUI-окружения — предоставляется .modelContainer() в ChappieApp.
+    ///
+    /// ЗАЧЕМ НУЖЕН:
+    /// Через modelContext.container получаем ModelContainer и передаём его в ViewModel.
+    /// Это единственный способ связать SwiftData с ViewModel без нарушения
+    /// архитектурных границ (App → View → ViewModel).
+    @Environment(\.modelContext) private var modelContext
+
     var body: some View {
         NavigationSplitView {
-            // САЙДБАР: контекст воркспейса и предупреждения
             SidebarView(
                 workspaceURL: viewModel.workspaceURL,
                 isApiKeyValid: SettingsManager.shared.isApiKeyValid,
@@ -58,13 +57,8 @@ struct ContentView: View {
             )
 
         } detail: {
-            // ОСНОВНАЯ ОБЛАСТЬ: лента чата + строка состояния + поле ввода
             VStack(spacing: 0) {
 
-                // Лента сообщений — получает уже отфильтрованный и обрезанный список.
-                // visibleMessages: только .message, максимум 30 штук.
-                // streamingText: для "живого" пузыря во время генерации ответа.
-                // runningCost: нарастающая стоимость — отображается в пузыре в реальном времени.
                 ChatScrollView(
                     messages: viewModel.visibleMessages,
                     isThinking: viewModel.isThinking,
@@ -72,18 +66,8 @@ struct ContentView: View {
                     runningCost: viewModel.runningCost
                 )
 
-                // Строка состояния — показывает текущий вызов инструмента.
-                // Плавно появляется и исчезает через .animation на VStack.
-                //
-                // ПОЧЕМУ .animation ЗДЕСЬ, А НЕ withAnimation В body:
-                // withAnimation{} — императивная функция для изменений в замыканиях
-                // (например, в onTapGesture или Button.action).
-                // В декларативном body SwiftUI правильный способ — модификатор .animation,
-                // привязанный к значению которое меняется. SwiftUI сам применит анимацию
-                // к любому вью в этом VStack при изменении currentToolCall.
                 StatusBarView(toolCall: viewModel.currentToolCall)
 
-                // Панель ввода — сигнализирует о нажатии "Отправить"
                 InputBarView(
                     prompt: $prompt,
                     isWorkspaceSelected: viewModel.workspaceURL != nil,
@@ -91,12 +75,8 @@ struct ContentView: View {
                     onSend: sendMessage
                 )
             }
-            // Анимация для StatusBarView: плавное появление/исчезновение строки состояния.
-            // Привязана к currentToolCall — при его изменении (nil ↔ строка) StatusBarView
-            // использует свой .transition(.move(edge:.bottom).combined(with:.opacity)).
             .animation(.easeInOut(duration: 0.25), value: viewModel.currentToolCall)
             .toolbar {
-                // Тулбар: баланс + шестерёнка настроек
                 ChappieToolbarContent(
                     balance: viewModel.currentBalance,
                     isApiKeyValid: SettingsManager.shared.isApiKeyValid,
@@ -104,7 +84,6 @@ struct ContentView: View {
                 )
             }
         }
-        // Фоновое изображение Чаппи — полупрозрачное, не мешает чтению
         .background {
             Image("Chappie")
                 .resizable()
@@ -112,19 +91,22 @@ struct ContentView: View {
                 .ignoresSafeArea()
                 .opacity(0.5)
         }
-        // Экран настроек — sheet поверх основного окна
         .sheet(isPresented: $showSettings) {
             SettingsView { newKey in
                 viewModel.updateApiKey(newKey)
             }
         }
+        // ПОДКЛЮЧЕНИЕ SWIFTDATA (IT-03):
+        // При первом появлении View передаём ModelContainer в ViewModel.
+        // modelContext.container — это тот же контейнер что создан в ChappieApp.
+        // setModelContainer() идемпотентен — повторные вызовы игнорируются.
+        .onAppear {
+            viewModel.setModelContainer(modelContext.container)
+        }
     }
 
     // MARK: - Приватные методы
 
-    /// Открывает NSOpenPanel для выбора папки проекта.
-    /// Логика выбора папки живёт здесь, а не в ViewModel, потому что
-    /// NSOpenPanel — это UI-операция, а не бизнес-логика.
     private func selectWorkspace() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -137,7 +119,6 @@ struct ContentView: View {
         }
     }
 
-    /// Отправляет сообщение из поля ввода в ViewModel и очищает поле.
     private func sendMessage() {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         viewModel.send(prompt: prompt)
