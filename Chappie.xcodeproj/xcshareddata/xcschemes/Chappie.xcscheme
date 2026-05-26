@@ -1,25 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  Chappie.xcscheme — схема для сборки и запуска основного приложения.
-
-  ПОЧЕМУ ЗДЕСЬ НЕТ TestAction:
-  Раньше здесь был пустой <TestAction> — он казался безвредным, но Xcode
-  всё равно регистрировал его в Test Navigator как "(unknown) 0 Excluded Tests".
-  Это создавало путаницу: пользователь видел два контейнера вместо одного.
-
-  Полное удаление TestAction из этой схемы устраняет проблему.
-  Все тесты запускаются ТОЛЬКО через схему ChappieCoreTests (⌘+U при активной схеме ChappieCoreTests).
-
-  ПРАВИЛЬНЫЙ WORKFLOW:
-  - Схема "Chappie" активна → ⌘+R запускает приложение, ⌘+U ничего не делает
-  - Схема "ChappieCoreTests" активна → ⌘+U запускает тесты (не убивает приложение)
-  - Переключение схемы в тулбаре Xcode: Chappie ↔ ChappieCoreTests
--->
 <Scheme
    LastUpgradeVersion = "2650"
    version = "1.7">
-
-   <!-- Фаза сборки: собираем только основное приложение Chappie.app -->
    <BuildAction
       parallelizeBuildables = "YES"
       buildImplicitDependencies = "YES"
@@ -41,8 +23,13 @@
          </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
-
-   <!-- Фаза запуска: запускаем основное приложение Chappie.app -->
+   <TestAction
+      buildConfiguration = "Debug"
+      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
+      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
+      shouldUseLaunchSchemeArgsEnv = "YES"
+      shouldAutocreateTestPlan = "YES">
+   </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
@@ -65,7 +52,6 @@
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
-
    <ProfileAction
       buildConfiguration = "Release"
       shouldUseLaunchSchemeArgsEnv = "YES"
@@ -83,14 +69,11 @@
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>
-
    <AnalyzeAction
       buildConfiguration = "Debug">
    </AnalyzeAction>
-
    <ArchiveAction
       buildConfiguration = "Release"
       revealArchiveInOrganizer = "YES">
    </ArchiveAction>
-
 </Scheme>
