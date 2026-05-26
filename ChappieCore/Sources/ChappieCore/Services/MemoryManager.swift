@@ -1,45 +1,42 @@
+// MemoryManager.swift
+// ChappieCore
 //
-//  MemoryManager.swift
-//  ChappieCore
-//
-//  Created by Chappie.
-//
-
 // Менеджер памяти — центральный компонент системы контекстной памяти ИИ-ассистента.
 //
 // АРХИТЕКТУРНОЕ РЕШЕНИЕ: Используем actor для обеспечения безопасного конкурентного доступа
 // в Swift 6. Это гарантирует, что все операции с файловой системой выполняются последовательно,
 // исключая состояния гонки при параллельных запросах от нескольких чатов или агентов.
 //
-// ДВОЙНОЙ БЭКЕНД (IT-03):
-// MemoryManager теперь работает с ДВУМЯ бэкендами одновременно:
-// 1. Файловый (legacy): ~/Documents/Chappie/semantic.json — для инструментов memorize/recall
-//    которые Чаппи вызывает через ToolExecutionService. Работает как раньше.
-// 2. SwiftData (новый): MemoryStore — для трёхуровневой памяти в system prompt.
-//    Используется в buildSystemPrompt() для автоматического подмешивания памяти.
+// ТРЁХУРОВНЕВАЯ ПАМЯТЬ (IT-08):
+// 1. Глобальная (scope = "global")     — факты, стиль общения, кросс-проектные правила
+// 2. Проектная  (scope = "<projectId>") — архитектура, пайплайны, договорённости проекта
+// 3. Тредовая   (scope = "<threadId>") — контекст текущей задачи, временные заметки
 //
-// ПОЧЕМУ ДВОЙНОЙ БЭКЕНД:
-// Полная миграция файлового бэкенда в SwiftData — это IT-04 (MigrationService).
-// До её завершения файловый бэкенд остаётся как fallback.
-// buildSystemPrompt() читает из MemoryStore (SwiftData) — это новый путь.
-// memorize/recall инструменты пишут в файл — это старый путь.
-// После IT-04 оба пути будут читать из одного SwiftData.
+// МАППИНГ SCOPE (IT-08):
+// ToolExecutionService передаёт ActiveMemoryContext при каждом вызове инструмента памяти.
+// MemoryManager.resolveScope() преобразует (scope, targetName) → строку scope для MemoryStore:
+//   - scope="global"       → "global"
+//   - scope="thread"       → UUID активного треда (из ActiveMemoryContext.threadId)
+//   - targetName="Chappie" → UUID проекта с именем "Chappie" (из ActiveMemoryContext.projects)
 //
-// ТРЁХУРОВНЕВАЯ ПАМЯТЬ В SYSTEM PROMPT (IT-03):
-// buildSystemPrompt(threadId:projectIds:) собирает полный system prompt:
-// 1. Базовый промпт (захардкоженные правила Чаппи)
-// 2. Глобальная память (scope = "global") — факты о пользователе, стиль
-// 3. Проектная память (scope = "<projectId>") — архитектура, пайплайны
-// 4. Тредовая память (scope = "<threadId>") — контекст задачи
+// РАЗРЕШЕНИЕ КОНФЛИКТОВ (IT-08):
+// Если инструмент указывает targetName="Chappie" но в треде нет такого проекта —
+// возвращаем ошибку с подсказкой. Чаппи должен сначала добавить проект через add_project_to_thread.
+//
+// ДВОЙНОЙ БЭКЕНД (IT-03 → IT-08):
+// MemoryManager работает с ДВУМЯ бэкендами:
+// 1. Файловый (legacy): ~/Documents/Chappie/semantic.json — для обратной совместимости
+// 2. SwiftData (новый): MemoryStore — для трёхуровневой памяти
+//
+// После IT-08 инструменты memorize/recall/search/delete пишут ТОЛЬКО в SwiftData.
+// Файловый бэкенд используется только для buildSystemPrompt (legacy блок) и миграции.
 //
 // ФИНАЛЬНАЯ СТРУКТУРА ПАМЯТИ:
 //
-//   ~/Documents/Chappie/semantic.json   — LEGACY файл семантической памяти.
-//                                         Используется инструментами memorize/recall.
-//                                         Будет заменён SwiftData в IT-04.
-//
-//   SwiftData MemoryEntity              — НОВЫЙ бэкенд трёхуровневой памяти.
+//   SwiftData MemoryEntity              — ОСНОВНОЙ бэкенд трёхуровневой памяти.
 //                                         scope: "global" | "<projectId>" | "<threadId>"
+//
+//   ~/Documents/Chappie/semantic.json   — LEGACY файл (только для миграции и фолбэка).
 //
 //   <WorkspaceRoot>/
 //   ├── architecture.md                 — архитектура всего проекта (корень воркспейса)
@@ -57,7 +54,7 @@ import Foundation
 
 // MARK: - Модели данных
 
-/// Запись в памяти ИИ-ассистента.
+/// Запись в памяти ИИ-ассистента (legacy — используется только для файлового бэкенда).
 /// Хранит тип записи, временную метку и сами данные в виде JSON-строки.
 /// Sendable — необходимо для безопасной передачи между акторами в Swift 6.
 public struct MemoryRecord: Codable, Sendable {
@@ -72,9 +69,11 @@ public struct MemoryRecord: Codable, Sendable {
     }
 }
 
-/// Область видимости памяти.
-/// ВАЖНО: Оба варианта теперь работают с одним файлом ~/Documents/Chappie/semantic.json.
-/// Enum сохранён для обратной совместимости API (ToolExecutionService передаёт scope из инструментов).
+/// Область видимости памяти — используется в legacy API инструментов.
+///
+/// ВАЖНО (IT-08): Этот enum сохранён для обратной совместимости.
+/// В новом API IT-08 scope передаётся как строка "global" | "thread" | (targetName).
+/// MemoryScope.project больше не используется — заменён на targetName.
 public enum MemoryScope: String, Codable, Sendable {
     case project
     case global
@@ -133,9 +132,9 @@ public struct TargetScanResult: Sendable {
 
 /// Центральный менеджер памяти ИИ-ассистента Chappie.
 ///
-/// Архитектура хранения:
-/// - Вся семантическая память (legacy): ~/Documents/Chappie/semantic.json (ОДИН файл)
-/// - Трёхуровневая память (новая): SwiftData через MemoryStore
+/// Архитектура хранения (IT-08):
+/// - Трёхуровневая память: SwiftData через MemoryStore (основной путь)
+/// - Legacy-память: ~/Documents/Chappie/semantic.json (только для миграции/фолбэка)
 /// - Документация таргетов: <Workspace>/<TargetName>/architecture.md
 ///
 /// Почему actor: MemoryManager работает с файловой системой из нескольких мест
@@ -159,21 +158,16 @@ public actor MemoryManager {
     /// Флаг завершения инициализации.
     private var isInitialized: Bool = false
 
-    /// Новый SwiftData бэкенд для трёхуровневой памяти.
+    /// SwiftData бэкенд для трёхуровневой памяти (IT-03, IT-08).
     ///
     /// ОПЦИОНАЛЬНЫЙ: MemoryStore создаётся только если ModelContainer доступен.
     /// Это позволяет MemoryManager работать без SwiftData (например, в тестах
     /// или при первом запуске до инициализации ModelContainer).
-    ///
-    /// ПОЧЕМУ ОПЦИОНАЛЬНЫЙ, А НЕ ОБЯЗАТЕЛЬНЫЙ:
-    /// MemoryManager инициализируется в initializeServices() синхронно.
-    /// ModelContainer создаётся в ChappieApp асинхронно. Чтобы не создавать
-    /// жёсткую зависимость — передаём MemoryStore опционально через setMemoryStore().
     private var memoryStore: MemoryStore?
 
     /// URL единственного файла семантической памяти: ~/Documents/Chappie/semantic.json.
     /// Вычисляется один раз — файловая система не меняется в процессе работы.
-    /// Используется для ВСЕХ операций чтения/записи legacy-памяти.
+    /// Используется ТОЛЬКО для legacy-операций и миграции.
     private var globalFileURL: URL {
         let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
         return docs.appendingPathComponent("Chappie/semantic.json")
@@ -190,12 +184,12 @@ public actor MemoryManager {
 
     /// Подключает MemoryStore (SwiftData бэкенд) к MemoryManager.
     ///
-    /// ВЫЗЫВАЕТСЯ: из ChappieViewModel.initializeServices() после создания ModelContainer.
+    /// ВЫЗЫВАЕТСЯ: из ChappieViewModel.setModelContainer() после создания ModelContainer.
     /// MemoryManager не может сам создать MemoryStore — ModelContainer создаётся в App-слое.
     ///
     /// После подключения:
     /// - buildSystemPrompt() читает из MemoryStore
-    /// - Инструменты memorize/recall продолжают писать в файл (до IT-04)
+    /// - Инструменты memorize/recall/search/delete работают через MemoryStore
     public func setMemoryStore(_ store: MemoryStore) {
         self.memoryStore = store
         print("[MemoryManager] ✅ MemoryStore подключён (SwiftData бэкенд активен)")
@@ -224,7 +218,7 @@ public actor MemoryManager {
         print("[MemoryManager] ✅ Инициализация завершена. Таргетов: \(targets.count). Память: ~/Documents/Chappie/semantic.json")
     }
 
-    // MARK: - ТРЁХУРОВНЕВАЯ ПАМЯТЬ: Сборка System Prompt (IT-03)
+    // MARK: - ТРЁХУРОВНЕВАЯ ПАМЯТЬ: Сборка System Prompt (IT-03, IT-08)
 
     /// Собирает полный system prompt с подмешанной трёхуровневой памятью.
     ///
@@ -292,15 +286,13 @@ public actor MemoryManager {
             return basePrompt
         }
 
-        // Также загружаем legacy-память из файла (для совместимости до IT-04)
-        let legacyEntries = loadLegacyMemoryForPrompt()
-
         // Собираем блоки памяти для промпта
         var memoryBlocks: [String] = []
 
         // --- БЛОК 1: Глобальная память ---
         // Объединяем SwiftData записи и legacy-записи из файла
         let globalSwiftDataEntries = entriesByScope["global"] ?? []
+        let legacyEntries = loadLegacyMemoryForPrompt()
         let globalBlock = buildMemoryBlock(
             title: "🧠 Глобальная память",
             swiftDataEntries: globalSwiftDataEntries,
@@ -346,18 +338,122 @@ public actor MemoryManager {
         return basePrompt + "\n\n" + memorySection
     }
 
-    // MARK: - Публичные методы чтения/записи (legacy файловый бэкенд)
+    // MARK: - UUID-based методы памяти (IT-08, основной путь)
 
-    /// Сохраняет запись в памяти по ключу.
+    /// Сохраняет запись в памяти по UUID-scope.
+    ///
+    /// ОСНОВНОЙ МЕТОД (IT-08): пишет напрямую в MemoryStore (SwiftData).
+    /// Вызывается из ToolExecutionService после resolveScope().
+    ///
+    /// - Parameters:
+    ///   - key: Уникальный ключ записи в рамках scope
+    ///   - type: Тип записи (fact, rule, persona, project_map и т.д.)
+    ///   - jsonString: Содержимое в формате JSON-строки
+    ///   - scope: Строка scope ("global", UUID треда, UUID проекта)
+    /// - Returns: nil при успехе, строка ошибки при неудаче
+    public func saveMemoryEntry(key: String, type: String, jsonString: String, scope: String) async -> String? {
+        guard let store = memoryStore else {
+            // Фолбэк на legacy если SwiftData недоступен
+            writeRecord(key: key, type: type, data: jsonString, to: globalFileURL)
+            print("[MemoryManager] ⚠️ MemoryStore недоступен, сохранено в legacy файл")
+            return nil
+        }
+
+        do {
+            try await store.saveEntry(key: key, type: type, jsonString: jsonString, scope: scope)
+            return nil
+        } catch {
+            return "Ошибка сохранения в память: \(error.localizedDescription)"
+        }
+    }
+
+    /// Читает одну запись по ключу из UUID-scope.
+    ///
+    /// ОСНОВНОЙ МЕТОД (IT-08): читает из MemoryStore (SwiftData).
+    ///
+    /// - Parameters:
+    ///   - key: Ключ записи
+    ///   - scope: Строка scope
+    /// - Returns: JSON-строка содержимого или nil если не найдено
+    public func readMemoryEntry(key: String, scope: String) async -> String? {
+        guard let store = memoryStore else {
+            // Фолбэк на legacy
+            let storage = readStorage(at: globalFileURL)
+            return storage[key]?.data
+        }
+
+        do {
+            return try await store.readEntry(key: key, scope: scope)
+        } catch {
+            print("[MemoryManager] ⚠️ Ошибка чтения из MemoryStore: \(error)")
+            return nil
+        }
+    }
+
+    /// Ищет все записи указанного типа в UUID-scope.
+    ///
+    /// ОСНОВНОЙ МЕТОД (IT-08): ищет в MemoryStore (SwiftData).
+    ///
+    /// - Parameters:
+    ///   - type: Тип записи для фильтрации
+    ///   - scope: Строка scope
+    /// - Returns: Словарь [ключ: JSON-строка]
+    public func searchMemoryEntries(type: String, scope: String) async -> [String: String] {
+        guard let store = memoryStore else {
+            // Фолбэк на legacy
+            let storage = readStorage(at: globalFileURL)
+            var results: [String: String] = [:]
+            for (k, v) in storage where v.type == type {
+                results[k] = v.data
+            }
+            return results
+        }
+
+        do {
+            return try await store.searchEntries(type: type, scope: scope)
+        } catch {
+            print("[MemoryManager] ⚠️ Ошибка поиска в MemoryStore: \(error)")
+            return [:]
+        }
+    }
+
+    /// Удаляет запись по ключу из UUID-scope.
+    ///
+    /// ОСНОВНОЙ МЕТОД (IT-08): удаляет из MemoryStore (SwiftData).
+    ///
+    /// - Parameters:
+    ///   - key: Ключ записи
+    ///   - scope: Строка scope
+    /// - Returns: nil при успехе, строка ошибки при неудаче
+    public func deleteMemoryEntry(key: String, scope: String) async -> String? {
+        guard let store = memoryStore else {
+            // Фолбэк на legacy
+            var storage = readStorage(at: globalFileURL)
+            storage.removeValue(forKey: key)
+            writeStorage(storage, to: globalFileURL)
+            return nil
+        }
+
+        do {
+            try await store.deleteEntry(key: key, scope: scope)
+            return nil
+        } catch {
+            return "Ошибка удаления из памяти: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - Публичные методы чтения/записи (legacy файловый бэкенд)
+    // Сохранены для обратной совместимости с тестами и MigrationService.
+
+    /// Сохраняет запись в памяти по ключу (legacy метод).
     ///
     /// LEGACY МЕТОД: пишет в ~/Documents/Chappie/semantic.json.
-    /// После IT-04 (MigrationService) будет переключён на MemoryStore.
     public func saveMemory(key: String, type: String, jsonString: String, scope: MemoryScope = .project, targetName: String? = nil) async {
         await ensureInitialized()
         writeRecord(key: key, type: type, data: jsonString, to: globalFileURL)
     }
 
-    /// Читает запись по ключу.
+    /// Читает запись по ключу (legacy метод).
     ///
     /// LEGACY МЕТОД: читает из ~/Documents/Chappie/semantic.json.
     public func readMemory(key: String, targetName: String? = nil) async -> String? {
@@ -366,7 +462,7 @@ public actor MemoryManager {
         return storage[key]?.data
     }
 
-    /// Ищет все записи указанного типа.
+    /// Ищет все записи указанного типа (legacy метод).
     ///
     /// LEGACY МЕТОД: ищет в ~/Documents/Chappie/semantic.json.
     public func searchMemory(type: String, targetName: String? = nil) async -> [String: String] {
@@ -379,7 +475,7 @@ public actor MemoryManager {
         return results
     }
 
-    /// Удаляет запись по ключу из ~/Documents/Chappie/semantic.json.
+    /// Удаляет запись по ключу из ~/Documents/Chappie/semantic.json (legacy метод).
     ///
     /// LEGACY МЕТОД.
     public func deleteMemory(key: String, targetName: String? = nil) async {
@@ -564,10 +660,10 @@ public actor MemoryManager {
     /// Загружает записи из legacy-файла semantic.json для подмешивания в промпт.
     ///
     /// ЗАЧЕМ LEGACY В ПРОМПТЕ:
-    /// До IT-04 инструменты memorize/recall пишут в файл, а не в SwiftData.
-    /// Чтобы эти записи тоже попадали в промпт — читаем файл и включаем в глобальный блок.
+    /// До полной миграции legacy-файл может содержать старые записи.
+    /// Чтобы они тоже попадали в промпт — читаем файл и включаем в глобальный блок.
     ///
-    /// После IT-04 (миграция) этот метод вернёт пустой массив — файл будет пустым.
+    /// После полной миграции этот метод вернёт пустой массив — файл будет пустым.
     private func loadLegacyMemoryForPrompt() -> [MemoryEntry] {
         let storage = readStorage(at: globalFileURL)
         guard !storage.isEmpty else { return [] }
@@ -585,12 +681,6 @@ public actor MemoryManager {
     ///
     /// ДЕДУПЛИКАЦИЯ:
     /// Если ключ есть и в SwiftData и в legacy — приоритет у SwiftData (новее).
-    ///
-    /// - Parameters:
-    ///   - title: Заголовок блока
-    ///   - swiftDataEntries: Записи из SwiftData MemoryStore
-    ///   - legacyEntries: Записи из legacy semantic.json файла
-    /// - Returns: Отформатированный блок или nil если нет записей
     private func buildMemoryBlock(
         title: String,
         swiftDataEntries: [MemoryEntry],

@@ -30,6 +30,23 @@
 // Инструменты add_project_to_thread и remove_project_from_thread позволяют Чаппи
 // самостоятельно управлять проектами в активном треде в процессе разговора.
 //
+// АРХИТЕКТУРНОЕ РЕШЕНИЕ — ТРЁХУРОВНЕВАЯ ПАМЯТЬ (IT-08):
+// Инструменты memorize/recall/search_memory/delete_memory работают с UUID-based scope:
+//   - scope="global"       → глобальная память (всегда доступна)
+//   - scope="thread"       → память активного треда (UUID из ActiveMemoryContext.threadId)
+//   - targetName="Chappie" → память проекта "Chappie" (UUID из ActiveMemoryContext.projects)
+//
+// МАППИНГ SCOPE (IT-08):
+// resolveScope() преобразует (scope, targetName) → строку scope для MemoryManager:
+//   - ("global", _)          → "global"
+//   - ("thread", _)          → UUID активного треда
+//   - (_, "Chappie")         → UUID проекта "Chappie" среди прикреплённых
+//   - неизвестный scope      → "global" (безопасный дефолт)
+//
+// РАЗРЕШЕНИЕ КОНФЛИКТОВ (IT-08):
+// Если targetName указан, но такого проекта нет в треде — возвращаем ошибку.
+// Чаппи должен сначала добавить проект через add_project_to_thread.
+//
 // ПРОБЛЕМА ЗАВИСИМОСТЕЙ:
 // ToolExecutionService живёт в ChappieCore, а ProjectStore/ThreadStore тоже в ChappieCore,
 // но создаются и управляются из Chappie.app (ChappieViewModel).
@@ -52,16 +69,26 @@
 // Это защищает от случайного использования инструментов в "свободном чате" без контекста.
 //
 // КАК РАБОТАЕТ PROJECT GUARD:
-// ViewModel вызывает setActiveProjectNames() при каждой смене треда или изменении проектов.
-// execute() проверяет hasActiveProjects перед выполнением файловых инструментов.
-// Инструменты памяти (memorize, recall и т.д.) и управления проектами — работают всегда.
-//
-// ПОЧЕМУ NAMES, А НЕ IDs:
-// ToolExecutionService не знает о UUID проектов (они в ChappieCore/ProjectStore, но
-// доступны только через ViewModel). Нам достаточно знать ЕСТЬ ли проекты — для guard.
-// Имена также используются в сообщении об ошибке, чтобы Чаппи понял контекст.
+// ViewModel вызывает setActiveMemoryContext() при каждой смене треда или изменении проектов.
+// execute() проверяет activeMemoryContext.hasProjects перед выполнением файловых инструментов.
+// Инструменты памяти и управления проектами — работают всегда.
 
 import Foundation
+
+// MARK: - ScopeResolution (IT-08)
+
+/// Результат маппинга scope из параметров инструмента в строку для MemoryStore.
+///
+/// ПОЧЕМУ НЕ Result<String, Error>:
+/// Swift требует чтобы тип ошибки в Result реализовывал протокол Error.
+/// Для нашего случая (строковые сообщения об ошибках) удобнее использовать
+/// простой enum с двумя случаями — без лишних зависимостей.
+private enum ScopeResolution {
+    /// Успешно определён scope для MemoryStore
+    case resolved(String)
+    /// Ошибка маппинга — строка с описанием для ответа Чаппи
+    case failed(String)
+}
 
 /// Сервис выполнения инструментов ИИ-агента.
 ///
@@ -75,52 +102,40 @@ public actor ToolExecutionService {
     /// Создаётся один раз с путём к сокету от MCPHelperLauncher.
     private let mcpBridge: MCPToolBridge
 
-    // MARK: - Защита файловых инструментов (PROJECT GUARD)
+    // MARK: - Активный контекст памяти (IT-08)
 
-    /// Имена проектов, привязанных к активному треду.
+    /// Контекст активного треда — содержит threadId и список проектов (UUID + имя).
     ///
-    /// ЗАЧЕМ ХРАНИТЬ ИМЕНА:
-    /// Для проверки hasActiveProjects достаточно знать количество.
-    /// Имена нужны для информативного сообщения об ошибке — Чаппи понимает
-    /// что нужно сначала добавить проект, прежде чем работать с файлами.
+    /// ЗАЧЕМ ХРАНИТЬ ЗДЕСЬ (IT-08):
+    /// При вызове инструментов памяти (memorize, recall и т.д.) нам нужно знать:
+    ///   - UUID активного треда (для scope="thread")
+    ///   - UUID каждого проекта по имени (для targetName="Chappie")
+    /// Раньше хранились только имена проектов (для PROJECT GUARD).
+    /// Теперь хранится полный ActiveMemoryContext — он покрывает обе нужды.
     ///
     /// КОГДА ОБНОВЛЯЕТСЯ:
-    /// ViewModel вызывает setActiveProjectNames() при:
+    /// ViewModel вызывает setActiveMemoryContext() при:
     ///   - выборе треда (selectThread)
-    ///   - добавлении проекта (addProject / add_project_to_thread)
-    ///   - удалении проекта (removeProject / remove_project_from_thread)
-    private var activeProjectNames: [String] = []
+    ///   - добавлении/удалении проекта (addProject / removeProject / через инструменты)
+    private var activeMemoryContext: ActiveMemoryContext = .empty
 
     /// Есть ли хотя бы один проект в активном треде.
     ///
     /// ИСПОЛЬЗУЕТСЯ В:
     /// execute() — как guard перед выполнением файловых/git/build инструментов.
     private var hasActiveProjects: Bool {
-        !activeProjectNames.isEmpty
+        activeMemoryContext.hasProjects
     }
 
     // MARK: - Обработчики проектов (IT-07)
 
     /// Замыкание для добавления проекта к активному треду.
-    ///
-    /// ЗАЧЕМ CLOSURE, А НЕ ПРЯМАЯ ССЫЛКА:
-    /// ToolExecutionService создаётся при выборе воркспейса (до подключения ModelContainer).
-    /// ProjectStore/ThreadStore создаются позже — когда ModelContainer готов.
-    /// Closure регистрируется ViewModel когда оба условия выполнены.
-    ///
-    /// Принимает: displayName (имя папки)
-    /// Возвращает: строку результата для ответа Чаппи
     private var addProjectHandler: (@Sendable (String) async -> String)?
 
     /// Замыкание для удаления проекта из активного треда.
-    ///
-    /// Принимает: displayName (имя проекта для удаления)
-    /// Возвращает: строку результата для ответа Чаппи
     private var removeProjectHandler: (@Sendable (String) async -> String)?
 
     /// Замыкание для получения списка проектов активного треда.
-    ///
-    /// Возвращает: строку со списком проектов (JSON-массив имён) для ответа Чаппи
     private var listProjectsHandler: (@Sendable () async -> String)?
 
     /// Инициализатор сервиса.
@@ -129,10 +144,6 @@ public actor ToolExecutionService {
     ///   - fileSystem: Менеджер файловой системы проекта.
     ///   - memoryManager: Менеджер долгосрочной памяти.
     ///   - socketPath: Путь к Unix Domain Socket файлу ChappieMCP.
-    ///     Должен совпадать с путём, по которому ChappieMCP создал свой сокет.
-    ///     Передаётся из MCPHelperLauncher.shared.socketPath через ChappieViewModel.
-    ///     Дефолтное значение — строковый литерал (не константа!) из-за ограничений
-    ///     Swift: default argument в public init не может ссылаться на internal/private символы.
     public init(
         fileSystem: FileSystemManager,
         memoryManager: MemoryManager,
@@ -140,28 +151,49 @@ public actor ToolExecutionService {
     ) {
         self.fileSystem = fileSystem
         self.memoryManager = memoryManager
-        // Создаём bridge с явным путём — он будет использовать именно этот сокет
         self.mcpBridge = MCPToolBridge(socketPath: socketPath)
     }
 
-    // MARK: - Обновление активных проектов (PROJECT GUARD)
+    // MARK: - Обновление активного контекста памяти (IT-08)
 
-    /// Обновляет список имён проектов активного треда.
+    /// Обновляет активный контекст памяти треда.
     ///
     /// КОГДА ВЫЗЫВАТЬ:
-    /// Из ChappieViewModel при каждом изменении проектов активного треда:
+    /// Из ChappieViewModel при каждом изменении активного треда или проектов:
     ///   - selectThread() — после загрузки проектов треда
     ///   - reloadAfterProjectChange() — после add/remove через инструменты Чаппи
     ///   - addProject(url:) / removeProject(id:) — после ручного изменения через UI
     ///
-    /// ПОЧЕМУ НЕ АВТОМАТИЧЕСКИ:
-    /// ToolExecutionService — actor, изолирован от MainActor ViewModel.
-    /// Прямая подписка на @Observable-свойства невозможна через actor-границу.
-    /// Явный вызов setActiveProjectNames() — простое и предсказуемое решение.
+    /// - Parameter context: Новый контекст с threadId и списком проектов (UUID + имя)
+    public func setActiveMemoryContext(_ context: ActiveMemoryContext) {
+        self.activeMemoryContext = context
+        if context.projects.isEmpty {
+            print("[ToolExecutionService] 🔒 Файловые инструменты заблокированы (нет проектов в треде)")
+        } else {
+            let names = context.projectNames.joined(separator: ", ")
+            print("[ToolExecutionService] 🔓 Файловые инструменты разблокированы: \(names)")
+        }
+    }
+
+    /// Обратная совместимость — старый метод setActiveProjectNames (IT-07).
     ///
-    /// - Parameter names: Имена проектов привязанных к активному треду (пустой = нет проектов)
+    /// ОГРАНИЧЕНИЕ (IT-08): не знает UUID проектов — создаёт контекст только с именами.
+    /// Поэтому targetName в инструментах памяти не сможет найти UUID проекта.
+    /// Полноценная работа памяти требует setActiveMemoryContext() с реальными UUID.
+    ///
+    /// ПОЧЕМУ ОСТАВЛЕН:
+    /// ChappieViewModel ещё вызывает syncProjectGuard() → setActiveProjectNames() в нескольких местах.
+    /// Этот метод — временный мост до полного перехода ViewModel на setActiveMemoryContext().
     public func setActiveProjectNames(_ names: [String]) {
-        self.activeProjectNames = names
+        let projects = names.map { name in
+            // UUID-заглушка — достаточно для PROJECT GUARD, но не для маппинга памяти.
+            // Полноценный UUID будет только после перехода на setActiveMemoryContext().
+            ActiveMemoryContext.ProjectInfo(id: UUID(), name: name)
+        }
+        self.activeMemoryContext = ActiveMemoryContext(
+            threadId: activeMemoryContext.threadId,
+            projects: projects
+        )
         if names.isEmpty {
             print("[ToolExecutionService] 🔒 Файловые инструменты заблокированы (нет проектов в треде)")
         } else {
@@ -175,16 +207,11 @@ public actor ToolExecutionService {
     ///
     /// КОГДА ВЫЗЫВАТЬ:
     /// Из ChappieViewModel.setModelContainer() — после создания ProjectStore и ThreadStore.
-    /// До этого момента инструменты add/remove project будут возвращать ошибку.
-    ///
-    /// ПОЧЕМУ @Sendable:
-    /// Замыкания передаются через actor-границу (из @MainActor ViewModel в actor ToolExecutionService).
-    /// Swift 6 требует @Sendable для таких замыканий.
     ///
     /// - Parameters:
     ///   - addProject: Замыкание добавления проекта (принимает displayName, возвращает результат)
     ///   - removeProject: Замыкание удаления проекта (принимает displayName, возвращает результат)
-    ///   - listProjects: Замыкание списка проектов (возвращает JSON-строку)
+    ///   - listProjects: Замыкание списка проектов (возвращает строку)
     public func registerProjectHandlers(
         addProject: @escaping @Sendable (String) async -> String,
         removeProject: @escaping @Sendable (String) async -> String,
@@ -196,6 +223,67 @@ public actor ToolExecutionService {
         print("[ToolExecutionService] ✅ Обработчики проектов зарегистрированы")
     }
 
+    // MARK: - Маппинг scope для памяти (IT-08)
+
+    /// Преобразует параметры инструмента (scope, targetName) в строку scope для MemoryManager.
+    ///
+    /// ЛОГИКА МАППИНГА (IT-08):
+    /// 1. targetName задан → ищем проект с таким именем в активном треде
+    ///    - Найден → возвращаем UUID проекта в строке
+    ///    - Не найден → возвращаем ошибку (проект не прикреплён к треду)
+    /// 2. scope="global" (или не задан) → "global"
+    /// 3. scope="thread" → UUID активного треда (ошибка если нет треда)
+    /// 4. Неизвестный scope → "global" (безопасный дефолт)
+    ///
+    /// ПОЧЕМУ ScopeResolution, А НЕ Result<String, Error>:
+    /// Swift требует чтобы тип ошибки реализовывал Error. Для строковых сообщений
+    /// удобнее собственный enum без лишних зависимостей.
+    ///
+    /// - Parameters:
+    ///   - scopeParam: Значение параметра "scope" из инструмента (nil = не задан)
+    ///   - targetName: Значение параметра "targetName" из инструмента (nil = не задан)
+    /// - Returns: .resolved(scopeString) или .failed(errorMessage)
+    private func resolveScope(scopeParam: String?, targetName: String?) -> ScopeResolution {
+        // Приоритет 1: targetName — явное указание проекта по имени
+        if let name = targetName, !name.isEmpty {
+            if let project = activeMemoryContext.projects.first(where: { $0.name == name }) {
+                return .resolved(project.id.uuidString)
+            } else {
+                // Проект не найден — информативная ошибка с подсказкой
+                let attached = activeMemoryContext.projectNames.isEmpty
+                    ? "нет прикреплённых проектов"
+                    : activeMemoryContext.projectNames.joined(separator: ", ")
+                return .failed(
+                    "Проект '\(name)' не найден в текущем треде. " +
+                    "Прикреплённые проекты: \(attached). " +
+                    "Используй add_project_to_thread чтобы добавить проект."
+                )
+            }
+        }
+
+        // Приоритет 2: scope="global" (дефолт если не задан)
+        let scope = scopeParam ?? "global"
+        if scope == "global" {
+            return .resolved("global")
+        }
+
+        // Приоритет 3: scope="thread"
+        if scope == "thread" {
+            if let threadId = activeMemoryContext.threadId {
+                return .resolved(threadId.uuidString)
+            } else {
+                return .failed(
+                    "Нет активного треда. Тредовая память недоступна. " +
+                    "Используй scope=\"global\" для глобальной памяти."
+                )
+            }
+        }
+
+        // Дефолт: неизвестный scope → глобальная память (безопасный фолбэк)
+        print("[ToolExecutionService] ⚠️ Неизвестный scope='\(scope)', используем 'global'")
+        return .resolved("global")
+    }
+
     // MARK: - Доступные инструменты
 
     /// Массив доступных ИИ-агенту инструментов.
@@ -204,10 +292,13 @@ public actor ToolExecutionService {
     /// какие функции она может вызывать. Список строго соответствует
     /// монофизитной архитектуре: файловая система, память и MCP-инструменты.
     ///
+    /// ИНСТРУМЕНТЫ ПАМЯТИ (IT-08):
+    /// memorize/recall/search_memory/delete_memory работают с трёхуровневой памятью.
+    /// scope="global" | scope="thread" | targetName="ProjectName"
+    ///
     /// ИНСТРУМЕНТЫ ПРОЕКТОВ (IT-07):
     /// add_project_to_thread, remove_project_from_thread, list_thread_projects —
     /// позволяют Чаппи управлять проектами в активном треде прямо в процессе разговора.
-    /// Например: "Добавь проект MyApp в текущий тред" → Чаппи вызывает add_project_to_thread.
     public var availableTools: [AITool] {
         return [
             // --- Инструменты файловой системы ---
@@ -252,18 +343,37 @@ public actor ToolExecutionService {
                 )
             )),
 
-            // --- Инструменты долгосрочной памяти ---
+            // --- Инструменты долгосрочной памяти (IT-08) ---
+            //
+            // ТРЁХУРОВНЕВАЯ ПАМЯТЬ:
+            // scope="global"       → глобальная память (кросс-проектные факты, правила)
+            // scope="thread"       → память активного треда (контекст текущей задачи)
+            // targetName="Name"    → память конкретного проекта (UUID ищется по имени)
+            //
+            // ЕСЛИ НЕ ЗАДАН НИ scope НИ targetName → глобальная память (дефолт)
+            //
+            // РАЗРЕШЕНИЕ КОНФЛИКТОВ:
+            // Если инструкции в разных уровнях памяти противоречат друг другу —
+            // остановись, объясни конфликт пользователю и жди решения.
+            // Обнови память так, чтобы конфликт был устранён.
 
             AITool(function: AIFunctionDefinition(
                 name: "memorize",
-                description: "Запомнить важную информацию, договоренность, факт или правило в долгосрочную память.",
+                description: """
+                Запомнить важную информацию, договоренность, факт или правило в долгосрочную память.
+                Используй scope для выбора уровня:
+                  scope="global" — глобальная память (кросс-проектные правила, факты о пользователе).
+                  scope="thread" — память активного треда (контекст текущей задачи).
+                  targetName="ProjectName" — память конкретного проекта (архитектура, пайплайны).
+                Если scope и targetName не заданы — сохраняется в глобальную память.
+                """,
                 parameters: AIToolParameters(
                     properties: [
                         "key": AIToolProperty(type: "string", description: "Уникальный ключ/тема для запоминания"),
                         "type": AIToolProperty(type: "string", description: "Тип данных (например: rule, fact, persona, project_map)"),
                         "jsonString": AIToolProperty(type: "string", description: "Данные в формате JSON строки"),
-                        "scope": AIToolProperty(type: "string", description: "Область видимости: project (по умолчанию) или global"),
-                        "targetName": AIToolProperty(type: "string", description: "Имя конкретного таргета (например, Chappie или ChappieCore) для сохранения памяти строго в этом таргете")
+                        "scope": AIToolProperty(type: "string", description: "Область видимости: global (по умолчанию) или thread"),
+                        "targetName": AIToolProperty(type: "string", description: "Имя конкретного проекта среди прикреплённых к треду (например, Chappie или ChappieCore) для сохранения памяти строго в этом проекте")
                     ],
                     required: ["key", "type", "jsonString"]
                 )
@@ -271,11 +381,18 @@ public actor ToolExecutionService {
 
             AITool(function: AIFunctionDefinition(
                 name: "recall",
-                description: "Вспомнить информацию из долгосрочной памяти по ключу.",
+                description: """
+                Вспомнить информацию из долгосрочной памяти по ключу.
+                Используй scope или targetName чтобы указать уровень памяти:
+                  scope="global" — глобальная память.
+                  scope="thread" — память активного треда.
+                  targetName="ProjectName" — память конкретного проекта.
+                """,
                 parameters: AIToolParameters(
                     properties: [
                         "key": AIToolProperty(type: "string", description: "Уникальный ключ/тема, который нужно вспомнить"),
-                        "targetName": AIToolProperty(type: "string", description: "Имя конкретного таргета (например, Chappie или ChappieCore) для поиска памяти строго в этом таргете")
+                        "scope": AIToolProperty(type: "string", description: "Область видимости: global (по умолчанию) или thread"),
+                        "targetName": AIToolProperty(type: "string", description: "Имя конкретного проекта среди прикреплённых к треду для поиска памяти строго в этом проекте")
                     ],
                     required: ["key"]
                 )
@@ -283,11 +400,18 @@ public actor ToolExecutionService {
 
             AITool(function: AIFunctionDefinition(
                 name: "search_memory",
-                description: "Найти все записи в памяти по определенному типу.",
+                description: """
+                Найти все записи в памяти по определенному типу.
+                Используй scope или targetName чтобы указать уровень памяти:
+                  scope="global" — глобальная память.
+                  scope="thread" — память активного треда.
+                  targetName="ProjectName" — память конкретного проекта.
+                """,
                 parameters: AIToolParameters(
                     properties: [
                         "type": AIToolProperty(type: "string", description: "Тип данных для поиска (например: rule, fact)"),
-                        "targetName": AIToolProperty(type: "string", description: "Имя конкретного таргета (например, Chappie или ChappieCore) для поиска памяти строго в этом таргете")
+                        "scope": AIToolProperty(type: "string", description: "Область видимости: global (по умолчанию) или thread"),
+                        "targetName": AIToolProperty(type: "string", description: "Имя конкретного проекта среди прикреплённых к треду для поиска памяти строго в этом проекте")
                     ],
                     required: ["type"]
                 )
@@ -295,11 +419,18 @@ public actor ToolExecutionService {
 
             AITool(function: AIFunctionDefinition(
                 name: "delete_memory",
-                description: "Удалить запись из долгосрочной памяти по ключу.",
+                description: """
+                Удалить запись из долгосрочной памяти по ключу.
+                Используй scope или targetName чтобы указать уровень памяти:
+                  scope="global" — глобальная память.
+                  scope="thread" — память активного треда.
+                  targetName="ProjectName" — память конкретного проекта.
+                """,
                 parameters: AIToolParameters(
                     properties: [
                         "key": AIToolProperty(type: "string", description: "Уникальный ключ/тема для удаления"),
-                        "targetName": AIToolProperty(type: "string", description: "Имя конкретного таргета (например, Chappie или ChappieCore) для удаления памяти строго из этого таргета")
+                        "scope": AIToolProperty(type: "string", description: "Область видимости: global (по умолчанию) или thread"),
+                        "targetName": AIToolProperty(type: "string", description: "Имя конкретного проекта среди прикреплённых к треду для удаления памяти строго из этого проекта")
                     ],
                     required: ["key"]
                 )
@@ -454,8 +585,6 @@ public actor ToolExecutionService {
         ]
 
         // PROJECT GUARD: блокируем файловые/git/build инструменты без проекта в треде.
-        // Это критично для безопасности — Чаппи не должен читать/писать файлы
-        // когда пользователь ведёт "свободный чат" без привязанного проекта.
         if projectRequiredTools.contains(name) && !hasActiveProjects {
             return """
             ❌ Инструмент '\(name)' недоступен: к текущему треду не привязан ни один проект.
@@ -502,57 +631,93 @@ public actor ToolExecutionService {
                 try await fileSystem.deleteFile(at: path)
                 return "Успешно: Файл \(path) удален."
 
-            // MARK: - Долгосрочная память
+            // MARK: - Долгосрочная память (IT-08)
+            //
+            // НОВЫЙ API: scope="global"|"thread" или targetName="ProjectName"
+            // resolveScope() преобразует параметры в строку scope для MemoryManager.
+            // MemoryManager пишет/читает из MemoryStore (SwiftData) по UUID-scope.
 
             case "memorize":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let key = args["key"],
                       let type = args["type"],
                       let jsonString = args["jsonString"] else {
-                    return "Ошибка: Неверные аргументы для memorize"
+                    return "Ошибка: Неверные аргументы для memorize (обязательны: key, type, jsonString)"
                 }
-                let scopeString = args["scope"] ?? "project"
-                let scope = MemoryScope(rawValue: scopeString) ?? .project
-                let targetName = args["targetName"]
-                await memoryManager.saveMemory(key: key, type: type, jsonString: jsonString, scope: scope, targetName: targetName)
-                return "Успешно: Запись \(key) сохранена в памяти \(targetName != nil ? "таргета \(targetName!)" : "проекта")."
+
+                switch resolveScope(scopeParam: args["scope"], targetName: args["targetName"]) {
+                case .failed(let msg):
+                    return "❌ memorize: \(msg)"
+                case .resolved(let scopeString):
+                    if let error = await memoryManager.saveMemoryEntry(
+                        key: key, type: type, jsonString: jsonString, scope: scopeString
+                    ) {
+                        return "❌ memorize: \(error)"
+                    }
+                    // Формируем читаемую метку scope для ответа
+                    let scopeLabel: String
+                    if scopeString == "global" {
+                        scopeLabel = "глобальной памяти"
+                    } else if scopeString == activeMemoryContext.threadId?.uuidString {
+                        scopeLabel = "памяти треда"
+                    } else {
+                        let projectName = args["targetName"] ?? scopeString
+                        scopeLabel = "памяти проекта '\(projectName)'"
+                    }
+                    return "✅ Запись '\(key)' сохранена в \(scopeLabel)."
+                }
 
             case "recall":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let key = args["key"] else {
-                    return "Ошибка: Неверные аргументы для recall"
+                    return "Ошибка: Неверные аргументы для recall (обязателен: key)"
                 }
-                let targetName = args["targetName"]
-                if let record = await memoryManager.readMemory(key: key, targetName: targetName) {
-                    return record
-                } else {
-                    return "Запись по ключу \(key) не найдена в памяти \(targetName != nil ? "таргета \(targetName!)" : "проекта")."
+
+                switch resolveScope(scopeParam: args["scope"], targetName: args["targetName"]) {
+                case .failed(let msg):
+                    return "❌ recall: \(msg)"
+                case .resolved(let scopeString):
+                    if let value = await memoryManager.readMemoryEntry(key: key, scope: scopeString) {
+                        return value
+                    } else {
+                        return "Запись по ключу '\(key)' не найдена в scope '\(scopeString)'."
+                    }
                 }
 
             case "search_memory":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let type = args["type"] else {
-                    return "Ошибка: Неверные аргументы для search_memory"
+                    return "Ошибка: Неверные аргументы для search_memory (обязателен: type)"
                 }
-                let targetName = args["targetName"]
-                let results = await memoryManager.searchMemory(type: type, targetName: targetName)
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = .prettyPrinted
-                let data = try encoder.encode(results)
-                return String(data: data, encoding: .utf8) ?? "{}"
+
+                switch resolveScope(scopeParam: args["scope"], targetName: args["targetName"]) {
+                case .failed(let msg):
+                    return "❌ search_memory: \(msg)"
+                case .resolved(let scopeString):
+                    let results = await memoryManager.searchMemoryEntries(type: type, scope: scopeString)
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = .prettyPrinted
+                    let data = try encoder.encode(results)
+                    return String(data: data, encoding: .utf8) ?? "{}"
+                }
 
             case "delete_memory":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let key = args["key"] else {
-                    return "Ошибка: Неверные аргументы для delete_memory"
+                    return "Ошибка: Неверные аргументы для delete_memory (обязателен: key)"
                 }
-                let targetName = args["targetName"]
-                await memoryManager.deleteMemory(key: key, targetName: targetName)
-                return "Успешно: Запись \(key) удалена из памяти \(targetName != nil ? "таргета \(targetName!)" : "проекта")."
+
+                switch resolveScope(scopeParam: args["scope"], targetName: args["targetName"]) {
+                case .failed(let msg):
+                    return "❌ delete_memory: \(msg)"
+                case .resolved(let scopeString):
+                    if let error = await memoryManager.deleteMemoryEntry(key: key, scope: scopeString) {
+                        return "❌ delete_memory: \(error)"
+                    }
+                    return "✅ Запись '\(key)' удалена из scope '\(scopeString)'."
+                }
 
             // MARK: - MCP: Git инструменты
-            // Все git-инструменты делегируются в MCPToolBridge → ChappieMCP сервер.
-            // Аргументы парсим из JSON, передаём как [String: String] словарь.
 
             case "git_status":
                 return await mcpBridge.execute(tool: "git_status")
@@ -593,25 +758,15 @@ public actor ToolExecutionService {
                 return await mcpBridge.execute(tool: "read_build_log")
 
             // MARK: - Управление проектами в треде (IT-07)
-            //
-            // ПОЧЕМУ ЧЕРЕЗ CALLBACK, А НЕ НАПРЯМУЮ:
-            // ToolExecutionService создаётся при выборе воркспейса — до подключения ModelContainer.
-            // ProjectStore/ThreadStore создаются позже через setModelContainer().
-            // Closure-обработчики регистрируются ViewModel когда все зависимости готовы.
-            // Это классический паттерн "поздней привязки" (late binding) через DI.
 
             case "add_project_to_thread":
-                // Извлекаем имя проекта из аргументов
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let displayName = args["display_name"], !displayName.isEmpty else {
                     return "Ошибка: Аргумент 'display_name' обязателен для add_project_to_thread"
                 }
-
-                // Проверяем что обработчик зарегистрирован
                 guard let handler = addProjectHandler else {
-                    return "Ошибка: Инструменты управления проектами недоступны. Проверьте что ModelContainer подключён (setModelContainer вызван)."
+                    return "Ошибка: Инструменты управления проектами недоступны. Проверьте что ModelContainer подключён."
                 }
-
                 return await handler(displayName)
 
             case "remove_project_from_thread":
@@ -619,18 +774,15 @@ public actor ToolExecutionService {
                       let displayName = args["display_name"], !displayName.isEmpty else {
                     return "Ошибка: Аргумент 'display_name' обязателен для remove_project_from_thread"
                 }
-
                 guard let handler = removeProjectHandler else {
-                    return "Ошибка: Инструменты управления проектами недоступны. Проверьте что ModelContainer подключён (setModelContainer вызван)."
+                    return "Ошибка: Инструменты управления проектами недоступны. Проверьте что ModelContainer подключён."
                 }
-
                 return await handler(displayName)
 
             case "list_thread_projects":
                 guard let handler = listProjectsHandler else {
-                    return "Ошибка: Инструменты управления проектами недоступны. Проверьте что ModelContainer подключён (setModelContainer вызван)."
+                    return "Ошибка: Инструменты управления проектами недоступны. Проверьте что ModelContainer подключён."
                 }
-
                 return await handler()
 
             default:
