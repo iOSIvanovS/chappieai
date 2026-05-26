@@ -127,7 +127,6 @@ public struct AITunnelClient: Sendable {
                 guard let choice = chunk.choices.first else { continue }
                 let delta = choice.delta
 
-                // 🔥 Исправлено: используем только delta.content
                 if let token = delta.content, !token.isEmpty {
                     accumulatedText += token
                     onToken?(token)
@@ -206,43 +205,91 @@ public struct AITunnelClient: Sendable {
         return (stream, getUsage)
     }
 
-    // MARK: - Приватные методы: формирование сообщений без ручного кэширования
+    // MARK: - Приватные методы: формирование сообщений
 
     /// Формирует массив сообщений для запроса (классический формат).
     private func buildMessages(systemPrompt: String, chatHistory: [AIMessage]) -> [AIMessage] {
         var messages: [AIMessage] = []
 
-        // Отправляем системный промпт простой строкой
         let systemMessage = AIMessage(
             role: "system",
             content: systemPrompt
         )
         messages.append(systemMessage)
-
-        // Добавляем историю как есть 
-        // 🔥 Исправлено: просто добавляем массив истории без поиска мифических contentString
         messages.append(contentsOf: chatHistory)
 
         print("[AITunnelClient] 📤 Формирование запроса: 1 (system) + \(chatHistory.count) (history) сообщений")
         return messages
     }
 
+    // MARK: - Диагностика кэша
+
+    /// Логирует подробную статистику кэша промптов для диагностики.
+    ///
+    /// ЗАЧЕМ ТАКОЙ ПОДРОБНЫЙ ЛОГ:
+    /// Нам нужно понять — кэшируются ли инструменты (tools) вместе с системным промптом,
+    /// или только сам промпт. Для этого смотрим на соотношение:
+    ///   - prompt_tokens = полное количество входных токенов (system + history + tools)
+    ///   - cache_read    = сколько из них взято из кэша
+    ///   - coverage%     = cache_read / prompt_tokens * 100
+    ///
+    /// Если coverage ≈ 80-100% → инструменты тоже кэшируются (отлично!)
+    /// Если coverage ≈ 30-50%  → кэшируется только системный промпт (без инструментов)
+    /// Если coverage = 0%      → кэш не работает совсем
+    ///
+    /// Первый запрос в сессии всегда создаёт кэш (created > 0, read = 0).
+    /// Второй и последующие — должны читать из кэша (read > 0).
     private func logCacheStats(usage: AIUsage?) {
         guard let usage else { return }
 
-        let cacheRead = usage.effectiveCacheRead
+        let cacheRead     = usage.effectiveCacheRead
         let cacheCreation = usage.effectiveCacheCreation
-        let promptTokens = usage.prompt_tokens ?? 0
+        let promptTokens  = usage.prompt_tokens ?? 0
         let completionTokens = usage.completion_tokens ?? 0
         let costStr = usage.cost_rub.map { String(format: "%.4f ₽", $0) } ?? "н/д"
 
-        if cacheRead > 0 {
-            let savings = Int(Double(cacheRead) * 0.9)
-            print("[AITunnelClient] ✅ Кэш шлюза сработал | read: \(cacheRead) tok (сэкономлено ~\(savings) tok) | created: \(cacheCreation) tok | prompt: \(promptTokens) | completion: \(completionTokens) | cost: \(costStr)")
-        } else if cacheCreation > 0 {
-            print("[AITunnelClient] 🔄 Кэш шлюза создан | created: \(cacheCreation) tok | prompt: \(promptTokens) | completion: \(completionTokens) | cost: \(costStr)")
+        // Считаем процент покрытия кэшем — ключевая метрика для диагностики
+        // Если prompt_tokens > 0, считаем сколько % входных токенов пришло из кэша
+        let coverageStr: String
+        if promptTokens > 0 && cacheRead > 0 {
+            let pct = Int(Double(cacheRead) / Double(promptTokens) * 100)
+            coverageStr = " | покрытие: \(pct)% промпта"
         } else {
-            print("[AITunnelClient] ⚠️ Кэш не активен | prompt: \(promptTokens) | completion: \(completionTokens) | cost: \(costStr)")
+            coverageStr = ""
+        }
+
+        if cacheRead > 0 {
+            // ✅ Кэш сработал — читаем токены из кэша (стоит ~10% от обычной цены)
+            let savings = Int(Double(cacheRead) * 0.9)
+            print("""
+            [AITunnelClient] ✅ КЭШ HIT \
+            | prompt: \(promptTokens) tok \
+            | read: \(cacheRead) tok (~\(savings) tok сэкономлено)\(coverageStr) \
+            | created: \(cacheCreation) tok \
+            | completion: \(completionTokens) tok \
+            | cost: \(costStr)
+            """)
+        } else if cacheCreation > 0 {
+            // 🔄 Кэш создан — первый запрос в сессии, токены записаны в кэш
+            print("""
+            [AITunnelClient] 🔄 КЭШ WRITE \
+            | prompt: \(promptTokens) tok \
+            | created: \(cacheCreation) tok → записано в кэш \
+            | completion: \(completionTokens) tok \
+            | cost: \(costStr)
+            """)
+        } else {
+            // ⚠️ Кэш не активен — ни чтения ни записи. Возможные причины:
+            // 1. top-level cache_control не поддерживается AITunnel для этой модели
+            // 2. Слишком мало токенов для кэширования (Anthropic требует минимум ~1024)
+            // 3. Шлюз проигнорировал поле
+            print("""
+            [AITunnelClient] ⚠️ КЭШ MISS \
+            | prompt: \(promptTokens) tok \
+            | completion: \(completionTokens) tok \
+            | cost: \(costStr) \
+            | (кэш не активен — ни read ни write)
+            """)
         }
     }
 
@@ -293,7 +340,6 @@ public struct AITunnelClient: Sendable {
 
             guard let choice = chunk.choices.first else { continue }
 
-            // 🔥 Исправлено: используем только delta.content
             if let token = choice.delta.content, !token.isEmpty {
                 continuation.yield(token)
             }
