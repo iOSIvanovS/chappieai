@@ -6,40 +6,18 @@
 // отдельные элементы. Его единственная задача — собрать все компоненты вместе
 // и "прокинуть" данные из ViewModel в нужные места.
 //
-// Структура разбита на файлы:
-// - Views/Sidebar/SidebarView.swift      — боковая панель с тредами (IT-05)
-// - Views/Sidebar/ThreadListView.swift   — список тредов (IT-05)
-// - Views/Sidebar/ThreadRowView.swift    — строка треда (IT-05)
-// - Views/Chat/ProjectChipsView.swift    — плашки проектов над чатом (IT-06)
-// - Views/Chat/ChatScrollView.swift      — лента сообщений (макс. 30 .message)
-// - Views/Chat/MessageBubbleView.swift   — пузырь одного сообщения
-// - Views/Chat/StatusBarView.swift       — строка состояния текущего инструмента
-// - Views/Input/InputBarView.swift       — поле ввода
-// - Views/Toolbar/ToolbarContent.swift   — контент тулбара
-// - Settings/SettingsView.swift          — экран настроек
+// ВОРКСПЕЙС (рабочая папка для инструментов):
+// Воркспейс — техническая настройка, не связанная с тредами/проектами.
+// НЕ отображается в тулбаре (убрано в UI-FIX-02) — тулбар минималистичный.
 //
-// ИЗМЕНЕНИЕ (IT-05 — Боковая панель тредов):
-// SidebarView получает список тредов и коллбэки управления тредами из ViewModel.
-// ContentView прокидывает данные без собственной логики — принцип "тупого дирижёра".
-//
-// ИЗМЕНЕНИЕ (IT-06 — Плашки проектов):
-// ProjectChipsView вставлен МЕЖДУ боковой панелью и лентой сообщений.
-// Коллбэки onAddProject и onRemoveProject прокидываются из ViewModel.
-//
-// ИЗМЕНЕНИЕ (UI-FIX-01 — Реструктуризация UI):
-// 1. Воркспейс убран из SidebarView → перенесён в ToolbarContent.
-//    ПОЧЕМУ: воркспейс — глобальная настройка, не per-тред навигация.
-// 2. ProjectChipsView показывается ВСЕГДА (не только когда activeThread != nil).
-//    ПОЧЕМУ: activeThread устанавливается асинхронно после загрузки SwiftData.
-//    Условный рендер по activeThread вызывал "мигание" и пропадание плашек.
-//    Теперь плашки всегда видны — если проектов нет, показывается только кнопка "+".
-//    Кнопка "+" недоступна (disabled) пока тред не выбран — защита от действий без контекста.
+// АРХИТЕКТУРА ПРОЕКТОВ (IT-06, UI-FIX-02):
+// ProjectChipsView показывается ТОЛЬКО когда activeThread != nil.
+// Это логично: без треда — некуда добавлять проекты.
+// Приложение всегда автоматически выбирает тред при старте.
 
 import SwiftUI
 import UniformTypeIdentifiers
 import SwiftData
-// ChappieCore нужен для доступа к типам ThreadMetadata (UUID свойство id)
-// через viewModel.activeThread?.id и viewModel.threads
 import ChappieCore
 
 // MARK: - Content View
@@ -55,22 +33,13 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            // MARK: Боковая панель с тредами (IT-05, UI-FIX-01)
-            // SidebarView получает:
-            // - список тредов из ViewModel (уже отсортированы по updatedAt DESC)
-            // - UUID активного треда для подсветки
-            // - коллбэки для всех действий с тредами
-            //
-            // НЕ получает (убрано в UI-FIX-01):
-            // - workspaceURL — перенесён в тулбар
-            // - onSelectWorkspace — перенесён в тулбар
+            // MARK: Боковая панель с тредами (IT-05)
             SidebarView(
                 isApiKeyValid: SettingsManager.shared.isApiKeyValid,
                 threads: viewModel.threads,
                 selectedThreadId: viewModel.activeThread?.id,
                 onOpenSettings: { showSettings = true },
                 onSelectThread: { thread in
-                    // Выбор треда — асинхронная операция (загрузка истории из SwiftData)
                     Task {
                         await viewModel.selectThread(thread)
                     }
@@ -89,29 +58,23 @@ struct ContentView: View {
         } detail: {
             VStack(spacing: 0) {
 
-                // MARK: Плашки проектов (IT-06, UI-FIX-01)
+                // MARK: Плашки проектов (IT-06, UI-FIX-02)
                 //
-                // ИЗМЕНЕНИЕ UI-FIX-01:
-                // Плашки показываются ВСЕГДА, а не только когда activeThread != nil.
-                //
-                // ПОЧЕМУ УБРАЛИ УСЛОВНЫЙ РЕНДЕР:
-                // activeThread устанавливается асинхронно — сначала nil, потом значение.
-                // Это вызывало "мигание": плашки появлялись с задержкой или пропадали.
-                // Теперь ProjectChipsView всегда в иерархии — нет Layout Shift.
-                //
-                // КАК ЗАЩИЩАЕМСЯ ОТ ДЕЙСТВИЙ БЕЗ ТРЕДА:
-                // ProjectChipsView.addButton disabled если activeThread == nil.
-                // Это передаётся через параметр isThreadActive.
-                ProjectChipsView(
-                    projects: viewModel.activeProjects,
-                    isThreadActive: viewModel.activeThread != nil,
-                    onAddProject: { url in
-                        viewModel.addProject(url: url)
-                    },
-                    onRemoveProject: { projectId in
-                        viewModel.removeProject(id: projectId)
-                    }
-                )
+                // Показываем строку проектов ТОЛЬКО когда тред активен.
+                // Параметр isThreadActive убран из ProjectChipsView — ContentView
+                // сам управляет видимостью через условный рендер.
+                if viewModel.activeThread != nil {
+                    ProjectChipsView(
+                        projects: viewModel.activeProjects,
+                        onAddProject: { url in
+                            viewModel.addProject(url: url)
+                        },
+                        onRemoveProject: { projectId in
+                            viewModel.removeProject(id: projectId)
+                        }
+                    )
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
 
                 ChatScrollView(
                     messages: viewModel.visibleMessages,
@@ -129,15 +92,14 @@ struct ContentView: View {
                     onSend: sendMessage
                 )
             }
+            .animation(.easeInOut(duration: 0.2), value: viewModel.activeThread?.id)
             .animation(.easeInOut(duration: 0.25), value: viewModel.currentToolCall)
             .toolbar {
-                // MARK: Тулбар (UI-FIX-01)
-                // Добавлены workspaceURL и onSelectWorkspace — убраны из SidebarView.
+                // MARK: Тулбар (UI-FIX-02)
+                // Минималистичный: только баланс и настройки.
                 ChappieToolbarContent(
-                    workspaceURL: viewModel.workspaceURL,
                     balance: viewModel.currentBalance,
                     isApiKeyValid: SettingsManager.shared.isApiKeyValid,
-                    onSelectWorkspace: selectWorkspace,
                     onOpenSettings: { showSettings = true }
                 )
             }
@@ -154,27 +116,12 @@ struct ContentView: View {
                 viewModel.updateApiKey(newKey)
             }
         }
-        // ПОДКЛЮЧЕНИЕ SWIFTDATA (IT-03 + IT-05 + IT-06):
-        // При первом появлении View передаём ModelContainer в ViewModel.
-        // setModelContainer() идемпотентен — повторные вызовы игнорируются.
         .onAppear {
             viewModel.setModelContainer(modelContext.container)
         }
     }
 
     // MARK: - Приватные методы
-
-    private func selectWorkspace() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.message = "Выберите папку проекта для Чаппи"
-
-        if panel.runModal() == .OK, let url = panel.url {
-            viewModel.setWorkspace(url)
-        }
-    }
 
     private func sendMessage() {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }

@@ -21,15 +21,10 @@
 // Все данные — через параметры, все действия — через коллбэки.
 // Логика в ChappieViewModel.
 //
-// ИЗМЕНЕНИЯ (UI-FIX-01):
-// Добавлен параметр isThreadActive: Bool.
-// ПОЧЕМУ:
-// Раньше ProjectChipsView показывался только когда activeThread != nil (условный рендер).
-// Это вызывало Layout Shift — плашки появлялись с задержкой после асинхронной загрузки треда.
-// Теперь компонент ВСЕГДА присутствует в иерархии View.
-// isThreadActive = false → кнопка "+" заблокирована (нельзя добавить проект без треда).
-// isThreadActive = true → кнопка "+" активна.
-// Чипы существующих проектов показываются всегда когда projects не пустой.
+// ВИДИМОСТЬ (UI-FIX-02):
+// Компонент показывается только когда тред активен (условие в ContentView).
+// Параметр isThreadActive убран — он больше не нужен.
+// ContentView сам решает показывать или нет через `if viewModel.activeThread != nil`.
 //
 // ПОВЕДЕНИЕ КНОПКИ "+":
 // Открывает NSOpenPanel → пользователь выбирает папку.
@@ -45,6 +40,8 @@ import ChappieCore
 /// Показывает список проектов, привязанных к треду.
 /// Кнопка "+" добавляет новый проект через NSOpenPanel.
 /// Кнопка "×" на каждом чипе удаляет проект из треда.
+///
+/// Компонент показывается только когда тред активен — ContentView управляет видимостью.
 struct ProjectChipsView: View {
 
     // MARK: - Входные данные
@@ -52,15 +49,6 @@ struct ProjectChipsView: View {
     /// Список проектов, привязанных к текущему треду.
     /// Пустой массив — показываем только кнопку "+".
     let projects: [ProjectMetadata]
-
-    /// Флаг: выбран ли активный тред.
-    ///
-    /// ПОЧЕМУ НУЖЕН ЭТОТ ПАРАМЕТР (UI-FIX-01):
-    /// Компонент теперь ВСЕГДА присутствует в иерархии (не скрывается).
-    /// Если тред не выбран — кнопка "+" заблокирована, чтобы не добавить проект
-    /// в никуда (без контекста треда).
-    /// Как только тред загружается (асинхронно) — кнопка активируется.
-    let isThreadActive: Bool
 
     // MARK: - Коллбэки
 
@@ -98,10 +86,7 @@ struct ProjectChipsView: View {
                     }
 
                     // Кнопка добавления нового проекта
-                    // disabled если тред не выбран — нельзя добавить проект без контекста
                     addButton
-                        .disabled(!isThreadActive)
-                        .opacity(isThreadActive ? 1.0 : 0.4)
                 }
                 .padding(.horizontal, 2)
             }
@@ -209,9 +194,7 @@ struct ProjectChipsView: View {
             )
         }
         .buttonStyle(.plain)
-        .help(isThreadActive
-              ? "Добавить папку проекта к этому треду"
-              : "Выберите тред чтобы добавить проект")
+        .help("Добавить папку проекта к этому треду")
     }
 
     // MARK: - Приватные методы
@@ -250,7 +233,6 @@ struct ProjectChipsView: View {
                 createdAt: Date()
             )
         ],
-        isThreadActive: true,
         onAddProject: { url in
             print("Добавить проект: \(url.lastPathComponent)")
         },
@@ -265,18 +247,6 @@ struct ProjectChipsView: View {
 #Preview("Пустой список") {
     ProjectChipsView(
         projects: [],
-        isThreadActive: true,
-        onAddProject: { _ in },
-        onRemoveProject: { _ in }
-    )
-    .frame(width: 600)
-    .background(Color(NSColor.windowBackgroundColor))
-}
-
-#Preview("Тред не выбран") {
-    ProjectChipsView(
-        projects: [],
-        isThreadActive: false,
         onAddProject: { _ in },
         onRemoveProject: { _ in }
     )
