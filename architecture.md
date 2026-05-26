@@ -195,7 +195,7 @@ readGroup.wait()
 
 ## 10. REFACTOR-THREADS — Большой рефакторинг: треды, проекты, SwiftData
 
-### Статус: 🔄 В ПРОЦЕССЕ (IT-01 ✅, IT-02 ✅, IT-03 ✅, IT-04 ✅, IT-05 ✅, IT-06 ✅)
+### Статус: ✅ ЗАВЕРШЁН (IT-01 ✅, IT-02 ✅, IT-03 ✅, IT-04 ✅, IT-05 ✅, IT-06 ✅, IT-07 ✅)
 
 ### Контекст и мотивация
 
@@ -224,11 +224,6 @@ readGroup.wait()
 `MigrationService.migrate<T: Codable>()` — Generic метод, не зависит от ChatMessage.
 Идемпотентен: флаг `UserDefaults["migration_v1_done"]`.
 Вызывается из `ChappieViewModel.setModelContainer()` асинхронно.
-
-**Двойной бэкенд памяти (до IT-04):**
-- legacy: ~/Documents/Chappie/semantic.json (инструменты memorize/recall)
-- новый: SwiftData MemoryStore (buildSystemPrompt читает отсюда + из legacy)
-- После IT-04: только SwiftData (миграция выполнена)
 
 **MemoryContext (IT-03 ✅):**
 ```swift
@@ -279,10 +274,28 @@ ViewModel хранит актуальный список projectIds в activeThr
 Все данные — через параметры, все действия — через коллбэки.
 NSOpenPanel открывается прямо из View (стандартный паттерн macOS).
 
-**Условный рендер ProjectChipsView (IT-06 ✅):**
-Показывается только когда `activeThread != nil`.
-До загрузки ModelContainer (первые миллисекунды) activeThread == nil — чипы скрыты.
-Появление/исчезновение анимировано через `.animation(.easeInOut, value: activeThread != nil)`.
+**Инструменты управления проектами — паттерн Callback/Closure (IT-07 ✅):**
+ToolExecutionService живёт в ChappieCore, ProjectStore/ThreadStore — тоже в ChappieCore,
+но управляются из Chappie.app. Прямая ссылка создала бы проблемы с зависимостями.
+Решение: ViewModel регистрирует @Sendable замыкания в ToolExecutionService через
+`registerProjectHandlers()`. Замыкания вызываются когда Чаппи использует инструменты.
+
+**SENDABLE + MainActor мост (IT-07 ✅):**
+Замыкания @Sendable не могут захватить self (@MainActor) напрямую.
+Используем `withCheckedContinuation + Task { @MainActor [weak self] in }` для безопасного
+доступа к свойствам ViewModel из @Sendable замыкания.
+`[weak self]` предотвращает retain-цикл: ViewModel → ToolExecutionService → замыкание → ViewModel.
+
+**add_project_to_thread без NSOpenPanel (IT-07 ✅):**
+Чаппи не может открыть NSOpenPanel (нет доступа к UI).
+При вызове инструмента — ищем существующий проект по displayName или создаём новый
+с пустым bookmark (`Data()`). Bookmark добавит пользователь через UI при необходимости.
+Для целей памяти и контекста проекта bookmark не нужен.
+
+**Статические методы для @Sendable (IT-07 ✅):**
+`performAddProjectByName` и `performRemoveProjectByName` — static методы.
+Статические методы не захватывают self — безопасны для вызова из @Sendable замыкания.
+Принимают все зависимости явными параметрами (DI через параметры).
 
 ### SwiftData схема (тонкий слой хранилища)
 
@@ -330,12 +343,6 @@ MemoryEntity (SwiftData)
 **Файлы:**
 - `Chappie/Views/Chat/ProjectChipsView.swift` — горизонтальный ряд чипов проектов
 
-**Изменённые файлы:**
-- `Chappie/ContentView.swift` — условный рендер ProjectChipsView (только при activeThread != nil)
-- `Chappie/ChappieViewModel.swift` — addProject(url:), removeProject(id:), activeProjects, loadProjectsForThread()
-- `ChappieCore/Sources/ChappieCore/Services/ThreadStore.swift` — updateProjectBindings(), addProject(), removeProject()
-- `ChappieCore/Sources/ChappieCore/Services/ProjectStore.swift` — loadProjects(ids:), публичный init ProjectMetadata
-
 **Поведение:**
 - Горизонтальный скролл с чипами-тегами проектов
 - Hover на чипе — появляется кнопка "×" для удаления проекта из треда
@@ -343,20 +350,29 @@ MemoryEntity (SwiftData)
 - При удалении — UUID убирается из projectBindingsJSON (ProjectEntity НЕ удаляется)
 - Компонент скрыт пока activeThread == nil (анимированное появление)
 
-### Инструменты управления тредом (IT-07 — следующая)
+### Инструменты управления проектами (IT-07 ✅)
 
-- `add_project_to_thread(projectId)` — Чаппи добавляет проект в текущий тред
-- `remove_project_from_thread(projectId)` — Чаппи удаляет проект из треда
+**Новые инструменты Чаппи:**
+- `add_project_to_thread(display_name:)` — добавить проект по имени папки
+- `remove_project_from_thread(display_name:)` — убрать проект из треда
+- `list_thread_projects()` — показать список проектов текущего треда
+
+**Изменённые файлы:**
+- `ChappieCore/.../ToolExecutionService.swift`
+  — добавлены 3 инструмента в availableTools
+  — добавлены 3 case в execute()
+  — добавлены приватные свойства addProjectHandler, removeProjectHandler, listProjectsHandler
+  — добавлен публичный метод registerProjectHandlers()
+- `Chappie/ChappieViewModel.swift`
+  — добавлен registerProjectToolHandlers() — регистрация callback'ов
+  — добавлены static performAddProjectByName() и performRemoveProjectByName()
+  — добавлен reloadAfterProjectChange() — обновление UI после изменений
+  — setModelContainer() вызывает registerProjectToolHandlers() после создания сторов
+  — initializeServices() вызывает registerProjectToolHandlers() если сторы уже есть
 
 ---
 
 ## 11. REFACTOR-THREADS — Пошаговый план итераций
-
-### ВАЖНО ДЛЯ ЧАППИ: Этот план написан так, чтобы его можно было выполнять
-### итерациями с полной перекомпиляцией после каждой. После каждой итерации —
-### обновляй статус в этом файле и делай коммит.
-
----
 
 ### ✅ / 🔲 Статус итераций
 
@@ -368,47 +384,9 @@ MemoryEntity (SwiftData)
 | IT-04 | Миграция старых файлов → SwiftData | ✅ ГОТОВО |
 | IT-05 | UI: боковая панель тредов | ✅ ГОТОВО |
 | IT-06 | UI: плашки проектов в треде | ✅ ГОТОВО |
-| IT-07 | Инструменты add/remove project | 🔲 |
+| IT-07 | Инструменты add/remove project | ✅ ГОТОВО |
 
----
-
-### IT-06: UI — плашки проектов в треде ✅ ГОТОВО
-
-**Созданные файлы:**
-- `Chappie/Views/Chat/ProjectChipsView.swift`
-  — горизонтальный ряд чипов с hover-кнопкой удаления и кнопкой "+" (NSOpenPanel)
-
-**Изменённые файлы:**
-- `Chappie/ContentView.swift`
-  — условный рендер ProjectChipsView между боковой панелью и лентой сообщений
-  — анимация появления/исчезновения (.easeInOut 0.2s)
-- `Chappie/ChappieViewModel.swift`
-  — addProject(url:) — создаёт bookmark, ProjectEntity, добавляет UUID в тред
-  — removeProject(id:) — убирает UUID из projectBindingsJSON треда
-  — activeProjects: [ProjectMetadata] — для отображения в ProjectChipsView
-  — loadProjectsForThread() — приватный метод загрузки проектов
-  — projectStore: ProjectStore? — SwiftData бэкенд для проектов
-- `ChappieCore/.../ThreadStore.swift`
-  — updateProjectBindings() — атомарная замена всего списка UUID проектов
-  — addProject(id:toThreadId:) — идемпотентное добавление одного проекта
-  — removeProject(id:fromThreadId:) — удаление одного проекта
-- `ChappieCore/.../ProjectStore.swift`
-  — loadProjects(ids:) — загрузка проектов по списку UUID (сохраняет порядок)
-  — публичный init ProjectMetadata для Preview и тестов
-
----
-
-### IT-07: Инструменты add/remove project
-
-**Цель:** Чаппи сам может добавлять/удалять проекты из треда в процессе разговора.
-
-**Файлы к изменению:**
-- `ChappieCore/Sources/ChappieCore/Services/ToolExecutionService.swift`
-- `ChappieCore/Sources/ChappieCore/Services/AIOrchestrator.swift`
-
-**Критерий готовности:** Проект компилируется. Чаппи может управлять проектами через tool_use.
-
-**Зависимости:** IT-01, IT-06.
+### 🎉 REFACTOR-THREADS ЗАВЕРШЁН ПОЛНОСТЬЮ!
 
 ---
 
@@ -429,6 +407,7 @@ MemoryEntity (SwiftData)
 
 | Date | Change |
 |------|--------|
+| 2025-07-XX | IT-07 ГОТОВО: add/remove/list_thread_projects инструменты, registerProjectHandlers() в ToolExecutionService, паттерн Callback/Closure + withCheckedContinuation, static performAdd/RemoveProjectByName |
 | 2025-07-XX | IT-06 ГОТОВО: ProjectChipsView (чипы проектов с hover/add/remove), ContentView условный рендер, ChappieViewModel addProject/removeProject, ThreadStore updateProjectBindings, ProjectStore loadProjects(ids:) |
 | 2025-07-XX | IT-05 ГОТОВО: ThreadListView, ThreadRowView, SidebarView с тредами, ChappieViewModel управление тредами, ContentView + import ChappieCore |
 | 2025-07-XX | IT-04 ГОТОВО: MigrationService (chat_history.json + semantic.json → SwiftData), 5 тестов, ThreadStore добавлен в ChappieViewModel |

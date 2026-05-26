@@ -45,7 +45,22 @@
 // activeProjects — список ProjectMetadata для отображения в ProjectChipsView.
 // При выборе треда загружаются его проекты из ProjectStore.
 // addProject(url:) — создаёт/находит ProjectEntity, добавляет UUID в тред.
-// removeProject(id:) — убирает UUID из тредa (ProjectEntity не удаляется).
+// removeProject(id:) — убирает UUID из треда (ProjectEntity не удаляется).
+//
+// ИНСТРУМЕНТЫ УПРАВЛЕНИЯ ПРОЕКТАМИ (IT-07):
+// Чаппи может сам добавлять/удалять проекты в треде через инструменты:
+//   add_project_to_thread(display_name:)
+//   remove_project_from_thread(display_name:)
+//   list_thread_projects()
+// Реализовано через паттерн callback/closure: ViewModel регистрирует обработчики
+// в ToolExecutionService через registerProjectHandlers() после создания ProjectStore.
+// Обработчики работают по displayName (имени папки) — без NSOpenPanel (Чаппи не может открыть UI).
+// Для add_project_to_thread — ищем существующий проект или создаём новый без bookmark.
+//
+// АРХИТЕКТУРНОЕ РЕШЕНИЕ — SENDABLE ЗАМЫКАНИЯ (IT-07):
+// Замыкания @Sendable не могут захватить self (@MainActor) напрямую.
+// Используем withCheckedContinuation + Task { @MainActor in } для безопасного доступа к self.
+// Это позволяет выполнять операции на MainActor из @Sendable замыкания.
 //
 // АРХИТЕКТУРА ЗАПУСКА ХЕЛПЕРА (MCPHelperLauncher):
 // ПРОБЛЕМА: если запускать MCPHelperLauncher.shared.launch() без пути (из ChappieApp.onAppear),
@@ -196,7 +211,7 @@ final class ChappieViewModel {
         loadWorkspaceWithSecurityScope()
     }
 
-    // MARK: - Подключение SwiftData (IT-03 + IT-04 + IT-05 + IT-06)
+    // MARK: - Подключение SwiftData (IT-03 + IT-04 + IT-05 + IT-06 + IT-07)
 
     /// Подключает ModelContainer к ViewModel — вызывается из ContentView.onAppear.
     ///
@@ -208,6 +223,7 @@ final class ChappieViewModel {
     /// 5. После этого buildSystemPrompt() начинает читать из SwiftData
     /// 6. Запускается MigrationService — переносит legacy-данные в SwiftData (один раз)
     /// 7. После миграции — загружается список тредов (IT-05)
+    /// 8. Регистрируются обработчики проектов в ToolExecutionService (IT-07)
     func setModelContainer(_ container: ModelContainer) {
         guard self.modelContainer == nil else { return } // Идемпотентность
 
@@ -231,10 +247,263 @@ final class ChappieViewModel {
 
         print("[ChappieViewModel] ✅ ModelContainer подключён: MemoryStore, ThreadStore, ProjectStore созданы")
 
+        // IT-07: регистрируем обработчики инструментов управления проектами в ToolExecutionService.
+        // ПОЧЕМУ ЗДЕСЬ: регистрация возможна только после создания ProjectStore и ThreadStore.
+        // ToolExecutionService уже создан (в initializeServices), поэтому регистрируем сейчас.
+        if let ts = toolService {
+            registerProjectToolHandlers(toolService: ts, projectStore: pStore, threadStore: tStore)
+        }
+
         Task {
             await runMigrationIfNeeded(threadStore: tStore, memoryStore: store)
             // После миграции загружаем треды и выбираем активный
             await loadThreadsAndSelectActive(from: tStore)
+        }
+    }
+
+    // MARK: - Регистрация обработчиков инструментов проектов (IT-07)
+
+    /// Регистрирует callback-обработчики в ToolExecutionService для инструментов управления проектами.
+    ///
+    /// ПАТТЕРН CALLBACK/CLOSURE:
+    /// ToolExecutionService живёт в ChappieCore и не знает о ProjectStore/ThreadStore напрямую.
+    /// ViewModel регистрирует замыкания, которые вызываются когда Чаппи использует инструменты.
+    ///
+    /// АРХИТЕКТУРНОЕ РЕШЕНИЕ — SENDABLE + MainActor:
+    /// Замыкания помечены @Sendable — нельзя захватить self (@MainActor) напрямую.
+    /// Используем withCheckedContinuation + Task { @MainActor [weak self] in } для безопасного
+    /// доступа к свойствам ViewModel (activeThread, activeProjects) из @Sendable замыкания.
+    ///
+    /// ПОЧЕМУ [weak self]:
+    /// Замыкания хранятся в ToolExecutionService на время жизни сервиса.
+    /// Слабая ссылка предотвращает retain-цикл: ViewModel → ToolExecutionService → замыкание → ViewModel.
+    private func registerProjectToolHandlers(
+        toolService ts: ToolExecutionService,
+        projectStore pStore: ProjectStore,
+        threadStore tStore: ThreadStore
+    ) {
+        Task {
+            await ts.registerProjectHandlers(
+
+                // ОБРАБОТЧИК: добавить проект по имени
+                addProject: { [weak self] displayName in
+                    // withCheckedContinuation позволяет "мостить" async-код с callback-based кодом.
+                    // Нужен потому что мы должны вернуть String из @Sendable замыкания,
+                    // но доступ к self требует MainActor.
+                    return await withCheckedContinuation { continuation in
+                        Task { @MainActor [weak self] in
+                            guard let self else {
+                                continuation.resume(returning: "Ошибка: ViewModel освобождена.")
+                                return
+                            }
+                            let activeThread = self.activeThread
+                            let result = await ChappieViewModel.performAddProjectByName(
+                                displayName: displayName,
+                                projectStore: pStore,
+                                threadStore: tStore,
+                                activeThread: activeThread,
+                                onUpdate: { [weak self] updatedThread in
+                                    Task { @MainActor [weak self] in
+                                        await self?.reloadAfterProjectChange(
+                                            updatedThread: updatedThread,
+                                            projectStore: pStore,
+                                            threadStore: tStore
+                                        )
+                                    }
+                                }
+                            )
+                            continuation.resume(returning: result)
+                        }
+                    }
+                },
+
+                // ОБРАБОТЧИК: удалить проект по имени
+                removeProject: { [weak self] displayName in
+                    return await withCheckedContinuation { continuation in
+                        Task { @MainActor [weak self] in
+                            guard let self else {
+                                continuation.resume(returning: "Ошибка: ViewModel освобождена.")
+                                return
+                            }
+                            let activeThread = self.activeThread
+                            let activeProjects = self.activeProjects
+                            let result = await ChappieViewModel.performRemoveProjectByName(
+                                displayName: displayName,
+                                projectStore: pStore,
+                                threadStore: tStore,
+                                activeThread: activeThread,
+                                activeProjects: activeProjects,
+                                onUpdate: { [weak self] updatedThread in
+                                    Task { @MainActor [weak self] in
+                                        await self?.reloadAfterProjectChange(
+                                            updatedThread: updatedThread,
+                                            projectStore: pStore,
+                                            threadStore: tStore
+                                        )
+                                    }
+                                }
+                            )
+                            continuation.resume(returning: result)
+                        }
+                    }
+                },
+
+                // ОБРАБОТЧИК: список проектов текущего треда
+                listProjects: { [weak self] in
+                    return await withCheckedContinuation { continuation in
+                        Task { @MainActor [weak self] in
+                            guard let self else {
+                                continuation.resume(returning: "Ошибка: ViewModel освобождена.")
+                                return
+                            }
+                            let names = self.activeProjects.map { $0.displayName }
+                            if names.isEmpty {
+                                continuation.resume(returning: "В текущем треде нет привязанных проектов.")
+                            } else {
+                                let list = names.enumerated()
+                                    .map { "\($0.offset + 1). \($0.element)" }
+                                    .joined(separator: "\n")
+                                continuation.resume(returning: "Проекты в текущем треде:\n\(list)")
+                            }
+                        }
+                    }
+                }
+            )
+            print("[ChappieViewModel] ✅ Обработчики инструментов проектов зарегистрированы в ToolExecutionService")
+        }
+    }
+
+    /// Выполняет добавление проекта по имени — вызывается из callback обработчика.
+    ///
+    /// ПОЧЕМУ STATIC:
+    /// Статический метод не захватывает self — безопасен для вызова из @Sendable замыкания.
+    /// Принимает все нужные зависимости явными параметрами.
+    ///
+    /// ЛОГИКА ПОИСКА ПРОЕКТА:
+    /// 1. Ищем существующий проект с таким displayName в ProjectStore
+    /// 2. Если нашли — добавляем его UUID в тред
+    /// 3. Если не нашли — создаём новый ProjectEntity без bookmark
+    ///    (Чаппи не может открыть NSOpenPanel; bookmark добавит пользователь через UI)
+    private static func performAddProjectByName(
+        displayName: String,
+        projectStore: ProjectStore,
+        threadStore: ThreadStore,
+        activeThread: ThreadMetadata?,
+        onUpdate: @escaping @Sendable (ThreadMetadata) -> Void
+    ) async -> String {
+        guard let thread = activeThread else {
+            return "Ошибка: Нет активного треда. Выберите тред перед добавлением проекта."
+        }
+
+        do {
+            // Загружаем все существующие проекты для поиска по имени
+            let allProjects = try await projectStore.loadProjects()
+            // Загружаем проекты уже привязанные к треду для проверки дублей
+            let threadProjects = try await projectStore.loadProjects(ids: thread.projectIds)
+
+            // Проверяем дубликат
+            if threadProjects.contains(where: { $0.displayName == displayName }) {
+                return "Проект '\(displayName)' уже добавлен в текущий тред."
+            }
+
+            // Ищем существующий проект с таким именем (мог быть создан через UI)
+            let projectId: UUID
+            if let existing = allProjects.first(where: { $0.displayName == displayName }) {
+                projectId = existing.id
+                print("[ChappieViewModel] 📁 Найден существующий проект '\(displayName)' (id: \(existing.id))")
+            } else {
+                // Создаём новый проект без security-scoped bookmark.
+                // ПОЧЕМУ БЕЗ BOOKMARK: Чаппи не может открыть NSOpenPanel.
+                // Пустой Data() — bookmark будет добавлен пользователем через UI при необходимости.
+                // Для целей памяти и контекста проекта bookmark не нужен.
+                projectId = try await projectStore.addProject(
+                    displayName: displayName,
+                    bookmarkData: Data()
+                )
+                print("[ChappieViewModel] 📁 Создан новый проект '\(displayName)' без bookmark (id: \(projectId))")
+            }
+
+            // Атомарно обновляем привязки треда
+            var updatedIds = thread.projectIds
+            updatedIds.append(projectId)
+            try await threadStore.updateProjectBindings(updatedIds, forThreadId: thread.id)
+
+            // Загружаем обновлённые метаданные треда для передачи в onUpdate
+            let refreshed = try await threadStore.loadThreads()
+            if let updatedThread = refreshed.first(where: { $0.id == thread.id }) {
+                onUpdate(updatedThread)
+            }
+
+            return "✅ Проект '\(displayName)' добавлен в текущий тред."
+        } catch {
+            return "Ошибка при добавлении проекта '\(displayName)': \(error.localizedDescription)"
+        }
+    }
+
+    /// Выполняет удаление проекта из треда по имени.
+    ///
+    /// ПОЧЕМУ STATIC: аналогично performAddProjectByName — безопасен для @Sendable замыкания.
+    private static func performRemoveProjectByName(
+        displayName: String,
+        projectStore: ProjectStore,
+        threadStore: ThreadStore,
+        activeThread: ThreadMetadata?,
+        activeProjects: [ProjectMetadata],
+        onUpdate: @escaping @Sendable (ThreadMetadata) -> Void
+    ) async -> String {
+        guard let thread = activeThread else {
+            return "Ошибка: Нет активного треда."
+        }
+
+        // Ищем проект по имени в списке проектов активного треда
+        guard let project = activeProjects.first(where: { $0.displayName == displayName }) else {
+            return "Проект '\(displayName)' не найден в текущем треде. Используй list_thread_projects чтобы увидеть список."
+        }
+
+        do {
+            // Убираем UUID из списка привязок треда
+            var updatedIds = thread.projectIds
+            updatedIds.removeAll { $0 == project.id }
+            try await threadStore.updateProjectBindings(updatedIds, forThreadId: thread.id)
+
+            // Загружаем обновлённые метаданные треда
+            let refreshed = try await threadStore.loadThreads()
+            if let updatedThread = refreshed.first(where: { $0.id == thread.id }) {
+                onUpdate(updatedThread)
+            }
+
+            return "✅ Проект '\(displayName)' убран из текущего треда."
+        } catch {
+            return "Ошибка при удалении проекта '\(displayName)': \(error.localizedDescription)"
+        }
+    }
+
+    /// Обновляет состояние ViewModel после изменения проектов в треде.
+    ///
+    /// Вызывается из callback-обработчиков после успешного add/remove.
+    /// Обновляет threads, activeThread, activeMemoryContext и activeProjects.
+    private func reloadAfterProjectChange(
+        updatedThread: ThreadMetadata,
+        projectStore: ProjectStore,
+        threadStore: ThreadStore
+    ) async {
+        do {
+            // Обновляем список тредов в боковой панели
+            let refreshed = try await threadStore.loadThreads()
+            self.threads = refreshed
+
+            // Обновляем activeThread если это он изменился
+            if activeThread?.id == updatedThread.id {
+                self.activeThread = updatedThread
+                self.activeMemoryContext = MemoryContext(
+                    threadId: updatedThread.id,
+                    projectIds: updatedThread.projectIds
+                )
+                // Перезагружаем список проектов для ProjectChipsView
+                await loadProjectsForThread(updatedThread)
+            }
+        } catch {
+            print("[ChappieViewModel] ⚠️ Ошибка обновления после изменения проектов: \(error)")
         }
     }
 
@@ -461,7 +730,7 @@ final class ChappieViewModel {
     ///
     /// АЛГОРИТМ:
     /// 1. Создаём security-scoped bookmark для выбранной папки
-    /// 2. Проверяем, не добавлен ли уже этот проект (по bookmark или имени папки)
+    /// 2. Проверяем, не добавлен ли уже этот проект (по имени папки)
     /// 3. Если нет — создаём ProjectEntity в ProjectStore
     /// 4. Добавляем UUID проекта в ThreadEntity.projectBindingsJSON через ThreadStore
     /// 5. Обновляем activeProjects и activeMemoryContext
@@ -825,6 +1094,13 @@ final class ChappieViewModel {
             fileSystem: fs,
             memoryManager: mm
         )
+
+        // IT-07: если ProjectStore уже создан (ModelContainer подключён раньше воркспейса),
+        // регистрируем обработчики немедленно.
+        // В обычном сценарии — регистрация происходит в setModelContainer().
+        if let pStore = projectStore, let tStore = threadStore {
+            registerProjectToolHandlers(toolService: ts, projectStore: pStore, threadStore: tStore)
+        }
     }
 
     // MARK: - Миграция legacy-данных (IT-04)

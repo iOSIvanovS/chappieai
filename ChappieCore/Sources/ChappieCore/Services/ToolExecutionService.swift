@@ -25,6 +25,26 @@
 // После перехода к монофизитной архитектуре (один агент — Чаппи)
 // инструмент `delegate_task` был полностью удалён. apiKey тоже не нужен —
 // никаких саб-агентов нет.
+//
+// АРХИТЕКТУРНОЕ РЕШЕНИЕ — ИНСТРУМЕНТЫ УПРАВЛЕНИЯ ПРОЕКТАМИ (IT-07):
+// Инструменты add_project_to_thread и remove_project_from_thread позволяют Чаппи
+// самостоятельно управлять проектами в активном треде в процессе разговора.
+//
+// ПРОБЛЕМА ЗАВИСИМОСТЕЙ:
+// ToolExecutionService живёт в ChappieCore, а ProjectStore/ThreadStore тоже в ChappieCore,
+// но создаются и управляются из Chappie.app (ChappieViewModel).
+// Прямая ссылка ToolExecutionService → ThreadStore/ProjectStore создала бы циклическую
+// зависимость через ViewModel и нарушила бы принцип инверсии зависимостей.
+//
+// РЕШЕНИЕ — ПАТТЕРН CALLBACK/CLOSURE:
+// ViewModel регистрирует async-замыкания в ToolExecutionService через registerProjectHandlers().
+// Когда Чаппи вызывает инструмент → ToolExecutionService вызывает замыкание →
+// ViewModel выполняет операцию с ProjectStore/ThreadStore → возвращает строковый результат.
+// Это сохраняет чистоту зависимостей: ChappieCore не знает о Chappie.app типах.
+//
+// SENDABLE-ЗАМЫКАНИЯ:
+// Замыкания помечены @Sendable — обязательно для Swift 6 при передаче через actor-границы.
+// ViewModel захватывает только Sendable-типы (UUID, String) в этих замыканиях.
 
 import Foundation
 
@@ -39,6 +59,30 @@ public actor ToolExecutionService {
     /// Мост к ChappieMCP серверу для git и xcodebuild инструментов.
     /// Создаётся один раз с путём к сокету от MCPHelperLauncher.
     private let mcpBridge: MCPToolBridge
+
+    // MARK: - Обработчики проектов (IT-07)
+
+    /// Замыкание для добавления проекта к активному треду.
+    ///
+    /// ЗАЧЕМ CLOSURE, А НЕ ПРЯМАЯ ССЫЛКА:
+    /// ToolExecutionService создаётся при выборе воркспейса (до подключения ModelContainer).
+    /// ProjectStore/ThreadStore создаются позже — когда ModelContainer готов.
+    /// Closure регистрируется ViewModel когда оба условия выполнены.
+    ///
+    /// Принимает: displayName (имя папки)
+    /// Возвращает: строку результата для ответа Чаппи
+    private var addProjectHandler: (@Sendable (String) async -> String)?
+
+    /// Замыкание для удаления проекта из активного треда.
+    ///
+    /// Принимает: displayName (имя проекта для удаления)
+    /// Возвращает: строку результата для ответа Чаппи
+    private var removeProjectHandler: (@Sendable (String) async -> String)?
+
+    /// Замыкание для получения списка проектов активного треда.
+    ///
+    /// Возвращает: строку со списком проектов (JSON-массив имён) для ответа Чаппи
+    private var listProjectsHandler: (@Sendable () async -> String)?
 
     /// Инициализатор сервиса.
     ///
@@ -61,6 +105,33 @@ public actor ToolExecutionService {
         self.mcpBridge = MCPToolBridge(socketPath: socketPath)
     }
 
+    // MARK: - Регистрация обработчиков проектов (IT-07)
+
+    /// Регистрирует обработчики для инструментов управления проектами.
+    ///
+    /// КОГДА ВЫЗЫВАТЬ:
+    /// Из ChappieViewModel.setModelContainer() — после создания ProjectStore и ThreadStore.
+    /// До этого момента инструменты add/remove project будут возвращать ошибку.
+    ///
+    /// ПОЧЕМУ @Sendable:
+    /// Замыкания передаются через actor-границу (из @MainActor ViewModel в actor ToolExecutionService).
+    /// Swift 6 требует @Sendable для таких замыканий.
+    ///
+    /// - Parameters:
+    ///   - addProject: Замыкание добавления проекта (принимает displayName, возвращает результат)
+    ///   - removeProject: Замыкание удаления проекта (принимает displayName, возвращает результат)
+    ///   - listProjects: Замыкание списка проектов (возвращает JSON-строку)
+    public func registerProjectHandlers(
+        addProject: @escaping @Sendable (String) async -> String,
+        removeProject: @escaping @Sendable (String) async -> String,
+        listProjects: @escaping @Sendable () async -> String
+    ) {
+        self.addProjectHandler = addProject
+        self.removeProjectHandler = removeProject
+        self.listProjectsHandler = listProjects
+        print("[ToolExecutionService] ✅ Обработчики проектов зарегистрированы")
+    }
+
     // MARK: - Доступные инструменты
 
     /// Массив доступных ИИ-агенту инструментов.
@@ -68,6 +139,11 @@ public actor ToolExecutionService {
     /// Этот массив передаётся в каждый API-запрос, чтобы модель знала,
     /// какие функции она может вызывать. Список строго соответствует
     /// монофизитной архитектуре: файловая система, память и MCP-инструменты.
+    ///
+    /// ИНСТРУМЕНТЫ ПРОЕКТОВ (IT-07):
+    /// add_project_to_thread, remove_project_from_thread, list_thread_projects —
+    /// позволяют Чаппи управлять проектами в активном треде прямо в процессе разговора.
+    /// Например: "Добавь проект MyApp в текущий тред" → Чаппи вызывает add_project_to_thread.
     public var availableTools: [AITool] {
         return [
             // --- Инструменты файловой системы ---
@@ -246,6 +322,42 @@ public actor ToolExecutionService {
                 name: "read_build_log",
                 description: "Прочитать полный лог последней сборки или запуска тестов.",
                 parameters: AIToolParameters(properties: [:], required: [])
+            )),
+
+            // --- Управление проектами в треде (IT-07) ---
+
+            AITool(function: AIFunctionDefinition(
+                name: "add_project_to_thread",
+                description: "Добавить проект к текущему треду по имени папки. Используй когда пользователь просит привязать проект к беседе или когда задача явно относится к конкретному проекту.",
+                parameters: AIToolParameters(
+                    properties: [
+                        "display_name": AIToolProperty(
+                            type: "string",
+                            description: "Отображаемое имя проекта (имя папки). Например: 'Chappie', 'MyApp', 'Backend'. Должно совпадать с реальным именем папки проекта."
+                        )
+                    ],
+                    required: ["display_name"]
+                )
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "remove_project_from_thread",
+                description: "Убрать проект из текущего треда по имени. Используй когда пользователь просит убрать проект из беседы или задача больше не касается этого проекта.",
+                parameters: AIToolParameters(
+                    properties: [
+                        "display_name": AIToolProperty(
+                            type: "string",
+                            description: "Отображаемое имя проекта для удаления из треда. Должно точно совпадать с именем добавленного проекта."
+                        )
+                    ],
+                    required: ["display_name"]
+                )
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "list_thread_projects",
+                description: "Показать список проектов, привязанных к текущему треду. Используй чтобы узнать какие проекты уже добавлены перед add/remove операциями.",
+                parameters: AIToolParameters(properties: [:], required: [])
             ))
         ]
     }
@@ -388,6 +500,47 @@ public actor ToolExecutionService {
 
             case "read_build_log":
                 return await mcpBridge.execute(tool: "read_build_log")
+
+            // MARK: - Управление проектами в треде (IT-07)
+            //
+            // ПОЧЕМУ ЧЕРЕЗ CALLBACK, А НЕ НАПРЯМУЮ:
+            // ToolExecutionService создаётся при выборе воркспейса — до подключения ModelContainer.
+            // ProjectStore/ThreadStore создаются позже через setModelContainer().
+            // Closure-обработчики регистрируются ViewModel когда все зависимости готовы.
+            // Это классический паттерн "поздней привязки" (late binding) через DI.
+
+            case "add_project_to_thread":
+                // Извлекаем имя проекта из аргументов
+                guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
+                      let displayName = args["display_name"], !displayName.isEmpty else {
+                    return "Ошибка: Аргумент 'display_name' обязателен для add_project_to_thread"
+                }
+
+                // Проверяем что обработчик зарегистрирован
+                guard let handler = addProjectHandler else {
+                    return "Ошибка: Инструменты управления проектами недоступны. Проверьте что ModelContainer подключён (setModelContainer вызван)."
+                }
+
+                return await handler(displayName)
+
+            case "remove_project_from_thread":
+                guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
+                      let displayName = args["display_name"], !displayName.isEmpty else {
+                    return "Ошибка: Аргумент 'display_name' обязателен для remove_project_from_thread"
+                }
+
+                guard let handler = removeProjectHandler else {
+                    return "Ошибка: Инструменты управления проектами недоступны. Проверьте что ModelContainer подключён (setModelContainer вызван)."
+                }
+
+                return await handler(displayName)
+
+            case "list_thread_projects":
+                guard let handler = listProjectsHandler else {
+                    return "Ошибка: Инструменты управления проектами недоступны. Проверьте что ModelContainer подключён (setModelContainer вызван)."
+                }
+
+                return await handler()
 
             default:
                 return "Ошибка: Неизвестный инструмент \(name)"
