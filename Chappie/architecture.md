@@ -1,18 +1,22 @@
 <!--
   Chappie/architecture.md
 
-  ДОКУМЕНТ АРХИТЕКТУРЫ — UI ТАРГЕТ (Chappie.app)
+  ЕДИНЫЙ ДОКУМЕНТ АРХИТЕКТУРЫ — UI ТАРГЕТ (Chappie.app)
 
-  Этот файл — единственный источник архитектурной документации для UI-таргета.
+  Этот файл — единственный источник архитектурной документации для UI-слоя.
   Обновляй при каждом значимом архитектурном изменении.
 -->
 
-# Chappie.app — Архитектура UI-таргета
+# Chappie.app — Архитектура UI-слоя
 
 ## 1. Назначение
 
 **Chappie.app** — тонкая SwiftUI-оболочка над ChappieCore.
-Вся бизнес-логика — в ChappieCore. App-таргет отвечает только за UI.
+Вся бизнес-логика живёт в ChappieCore. UI-таргет отвечает только за:
+- Отображение данных из ViewModel
+- Обработку пользовательского ввода
+- Навигацию и анимации
+- Запуск ChappieMCP хелпера
 
 ---
 
@@ -20,157 +24,137 @@
 
 ```
 Chappie/
-├── architecture.md                     # Этот файл
-├── ChappieApp.swift                    # @main точка входа, ModelContainer
+├── ChappieApp.swift                    # @main, ModelContainer, onAppear
+├── ContentView.swift                   # Дирижёр: собирает компоненты, управляет sheets
 ├── ChappieViewModel.swift              # @Observable @MainActor ViewModel
-├── ContentView.swift                   # "Дирижёр" — собирает компоненты
-│
+├── MCPHelperLauncher.swift             # Запуск ChappieMCP дочернего процесса
 ├── Models/
-│   └── ChatMessage.swift               # UI-модель сообщения (enum с associated values)
-│
-├── Views/
-│   ├── Sidebar/
-│   │   ├── SidebarView.swift           # Боковая панель (только треды)
-│   │   ├── ThreadListView.swift        # Список тредов (ForEach)
-│   │   └── ThreadRowView.swift         # Строка треда (hover/rename/delete)
-│   ├── Chat/
-│   │   ├── ProjectChipsView.swift      # Чипы проектов над чатом (IT-06)
-│   │   ├── ChatScrollView.swift        # Лента сообщений
-│   │   ├── MessageBubbleView.swift     # Пузырь одного сообщения
-│   │   ├── MarkdownTextView.swift      # Рендер Markdown
-│   │   └── StatusBarView.swift         # Строка текущего инструмента
-│   ├── Input/
-│   │   └── InputBarView.swift          # Поле ввода + кнопка отправки
-│   └── Toolbar/
-│       └── ToolbarContent.swift        # Тулбар: баланс + настройки
-│
-└── Settings/
-    ├── SettingsView.swift              # Экран настроек (API-ключ, воркспейс)
-    ├── SettingsManager.swift           # UserDefaults обёртка
-    └── KeychainManager.swift           # Keychain для API-ключа
+│   └── ChatMessage.swift               # UI-модель сообщения (enum с .message/.toolCall)
+├── Settings/
+│   ├── SettingsView.swift              # Sheet настроек приложения (API-ключ)
+│   ├── SettingsManager.swift           # UserDefaults + Keychain для API-ключа
+│   └── KeychainManager.swift           # Keychain wrapper
+└── Views/
+    ├── Chat/
+    │   ├── ChatScrollView.swift         # Лента сообщений
+    │   ├── MessageBubbleView.swift      # Пузырь одного сообщения
+    │   ├── MarkdownTextView.swift       # Рендер Markdown в NSAttributedString
+    │   ├── StatusBarView.swift          # Строка статуса (текущий инструмент)
+    │   ├── ProjectChipsView.swift       # [IT-06, IT-09] Чипы проектов + тап → настройки
+    │   └── ProjectSettingsSheet.swift  # [IT-09] Sheet настроек проекта
+    ├── Input/
+    │   └── InputBarView.swift           # Поле ввода + кнопка отправки
+    ├── Sidebar/
+    │   ├── SidebarView.swift            # Боковая панель (контейнер)
+    │   ├── ThreadListView.swift         # Список тредов
+    │   └── ThreadRowView.swift          # Строка одного треда
+    └── Toolbar/
+        └── ToolbarContent.swift         # Тулбар: баланс + настройки
 ```
 
 ---
 
-## 3. Архитектурные принципы
+## 3. ChappieViewModel
 
-### "Тупой дирижёр" (ContentView)
-ContentView НЕ содержит бизнес-логику. Только собирает компоненты и прокидывает
-данные из ViewModel в View и коллбэки обратно.
+`@Observable @MainActor final class ChappieViewModel`
 
-### "Тупые компоненты" (все View)
-Все View получают данные через параметры, все действия — через коллбэки.
-Никакой прямой работы с SwiftData, ThreadStore, ProjectStore в View.
+### Ключевые свойства
 
-### @Observable + @MainActor
-ChappieViewModel — единственная точка состояния UI.
-@Observable (Swift 5.9+) даёт точечные перерисовки (только изменившиеся свойства).
-@MainActor гарантирует безопасность обновлений из async-контекста.
+| Свойство | Тип | Назначение |
+|----------|-----|------------|
+| `threads` | `[ThreadMetadata]` | Список всех тредов для боковой панели |
+| `activeThread` | `ThreadMetadata?` | Активный тред |
+| `activeProjects` | `[ProjectMetadata]` | Проекты активного треда |
+| `activeMemoryContext` | `MemoryContext` | Контекст для system prompt (IT-09: с settings) |
+| `messages` | `[ChatMessage]` | Полная история (UI + legacy) |
+| `isThinking` | `Bool` | Индикатор загрузки |
+| `streamingText` | `String` | Текущий стриминговый ответ |
+| `runningCost` | `Double` | Накопленная стоимость запроса |
 
----
+### Ключевые методы
 
-## 4. Тулбар (UI-FIX-02)
+| Метод | Назначение |
+|-------|------------|
+| `setModelContainer(_:)` | Подключает SwiftData, регистрирует обработчики |
+| `selectThread(_:)` | Загружает тред + проекты + синхронизирует контекст |
+| `addProject(url:)` | Добавляет проект через NSOpenPanel bookmark |
+| `removeProject(id:)` | Убирает проект из треда |
+| `updateProjectSettings(_:forProjectId:)` | **[IT-09]** Сохраняет настройки проекта |
+| `buildAndSyncMemoryContext()` | Собирает MemoryContext с settings (IT-09) |
+| `syncActiveMemoryContext()` | Синхронизирует ToolExecutionService (context + settings) |
+| `send(prompt:)` | Отправляет запрос в AIOrchestrator |
 
-**Состав тулбара:** только баланс (если загружен) + кнопка настроек ⚙️.
+### Поток данных при смене треда
 
-**ПОЧЕМУ НЕТ ВОРКСПЕЙСА В ТУЛБАРЕ:**
-Воркспейс — техническая настройка (рабочая папка для инструментов read_file/write_file).
-Она не связана с тредами и проектами пользователя.
-Её место — в SettingsView, а не в основном тулбаре.
-Тулбар должен быть минималистичным.
-
-**ВИЗУАЛЬНЫЙ СИГНАЛ:**
-Шестерёнка ⚙️ становится оранжевой если API-ключ не задан.
-Это мягкое напоминание без агрессивных алертов.
-
----
-
-## 5. Боковая панель (IT-05)
-
-**Содержит ТОЛЬКО треды** — как в ChatGPT/Claude.
-
-**Поведение:**
-- Список тредов отсортирован по updatedAt DESC (свежий — сверху)
-- Активный тред подсвечивается акцентным цветом
-- Hover → кнопка удаления
-- Двойной клик → inline переименование
-- Правый клик → контекстное меню (переименовать, удалить)
-- Кнопка "Новый тред" закреплена внизу
-- При удалении последнего треда → автосоздание нового
-
-**ПОЧЕМУ НЕТ ВОРКСПЕЙСА В САЙДБАРЕ:**
-Воркспейс — глобальная настройка приложения, не per-тред навигация.
-Смешивать их в одной панели создаёт путаницу.
+```
+selectThread()
+  → loadProjectsForThread()      ← ProjectStore → activeProjects
+  → buildAndSyncMemoryContext()  ← activeProjects → MemoryContext (с settings IT-09)
+  → syncActiveMemoryContext()    ← ToolExecutionService.setActiveMemoryContext()
+                                 ← ToolExecutionService.setProjectSettings() (IT-09)
+```
 
 ---
 
-## 6. Плашки проектов (IT-06, UI-FIX-02)
+## 4. IT-09: ProjectSettingsSheet
 
-**Компонент:** `ProjectChipsView` — над лентой сообщений.
+**Открывается:** тап на чип проекта в ProjectChipsView → `onOpenSettings(UUID)` → `ContentView.selectedProjectForSettings`
 
-**Видимость:**
-Показывается ТОЛЬКО когда `viewModel.activeThread != nil`.
-Без треда — строка не отображается (нет смысла добавлять проекты без контекста).
-Приложение всегда автоматически выбирает/создаёт тред при старте.
+**Паттерн:** "тупой компонент" — не знает о SwiftData.
+- Принимает `ProjectMetadata` и `onSave: (ProjectSettings) -> Void`
+- Редактирует `@State draft: ProjectSettings` (копия, не оригинал)
+- При "Сохранить" → `onSave(draft)` → `viewModel.updateProjectSettings()`
 
-**Поведение чипов:**
-- Горизонтальный скролл
-- Hover → кнопка "×" для удаления проекта из треда
-- Кнопка "+" → NSOpenPanel → выбор папки → addProject(url:)
-- При удалении — UUID убирается из projectBindingsJSON (ProjectEntity НЕ удаляется)
+**Логика разблокировки:**
+```
+.advisor → только роль + язык (расширенные настройки скрыты)
+.executor + !isProgrammingProject → роль + язык + флаг типа проекта
+.executor + isProgrammingProject → всё: git, тесты, архитектура, комментарии
+```
 
-**ПОЧЕМУ NSOpenPanel, А НЕ .fileImporter:**
-.fileImporter в SwiftUI не позволяет настроить canChooseFiles: false, canChooseDirectories: true.
-NSOpenPanel даёт полный контроль над диалогом выбора папки.
+**Алерт при downgrade:** executor → advisor → алерт → `downgradeToAdvisor()` сбрасывает все флаги
 
----
-
-## 7. Воркспейс (рабочая папка)
-
-**Что это:** папка проекта для инструментов read_file/write_file/list_files.
-**Хранится:** security-scoped bookmark в UserDefaults ("workspaceBookmark").
-**Восстанавливается:** при старте через `loadWorkspaceWithSecurityScope()`.
-**Выбирается:** через SettingsView (TODO: добавить кнопку в Settings).
-
-**ОТЛИЧИЕ ОТ "ПРОЕКТА ТРЕДА":**
-Воркспейс — один на всё приложение, технический.
-Проект треда (ProjectEntity) — per-тред, для контекста памяти.
-Это разные концепции!
+**Индикатор роли в чипе:**
+- 🔒 (lock.fill) = advisor
+- ⚡ (bolt.fill) = executor
 
 ---
 
-## 8. SwiftData (IT-01..IT-06)
+## 5. ContentView — управление sheets
 
-**ModelContainer создаётся в ChappieApp.swift** и передаётся через `.modelContainer()`.
-**ContentView.onAppear** вызывает `viewModel.setModelContainer(modelContext.container)`.
-**setModelContainer() идемпотентен** — повторные вызовы игнорируются.
-
-**Сторы создаются в ViewModel:**
-- `MemoryStore` — трёхуровневая память (global/project/thread)
-- `ThreadStore` — треды и их история
-- `ProjectStore` — проекты
-
----
-
-## 9. Система памяти и system prompt
-
-**Три уровня памяти (IT-03):**
-1. Глобальная (scope="global") — факты о пользователе, стиль общения
-2. Проектная (scope="<projectId>") — архитектура проекта, договорённости
-3. Тредовая (scope="<threadId>") — контекст текущей задачи
-
-**Автоматическое подмешивание:**
-`MemoryManager.buildSystemPrompt()` вызывается перед каждым запросом.
-Чаппи ВСЕГДА видит всю свою память — не нужно явно вызывать recall.
-
-**MemoryContext:**
 ```swift
-struct MemoryContext: Sendable {
-    let threadId: UUID?      // для тредовой памяти
-    let projectIds: [UUID]   // для проектной памяти
+// Sheet настроек приложения
+.sheet(isPresented: $showSettings) { SettingsView() }
+
+// Sheet настроек проекта (IT-09)
+.sheet(item: $selectedProjectForSettings) { project in
+    ProjectSettingsSheet(
+        project: project,
+        onSave: { viewModel.updateProjectSettings($0, forProjectId: project.id) },
+        onDismiss: { selectedProjectForSettings = nil }
+    )
 }
 ```
-Заполняется из `activeThread` при выборе треда.
+
+---
+
+## 6. MCPHelperLauncher
+
+Управляет жизненным циклом ChappieMCP дочернего процесса.
+
+**Правило:** запускается ТОЛЬКО когда известен путь к воркспейсу:
+- `loadWorkspaceWithSecurityScope()` → `launch(workspacePath:)`
+- `setWorkspace()` → `restartWithWorkspace()`
+- `ChappieApp.onAppear` НЕ вызывает launch() (путь ещё неизвестен)
+
+---
+
+## 7. Security-Scoped Bookmarks
+
+Для каждой папки проекта создаётся security-scoped bookmark.
+Хранится в `ProjectEntity.bookmarkData` (SwiftData).
+При добавлении через инструмент `add_project_to_thread` — bookmark пустой (Data()).
+Пользователь добавляет через UI с реальным bookmark.
 
 ---
 
@@ -178,12 +162,6 @@ struct MemoryContext: Sendable {
 
 | Date | Change |
 |------|--------|
-| 2025-07-XX | UI-FIX-02: убрана кнопка воркспейса из тулбара, упрощён ProjectChipsView (убран isThreadActive), плашки показываются только при activeThread != nil |
-| 2025-07-XX | UI-FIX-01: убрана секция воркспейса из SidebarView, добавлена в тулбар (отменено в UI-FIX-02) |
-| 2025-07-XX | IT-07: инструменты add/remove/list_thread_projects, registerProjectHandlers() |
-| 2025-07-XX | IT-06: ProjectChipsView, addProject/removeProject в ViewModel |
-| 2025-07-XX | IT-05: ThreadListView, ThreadRowView, SidebarView с тредами |
-| 2025-07-XX | IT-04: MigrationService, setModelContainer() в ViewModel |
-| 2025-07-XX | IT-03: MemoryStore, buildSystemPrompt(), MemoryContext |
-| 2025-07-XX | IT-02: динамический AppConfig, activeThreadSettings |
-| 2025-07-XX | IT-01: SwiftData модели, ModelContainer в ChappieApp |
+| 2026-05-26 | IT-09 ✅: ProjectSettingsSheet, ProjectChipsView.onOpenSettings, ContentView.sheet(item:), ChappieViewModel.updateProjectSettings(), buildAndSyncMemoryContext() с settings |
+| 2025-07-XX | IT-06..IT-08 завершён: ProjectChipsView, плашки проектов, UUID-based память |
+| 2025-07-XX | IT-05: SidebarView, ThreadListView, ThreadRowView |

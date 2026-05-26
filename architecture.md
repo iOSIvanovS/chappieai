@@ -90,14 +90,9 @@ ChappieMCP
 **Миграция выполняется ОДИН РАЗ** при первом запуске новой версии через `MigrationService`.
 Флаг `UserDefaults["migration_v1_done"]` предотвращает повторную миграцию.
 
-**Путь:** `<workspaceURL>/chat_history.json` (прямо в корне проекта)
-
-Управляется `ChatHistoryManager` в ChappieCore — продолжает работать параллельно
-до полного перехода на SwiftData в IT-05.
-
 ---
 
-## 6. Структура памяти — ФИНАЛЬНАЯ (IT-08 ✅)
+## 6. Структура памяти — ФИНАЛЬНАЯ (IT-08 ✅, IT-09 ✅)
 
 Три уровня памяти, все в SwiftData:
 
@@ -108,94 +103,50 @@ ChappieMCP
 | Тредовая | SwiftData MemoryEntity scope="<threadId UUID>" | memorize(scope="thread") |
 | Документация таргетов | `<target>/architecture.md` | write_file вручную |
 
-**АВТОМАТИЧЕСКОЕ ПОДМЕШИВАНИЕ В SYSTEM PROMPT:**
-`MemoryManager.buildSystemPrompt(basePrompt:threadId:projectIds:)` собирает полный промпт:
-1. Базовый промпт (захардкоженные правила Чаппи)
-2. Глобальная память (scope="global") — из SwiftData
-3. Проектная память (scope="<projectId>") — для каждого проекта в треде
-4. Тредовая память (scope="<threadId>") — контекст текущей задачи
+**АВТОМАТИЧЕСКОЕ ПОДМЕШИВАНИЕ В SYSTEM PROMPT (IT-09 ✅):**
 
-**УМНЫЙ SCOPE-МАППИНГ (IT-08 ✅):**
-`ToolExecutionService.resolveScope()` маппирует параметры инструментов → UUID scope:
-- `scope="global"` → "global"
-- `scope="thread"` → UUID активного треда (из ActiveMemoryContext.threadId)
-- `targetName="Chappie"` → UUID проекта с именем "Chappie" (из ActiveMemoryContext.projects)
+Структура итогового промпта:
+```
+[базовый промпт — правила Чаппи]
 
-**ActiveMemoryContext передаётся из ChappieViewModel:**
-`syncActiveMemoryContext()` собирает реальные UUID из activeThread + activeProjects
-и передаёт в ToolExecutionService через `setActiveMemoryContext()`.
-Вызывается при: selectThread(), addProject(), removeProject(), reloadAfterProjectChange().
+---
+## Memory Context
 
-**РАЗРЕШЕНИЕ КОНФЛИКТОВ (IT-08 ✅):**
-Если инструкции в разных уровнях памяти противоречат — Чаппи ОСТАНАВЛИВАЕТСЯ,
-объясняет конфликт пользователю и ждёт решения. Правило в baseSystemPrompt.
+## Project Settings: Chappie          ← IT-09: права агента (первым!)
+- Role: EXECUTOR
+- Git: write [git_status, git_add, ...]
+...
 
-**МИГРАЦИЯ (IT-04 ✅):**
-- `MigrationService.migrate()` — идемпотентный, флаг `UserDefaults["migration_v1_done"]`
-- chat_history.json → ThreadEntity "Основной" в SwiftData
-- semantic.json → MemoryEntity scope="global" в SwiftData
-- Старые файлы НЕ удаляются (backup)
+## Global Memory
+## Project Memory: Chappie
+## Thread Context
+```
+
+**ПРАВА АГЕНТА (IT-09 ✅):**
+`ProjectSettings` хранится в `ProjectEntity.settingsJSON`.
+Роль по умолчанию: `.advisor` (только чтение).
+`ToolExecutionService.checkToolAccess()` проверяет права перед каждым инструментом.
+`git_diff` НИКОГДА не разрешён — железный запрет в коде.
 
 ---
 
 ## 7. Группа 📚 Docs в Xcode Navigator
-
-**Проблема:** Файлы `architecture.md` лежат в корнях таргетов — Xcode их не показывает в Navigator автоматически.
 
 **Решение:** Группа `📚 Docs` добавлена в `project.pbxproj` как чисто навигационная PBXGroup.
 - UUID корневой группы: `87DOCS0000000000000000000`
 - Файлы: 5 PBXFileReference с UUID `87DOCS000000000000000000[1-5]`
 - **НЕ участвует в сборке**, **НЕ копируется в бандл**
 
-**УПРАВЛЕНИЕ ГРУППОЙ — ТОЛЬКО ВРУЧНУЮ:**
-`XcodeDocsGroupManager.swift` был УДАЛЁН (2025-07-10).
-Причина: автоматическая запись `project.pbxproj` при каждом запуске приложения
-повреждала файл проекта и вызывала `"Failed to load container for document at url: ..."` в Xcode.
-Текстовая манипуляция pbxproj слишком хрупка для автоматизации.
-
-**ПРАВИЛО:** При добавлении нового таргета — Чаппи ВРУЧНУЮ обновляет `project.pbxproj`
-через `write_file`, добавляя:
-1. Новую строку `PBXFileReference` в секцию `/* Begin PBXFileReference section */`
-2. Новую строку в `children = (` группы `87DOCS0000000000000000000`
+**УПРАВЛЕНИЕ ГРУППОЙ — ТОЛЬКО ВРУЧНУЮ** через `write_file` в `project.pbxproj`.
+Автоматическая запись pbxproj была удалена (XcodeDocsGroupManager.swift) — повреждала файл проекта.
 
 ---
 
-## 8. Зависания build_project и run_tests — КОРНЕВАЯ ПРИЧИНА И РЕШЕНИЕ
+## 8. Зависания build_project и run_tests — РЕШЕНО (2025-07-11)
 
-### Причина 1: Дедлок Pipe (ИСПРАВЛЕНО 2025-07-11)
-
-**Симптом:** `build_project` и `run_tests` зависали навсегда.
-
-**Корневая причина — дедлок Pipe:**
-```
-process.waitUntilExit()          ← ждёт завершения процесса
-// ... после этого ...
-pipe.readDataToEndOfFile()       ← читаем вывод
-```
-Pipe имеет буфер ~64KB. xcodebuild пишет МНОГО вывода (1000+ строк).
-Когда буфер заполняется — xcodebuild блокируется в ожидании чтения.
-Но мы читаем ПОСЛЕ waitUntilExit(). **Взаимная блокировка навсегда.**
-
-**Решение:** читать stdout/stderr в отдельных DispatchQueue **параллельно** с waitUntilExit():
-```swift
-readGroup.enter()
-DispatchQueue.global(qos: .utility).async {
-    stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-    readGroup.leave()
-}
-try process.run()
-process.waitUntilExit()
-readGroup.wait()
-```
-
-### Причина 2: Нет явного destination (ИСПРАВЛЕНО 2025-07-11)
-
-Без явного `arch` xcodebuild на macOS 26 beta зависал, выбирая между устройствами.
-**Решение:** добавлен явный `-destination "platform=macOS,arch=arm64"` для обеих команд.
-
-### Причина 3: Таймаут как последняя линия защиты
-
-Таймаут 300с остаётся как страховка от зависания.
+**Причина:** дедлок Pipe — xcodebuild ждёт чтения stdout, мы ждём завершения процесса.
+**Решение:** читать stdout/stderr в отдельных DispatchQueue параллельно с waitUntilExit().
+**Дополнительно:** явный `-destination "platform=macOS,arch=arm64"` для xcodebuild.
 
 ---
 
@@ -208,37 +159,24 @@ readGroup.wait()
 
 ---
 
-## 10. REFACTOR-THREADS — Большой рефакторинг: треды, проекты, SwiftData
+## 10. Пайплайн работы в проекте
 
-### Статус: ✅ ПОЛНОСТЬЮ ЗАВЕРШЁН (IT-01 ✅ → IT-08 ✅)
+Зафиксирован по договорённости с пользователем:
 
-### Ключевые архитектурные решения
-
-**Принцип JSON-сериализации в SwiftData:**
-Вместо того чтобы хранить Swift-модели напрямую в SwiftData (проблемы миграции схемы),
-мы храним только примитивы и `Data`. Все сложные объекты сериализуются через JSONEncoder
-и хранятся как `Data`. При чтении — JSONDecoder. Это даёт нам свободу эволюции моделей
-без болезненных SwiftData-миграций.
-
-**Три уровня памяти в system prompt (IT-03, IT-08 ✅):**
-1. Глобальная память — факты о пользователе, стиль общения, кросс-проектные знания
-2. Проектная память — архитектура конкретного проекта, пайплайны, договорённости
-3. Тредовая память — контекст текущей задачи, временные заметки
-
-**Инструменты управления проектами — паттерн Callback/Closure (IT-07 ✅):**
-ToolExecutionService живёт в ChappieCore, ProjectStore/ThreadStore — тоже в ChappieCore,
-но управляются из Chappie.app. Прямая ссылка создала бы проблемы с зависимостями.
-Решение: ViewModel регистрирует @Sendable замыкания в ToolExecutionService через
-`registerProjectHandlers()`. Замыкания вызываются когда Чаппи использует инструменты.
-
-**UUID-based scope памяти (IT-08 ✅):**
-Инструменты памяти работают с реальными UUID из SwiftData.
-ActiveMemoryContext (threadId UUID + [ProjectInfo{id, name}]) передаётся из ViewModel.
-resolveScope() маппирует scope="thread"/"global" и targetName → UUID строку для MemoryStore.
+1. `git commit` — сохранить checkpoint перед рефакторингом
+2. Реализовать изменения
+3. Добавить unit-тесты если нужно (для бизнес-логики, не тривиального UI)
+4. `build_project`
+5. `run_tests` (только после зелёного билда)
+6. Фиксировать ошибки до консистентного состояния
+7. `git commit`
+8. Отчитаться пользователю
 
 ---
 
-## 11. Пошаговый план итераций REFACTOR-THREADS
+## 11. REFACTOR-THREADS + PROJECT SETTINGS
+
+### Статус: ✅ ПОЛНОСТЬЮ ЗАВЕРШЁН (IT-01 → IT-09 ✅)
 
 | # | Итерация | Статус |
 |---|---|---|
@@ -250,19 +188,7 @@ resolveScope() маппирует scope="thread"/"global" и targetName → UUID
 | IT-06 | UI: плашки проектов в треде | ✅ ГОТОВО |
 | IT-07 | Инструменты add/remove project | ✅ ГОТОВО |
 | IT-08 | Переработка инструментов памяти (SwiftData + умный UUID scope) | ✅ ГОТОВО |
-
----
-
-## 12. История чата (TD-03)
-
-**Путь:** `<workspaceURL>/chat_history.json` (прямо в корне проекта)
-
-Управляется `ChatHistoryManager` в ChappieCore.
-
-**Ключевые решения:**
-- Файл лежит в КОРНЕ воркспейса (не в AI_Docs/ — папка упразднена).
-- Автоматическое подрезание до 100 сообщений при каждом сохранении.
-- После IT-05 — история хранится в ThreadStore (SwiftData), ChatHistoryManager устаревает.
+| IT-09 | ProjectSettings — роль агента и права доступа | ✅ ГОТОВО |
 
 ---
 
@@ -270,13 +196,14 @@ resolveScope() маппирует scope="thread"/"global" и targetName → UUID
 
 | Date | Change |
 |------|--------|
-| 2025-07-XX | IT-08 ✅ ЗАВЕРШЁН: ActiveMemoryContext, UUID-based scope, resolveScope(), syncActiveMemoryContext(), конфликт-резолюция в baseSystemPrompt |
-| 2025-07-XX | IT-07 ГОТОВО: add/remove/list_thread_projects инструменты, registerProjectHandlers() в ToolExecutionService |
+| 2026-05-26 | IT-09 ✅: ProjectSettings (AgentRole, GitAccessLevel, TestsAccessLevel, ProjectLanguage), ProjectSettingsSheet UI, ToolExecutionService.checkToolAccess(), блок прав в system prompt |
+| 2025-07-XX | IT-08 ✅: ActiveMemoryContext, UUID-based scope, resolveScope(), syncActiveMemoryContext() |
+| 2025-07-XX | IT-07 ГОТОВО: add/remove/list_thread_projects инструменты |
 | 2025-07-XX | IT-06 ГОТОВО: ProjectChipsView, ChappieViewModel addProject/removeProject |
 | 2025-07-XX | IT-05 ГОТОВО: ThreadListView, ThreadRowView, SidebarView с тредами |
 | 2025-07-XX | IT-04 ГОТОВО: MigrationService (chat_history.json + semantic.json → SwiftData) |
 | 2025-07-XX | IT-03 ГОТОВО: MemoryStore (SwiftData CRUD), buildSystemPrompt() с трёхуровневой памятью |
-| 2025-07-XX | IT-02 ГОТОВО: динамический AppConfig, tokenBudget = maxMessages × 500 |
-| 2025-07-XX | IT-01 ГОТОВО: SwiftData модели (ThreadEntity, ProjectEntity, MemoryEntity) |
+| 2025-07-XX | IT-02 ГОТОВО: динамический AppConfig |
+| 2025-07-XX | IT-01 ГОТОВО: SwiftData модели |
 | 2025-07-11 | РЕШЕНО TD-01: исправлен дедлок Pipe в BuildTools.swift |
 | 2025-07-10 | КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: удалён XcodeDocsGroupManager |
