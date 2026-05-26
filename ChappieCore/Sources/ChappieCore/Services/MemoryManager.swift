@@ -38,17 +38,11 @@
 //
 //   ~/Documents/Chappie/semantic.json   — LEGACY файл (только для миграции и фолбэка).
 //
-//   <WorkspaceRoot>/
-//   ├── architecture.md                 — архитектура всего проекта (корень воркспейса)
-//   ├── Chappie/architecture.md         — архитектура таргета
-//   ├── ChappieCore/architecture.md
-//   ├── ChappieCoreTests/architecture.md
-//   └── ChappieMCP/architecture.md
-//
-// РОЛЬ architecture.md:
-// Это ДОКУМЕНТАЦИЯ, а не данные. Чаппи читает и пишет его через инструменты
-// read_file/write_file как обычный текстовый файл. MemoryManager его не трогает
-// (только создаёт шаблон при первом обнаружении нового таргета).
+// ФАЙЛЫ АРХИТЕКТУРЫ (architecture.md):
+// Это ДОКУМЕНТАЦИЯ, а не данные. Чаппи читает и пишет их через инструменты
+// read_file/write_file как обычные текстовые файлы.
+// MemoryManager НЕ создаёт и НЕ управляет architecture.md автоматически.
+// Файлы архитектуры создаются ТОЛЬКО вручную по договорённости с пользователем.
 //
 // БЕЗ ЭМОДЗИ В SYSTEM PROMPT (MEMORY-ENGLISH + TOKEN-EFFICIENCY):
 // Все заголовки секций памяти в buildSystemPrompt() — только чистый текст без эмодзи.
@@ -96,28 +90,19 @@ public enum TargetKind: Sendable {
 
 /// Описание одного таргета воркспейса.
 ///
-/// WorkspaceTarget хранит только путь к architecture.md — единственному файлу,
-/// которым управляет MemoryManager для каждого таргета.
-/// semantic.json больше НЕ является частью таргета — он глобальный.
+/// WorkspaceTarget хранит метаданные о директории таргета.
+/// Используется для сканирования структуры проекта.
 ///
 /// Структура намеренно сделана Sendable для безопасной передачи между акторами в Swift 6.
 public struct WorkspaceTarget: Sendable {
     public let name: String
     public let directoryURL: URL
-
-    /// Путь к единому файлу архитектуры таргета: <target>/architecture.md.
-    /// Это единственный файл, которым MemoryManager управляет в директории таргета.
-    public let architectureFileURL: URL
-
     public let kind: TargetKind
 
     init(name: String, directoryURL: URL, kind: TargetKind) {
         self.name = name
         self.directoryURL = directoryURL
         self.kind = kind
-
-        // architecture.md лежит прямо в корне таргета — без подпапок.
-        self.architectureFileURL = directoryURL.appendingPathComponent("architecture.md")
     }
 }
 
@@ -141,7 +126,6 @@ public struct TargetScanResult: Sendable {
 /// Архитектура хранения (IT-08):
 /// - Трёхуровневая память: SwiftData через MemoryStore (основной путь)
 /// - Legacy-память: ~/Documents/Chappie/semantic.json (только для миграции/фолбэка)
-/// - Документация таргетов: <Workspace>/<TargetName>/architecture.md
 ///
 /// Почему actor: MemoryManager работает с файловой системой из нескольких мест
 /// параллельно. Actor гарантирует сериализацию доступа и отсутствие гонок данных
@@ -203,7 +187,15 @@ public actor MemoryManager {
 
     // MARK: - Публичный метод инициализации
 
-    /// Инициализирует файловую структуру памяти для всего воркспейса.
+    /// Инициализирует файловую структуру памяти для воркспейса.
+    ///
+    /// Что происходит при инициализации:
+    /// 1. Создаётся глобальный файл semantic.json (legacy)
+    /// 2. Сканируются таргеты воркспейса
+    /// 3. Очищаются legacy-папки AI_Docs
+    ///
+    /// ВАЖНО: architecture.md файлы НЕ создаются автоматически.
+    /// Они создаются только вручную по договорённости с пользователем.
     public func initializeWorkspaceMemory() async {
         guard !isInitialized else { return }
 
@@ -213,10 +205,6 @@ public actor MemoryManager {
 
         let discovered = discoverTargets()
         self.targets = discovered
-
-        for target in targets {
-            setupTargetFiles(for: target)
-        }
 
         cleanupLegacyFiles()
 
@@ -245,18 +233,7 @@ public actor MemoryManager {
     /// - [task] current_task: Thread refactoring
     /// ```
     ///
-    /// ПОЧЕМУ БЕЗ ЭМОДЗИ (MEMORY-ENGLISH + TOKEN-EFFICIENCY):
-    /// Эмодзи = 2-4 токена каждый. При ~30 эмодзи в промпте = ~90 токенов впустую.
-    /// Чистый ASCII лучше кэшируется и стабильнее токенизируется.
-    ///
-    /// ПОЧЕМУ ПОДМЕШИВАЕМ В ПРОМПТ, А НЕ ЧИТАЕМ ПО ТРЕБОВАНИЮ:
-    /// Чаппи не может "вспомнить" то, о чём не знает. Если память не подмешана
-    /// в промпт — она недоступна модели без явного вызова инструмента recall.
-    /// Автоматическое подмешивание гарантирует что модель ВСЕГДА видит контекст.
-    ///
-    /// FALLBACK:
-    /// Если MemoryStore не подключён (SwiftData недоступен) — возвращает только
-    /// базовый промпт. Это гарантирует работу системы даже без SwiftData.
+    /// FALLBACK: если MemoryStore не подключён — возвращает только базовый промпт.
     ///
     /// - Parameters:
     ///   - basePrompt: Базовый system prompt (захардкоженные правила)
@@ -266,27 +243,21 @@ public actor MemoryManager {
         basePrompt: String,
         memoryContext: MemoryContext
     ) async -> String {
-        // Если SwiftData бэкенд не подключён — возвращаем базовый промпт как есть.
-        // Это нормальная ситуация при первом запуске или в тестах.
         guard let store = memoryStore else {
             print("[MemoryManager] MemoryStore not connected, using base prompt only")
             return basePrompt
         }
 
-        // Собираем список scope для загрузки
         var scopes: [String] = ["global"]
 
-        // Добавляем scope каждого проекта по его UUID
         for info in memoryContext.projectInfos {
             scopes.append(info.id.uuidString)
         }
 
-        // Добавляем scope треда если задан
         if let threadId = memoryContext.threadId {
             scopes.append(threadId.uuidString)
         }
 
-        // Загружаем все записи одним запросом к SwiftData
         let entriesByScope: [String: [MemoryEntry]]
         do {
             entriesByScope = try await store.readEntriesForScopes(scopes)
@@ -295,12 +266,8 @@ public actor MemoryManager {
             return basePrompt
         }
 
-        // Собираем блоки памяти для промпта
         var memoryBlocks: [String] = []
 
-        // --- БЛОК 1: Глобальная память ---
-        // Объединяем SwiftData записи и legacy-записи из файла.
-        // Заголовок без эмодзи — чистый ASCII для эффективного кэширования.
         let globalSwiftDataEntries = entriesByScope["global"] ?? []
         let legacyEntries = loadLegacyMemoryForPrompt()
         let globalBlock = buildMemoryBlock(
@@ -312,25 +279,16 @@ public actor MemoryManager {
             memoryBlocks.append(block)
         }
 
-        // --- БЛОК 2: Проектная память ---
-        // Для каждого проекта — отдельный блок с именем проекта в заголовке.
-        // Заголовок: "Project Memory: Chappie" — без эмодзи, чистый ASCII.
-        //
-        // ПОЧЕМУ ИМЕНА (IT-08 финал):
-        // Модель понимает КАКОЙ проект — особенно важно при нескольких проектах в треде.
         for info in memoryContext.projectInfos {
             let projectEntries = entriesByScope[info.id.uuidString] ?? []
             guard !projectEntries.isEmpty else { continue }
 
             let tempEntity = MemoryEntity(scope: info.id.uuidString, entries: projectEntries)
-            // Заголовок: "Project Memory: Chappie" — информативно, без эмодзи
             if let block = tempEntity.formatForPrompt(title: "Project Memory: \(info.name)") {
                 memoryBlocks.append(block)
             }
         }
 
-        // --- БЛОК 3: Тредовая память ---
-        // Заголовок: "Thread Context" — без эмодзи.
         if let threadId = memoryContext.threadId {
             let threadEntries = entriesByScope[threadId.uuidString] ?? []
             if !threadEntries.isEmpty {
@@ -341,13 +299,10 @@ public actor MemoryManager {
             }
         }
 
-        // Если нет ни одного блока памяти — возвращаем базовый промпт без изменений
         guard !memoryBlocks.isEmpty else {
             return basePrompt
         }
 
-        // Собираем финальный промпт: базовый + разделитель + блоки памяти.
-        // Заголовок секции без эмодзи — чистый ASCII.
         let memorySectionHeader = "---\n## Memory Context"
         let memorySection = ([memorySectionHeader] + memoryBlocks).joined(separator: "\n\n")
 
@@ -358,10 +313,6 @@ public actor MemoryManager {
 
     /// Старая сигнатура buildSystemPrompt — сохранена для обратной совместимости.
     ///
-    /// ПОЧЕМУ ОСТАВЛЕНА:
-    /// Некоторые тесты и старый код могут вызывать buildSystemPrompt с отдельными параметрами.
-    /// Этот метод создаёт MemoryContext из переданных параметров и делегирует новому методу.
-    ///
     /// ОГРАНИЧЕНИЕ: projectIds без имён — заголовки блоков будут "Project Memory: <UUID>".
     /// Используй buildSystemPrompt(basePrompt:memoryContext:) для правильных имён.
     public func buildSystemPrompt(
@@ -369,8 +320,6 @@ public actor MemoryManager {
         threadId: UUID?,
         projectIds: [UUID]
     ) async -> String {
-        // Создаём MemoryContext без имён — заголовки будут "Project Memory: <UUID>"
-        // Это лучше чем ничего, но для правильных имён нужна новая сигнатура.
         let projectInfos = projectIds.map { id in
             MemoryContext.ProjectInfo(id: id, name: id.uuidString)
         }
@@ -381,19 +330,9 @@ public actor MemoryManager {
     // MARK: - UUID-based методы памяти (IT-08, основной путь)
 
     /// Сохраняет запись в памяти по UUID-scope.
-    ///
-    /// ОСНОВНОЙ МЕТОД (IT-08): пишет напрямую в MemoryStore (SwiftData).
-    /// Вызывается из ToolExecutionService после resolveScope().
-    ///
-    /// - Parameters:
-    ///   - key: Уникальный ключ записи в рамках scope
-    ///   - type: Тип записи (fact, rule, persona, project_map и т.д.)
-    ///   - jsonString: Содержимое в формате JSON-строки
-    ///   - scope: Строка scope ("global", UUID треда, UUID проекта)
-    /// - Returns: nil при успехе, строка ошибки при неудаче
+    /// Пишет напрямую в MemoryStore (SwiftData). Фолбэк на legacy-файл если SwiftData недоступен.
     public func saveMemoryEntry(key: String, type: String, jsonString: String, scope: String) async -> String? {
         guard let store = memoryStore else {
-            // Фолбэк на legacy если SwiftData недоступен
             writeRecord(key: key, type: type, data: jsonString, to: globalFileURL)
             print("[MemoryManager] MemoryStore unavailable, saved to legacy file")
             return nil
@@ -408,16 +347,9 @@ public actor MemoryManager {
     }
 
     /// Читает одну запись по ключу из UUID-scope.
-    ///
-    /// ОСНОВНОЙ МЕТОД (IT-08): читает из MemoryStore (SwiftData).
-    ///
-    /// - Parameters:
-    ///   - key: Ключ записи
-    ///   - scope: Строка scope
-    /// - Returns: JSON-строка содержимого или nil если не найдено
+    /// Читает из MemoryStore (SwiftData). Фолбэк на legacy-файл если SwiftData недоступен.
     public func readMemoryEntry(key: String, scope: String) async -> String? {
         guard let store = memoryStore else {
-            // Фолбэк на legacy
             let storage = readStorage(at: globalFileURL)
             return storage[key]?.data
         }
@@ -431,16 +363,9 @@ public actor MemoryManager {
     }
 
     /// Ищет все записи указанного типа в UUID-scope.
-    ///
-    /// ОСНОВНОЙ МЕТОД (IT-08): ищет в MemoryStore (SwiftData).
-    ///
-    /// - Parameters:
-    ///   - type: Тип записи для фильтрации
-    ///   - scope: Строка scope
-    /// - Returns: Словарь [ключ: JSON-строка]
+    /// Ищет в MemoryStore (SwiftData). Фолбэк на legacy-файл если SwiftData недоступен.
     public func searchMemoryEntries(type: String, scope: String) async -> [String: String] {
         guard let store = memoryStore else {
-            // Фолбэк на legacy
             let storage = readStorage(at: globalFileURL)
             var results: [String: String] = [:]
             for (k, v) in storage where v.type == type {
@@ -458,16 +383,9 @@ public actor MemoryManager {
     }
 
     /// Удаляет запись по ключу из UUID-scope.
-    ///
-    /// ОСНОВНОЙ МЕТОД (IT-08): удаляет из MemoryStore (SwiftData).
-    ///
-    /// - Parameters:
-    ///   - key: Ключ записи
-    ///   - scope: Строка scope
-    /// - Returns: nil при успехе, строка ошибки при неудаче
+    /// Удаляет из MemoryStore (SwiftData). Фолбэк на legacy-файл если SwiftData недоступен.
     public func deleteMemoryEntry(key: String, scope: String) async -> String? {
         guard let store = memoryStore else {
-            // Фолбэк на legacy
             var storage = readStorage(at: globalFileURL)
             storage.removeValue(forKey: key)
             writeStorage(storage, to: globalFileURL)
@@ -486,16 +404,14 @@ public actor MemoryManager {
     // Сохранены для обратной совместимости с тестами и MigrationService.
 
     /// Сохраняет запись в памяти по ключу (legacy метод).
-    ///
-    /// LEGACY МЕТОД: пишет в ~/Documents/Chappie/semantic.json.
+    /// Пишет в ~/Documents/Chappie/semantic.json.
     public func saveMemory(key: String, type: String, jsonString: String, scope: MemoryScope = .project, targetName: String? = nil) async {
         await ensureInitialized()
         writeRecord(key: key, type: type, data: jsonString, to: globalFileURL)
     }
 
     /// Читает запись по ключу (legacy метод).
-    ///
-    /// LEGACY МЕТОД: читает из ~/Documents/Chappie/semantic.json.
+    /// Читает из ~/Documents/Chappie/semantic.json.
     public func readMemory(key: String, targetName: String? = nil) async -> String? {
         await ensureInitialized()
         let storage = readStorage(at: globalFileURL)
@@ -503,8 +419,7 @@ public actor MemoryManager {
     }
 
     /// Ищет все записи указанного типа (legacy метод).
-    ///
-    /// LEGACY МЕТОД: ищет в ~/Documents/Chappie/semantic.json.
+    /// Ищет в ~/Documents/Chappie/semantic.json.
     public func searchMemory(type: String, targetName: String? = nil) async -> [String: String] {
         await ensureInitialized()
         let storage = readStorage(at: globalFileURL)
@@ -516,8 +431,6 @@ public actor MemoryManager {
     }
 
     /// Удаляет запись по ключу из ~/Documents/Chappie/semantic.json (legacy метод).
-    ///
-    /// LEGACY МЕТОД.
     public func deleteMemory(key: String, targetName: String? = nil) async {
         await ensureInitialized()
         var storage = readStorage(at: globalFileURL)
@@ -619,14 +532,6 @@ public actor MemoryManager {
         return .library
     }
 
-    private func setupTargetFiles(for target: WorkspaceTarget) {
-        if !fileManager.fileExists(atPath: target.architectureFileURL.path) {
-            let template = makeArchitectureTemplate(for: target)
-            try? template.write(to: target.architectureFileURL, atomically: true, encoding: .utf8)
-            print("[MemoryManager] Created template: \(target.name)/architecture.md")
-        }
-    }
-
     private func cleanupLegacyFiles() {
         for target in targets {
             let legacyAIDocsURL = target.directoryURL.appendingPathComponent("AI_Docs")
@@ -698,12 +603,7 @@ public actor MemoryManager {
     // MARK: - Форматирование памяти для промпта (приватные хелперы)
 
     /// Загружает записи из legacy-файла semantic.json для подмешивания в промпт.
-    ///
-    /// ЗАЧЕМ LEGACY В ПРОМПТЕ:
-    /// До полной миграции legacy-файл может содержать старые записи.
-    /// Чтобы они тоже попадали в промпт — читаем файл и включаем в глобальный блок.
-    ///
-    /// После полной миграции этот метод вернёт пустой массив — файл будет пустым.
+    /// После полной миграции вернёт пустой массив.
     private func loadLegacyMemoryForPrompt() -> [MemoryEntry] {
         let storage = readStorage(at: globalFileURL)
         guard !storage.isEmpty else { return [] }
@@ -718,30 +618,24 @@ public actor MemoryManager {
     }
 
     /// Строит текстовый блок памяти для промпта из SwiftData + legacy записей.
-    ///
-    /// ДЕДУПЛИКАЦИЯ:
-    /// Если ключ есть и в SwiftData и в legacy — приоритет у SwiftData (новее).
+    /// SwiftData имеет приоритет при дедупликации по ключу.
     private func buildMemoryBlock(
         title: String,
         swiftDataEntries: [MemoryEntry],
         legacyEntries: [MemoryEntry]
     ) -> String? {
-        // Объединяем: SwiftData имеет приоритет (перезаписывает legacy по ключу)
         var mergedByKey: [String: MemoryEntry] = [:]
 
-        // Сначала добавляем legacy
         for entry in legacyEntries {
             mergedByKey[entry.key] = entry
         }
 
-        // Потом SwiftData — перезаписывает legacy при совпадении ключей
         for entry in swiftDataEntries {
             mergedByKey[entry.key] = entry
         }
 
         guard !mergedByKey.isEmpty else { return nil }
 
-        // Сортируем по ключу для стабильного порядка
         let sorted = mergedByKey.values.sorted { $0.key < $1.key }
 
         var lines = ["## \(title)"]
@@ -795,62 +689,5 @@ public actor MemoryManager {
         var storage = readStorage(at: url)
         storage[key] = MemoryRecord(type: type, data: data)
         writeStorage(storage, to: url)
-    }
-
-    // MARK: - Генератор шаблона architecture.md
-
-    private func makeArchitectureTemplate(for target: WorkspaceTarget) -> String {
-        let kindLabel = target.kind == .appTarget ? "App Target" : "Library Target"
-        let date = ISO8601DateFormatter().string(from: Date())
-
-        return """
-        <!--
-          \(target.name)/architecture.md
-
-          ДОКУМЕНТ АРХИТЕКТУРЫ — \(target.name.uppercased())
-
-          Этот файл — единственный источник архитектурной документации для таргета.
-          Обновляй при каждом значимом архитектурном изменении.
-          Создан: \(date)
-        -->
-
-        # \(target.name) — Архитектура
-
-        > **Target type:** \(kindLabel)
-        > **Created:** \(date)
-        > **Managed by:** Chappie AI Assistant
-
-        ---
-
-        ## 1. Назначение
-
-        _Опиши цель и ответственность этого таргета._
-
-        ---
-
-        ## 2. Структура файлов
-
-        ```
-        \(target.name)/
-        ├── architecture.md     # Этот файл
-        └── ...                 # Исходные файлы
-        ```
-
-        ---
-
-        ## 3. Ключевые архитектурные решения
-
-        | Решение | Причина | Дата |
-        |---------|---------|------|
-        | _Добавь решения здесь_ | _Почему так?_ | \(date) |
-
-        ---
-
-        ## 📚 Changelog
-
-        | Date | Change | Author |
-        |------|--------|--------|
-        | \(date) | Initial creation | Chappie AI |
-        """
     }
 }

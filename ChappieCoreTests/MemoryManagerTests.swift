@@ -13,6 +13,10 @@
 // Никаких semantic.json в таргетах воркспейса — только architecture.md.
 // scope и targetName в API сохранены для совместимости, но игнорируются при выборе файла.
 //
+// ИЗМЕНЕНИЕ (2026-06, выпил автосоздания architecture.md):
+// MemoryManager больше НЕ создаёт architecture.md автоматически при инициализации.
+// Файлы архитектуры создаются только вручную по договорённости с пользователем.
+//
 // ПРОБЛЕМА ИЗОЛЯЦИИ ТЕСТОВ:
 // Все тесты теперь пишут в один глобальный ~/Documents/Chappie/semantic.json.
 // Для изоляции используем UUID-суффиксы в ключах — это гарантирует уникальность
@@ -40,8 +44,7 @@ struct MemoryManagerTests {
     ///   └── TestApp/
     ///       └── TestApp.swift   ← суффикс App.swift → classifyTarget() вернёт .appTarget
     ///
-    /// Воркспейс нужен для discoverTargets() — без него targets = [] и MemoryManager
-    /// не сможет создать architecture.md (хотя это не влияет на работу памяти).
+    /// Воркспейс нужен для discoverTargets() — без него targets = [].
     private func makeTempWorkspace() throws -> URL {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("ChappieCoreTests_\(UUID().uuidString)", isDirectory: true)
@@ -252,10 +255,14 @@ struct MemoryManagerTests {
 
     // MARK: - Тесты инициализации
 
-    /// Проверяем что initializeWorkspaceMemory НЕ создаёт semantic.json в таргете.
-    /// semantic.json должен быть ТОЛЬКО в ~/Documents/Chappie/ — не в воркспейсе.
-    @Test("Инициализация НЕ создаёт semantic.json в таргете воркспейса")
-    func initializationDoesNotCreateSemanticInTarget() async throws {
+    /// Проверяем что initializeWorkspaceMemory НЕ создаёт лишних файлов в таргете.
+    ///
+    /// После выпила автосоздания architecture.md (2026-06):
+    /// - semantic.json НЕ создаётся в таргете (только в ~/Documents/Chappie/)
+    /// - AI_Docs/ НЕ создаётся
+    /// - architecture.md НЕ создаётся автоматически (только вручную по договорённости)
+    @Test("Инициализация НЕ создаёт лишних файлов в таргете воркспейса")
+    func initializationDoesNotCreateFilesInTarget() async throws {
         let workspace = try makeTempWorkspace()
         defer { cleanup(workspace) }
 
@@ -272,10 +279,10 @@ struct MemoryManagerTests {
         #expect(!FileManager.default.fileExists(atPath: aiDocsDir.path),
                 "Папка AI_Docs/ не должна создаваться")
 
-        // architecture.md должен создаться (это единственный файл в таргете)
+        // architecture.md НЕ должен создаваться автоматически
         let architectureFile = workspace.appendingPathComponent("TestApp/architecture.md")
-        #expect(FileManager.default.fileExists(atPath: architectureFile.path),
-                "architecture.md должен создаться в корне таргета")
+        #expect(!FileManager.default.fileExists(atPath: architectureFile.path),
+                "architecture.md НЕ должен создаваться автоматически — только вручную")
     }
 
     /// Проверяем что устаревший semantic.json в корне таргета мигрируется и удаляется.
