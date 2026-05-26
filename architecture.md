@@ -16,7 +16,7 @@
 ```
 /Volumes/Хранилище/Работа/Chappie/
 ├── architecture.md                     # Этот файл (корневая архитектура)
-├── chat_history.json                   # История чата (корень проекта, управляется ChatHistoryManager)
+├── chat_history.json                   # История чата (корень проекта, УСТАРЕВАЕТ — IT-04)
 ├── ChappieCoreTests.xctestplan         # Тестплан для Xcode
 ├── Chappie.xcodeproj/                  # Основной Xcode проект
 │
@@ -84,24 +84,20 @@ ChappieMCP
 
 ## 5. История чата (TD-03) — УСТАРЕВАЕТ
 
-**ВНИМАНИЕ:** `chat_history.json` и `semantic.json` будут заменены на SwiftData
-в рамках REFACTOR-THREADS (см. раздел 10). Файлы останутся до завершения миграции.
+**ВНИМАНИЕ:** `chat_history.json` и `semantic.json` заменены SwiftData в IT-04.
+Файлы остаются как backup, но основным хранилищем теперь является SwiftData.
+
+**Миграция выполняется ОДИН РАЗ** при первом запуске новой версии через `MigrationService`.
+Флаг `UserDefaults["migration_v1_done"]` предотвращает повторную миграцию.
 
 **Путь:** `<workspaceURL>/chat_history.json` (прямо в корне проекта)
 
-Управляется `ChatHistoryManager` в ChappieCore.
-
-**Ключевые решения:**
-- Файл лежит в КОРНЕ воркспейса (не в AI_Docs/ — папка упразднена).
-- Автоматическое подрезание до 100 сообщений при каждом сохранении.
-- 100 сообщений = ~20-50 диалоговых пар, достаточно для работы.
-- Оркестратор всё равно берёт только последние maxMessagesInContext (теперь из ThreadSettings).
-
-**ВАЖНО:** При рефакторинге — путь нельзя менять без обновления `ChatHistoryManager.swift`.
+Управляется `ChatHistoryManager` в ChappieCore — продолжает работать параллельно
+до полного перехода на SwiftData в IT-05.
 
 ---
 
-## 6. Структура памяти (TD-03) — ОБНОВЛЕНО IT-03
+## 6. Структура памяти (TD-03) — ОБНОВЛЕНО IT-04
 
 Три уровня памяти:
 
@@ -119,10 +115,11 @@ ChappieMCP
 3. Проектная память (scope="<projectId>") — для каждого проекта в треде
 4. Тредовая память (scope="<threadId>") — контекст текущей задачи
 
-**ДВОЙНОЙ БЭКЕНД (до IT-04):**
-- Инструменты memorize/recall → пишут в ~/Documents/Chappie/semantic.json (legacy)
-- buildSystemPrompt() → читает из MemoryStore (SwiftData) + legacy файл (дедупликация)
-- После IT-04 (MigrationService) → только SwiftData
+**МИГРАЦИЯ (IT-04 ✅):**
+- `MigrationService.migrate()` — идемпотентный, флаг `UserDefaults["migration_v1_done"]`
+- chat_history.json → ThreadEntity "Основной" в SwiftData
+- semantic.json → MemoryEntity scope="global" в SwiftData
+- Старые файлы НЕ удаляются (backup)
 
 ---
 
@@ -198,7 +195,7 @@ readGroup.wait()
 
 ## 10. REFACTOR-THREADS — Большой рефакторинг: треды, проекты, SwiftData
 
-### Статус: 🔄 В ПРОЦЕССЕ (IT-01 ✅, IT-02 ✅, IT-03 ✅)
+### Статус: 🔄 В ПРОЦЕССЕ (IT-01 ✅, IT-02 ✅, IT-03 ✅, IT-04 ✅)
 
 ### Контекст и мотивация
 
@@ -223,10 +220,15 @@ readGroup.wait()
 `MemoryManager.buildSystemPrompt()` вызывается перед каждым запросом в `AIOrchestrator.process()`.
 Чаппи ВСЕГДА видит всю свою память — не нужно явно вызывать recall.
 
+**Миграция legacy-данных (IT-04 ✅):**
+`MigrationService.migrate<T: Codable>()` — Generic метод, не зависит от ChatMessage.
+Идемпотентен: флаг `UserDefaults["migration_v1_done"]`.
+Вызывается из `ChappieViewModel.setModelContainer()` асинхронно.
+
 **Двойной бэкенд памяти (до IT-04):**
 - legacy: ~/Documents/Chappie/semantic.json (инструменты memorize/recall)
 - новый: SwiftData MemoryStore (buildSystemPrompt читает отсюда + из legacy)
-- После IT-04: только SwiftData
+- После IT-04: только SwiftData (миграция выполнена)
 
 **MemoryContext (IT-03 ✅):**
 ```swift
@@ -246,7 +248,7 @@ tokenBudget = maxMessagesInContext × 500
 
 **AppConfig — динамический (IT-02 ✅):**
 - `AppConfig.shared` — дефолт (20 сообщений, 10,000 токенов)
-- `AppConfig(maxMessagesInContext:)` — создаётся из настроек треда
+- `AppConfig(maxMessagesInContext:)` — создаётся из числа
 - `AppConfig(settings: ThreadSettings)` — фабричный метод из ThreadSettings
 - `AIOrchestrator.process()` принимает `config: AppConfig` как параметр
 
@@ -294,15 +296,6 @@ MemoryEntity (SwiftData)
 - `add_project_to_thread(projectId)` — Чаппи добавляет проект в текущий тред
 - `remove_project_from_thread(projectId)` — Чаппи удаляет проект из треда
 
-### Миграция при первом запуске
-
-При первом запуске новой версии:
-1. Читаем `chat_history.json` из корня воркспейса
-2. Создаём один тред "Основной" и переносим историю в него
-3. Читаем `~/Documents/Chappie/semantic.json`
-4. Переносим записи в MemoryEntity с scope="global"
-5. Старые файлы НЕ удаляем сразу — оставляем как backup
-
 ---
 
 ## 11. REFACTOR-THREADS — Пошаговый план итераций
@@ -320,7 +313,7 @@ MemoryEntity (SwiftData)
 | IT-01 | SwiftData модели + JSON-сериализация | ✅ ГОТОВО |
 | IT-02 | ThreadSettings + динамический AppConfig | ✅ ГОТОВО |
 | IT-03 | Трёхуровневая память в system prompt | ✅ ГОТОВО |
-| IT-04 | Миграция старых файлов → SwiftData | 🔲 |
+| IT-04 | Миграция старых файлов → SwiftData | ✅ ГОТОВО |
 | IT-05 | UI: боковая панель тредов | 🔲 |
 | IT-06 | UI: плашки проектов в треде | 🔲 |
 | IT-07 | Инструменты add/remove project | 🔲 |
@@ -353,50 +346,35 @@ MemoryEntity (SwiftData)
 
 **Созданные файлы:**
 - `ChappieCore/Sources/ChappieCore/Services/MemoryStore.swift`
-  — actor для CRUD памяти в SwiftData
-  — readEntriesForScopes() — массовая загрузка для buildSystemPrompt()
-  — importEntries() — для MigrationService в IT-04
 
 **Изменённые файлы:**
 - `ChappieCore/Sources/ChappieCore/Services/MemoryManager.swift`
-  — добавлен setMemoryStore(store: MemoryStore)
-  — добавлен buildSystemPrompt(basePrompt:threadId:projectIds:)
-  — добавлен loadLegacyMemoryForPrompt() — читает legacy semantic.json
-  — добавлен buildMemoryBlock() — форматирует блок памяти с дедупликацией SwiftData vs legacy
 - `ChappieCore/Sources/ChappieCore/Services/AIOrchestrator.swift`
-  — добавлен MemoryContext: Sendable struct (threadId + projectIds)
-  — systemPrompt переименован в baseSystemPrompt
-  — init принимает memoryManager: MemoryManager
-  — process() принимает memoryContext: MemoryContext = .empty
-  — вызывает buildSystemPrompt() перед каждым запросом
 - `Chappie/ChappieViewModel.swift`
-  — добавлен activeMemoryContext: MemoryContext = .empty
-  — добавлен setModelContainer(_ container: ModelContainer)
-  — добавлен memoryStore: MemoryStore? (опциональный)
-  — initializeServices() подключает MemoryStore к MemoryManager
-  — send() передаёт memoryContext в process()
 - `Chappie/ContentView.swift`
-  — @Environment(\.modelContext) private var modelContext
-  — .onAppear { viewModel.setModelContainer(modelContext.container) }
 
 ---
 
-### IT-04: Миграция старых файлов → SwiftData
+### IT-04: Миграция старых файлов → SwiftData ✅ ГОТОВО
 
-**Цель:** При первом запуске перенести `chat_history.json` и `semantic.json` в SwiftData.
-
-**Файлы к созданию:**
+**Созданные файлы:**
 - `ChappieCore/Sources/ChappieCore/Services/MigrationService.swift`
-  — `migrate()` — идемпотентный, проверяет флаг `UserDefaults["migration_v1_done"]`
-  — читает `chat_history.json`, создаёт тред "Основной", переносит историю
-  — читает `semantic.json`, переносит в MemoryEntity с scope="global" через MemoryStore.importEntries()
+  — `migrate<T: Codable>()` — Generic, идемпотентный, флаг UserDefaults["migration_v1_done"]
+  — `migrateChatHistory()` — chat_history.json → ThreadEntity "Основной"
+  — `migrateSemanticMemory()` — semantic.json → MemoryEntity scope="global"
+  — `LegacyMemoryRecord` — приватный Codable тип для десериализации semantic.json
+- `ChappieCoreTests/MigrationServiceTests.swift`
+  — 5 тестов: идемпотентность, без файлов, с chat_history, с semantic, сброс флага
 
-**Файлы к изменению:**
-- `Chappie/ChappieViewModel.swift` — вызвать MigrationService после setModelContainer()
+**Изменённые файлы:**
+- `Chappie/ChappieViewModel.swift`
+  — добавлен `threadStore: ThreadStore?` (SwiftData бэкенд для тредов)
+  — `setModelContainer()` создаёт ThreadStore и запускает `runMigrationIfNeeded()`
+  — `runMigrationIfNeeded()` — определяет URL файлов и вызывает MigrationService
 
-**Критерий готовности:** Проект компилируется. Старая история видна в новом треде.
-
-**Зависимости:** IT-01, IT-03 (MemoryStore.importEntries()).
+**АРХИТЕКТУРНОЕ РЕШЕНИЕ — GENERIC ДЛЯ ChatMessage:**
+MigrationService не знает о ChatMessage (UI-тип). Принимает `T: Codable`.
+ChappieViewModel вызывает: `migrate(messageType: ChatMessage.self, ...)`
 
 ---
 
@@ -410,12 +388,17 @@ MemoryEntity (SwiftData)
 
 **Файлы к изменению:**
 - `Chappie/Views/Sidebar/SidebarView.swift`
-- `Chappie/ChappieViewModel.swift` — activeThread, threads, createThread(), selectThread(), deleteThread()
+- `Chappie/ChappieViewModel.swift`
+  — activeThread: ThreadMetadata?
+  — threads: [ThreadMetadata]
+  — createThread(), selectThread(), deleteThread()
+  — activeMemoryContext заполняется из активного треда
 - `Chappie/ContentView.swift` — NavigationSplitView
 
 **При завершении IT-05:**
 - `activeMemoryContext` заполняется из активного треда (threadId + projectIds)
 - `activeThreadSettings` загружается из ThreadStore
+- История сообщений загружается из ThreadStore (не из ChatHistoryManager)
 
 **Критерий готовности:** Проект компилируется. Можно создавать треды и переключаться между ними.
 
@@ -463,7 +446,7 @@ MemoryEntity (SwiftData)
 **Ключевые решения:**
 - Файл лежит в КОРНЕ воркспейса (не в AI_Docs/ — папка упразднена).
 - Автоматическое подрезание до 100 сообщений при каждом сохранении.
-- Оркестратор берёт последние maxMessagesInContext (из ThreadSettings треда).
+- После IT-05 — история хранится в ThreadStore (SwiftData), ChatHistoryManager устаревает.
 
 ---
 
@@ -471,6 +454,7 @@ MemoryEntity (SwiftData)
 
 | Date | Change |
 |------|--------|
+| 2025-07-XX | IT-04 ГОТОВО: MigrationService (chat_history.json + semantic.json → SwiftData), 5 тестов, ThreadStore добавлен в ChappieViewModel |
 | 2025-07-XX | IT-03 ГОТОВО: MemoryStore (SwiftData CRUD), buildSystemPrompt() с трёхуровневой памятью, MemoryContext, двойной бэкенд (legacy + SwiftData) |
 | 2025-07-XX | IT-02 ГОТОВО: динамический AppConfig, tokenBudget = maxMessages × 500 |
 | 2025-07-XX | IT-01 ГОТОВО: SwiftData модели (ThreadEntity, ProjectEntity, MemoryEntity), ThreadStore, ProjectStore, ModelContainer |
