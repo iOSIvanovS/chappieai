@@ -4,77 +4,8 @@
 //
 //  Сетевой клиент для работы с API AI-провайдера (AITunnel / OpenAI-совместимый).
 //
-//  АРХИТЕКТУРНОЕ РЕШЕНИЕ: Структура (struct) вместо класса (class).
-//  Причина: AITunnelClient не имеет изменяемого состояния — все свойства константы.
-//  Это делает его автоматически Sendable и потокобезопасным в Swift 6 без каких-либо
-//  дополнительных аннотаций. Структуры копируются при передаче между акторами,
-//  что полностью исключает гонки данных.
-//
-//  ПОЧЕМУ НЕ ACTOR: Actor нужен, когда есть изменяемое состояние, требующее защиты.
-//  Здесь нет никакого состояния — только конфигурация и URLSession, которая сама
-//  является потокобезопасной. Использование actor было бы избыточным усложнением.
-//
-//  PROMPT CACHING (Anthropic через AITunnel):
-//  buildMessages() помечает системный промпт тегом `cache_control: {type: "ephemeral"}`.
-//  Это говорит Anthropic API закэшировать этот блок на 5 минут.
-//  При повторных запросах кэшированные токены стоят ~10% от обычной цены.
-//
-//  КАК РАБОТАЕТ КЭШИРОВАНИЕ (подтверждено логами):
-//  AITunnel пробрасывает статистику кэша через нестандартный объект:
-//    prompt_tokens_details.cache_write_tokens — токены записанные в кэш
-//    prompt_tokens_details.cached_tokens — токены прочитанные из кэша
-//  Это НЕ стандартные поля Anthropic (cache_creation_input_tokens / cache_read_input_tokens),
-//  а OpenAI-совместимый формат AITunnel. Парсинг через AIPromptTokensDetails в AITunnelModels.
-//  Вычисляемые свойства effectiveCacheRead / effectiveCacheCreation в AIUsage
-//  объединяют оба формата в единый интерфейс.
-//
-//  СТРАТЕГИЯ ТРЁХ BREAKPOINT'ОВ (CACHE-MSG-2):
-//
-//  Breakpoint 1: системный промпт — стабильный, всегда кэшируется (~2384 токена).
-//
-//  Breakpoint 2: ПОСЛЕДНИЙ USER-элемент в истории (CACHE-MSG).
-//  В агентном цикле последнее сообщение часто role="tool", поэтому ищем
-//  последний user-элемент с конца истории. Это кэширует system + всю предшествующую историю.
-//
-//  Breakpoint 3: ПОСЛЕДНЕЕ СООБЩЕНИЕ в истории (CACHE-MSG-2) — НОВОЕ.
-//  Проблема: после breakpoint 2 накапливаются tool-сообщения нового шага цикла.
-//  Они не кэшируются, и на каждом следующем шаге пересчитываются заново.
-//  Решение: ставим третий breakpoint на самое последнее сообщение истории.
-//  Это кэширует "хвост" из tool-ответов текущего шага, который станет
-//  стабильным префиксом для следующего шага.
-//
-//  ПРИМЕР (агентный цикл, шаг 3):
-//    system [cache✅]
-//    user: "напиши код"
-//    assistant: "сейчас"
-//    tool: "результат read_file"
-//    user: "продолжи" [cache✅]     ← breakpoint 2: последний user
-//    assistant: "ещё инструмент"
-//    tool: "результат write_file"   ← breakpoint 3: последнее сообщение [cache✅]
-//    user: "текущий запрос"         ← добавляется buildContextWindow() (не кэшируется)
-//
-//  ОЖИДАЕМЫЙ ЭФФЕКТ: created → ~500 tok (только новое сообщение пользователя),
-//  read → всё остальное из кэша.
-//
-//  ЕДИНЫЙ СТРИМИНГОВЫЙ ЦИКЛ (без probe):
-//  streamRequestWithTools() — единственный метод, используемый в агентном цикле.
-//  Накапливает tool_calls из дельт SSE-потока и возвращает AIStreamResult.
-//
-//  ОБРАБОТКА ОТМЕНЫ ЗАДАЧИ (FIX-CANCELLED):
-//  URLSession бросает URLError(.cancelled) / CancellationError когда Swift Task отменяется
-//  в момент стриминга. Это происходит при быстром повторном нажатии отправки или
-//  при пересоздании View. Такая ошибка НЕ является ошибкой пользователя — она
-//  должна тихо проглатываться, а не показываться как "Упс, ошибка: cancelled".
-//  Решение: в streamRequestWithTools() перебрасываем CancellationError дальше
-//  (Swift Task machinery сам её обрабатывает), а URLError(.cancelled) оборачиваем
-//  в ChappieError.cancelled для явного распознавания в ViewModel.
 
 import Foundation
-
-// MARK: - ChappieError расширение (cancelled)
-
-// ПРИМЕЧАНИЕ: ChappieError.cancelled добавлен в ChappieError.swift.
-// Здесь только документируем что этот кейс используется в AITunnelClient.
 
 /// Лёгкий и быстрый сетевой клиент для выполнения запросов к API AITunnel.
 public struct AITunnelClient: Sendable {
@@ -89,9 +20,6 @@ public struct AITunnelClient: Sendable {
     private let modelName: String
 
     /// Кастомная URLSession с увеличенными таймаутами.
-    ///
-    /// ПОЧЕМУ НЕ URLSession.shared:
-    /// Дефолтный таймаут — 60 секунд. Чаппи может работать минутами.
     private let urlSession: URLSession
 
     // MARK: - Инициализация
@@ -109,7 +37,6 @@ public struct AITunnelClient: Sendable {
     // MARK: - Публичный API: обычный запрос (резервный)
 
     /// Отправляет запрос к языковой модели и возвращает полный ответ одним куском.
-    /// Резервный метод — в основном агентном цикле используется streamRequestWithTools().
     public func sendRequest(
         systemPrompt: String,
         chatHistory: [AIMessage],
@@ -143,20 +70,6 @@ public struct AITunnelClient: Sendable {
     // MARK: - Публичный API: стриминговый запрос с инструментами (основной метод)
 
     /// Отправляет стриминговый запрос с поддержкой инструментов и возвращает AIStreamResult.
-    ///
-    /// КЛЮЧЕВОЕ ОТЛИЧИЕ: Поддерживает инструменты и правильно накапливает
-    /// tool_calls из дельт SSE-потока. Один запрос на каждый шаг цикла.
-    ///
-    /// КАК РАБОТАЕТ НАКОПЛЕНИЕ TOOL_CALLS:
-    /// Anthropic API в стриминге отдаёт tool_calls по кусочкам:
-    ///   - Первый чанк: id="call_abc", function.name="write_file", function.arguments="{"
-    ///   - Последующие: id=nil, function.name=nil, function.arguments="path..."
-    /// Накапливаем аргументы по index и собираем полные AIToolCall объекты.
-    ///
-    /// ОБРАБОТКА ОТМЕНЫ (FIX-CANCELLED):
-    /// CancellationError — пробрасываем дальше, Swift Task machinery обрабатывает сам.
-    /// URLError(.cancelled) — оборачиваем в ChappieError.cancelled для ViewModel.
-    /// Оба случая НЕ должны показываться пользователю как "Упс, ошибка".
     public func streamRequestWithTools(
         systemPrompt: String,
         chatHistory: [AIMessage],
@@ -176,23 +89,13 @@ public struct AITunnelClient: Sendable {
 
         let request = try buildURLRequest(body: requestBody)
 
-        // Оборачиваем URLSession в do/catch для явной обработки отмены.
-        // ПОЧЕМУ ЗДЕСЬ, А НЕ В PERFORMREQUEST:
-        // bytes(for:) используется для стриминга — это другой путь, не performRequest().
-        // Отмена Task во время чтения asyncBytes.lines бросает CancellationError или
-        // URLError(.cancelled) — нужно поймать именно здесь.
         let asyncBytes: URLSession.AsyncBytes
         let response: URLResponse
         do {
             (asyncBytes, response) = try await urlSession.bytes(for: request)
         } catch is CancellationError {
-            // Task был отменён до начала стриминга — пробрасываем дальше.
-            // Swift Task machinery сам обработает отмену корректно.
             throw CancellationError()
         } catch let urlError as URLError where urlError.code == .cancelled {
-            // URLSession сообщил об отмене — это эквивалент CancellationError.
-            // Оборачиваем в ChappieError.cancelled чтобы ViewModel могла
-            // тихо проглотить эту ошибку без показа "Упс, ошибка: cancelled".
             throw ChappieError.cancelled
         }
 
@@ -203,9 +106,6 @@ public struct AITunnelClient: Sendable {
         var finalCost: Double? = nil
         var finalBalance: Double? = nil
 
-        // Читаем SSE-поток построчно.
-        // ВАЖНО: do/catch здесь нужен потому что отмена Task может произойти
-        // В ЛЮБОЙ МОМЕНТ чтения строк — не только при установке соединения.
         do {
             for try await line in asyncBytes.lines {
                 guard !line.isEmpty, line.hasPrefix("data: ") else { continue }
@@ -218,24 +118,21 @@ public struct AITunnelClient: Sendable {
                     continue
                 }
 
-                // Извлекаем финансовую статистику из последнего чанка
                 if let usage = chunk.usage {
                     finalCost = usage.cost_rub
                     finalBalance = usage.balance
-                    // Логируем статистику кэша через вычисляемые свойства effectiveCacheRead/Creation
                     logCacheStats(usage: usage)
                 }
 
                 guard let choice = chunk.choices.first else { continue }
                 let delta = choice.delta
 
-                // Текстовые токены — передаём в UI
+                // 🔥 Исправлено: используем только delta.content
                 if let token = delta.content, !token.isEmpty {
                     accumulatedText += token
                     onToken?(token)
                 }
 
-                // Накопление tool_calls по индексам
                 if let streamToolCalls = delta.tool_calls {
                     for streamToolCall in streamToolCalls {
                         let idx = streamToolCall.index
@@ -255,15 +152,11 @@ public struct AITunnelClient: Sendable {
                 }
             }
         } catch is CancellationError {
-            // Task был отменён во время чтения потока — пробрасываем дальше.
             throw CancellationError()
         } catch let urlError as URLError where urlError.code == .cancelled {
-            // URLSession отменён во время чтения потока.
             throw ChappieError.cancelled
         }
-        // Все остальные ошибки (сетевые, парсинг) — пробрасываем без изменений.
 
-        // Собираем полные AIToolCall из буферов
         let assembledToolCalls: [AIToolCall]? = toolCallBuffers.isEmpty ? nil :
             toolCallBuffers.sorted(by: { $0.key < $1.key }).compactMap { (_, buffer) in
                 guard !buffer.name.isEmpty else { return nil }
@@ -283,8 +176,6 @@ public struct AITunnelClient: Sendable {
     }
 
     // MARK: - Публичный API: стриминговый запрос без инструментов (устаревший)
-
-    /// Устарел. Используй streamRequestWithTools() вместо этого метода.
     public func streamRequest(
         systemPrompt: String,
         chatHistory: [AIMessage]
@@ -315,154 +206,27 @@ public struct AITunnelClient: Sendable {
         return (stream, getUsage)
     }
 
-    // MARK: - Приватные методы: формирование сообщений с кэшированием
+    // MARK: - Приватные методы: формирование сообщений без ручного кэширования
 
-    /// Формирует массив сообщений для запроса с расстановкой тегов кэширования.
-    ///
-    /// СТРАТЕГИЯ ТРЁХ BREAKPOINT'ОВ (CACHE-MSG-2):
-    ///
-    /// 1. СИСТЕМНЫЙ ПРОМПТ — первый и главный breakpoint.
-    ///    Стабильный, никогда не меняется. ~2384 токена стабильно кэшируются.
-    ///
-    /// 2. ПОСЛЕДНИЙ USER-ЭЛЕМЕНТ — второй breakpoint (CACHE-MSG).
-    ///    Кэширует system + всю историю до последнего user-сообщения.
-    ///    Работает даже когда последнее сообщение role="tool".
-    ///
-    /// 3. ПОСЛЕДНЕЕ СООБЩЕНИЕ ИСТОРИИ — третий breakpoint (CACHE-MSG-2).
-    ///    Кэширует "хвост" из tool-ответов текущего шага цикла.
-    ///    На следующем шаге этот хвост станет стабильным префиксом → будет прочитан из кэша.
-    ///
-    ///    ВАЖНО: Breakpoint 3 ставится ТОЛЬКО если последнее сообщение ≠ последнему user-сообщению
-    ///    (т.е. если между breakpoint 2 и концом истории есть хотя бы одно сообщение).
-    ///    Иначе мы бы поставили два breakpoint'а на одно сообщение — бессмысленно.
-    ///
-    ///    ТАКЖЕ ВАЖНО: Третий breakpoint не ставится на сообщения с tool_calls (assistant),
-    ///    т.к. их contentString может быть nil — кэшировать нечего. Ставим только на
-    ///    role="tool" (результат инструмента) или role="user" (редкий случай).
-    ///
-    /// ПРИМЕР (агентный цикл, шаг 3):
-    ///   system [cache✅]
-    ///   user: "напиши код"
-    ///   assistant: "сейчас"
-    ///   tool: "результат read_file"
-    ///   user: "продолжи" [cache✅]     ← breakpoint 2
-    ///   assistant: "ещё инструмент"
-    ///   tool: "результат write_file" [cache✅]  ← breakpoint 3
-    ///   user: "текущий запрос"        ← добавляется buildContextWindow() (не кэшируется)
-    ///
+    /// Формирует массив сообщений для запроса (классический формат).
     private func buildMessages(systemPrompt: String, chatHistory: [AIMessage]) -> [AIMessage] {
         var messages: [AIMessage] = []
 
-        // ── Breakpoint 1: системный промпт ──────────────────────────────────────
-        // Стабильный, никогда не меняется. ~2384 токена стабильно кэшируются.
+        // Отправляем системный промпт простой строкой
         let systemMessage = AIMessage(
             role: "system",
-            contentBlocks: [.cached(systemPrompt)]
+            content: systemPrompt
         )
         messages.append(systemMessage)
 
-        guard !chatHistory.isEmpty else {
-            print("[AITunnelClient] 🗃️ Кэш: 1 блок (только system), история пуста")
-            return messages
-        }
+        // Добавляем историю как есть 
+        // 🔥 Исправлено: просто добавляем массив истории без поиска мифических contentString
+        messages.append(contentsOf: chatHistory)
 
-        // ── Ищем индексы для breakpoint 2 и 3 ───────────────────────────────────
-
-        // Breakpoint 2: последний user-элемент (ищем с конца истории).
-        // ПОЧЕМУ С КОНЦА: нам нужен самый поздний user-элемент — он максимизирует
-        // кэшируемый префикс. Итерируем reversed() и берём первый найденный.
-        let lastUserIndex = chatHistory.indices.reversed().first { idx in
-            chatHistory[idx].role == "user"
-        }
-
-        // Breakpoint 3: последнее сообщение в истории (если оно отличается от breakpoint 2).
-        // Кэшируем "хвост" из tool-ответов, который накопился после последнего user-сообщения.
-        // ОГРАНИЧЕНИЕ: ставим только на role="tool" или role="user" (у них есть текстовый контент).
-        // role="assistant" с tool_calls имеет contentString=nil → кэшировать нечего.
-        let lastIndex = chatHistory.count - 1
-        let lastMessage = chatHistory[lastIndex]
-        let canCacheLastMessage = (lastMessage.role == "tool" || lastMessage.role == "user")
-            && (lastMessage.contentString != nil && !lastMessage.contentString!.isEmpty)
-
-        // Breakpoint 3 актуален только если последнее сообщение ≠ последнему user-сообщению.
-        // Если они совпадают — breakpoint 2 уже покрывает это сообщение.
-        let useThirdBreakpoint = canCacheLastMessage && lastUserIndex != lastIndex
-
-        // ── Собираем массив сообщений с breakpoint'ами ───────────────────────────
-
-        if let targetIdx = lastUserIndex {
-            // Добавляем все сообщения ДО целевого user-элемента — без кэширования
-            if targetIdx > 0 {
-                messages.append(contentsOf: chatHistory[0..<targetIdx])
-            }
-
-            // ── Breakpoint 2: последний user-элемент ────────────────────────────
-            let targetMessage = chatHistory[targetIdx]
-            if let content = targetMessage.contentString, !content.isEmpty {
-                let cachedMessage = AIMessage(
-                    role: targetMessage.role,
-                    contentBlocks: [.cached(content)],
-                    tool_calls: targetMessage.tool_calls,       // ← сохраняем tool_calls если есть
-                    tool_call_id: targetMessage.tool_call_id,   // ← критично для role="tool"
-                    name: targetMessage.name                     // ← имя функции для tool-сообщений
-                )
-                messages.append(cachedMessage)
-            } else {
-                // Если контент пустой или сложный (tool_calls без текста) — добавляем как есть
-                messages.append(targetMessage)
-            }
-
-            // Добавляем сообщения МЕЖДУ breakpoint 2 и концом истории
-            if targetIdx < chatHistory.count - 1 {
-                let afterUserMessages = chatHistory[(targetIdx + 1)...]
-
-                if useThirdBreakpoint {
-                    // Добавляем все сообщения кроме последнего без кэширования
-                    let withoutLast = afterUserMessages.dropLast()
-                    messages.append(contentsOf: withoutLast)
-
-                    // ── Breakpoint 3: последнее сообщение истории ───────────────
-                    // Кэшируем "хвост" из tool-результатов текущего шага.
-                    // На следующем шаге цикла этот хвост станет стабильным префиксом
-                    // и будет полностью прочитан из кэша → created ≈ 0.
-                    if let content = lastMessage.contentString, !content.isEmpty {
-                        let cachedLast = AIMessage(
-                            role: lastMessage.role,
-                            contentBlocks: [.cached(content)],
-                            tool_calls: lastMessage.tool_calls,
-                            tool_call_id: lastMessage.tool_call_id, // ← обязательно для role="tool"
-                            name: lastMessage.name
-                        )
-                        messages.append(cachedLast)
-                    } else {
-                        messages.append(lastMessage)
-                    }
-                } else {
-                    // Третий breakpoint не нужен — добавляем хвост как есть
-                    messages.append(contentsOf: afterUserMessages)
-                }
-            }
-
-            // Формируем описание для лога
-            let afterCount = chatHistory.count - 1 - targetIdx
-            let bpCount = useThirdBreakpoint ? 3 : 2
-            print("[AITunnelClient] 🗃️ Кэш: \(bpCount) блока (system + user[idx:\(targetIdx)]\(useThirdBreakpoint ? " + last[idx:\(lastIndex)]" : ""), \(afterCount) сообщений после bp2), всего: \(messages.count)")
-
-        } else {
-            // В истории нет ни одного user-сообщения (только tool/assistant).
-            // Это редкий случай, но защищаемся: добавляем историю без кэширования.
-            messages.append(contentsOf: chatHistory)
-            print("[AITunnelClient] 🗃️ Кэш: 1 блок (только system, в истории нет user-сообщений)")
-        }
-
+        print("[AITunnelClient] 📤 Формирование запроса: 1 (system) + \(chatHistory.count) (history) сообщений")
         return messages
     }
 
-    /// Логирует статистику кэширования через вычисляемые свойства AIUsage.
-    ///
-    /// ВАЖНО: Используем effectiveCacheRead / effectiveCacheCreation — они умеют
-    /// читать как стандартные поля Anthropic, так и нестандартные поля AITunnel
-    /// (prompt_tokens_details.cached_tokens / cache_write_tokens).
     private func logCacheStats(usage: AIUsage?) {
         guard let usage else { return }
 
@@ -473,11 +237,10 @@ public struct AITunnelClient: Sendable {
         let costStr = usage.cost_rub.map { String(format: "%.4f ₽", $0) } ?? "н/д"
 
         if cacheRead > 0 {
-            // Экономия: кэшированные токены стоят ~10% от обычной цены → экономим 90%
             let savings = Int(Double(cacheRead) * 0.9)
-            print("[AITunnelClient] ✅ Кэш сработал | read: \(cacheRead) tok (сэкономлено ~\(savings) tok) | created: \(cacheCreation) tok | prompt: \(promptTokens) | completion: \(completionTokens) | cost: \(costStr)")
+            print("[AITunnelClient] ✅ Кэш шлюза сработал | read: \(cacheRead) tok (сэкономлено ~\(savings) tok) | created: \(cacheCreation) tok | prompt: \(promptTokens) | completion: \(completionTokens) | cost: \(costStr)")
         } else if cacheCreation > 0 {
-            print("[AITunnelClient] 🔄 Кэш создан | created: \(cacheCreation) tok | prompt: \(promptTokens) | completion: \(completionTokens) | cost: \(costStr)")
+            print("[AITunnelClient] 🔄 Кэш шлюза создан | created: \(cacheCreation) tok | prompt: \(promptTokens) | completion: \(completionTokens) | cost: \(costStr)")
         } else {
             print("[AITunnelClient] ⚠️ Кэш не активен | prompt: \(promptTokens) | completion: \(completionTokens) | cost: \(costStr)")
         }
@@ -485,8 +248,6 @@ public struct AITunnelClient: Sendable {
 
     // MARK: - Приватные методы: выполнение запросов
 
-    /// Выполняет стриминговый HTTP-запрос и парсит SSE-поток (без инструментов).
-    /// Используется устаревшим методом streamRequest().
     private func performStreamRequest(
         systemPrompt: String,
         chatHistory: [AIMessage],
@@ -532,6 +293,7 @@ public struct AITunnelClient: Sendable {
 
             guard let choice = chunk.choices.first else { continue }
 
+            // 🔥 Исправлено: используем только delta.content
             if let token = choice.delta.content, !token.isEmpty {
                 continuation.yield(token)
             }
@@ -607,12 +369,6 @@ public struct AITunnelClient: Sendable {
 
 // MARK: - UsageBox
 
-/// Потокобезопасный контейнер для передачи финансовой статистики из SSE-парсера.
-///
-/// ЗАЧЕМ НУЖЕН:
-/// AsyncThrowingStream.Continuation — Sendable-замыкание, которое не может
-/// захватывать изменяемые переменные напрямую. Actor изолирует изменяемое состояние
-/// и делает его доступным из любого контекста.
 private actor UsageBox {
     private var cost: Double? = nil
     private var balance: Double? = nil

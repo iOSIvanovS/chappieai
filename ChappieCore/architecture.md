@@ -220,12 +220,63 @@ while stepCount < maxSteps:
 
 ---
 
-## 8. Технический долг
+## 8. ⚠️ КРИТИЧЕСКОЕ ПРАВИЛО: формат запросов к AITunnel
+
+### Проблема (зафиксирована после инцидента с Gemini)
+
+**AITunnel — OpenAI-совместимый шлюз**, а НЕ нативный Anthropic API.
+Это означает: поле `content` в сообщениях ОБЯЗАНО быть **строкой**, не массивом объектов.
+
+### ❌ ЗАПРЕЩЕНО (ломает шлюз):
+
+```json
+{
+  "role": "system",
+  "content": [
+    {
+      "type": "text",
+      "text": "...",
+      "cache_control": {"type": "ephemeral"}
+    }
+  ]
+}
+```
+
+Это **Anthropic-нативный формат** с `cache_control`. Когда Cloudflare/nginx на стороне
+AITunnel получает массив вместо строки — он давится при парсинге и закрывает QUIC/HTTP3
+соединение. Клиент получает `URLError(.cancelled)` → `ChappieError.cancelled`.
+
+### ✅ ПРАВИЛЬНО (OpenAI-совместимый формат):
+
+```json
+{
+  "role": "system",
+  "content": "просто строка с текстом промпта"
+}
+```
+
+### Правило для `buildMessages()` в `AITunnelClient.swift`:
+
+- `AIMessage.content` — ВСЕГДА `String?`, НИКОГДА не массив content-блоков.
+- Кэширование промптов — НЕ через `cache_control` в теле запроса.
+  Шлюз AITunnel кэширует на своей стороне автоматически.
+- Если захочется добавить prompt caching — сначала проверить документацию AITunnel,
+  поддерживает ли шлюз Anthropic-специфичные расширения. Скорее всего — нет.
+
+### Симптомы нарушения этого правила:
+- Сообщения вообще не уходят на бэкенд
+- `URLError(.cancelled)` сразу при отправке запроса
+- Ошибка "Упс, ошибка: cancelled" в UI без видимой причины
+- QUIC/HTTP3 соединение закрывается на стороне шлюза
+
+---
+
+## 9. Технический долг
 
 | # | Описание | Приоритет | Статус |
 |---|----------|-----------|--------|
 | ТД-TEST | Unit-тесты для XcodeDocsGroupManager | 🟡 | 🔲 Открыт |
-| REFACTOR-THREADS | Мультитредовость + SwiftData | 🔴 | 🔲 IT-01..IT-07 |
+| REFACTOR-THREADS | Мультитредовость + SwiftData | 🔴 | ✅ IT-01..IT-07 завершён |
 
 ---
 
@@ -239,3 +290,4 @@ while stepCount < maxSteps:
 | 2025-07-XX | REFACTOR-THREADS: зафиксирована полная архитектура SwiftData + JSON-сериализация |
 | 2025-07-XX | REFACTOR-THREADS: динамический AppConfig (tokenBudget = maxMessages × 500) |
 | 2025-07-XX | REFACTOR-THREADS: трёхуровневая память (global + project + thread) |
+| 2025-07-XX | ИНЦИДЕНТ: зафиксировано критическое правило формата AITunnel (раздел 8) |
