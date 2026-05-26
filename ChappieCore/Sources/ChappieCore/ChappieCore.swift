@@ -44,6 +44,16 @@ import Foundation
 // • AIUsage            — статистика использования токенов и стоимость
 // • AIToolCall         — вызов инструмента, возвращённый моделью
 // • AIToolCallFunction — имя и аргументы конкретного вызова инструмента
+//
+// REFACTOR-THREADS IT-01 (новые модели):
+// • ThreadEntity       — SwiftData модель треда (id, title, messagesJSON, settingsJSON, projectBindingsJSON)
+// • ThreadSettings     — Codable настройки треда (maxMessagesInContext, tokenBudget)
+// • ThreadMetadata     — Sendable DTO для передачи метаданных треда из actor в UI
+// • ProjectEntity      — SwiftData модель проекта (id, displayName, bookmarkData, settingsJSON)
+// • ProjectSettings    — Codable настройки проекта (preferredLanguage)
+// • ProjectMetadata    — Sendable DTO для передачи метаданных проекта из actor в UI
+// • MemoryEntity       — SwiftData модель контейнера памяти (scope, entriesJSON)
+// • MemoryEntry        — Codable одна запись памяти (key, type, jsonString, metadata)
 
 // MARK: Сервисы (Services/)
 //
@@ -52,7 +62,11 @@ import Foundation
 // • ToolExecutionService — реестр и исполнитель всех инструментов Чаппи
 // • FileSystemManager  — безопасный доступ к файловой системе с защитой от path traversal
 // • MemoryManager      — долгосрочная память: запись, чтение, поиск записей
-// • ChatHistoryManager — персистентное хранение истории чата между сессиями
+// • ChatHistoryManager — персистентное хранение истории чата между сессиями [УСТАРЕВАЕТ]
+//
+// REFACTOR-THREADS IT-01 (новые сервисы):
+// • ThreadStore        — actor, CRUD операции над тредами через SwiftData
+// • ProjectStore       — actor, CRUD операции над проектами через SwiftData
 
 // MARK: - Версия пакета
 
@@ -60,4 +74,4 @@ import Foundation
 ///
 /// Зачем: Позволяет диагностировать проблемы совместимости при обновлениях.
 /// Обновляй при каждом значимом изменении публичного API.
-public let coreVersion = "1.0.0"
+public let coreVersion = "2.0.0" // IT-01: SwiftData модели + ThreadStore + ProjectStore
