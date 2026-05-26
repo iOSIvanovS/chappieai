@@ -23,6 +23,11 @@
 // ChatMessage определён в Chappie (UI-таргет). ChappieCore не должен от него зависеть.
 // Методы saveMessages/loadMessages используют Generic <T: Codable> — аналогично
 // уже работающему ChatHistoryManager. UI-слой передаёт конкретный тип.
+//
+// ИЗМЕНЕНИЕ (IT-06):
+// Добавлен метод updateProjectBindings() — атомарная замена всего списка UUID проектов.
+// Нужен в ChappieViewModel.addProject() и removeProject() для атомарного обновления
+// без риска рассинхронизации при конкурентных изменениях.
 
 import Foundation
 import SwiftData
@@ -240,7 +245,42 @@ public actor ThreadStore {
         return ids
     }
 
+    /// Атомарно заменяет весь список UUID проектов в треде.
+    ///
+    /// ПОЧЕМУ АТОМАРНАЯ ЗАМЕНА, А НЕ ДОБАВЛЕНИЕ/УДАЛЕНИЕ:
+    /// ChappieViewModel хранит актуальный список projectIds в activeThread.
+    /// При добавлении или удалении проекта ViewModel вычисляет новый массив
+    /// и передаёт его сюда целиком. Это гарантирует консистентность:
+    /// нет риска рассинхронизации между тем что видит ViewModel и что в БД.
+    ///
+    /// АНАЛОГ: saveMessages() — тоже полная замена, не append.
+    ///
+    /// - Parameters:
+    ///   - projectIds: Новый полный список UUID проектов (может быть пустым)
+    ///   - threadId: UUID треда для обновления
+    /// - Throws: Ошибка SwiftData если сохранение не удалось
+    public func updateProjectBindings(_ projectIds: [UUID], forThreadId threadId: UUID) throws {
+        let context = makeContext()
+        let descriptor = FetchDescriptor<ThreadEntity>(
+            predicate: #Predicate { $0.id == threadId }
+        )
+        guard let thread = try context.fetch(descriptor).first else {
+            print("[ThreadStore] ⚠️ Тред \(threadId) не найден при обновлении проектов")
+            return
+        }
+
+        thread.projectBindingsJSON = (try? JSONEncoder().encode(projectIds)) ?? thread.projectBindingsJSON
+        thread.updatedAt = Date()
+        try context.save()
+
+        print("[ThreadStore] ✅ Обновлены привязки проектов треда '\(thread.title)': \(projectIds.count) проектов")
+    }
+
     /// Добавляет проект в тред (идемпотентно — дубликаты игнорируются).
+    ///
+    /// КОГДА ИСПОЛЬЗОВАТЬ:
+    /// Для прямого добавления одного проекта без загрузки всего списка.
+    /// Для batch-операций предпочтительнее updateProjectBindings().
     ///
     /// - Parameters:
     ///   - projectId: UUID проекта для добавления
@@ -272,6 +312,10 @@ public actor ThreadStore {
     }
 
     /// Удаляет проект из треда.
+    ///
+    /// КОГДА ИСПОЛЬЗОВАТЬ:
+    /// Для прямого удаления одного проекта без загрузки всего списка.
+    /// Для batch-операций предпочтительнее updateProjectBindings().
     ///
     /// - Parameters:
     ///   - projectId: UUID проекта для удаления

@@ -195,7 +195,7 @@ readGroup.wait()
 
 ## 10. REFACTOR-THREADS — Большой рефакторинг: треды, проекты, SwiftData
 
-### Статус: 🔄 В ПРОЦЕССЕ (IT-01 ✅, IT-02 ✅, IT-03 ✅, IT-04 ✅, IT-05 ✅)
+### Статус: 🔄 В ПРОЦЕССЕ (IT-01 ✅, IT-02 ✅, IT-03 ✅, IT-04 ✅, IT-05 ✅, IT-06 ✅)
 
 ### Контекст и мотивация
 
@@ -265,6 +265,25 @@ Swift автогенерирует memberwise init как internal — для UI
 Фича требует явного `import ChappieCore` в каждом файле UI-таргета, где используются
 типы из ChappieCore. ContentView.swift получил явный `import ChappieCore`.
 
+**ProjectMetadata — публичный init (IT-06 ✅):**
+Аналогично ThreadMetadata — добавлен явный public init в ProjectMetadata.
+Используется в Preview и при создании объектов в UI-таргете.
+
+**addProject / removeProject — атомарное обновление (IT-06 ✅):**
+ViewModel хранит актуальный список projectIds в activeThread.
+При изменении — вычисляет новый массив и вызывает `updateProjectBindings()` целиком.
+Это гарантирует консистентность без риска рассинхронизации.
+
+**ProjectChipsView — "тупой компонент" (IT-06 ✅):**
+Не знает о SwiftData, ProjectStore или ThreadStore напрямую.
+Все данные — через параметры, все действия — через коллбэки.
+NSOpenPanel открывается прямо из View (стандартный паттерн macOS).
+
+**Условный рендер ProjectChipsView (IT-06 ✅):**
+Показывается только когда `activeThread != nil`.
+До загрузки ModelContainer (первые миллисекунды) activeThread == nil — чипы скрыты.
+Появление/исчезновение анимировано через `.animation(.easeInOut, value: activeThread != nil)`.
+
 ### SwiftData схема (тонкий слой хранилища)
 
 ```
@@ -306,20 +325,25 @@ MemoryEntity (SwiftData)
 - Кнопка "Новый тред" закреплена внизу панели
 - При удалении последнего треда — автоматически создаётся новый
 
-**Автоматическое управление тредами в ViewModel:**
-- При старте: loadThreadsAndSelectActive() — загружает треды и выбирает первый
-- При пустом списке: автоматически создаётся "Новый тред"
-- selectThread(): загружает историю + настройки + обновляет MemoryContext
-- После отправки сообщения: история сохраняется в активный тред через ThreadStore
+### UI — плашки проектов в треде (IT-06 ✅)
 
-### UI — плашки проектов в треде (IT-06 — следующая)
+**Файлы:**
+- `Chappie/Views/Chat/ProjectChipsView.swift` — горизонтальный ряд чипов проектов
 
-- В верхней части чата — горизонтальный ряд чипов/тегов с именами проектов
-- Кнопка `+` для добавления проекта из списка существующих
-- Кнопка `×` на каждом чипе для удаления проекта из треда
-- Чаппи сам может добавлять/удалять проекты через инструменты в процессе разговора
+**Изменённые файлы:**
+- `Chappie/ContentView.swift` — условный рендер ProjectChipsView (только при activeThread != nil)
+- `Chappie/ChappieViewModel.swift` — addProject(url:), removeProject(id:), activeProjects, loadProjectsForThread()
+- `ChappieCore/Sources/ChappieCore/Services/ThreadStore.swift` — updateProjectBindings(), addProject(), removeProject()
+- `ChappieCore/Sources/ChappieCore/Services/ProjectStore.swift` — loadProjects(ids:), публичный init ProjectMetadata
 
-### Инструменты управления тредом (IT-07 — после IT-06)
+**Поведение:**
+- Горизонтальный скролл с чипами-тегами проектов
+- Hover на чипе — появляется кнопка "×" для удаления проекта из треда
+- Кнопка "+" → NSOpenPanel → выбор папки → создание/добавление проекта
+- При удалении — UUID убирается из projectBindingsJSON (ProjectEntity НЕ удаляется)
+- Компонент скрыт пока activeThread == nil (анимированное появление)
+
+### Инструменты управления тредом (IT-07 — следующая)
 
 - `add_project_to_thread(projectId)` — Чаппи добавляет проект в текущий тред
 - `remove_project_from_thread(projectId)` — Чаппи удаляет проект из треда
@@ -343,58 +367,34 @@ MemoryEntity (SwiftData)
 | IT-03 | Трёхуровневая память в system prompt | ✅ ГОТОВО |
 | IT-04 | Миграция старых файлов → SwiftData | ✅ ГОТОВО |
 | IT-05 | UI: боковая панель тредов | ✅ ГОТОВО |
-| IT-06 | UI: плашки проектов в треде | 🔲 |
+| IT-06 | UI: плашки проектов в треде | ✅ ГОТОВО |
 | IT-07 | Инструменты add/remove project | 🔲 |
 
 ---
 
-### IT-05: UI — боковая панель тредов ✅ ГОТОВО
+### IT-06: UI — плашки проектов в треде ✅ ГОТОВО
 
 **Созданные файлы:**
-- `Chappie/Views/Sidebar/ThreadListView.swift`
-  — ForEach по тредам, делегирует рендер ThreadRowView
-- `Chappie/Views/Sidebar/ThreadRowView.swift`
-  — строка треда: hover-кнопка удаления, inline-переименование, контекстное меню
-  — RelativeDateTimeFormatter для отображения даты (ru_RU)
+- `Chappie/Views/Chat/ProjectChipsView.swift`
+  — горизонтальный ряд чипов с hover-кнопкой удаления и кнопкой "+" (NSOpenPanel)
 
 **Изменённые файлы:**
-- `Chappie/Views/Sidebar/SidebarView.swift`
-  — добавлена секция "Треды" с ThreadListView
-  — кнопка "Новый тред" закреплена внизу (VStack + Divider)
-  — новые параметры: threads, selectedThreadId, onSelectThread, onCreateThread, onDeleteThread, onRenameThread
-- `Chappie/ChappieViewModel.swift`
-  — threads: [ThreadMetadata] — список для боковой панели
-  — activeThread: ThreadMetadata? — активный тред
-  — isLoadingThread: Bool — флаг предотвращения записи в legacy при загрузке треда
-  — loadThreadsAndSelectActive() — загрузка и выбор активного треда
-  — selectThread() — переключение треда (загрузка истории + настроек + MemoryContext)
-  — createNewThread() — создание нового треда
-  — deleteThread() — удаление с защитой от пустого списка
-  — renameThread() — переименование
-  — saveMessages() — пропускает запись при isLoadingThread
-  — send() — после получения ответа сохраняет в ThreadStore
 - `Chappie/ContentView.swift`
-  — добавлен `import ChappieCore` (MemberImportVisibility Swift 6)
-  — SidebarView получает threads, selectedThreadId и все коллбэки
-- `ChappieCore/Sources/ChappieCore/Services/ThreadStore.swift`
-  — ThreadMetadata добавлен публичный memberwise init
-
----
-
-### IT-06: UI — плашки проектов в треде
-
-**Цель:** Горизонтальный ряд чипов проектов в верхней части чата.
-
-**Файлы к созданию:**
-- `Chappie/Views/Chat/ProjectChipsView.swift`
-
-**Файлы к изменению:**
-- `Chappie/Views/Chat/ChatScrollView.swift`
-- `Chappie/ChappieViewModel.swift` — addProject(), removeProject()
-
-**Критерий готовности:** Проект компилируется. Можно добавлять/удалять проекты в треде через UI.
-
-**Зависимости:** IT-01, IT-05.
+  — условный рендер ProjectChipsView между боковой панелью и лентой сообщений
+  — анимация появления/исчезновения (.easeInOut 0.2s)
+- `Chappie/ChappieViewModel.swift`
+  — addProject(url:) — создаёт bookmark, ProjectEntity, добавляет UUID в тред
+  — removeProject(id:) — убирает UUID из projectBindingsJSON треда
+  — activeProjects: [ProjectMetadata] — для отображения в ProjectChipsView
+  — loadProjectsForThread() — приватный метод загрузки проектов
+  — projectStore: ProjectStore? — SwiftData бэкенд для проектов
+- `ChappieCore/.../ThreadStore.swift`
+  — updateProjectBindings() — атомарная замена всего списка UUID проектов
+  — addProject(id:toThreadId:) — идемпотентное добавление одного проекта
+  — removeProject(id:fromThreadId:) — удаление одного проекта
+- `ChappieCore/.../ProjectStore.swift`
+  — loadProjects(ids:) — загрузка проектов по списку UUID (сохраняет порядок)
+  — публичный init ProjectMetadata для Preview и тестов
 
 ---
 
@@ -429,6 +429,7 @@ MemoryEntity (SwiftData)
 
 | Date | Change |
 |------|--------|
+| 2025-07-XX | IT-06 ГОТОВО: ProjectChipsView (чипы проектов с hover/add/remove), ContentView условный рендер, ChappieViewModel addProject/removeProject, ThreadStore updateProjectBindings, ProjectStore loadProjects(ids:) |
 | 2025-07-XX | IT-05 ГОТОВО: ThreadListView, ThreadRowView, SidebarView с тредами, ChappieViewModel управление тредами, ContentView + import ChappieCore |
 | 2025-07-XX | IT-04 ГОТОВО: MigrationService (chat_history.json + semantic.json → SwiftData), 5 тестов, ThreadStore добавлен в ChappieViewModel |
 | 2025-07-XX | IT-03 ГОТОВО: MemoryStore (SwiftData CRUD), buildSystemPrompt() с трёхуровневой памятью, MemoryContext, двойной бэкенд (legacy + SwiftData) |

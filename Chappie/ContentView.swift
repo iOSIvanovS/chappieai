@@ -10,6 +10,7 @@
 // - Views/Sidebar/SidebarView.swift      — боковая панель с тредами (IT-05)
 // - Views/Sidebar/ThreadListView.swift   — список тредов (IT-05)
 // - Views/Sidebar/ThreadRowView.swift    — строка треда (IT-05)
+// - Views/Chat/ProjectChipsView.swift    — плашки проектов над чатом (IT-06)
 // - Views/Chat/ChatScrollView.swift      — лента сообщений (макс. 30 .message)
 // - Views/Chat/MessageBubbleView.swift   — пузырь одного сообщения
 // - Views/Chat/StatusBarView.swift       — строка состояния текущего инструмента
@@ -20,6 +21,11 @@
 // ИЗМЕНЕНИЕ (IT-05 — Боковая панель тредов):
 // SidebarView получает список тредов и коллбэки управления тредами из ViewModel.
 // ContentView прокидывает данные без собственной логики — принцип "тупого дирижёра".
+//
+// ИЗМЕНЕНИЕ (IT-06 — Плашки проектов):
+// ProjectChipsView вставлен МЕЖДУ боковой панелью и лентой сообщений.
+// Показывается только когда есть активный тред (activeThread != nil).
+// Коллбэки onAddProject и onRemoveProject прокидываются из ViewModel.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -73,6 +79,25 @@ struct ContentView: View {
         } detail: {
             VStack(spacing: 0) {
 
+                // MARK: Плашки проектов (IT-06)
+                // Показываем только если есть активный тред.
+                // ПОЧЕМУ УСЛОВНЫЙ РЕНДЕР:
+                // До загрузки ModelContainer (первые миллисекунды) activeThread == nil.
+                // Показывать пустые чипы без контекста не имеет смысла.
+                // После выбора треда — ProjectChipsView появляется с анимацией.
+                if viewModel.activeThread != nil {
+                    ProjectChipsView(
+                        projects: viewModel.activeProjects,
+                        onAddProject: { url in
+                            viewModel.addProject(url: url)
+                        },
+                        onRemoveProject: { projectId in
+                            viewModel.removeProject(id: projectId)
+                        }
+                    )
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
                 ChatScrollView(
                     messages: viewModel.visibleMessages,
                     isThinking: viewModel.isThinking,
@@ -90,6 +115,8 @@ struct ContentView: View {
                 )
             }
             .animation(.easeInOut(duration: 0.25), value: viewModel.currentToolCall)
+            // Анимируем появление/исчезновение ProjectChipsView
+            .animation(.easeInOut(duration: 0.2), value: viewModel.activeThread != nil)
             .toolbar {
                 ChappieToolbarContent(
                     balance: viewModel.currentBalance,
@@ -110,7 +137,7 @@ struct ContentView: View {
                 viewModel.updateApiKey(newKey)
             }
         }
-        // ПОДКЛЮЧЕНИЕ SWIFTDATA (IT-03 + IT-05):
+        // ПОДКЛЮЧЕНИЕ SWIFTDATA (IT-03 + IT-05 + IT-06):
         // При первом появлении View передаём ModelContainer в ViewModel.
         // setModelContainer() идемпотентен — повторные вызовы игнорируются.
         .onAppear {

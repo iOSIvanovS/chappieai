@@ -40,6 +40,13 @@
 // activeMemoryContext заполняется из активного треда (threadId + projectIds).
 // ChatHistoryManager продолжает работать параллельно как legacy-фолбэк.
 //
+// ПЛАШКИ ПРОЕКТОВ (IT-06):
+// Каждый тред может иметь привязанные проекты.
+// activeProjects — список ProjectMetadata для отображения в ProjectChipsView.
+// При выборе треда загружаются его проекты из ProjectStore.
+// addProject(url:) — создаёт/находит ProjectEntity, добавляет UUID в тред.
+// removeProject(id:) — убирает UUID из тредa (ProjectEntity не удаляется).
+//
 // АРХИТЕКТУРА ЗАПУСКА ХЕЛПЕРА (MCPHelperLauncher):
 // ПРОБЛЕМА: если запускать MCPHelperLauncher.shared.launch() без пути (из ChappieApp.onAppear),
 // хелпер получает FileManager.currentDirectoryPath = "/" как воркспейс.
@@ -114,6 +121,15 @@ final class ChappieViewModel {
     /// После миграции IT-04 создаётся тред "Основной" — он становится активным.
     var activeThread: ThreadMetadata? = nil
 
+    // MARK: - Проекты в треде (IT-06)
+
+    /// Список проектов, привязанных к активному треду.
+    ///
+    /// Отображается в ProjectChipsView над лентой сообщений.
+    /// Загружается из ProjectStore при выборе треда.
+    /// Обновляется при addProject() и removeProject().
+    var activeProjects: [ProjectMetadata] = []
+
     // MARK: - Настройки активного треда (IT-02)
 
     /// Настройки активного треда — определяют глубину контекста и токенный бюджет.
@@ -150,7 +166,7 @@ final class ChappieViewModel {
     private var orchestrator: AIOrchestrator?
     private var chatHistoryManager: ChatHistoryManager
 
-    // MARK: - SwiftData (IT-03 + IT-04 + IT-05)
+    // MARK: - SwiftData (IT-03 + IT-04 + IT-05 + IT-06)
 
     /// Контейнер SwiftData — передаётся из ChappieApp через setModelContainer().
     private var modelContainer: ModelContainer?
@@ -160,6 +176,9 @@ final class ChappieViewModel {
 
     /// ThreadStore — SwiftData бэкенд для тредов.
     private var threadStore: ThreadStore?
+
+    /// ProjectStore — SwiftData бэкенд для проектов (IT-06).
+    private var projectStore: ProjectStore?
 
     // MARK: - Инициализация
 
@@ -177,17 +196,18 @@ final class ChappieViewModel {
         loadWorkspaceWithSecurityScope()
     }
 
-    // MARK: - Подключение SwiftData (IT-03 + IT-04 + IT-05)
+    // MARK: - Подключение SwiftData (IT-03 + IT-04 + IT-05 + IT-06)
 
     /// Подключает ModelContainer к ViewModel — вызывается из ContentView.onAppear.
     ///
     /// ЧТО ПРОИСХОДИТ:
     /// 1. Создаётся MemoryStore с переданным контейнером
     /// 2. Создаётся ThreadStore с переданным контейнером
-    /// 3. MemoryStore подключается к MemoryManager через setMemoryStore()
-    /// 4. После этого buildSystemPrompt() начинает читать из SwiftData
-    /// 5. Запускается MigrationService — переносит legacy-данные в SwiftData (один раз)
-    /// 6. После миграции — загружается список тредов (IT-05)
+    /// 3. Создаётся ProjectStore с переданным контейнером (IT-06)
+    /// 4. MemoryStore подключается к MemoryManager через setMemoryStore()
+    /// 5. После этого buildSystemPrompt() начинает читать из SwiftData
+    /// 6. Запускается MigrationService — переносит legacy-данные в SwiftData (один раз)
+    /// 7. После миграции — загружается список тредов (IT-05)
     func setModelContainer(_ container: ModelContainer) {
         guard self.modelContainer == nil else { return } // Идемпотентность
 
@@ -199,13 +219,17 @@ final class ChappieViewModel {
         let tStore = ThreadStore(modelContainer: container)
         self.threadStore = tStore
 
+        // IT-06: создаём ProjectStore
+        let pStore = ProjectStore(modelContainer: container)
+        self.projectStore = pStore
+
         if let mm = memoryManager {
             Task {
                 await mm.setMemoryStore(store)
             }
         }
 
-        print("[ChappieViewModel] ✅ ModelContainer подключён, MemoryStore и ThreadStore созданы")
+        print("[ChappieViewModel] ✅ ModelContainer подключён: MemoryStore, ThreadStore, ProjectStore созданы")
 
         Task {
             await runMigrationIfNeeded(threadStore: tStore, memoryStore: store)
@@ -256,7 +280,7 @@ final class ChappieViewModel {
         }
     }
 
-    /// Выбирает тред — загружает его историю и обновляет контекст памяти.
+    /// Выбирает тред — загружает его историю, настройки и проекты.
     ///
     /// ПОЧЕМУ ASYNC:
     /// Загрузка сообщений из SwiftData — асинхронная операция через actor ThreadStore.
@@ -267,6 +291,7 @@ final class ChappieViewModel {
     /// 2. Загружаем настройки треда → activeThreadSettings
     /// 3. Загружаем историю сообщений → messages
     /// 4. Обновляем activeMemoryContext (threadId + projectIds)
+    /// 5. Загружаем проекты треда → activeProjects (IT-06)
     func selectThread(_ thread: ThreadMetadata) async {
         guard let store = threadStore else { return }
 
@@ -302,6 +327,10 @@ final class ChappieViewModel {
         } catch {
             print("[ChappieViewModel] ⚠️ Ошибка загрузки треда '\(thread.title)': \(error)")
         }
+
+        // Загружаем проекты треда (IT-06)
+        // Делаем это ПОСЛЕ загрузки истории — не блокируем основной поток
+        await loadProjectsForThread(thread)
     }
 
     /// Флаг: идёт загрузка треда — не сохранять в legacy ChatHistoryManager.
@@ -316,7 +345,7 @@ final class ChappieViewModel {
     /// Создаёт новый тред и делает его активным.
     ///
     /// Вызывается по кнопке "Новый тред" в боковой панели.
-    /// Новый тред начинается с пустой историей.
+    /// Новый тред начинается с пустой историей и без проектов.
     func createNewThread() {
         guard let store = threadStore else { return }
 
@@ -332,6 +361,8 @@ final class ChappieViewModel {
                     self.isLoadingThread = true
                     self.messages = []
                     self.isLoadingThread = false
+                    // Сбрасываем проекты — новый тред начинается без проектов
+                    self.activeProjects = []
                 }
 
                 print("[ChappieViewModel] ✅ Создан новый тред")
@@ -393,6 +424,159 @@ final class ChappieViewModel {
                 }
             } catch {
                 print("[ChappieViewModel] ⚠️ Ошибка переименования треда: \(error)")
+            }
+        }
+    }
+
+    // MARK: - Управление проектами в треде (IT-06)
+
+    /// Загружает проекты для указанного треда из ProjectStore.
+    ///
+    /// ПОЧЕМУ ОТДЕЛЬНЫЙ МЕТОД:
+    /// Вызывается из selectThread() и после добавления/удаления проекта.
+    /// Изолирован для переиспользования без дублирования кода.
+    private func loadProjectsForThread(_ thread: ThreadMetadata) async {
+        guard let pStore = projectStore else {
+            self.activeProjects = []
+            return
+        }
+
+        guard !thread.projectIds.isEmpty else {
+            // У треда нет проектов — сразу очищаем список без запроса к БД
+            self.activeProjects = []
+            return
+        }
+
+        do {
+            let projects = try await pStore.loadProjects(ids: thread.projectIds)
+            self.activeProjects = projects
+            print("[ChappieViewModel] 📁 Загружено \(projects.count) проектов для треда '\(thread.title)'")
+        } catch {
+            print("[ChappieViewModel] ⚠️ Ошибка загрузки проектов треда: \(error)")
+            self.activeProjects = []
+        }
+    }
+
+    /// Добавляет папку как проект к активному треду.
+    ///
+    /// АЛГОРИТМ:
+    /// 1. Создаём security-scoped bookmark для выбранной папки
+    /// 2. Проверяем, не добавлен ли уже этот проект (по bookmark или имени папки)
+    /// 3. Если нет — создаём ProjectEntity в ProjectStore
+    /// 4. Добавляем UUID проекта в ThreadEntity.projectBindingsJSON через ThreadStore
+    /// 5. Обновляем activeProjects и activeMemoryContext
+    ///
+    /// ПОЧЕМУ BOOKMARK, А НЕ ПУТЬ:
+    /// macOS sandbox требует security-scoped bookmark для постоянного доступа к папке.
+    /// Путь ненадёжен — папку могут переименовать/переместить.
+    ///
+    /// - Parameter url: URL папки выбранной пользователем через NSOpenPanel
+    func addProject(url: URL) {
+        guard let pStore = projectStore,
+              let tStore = threadStore,
+              let thread = activeThread else { return }
+
+        Task {
+            do {
+                // Создаём security-scoped bookmark
+                let bookmarkData: Data
+                do {
+                    bookmarkData = try url.bookmarkData(
+                        options: .withSecurityScope,
+                        includingResourceValuesForKeys: nil,
+                        relativeTo: nil
+                    )
+                } catch {
+                    // Фолбэк без security scope (для тестирования или без sandbox)
+                    bookmarkData = try url.bookmarkData(
+                        options: [],
+                        includingResourceValuesForKeys: nil,
+                        relativeTo: nil
+                    )
+                }
+
+                let displayName = url.lastPathComponent
+
+                // Проверяем, нет ли уже проекта с таким именем в текущем треде
+                // ПОЧЕМУ ПО ИМЕНИ, А НЕ BOOKMARK:
+                // Сравнение bookmark-ов ненадёжно (байты могут отличаться при пересоздании).
+                // Имя папки — достаточный идентификатор для UX (пользователь видит имя).
+                let alreadyAdded = activeProjects.contains { $0.displayName == displayName }
+                guard !alreadyAdded else {
+                    print("[ChappieViewModel] ℹ️ Проект '\(displayName)' уже добавлен в тред")
+                    return
+                }
+
+                // Создаём проект в ProjectStore
+                let projectId = try await pStore.addProject(
+                    displayName: displayName,
+                    bookmarkData: bookmarkData
+                )
+
+                // Добавляем UUID в тред через ThreadStore
+                var updatedIds = thread.projectIds
+                updatedIds.append(projectId)
+                try await tStore.updateProjectBindings(updatedIds, forThreadId: thread.id)
+
+                // Обновляем список тредов (метаданные изменились)
+                let refreshed = try await tStore.loadThreads()
+                self.threads = refreshed
+
+                // Обновляем activeThread и activeMemoryContext
+                if let updatedThread = refreshed.first(where: { $0.id == thread.id }) {
+                    self.activeThread = updatedThread
+                    self.activeMemoryContext = MemoryContext(
+                        threadId: updatedThread.id,
+                        projectIds: updatedThread.projectIds
+                    )
+                    // Перезагружаем проекты треда
+                    await loadProjectsForThread(updatedThread)
+                }
+
+                print("[ChappieViewModel] ✅ Проект '\(displayName)' добавлен в тред '\(thread.title)'")
+            } catch {
+                print("[ChappieViewModel] ⚠️ Ошибка добавления проекта: \(error)")
+            }
+        }
+    }
+
+    /// Удаляет проект из активного треда (ProjectEntity НЕ удаляется из БД).
+    ///
+    /// ПОЧЕМУ НЕ УДАЛЯЕМ ProjectEntity:
+    /// Проект может быть привязан к другим тредам.
+    /// Удаление из треда = просто убрать UUID из projectBindingsJSON.
+    /// Полное удаление проекта из системы — отдельная операция (не реализована в IT-06).
+    ///
+    /// - Parameter projectId: UUID проекта для удаления из треда
+    func removeProject(id projectId: UUID) {
+        guard let tStore = threadStore,
+              let thread = activeThread else { return }
+
+        Task {
+            do {
+                // Убираем UUID из списка привязок треда
+                var updatedIds = thread.projectIds
+                updatedIds.removeAll { $0 == projectId }
+                try await tStore.updateProjectBindings(updatedIds, forThreadId: thread.id)
+
+                // Обновляем список тредов
+                let refreshed = try await tStore.loadThreads()
+                self.threads = refreshed
+
+                // Обновляем activeThread и activeMemoryContext
+                if let updatedThread = refreshed.first(where: { $0.id == thread.id }) {
+                    self.activeThread = updatedThread
+                    self.activeMemoryContext = MemoryContext(
+                        threadId: updatedThread.id,
+                        projectIds: updatedThread.projectIds
+                    )
+                    // Перезагружаем проекты треда
+                    await loadProjectsForThread(updatedThread)
+                }
+
+                print("[ChappieViewModel] 🗑 Проект убран из треда '\(thread.title)'")
+            } catch {
+                print("[ChappieViewModel] ⚠️ Ошибка удаления проекта из треда: \(error)")
             }
         }
     }

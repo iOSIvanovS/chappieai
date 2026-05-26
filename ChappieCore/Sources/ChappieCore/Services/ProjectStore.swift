@@ -17,6 +17,10 @@
 // Сейчас выбор воркспейса хранится в UserDefaults через SettingsManager.
 // После IT-05 (UI тредов) воркспейс будет выбираться через ProjectStore.
 // Существующий SettingsManager остаётся как фолбэк до полной миграции.
+//
+// ИЗМЕНЕНИЕ (IT-06):
+// ProjectMetadata получил публичный инициализатор для Preview и тестов.
+// Swift автогенерирует memberwise init как internal — UI-таргету нужен явный public.
 
 import Foundation
 import SwiftData
@@ -234,6 +238,11 @@ public actor ProjectStore {
 /// АНАЛОГ ThreadMetadata: ProjectEntity не является Sendable, поэтому
 /// передаём только примитивы. Для операций с файлами UI запрашивает
 /// bookmark через loadBookmark(forProjectId:).
+///
+/// ПОЧЕМУ ПУБЛИЧНЫЙ INIT (IT-06):
+/// Swift автогенерирует memberwise init как internal.
+/// UI-таргет (Chappie.app) не имеет доступа к internal-инициализаторам из другого модуля.
+/// Нужен явный public init для использования в Preview и тестах.
 public struct ProjectMetadata: Sendable, Identifiable, Hashable {
 
     /// UUID проекта
@@ -249,10 +258,36 @@ public struct ProjectMetadata: Sendable, Identifiable, Hashable {
     public let settings: ProjectSettings
 
     /// Создаёт ProjectMetadata из ProjectEntity (только внутри actor).
+    ///
+    /// Этот инициализатор используется внутри ProjectStore.
+    /// Не public — ProjectEntity не должен покидать actor.
     init(from entity: ProjectEntity) {
         self.id = entity.id
         self.displayName = entity.displayName
         self.createdAt = entity.createdAt
         self.settings = entity.settings
+    }
+
+    /// Публичный инициализатор для Preview, тестов и прямого создания.
+    ///
+    /// ЗАЧЕМ НУЖЕН:
+    /// Swift генерирует memberwise init как internal — недоступен из UI-таргета.
+    /// Этот явный public init решает проблему без изменения архитектуры.
+    ///
+    /// - Parameters:
+    ///   - id: UUID проекта (по умолчанию — новый)
+    ///   - displayName: Отображаемое имя
+    ///   - createdAt: Дата создания (по умолчанию — сейчас)
+    ///   - settings: Настройки (по умолчанию — дефолтные)
+    public init(
+        id: UUID = UUID(),
+        displayName: String,
+        createdAt: Date = Date(),
+        settings: ProjectSettings = ProjectSettings()
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.createdAt = createdAt
+        self.settings = settings
     }
 }
