@@ -376,7 +376,11 @@ public struct ThreadMetadata: Sendable, Identifiable, Hashable {
     /// Список UUID проектов, привязанных к треду
     public let projectIds: [UUID]
 
+    // MARK: - Инициализаторы
+
     /// Создаёт ThreadMetadata из ThreadEntity (только внутри actor).
+    ///
+    /// Используется ThreadStore при загрузке тредов из SwiftData.
     init(from entity: ThreadEntity) {
         self.id = entity.id
         self.title = entity.title
@@ -390,5 +394,24 @@ public struct ThreadMetadata: Sendable, Identifiable, Hashable {
         } else {
             self.projectIds = []
         }
+    }
+
+    /// Публичный memberwise инициализатор — для Preview и тестов.
+    ///
+    /// ПОЧЕМУ НУЖЕН ПУБЛИЧНЫЙ INIT:
+    /// Swift автогенерирует memberwise init как internal для struct.
+    /// Для использования в UI-таргете (Chappie) и тестах нужен явный public init.
+    public init(
+        id: UUID = UUID(),
+        title: String,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date(),
+        projectIds: [UUID] = []
+    ) {
+        self.id = id
+        self.title = title
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.projectIds = projectIds
     }
 }

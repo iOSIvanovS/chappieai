@@ -1,35 +1,32 @@
+// ContentView.swift
+// Chappie
 //
-//  ContentView.swift
-//  Chappie
+// АРХИТЕКТУРНАЯ РОЛЬ ЭТОГО ФАЙЛА:
+// ContentView — это чистый "дирижёр". Он НЕ содержит бизнес-логику и НЕ рисует
+// отдельные элементы. Его единственная задача — собрать все компоненты вместе
+// и "прокинуть" данные из ViewModel в нужные места.
 //
-//  АРХИТЕКТУРНАЯ РОЛЬ ЭТОГО ФАЙЛА:
-//  ContentView — это чистый "дирижёр". Он НЕ содержит бизнес-логику и НЕ рисует
-//  отдельные элементы. Его единственная задача — собрать все компоненты вместе
-//  и "прокинуть" данные из ViewModel в нужные места.
+// Структура разбита на файлы:
+// - Views/Sidebar/SidebarView.swift      — боковая панель с тредами (IT-05)
+// - Views/Sidebar/ThreadListView.swift   — список тредов (IT-05)
+// - Views/Sidebar/ThreadRowView.swift    — строка треда (IT-05)
+// - Views/Chat/ChatScrollView.swift      — лента сообщений (макс. 30 .message)
+// - Views/Chat/MessageBubbleView.swift   — пузырь одного сообщения
+// - Views/Chat/StatusBarView.swift       — строка состояния текущего инструмента
+// - Views/Input/InputBarView.swift       — поле ввода
+// - Views/Toolbar/ToolbarContent.swift   — контент тулбара
+// - Settings/SettingsView.swift          — экран настроек
 //
-//  Структура разбита на файлы:
-//  - Views/Sidebar/SidebarView.swift      — боковая панель
-//  - Views/Chat/ChatScrollView.swift      — лента сообщений (макс. 30 .message)
-//  - Views/Chat/MessageBubbleView.swift   — пузырь одного сообщения
-//  - Views/Chat/StatusBarView.swift       — строка состояния текущего инструмента
-//  - Views/Input/InputBarView.swift       — поле ввода
-//  - Views/Toolbar/ToolbarContent.swift   — контент тулбара
-//  - Settings/SettingsView.swift          — экран настроек
-//
-//  ИЗМЕНЕНИЕ (IT-03 — Трёхуровневая память):
-//  ContentView получает ModelContainer из SwiftUI-окружения (.modelContainer в ChappieApp)
-//  и передаёт его в ChappieViewModel через setModelContainer().
-//  Это связывает SwiftData с MemoryManager для автоматического подмешивания памяти
-//  в system prompt перед каждым запросом к ИИ.
-//
-//  ПОЧЕМУ ЧЕРЕЗ onAppear, А НЕ ЧЕРЕЗ INIT:
-//  @Environment(\.modelContext) недоступен в init — SwiftUI инжектирует его только
-//  в body. onAppear — первый момент когда View "вмонтирована" в иерархию и
-//  окружение доступно. Используем modelContext.container для передачи в ViewModel.
+// ИЗМЕНЕНИЕ (IT-05 — Боковая панель тредов):
+// SidebarView получает список тредов и коллбэки управления тредами из ViewModel.
+// ContentView прокидывает данные без собственной логики — принцип "тупого дирижёра".
 
 import SwiftUI
 import UniformTypeIdentifiers
 import SwiftData
+// ChappieCore нужен для доступа к типам ThreadMetadata (UUID свойство id)
+// через viewModel.activeThread?.id и viewModel.threads
+import ChappieCore
 
 // MARK: - Content View
 
@@ -40,20 +37,37 @@ struct ContentView: View {
     @State private var showSettings: Bool = false
 
     /// ModelContext из SwiftUI-окружения — предоставляется .modelContainer() в ChappieApp.
-    ///
-    /// ЗАЧЕМ НУЖЕН:
-    /// Через modelContext.container получаем ModelContainer и передаём его в ViewModel.
-    /// Это единственный способ связать SwiftData с ViewModel без нарушения
-    /// архитектурных границ (App → View → ViewModel).
     @Environment(\.modelContext) private var modelContext
 
     var body: some View {
         NavigationSplitView {
+            // MARK: Боковая панель с тредами (IT-05)
+            // SidebarView получает:
+            // - список тредов из ViewModel (уже отсортированы по updatedAt DESC)
+            // - UUID активного треда для подсветки
+            // - коллбэки для всех действий с тредами
             SidebarView(
                 workspaceURL: viewModel.workspaceURL,
                 isApiKeyValid: SettingsManager.shared.isApiKeyValid,
+                threads: viewModel.threads,
+                selectedThreadId: viewModel.activeThread?.id,
                 onSelectWorkspace: selectWorkspace,
-                onOpenSettings: { showSettings = true }
+                onOpenSettings: { showSettings = true },
+                onSelectThread: { thread in
+                    // Выбор треда — асинхронная операция (загрузка истории из SwiftData)
+                    Task {
+                        await viewModel.selectThread(thread)
+                    }
+                },
+                onCreateThread: {
+                    viewModel.createNewThread()
+                },
+                onDeleteThread: { thread in
+                    viewModel.deleteThread(thread)
+                },
+                onRenameThread: { thread, newTitle in
+                    viewModel.renameThread(thread, newTitle: newTitle)
+                }
             )
 
         } detail: {
@@ -96,9 +110,8 @@ struct ContentView: View {
                 viewModel.updateApiKey(newKey)
             }
         }
-        // ПОДКЛЮЧЕНИЕ SWIFTDATA (IT-03):
+        // ПОДКЛЮЧЕНИЕ SWIFTDATA (IT-03 + IT-05):
         // При первом появлении View передаём ModelContainer в ViewModel.
-        // modelContext.container — это тот же контейнер что создан в ChappieApp.
         // setModelContainer() идемпотентен — повторные вызовы игнорируются.
         .onAppear {
             viewModel.setModelContainer(modelContext.container)

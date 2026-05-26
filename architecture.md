@@ -195,7 +195,7 @@ readGroup.wait()
 
 ## 10. REFACTOR-THREADS — Большой рефакторинг: треды, проекты, SwiftData
 
-### Статус: 🔄 В ПРОЦЕССЕ (IT-01 ✅, IT-02 ✅, IT-03 ✅, IT-04 ✅)
+### Статус: 🔄 В ПРОЦЕССЕ (IT-01 ✅, IT-02 ✅, IT-03 ✅, IT-04 ✅, IT-05 ✅)
 
 ### Контекст и мотивация
 
@@ -238,7 +238,7 @@ struct MemoryContext: Sendable {
     static let empty = MemoryContext()  // фолбэк без памяти
 }
 ```
-Передаётся в `process()` как параметр. До IT-05 = `.empty`.
+Передаётся в `process()` как параметр. С IT-05 заполняется из активного треда.
 
 **Формула tokenBudget (IT-02 ✅):**
 ```
@@ -251,6 +251,19 @@ tokenBudget = maxMessagesInContext × 500
 - `AppConfig(maxMessagesInContext:)` — создаётся из числа
 - `AppConfig(settings: ThreadSettings)` — фабричный метод из ThreadSettings
 - `AIOrchestrator.process()` принимает `config: AppConfig` как параметр
+
+**ThreadMetadata — публичный init (IT-05 ✅):**
+Добавлен публичный memberwise init в ThreadMetadata для Preview и тестов.
+Swift автогенерирует memberwise init как internal — для UI-таргета нужен явный public.
+
+**isLoadingThread флаг (IT-05 ✅):**
+При загрузке истории треда из SwiftData messages.didSet НЕ должен сохранять
+в legacy ChatHistoryManager (иначе перезапишет историю другого треда).
+Флаг isLoadingThread позволяет saveMessages() пропустить сохранение.
+
+**MemberImportVisibility (Swift 6 / Xcode 26):**
+Фича требует явного `import ChappieCore` в каждом файле UI-таргета, где используются
+типы из ChappieCore. ContentView.swift получил явный `import ChappieCore`.
 
 ### SwiftData схема (тонкий слой хранилища)
 
@@ -277,21 +290,36 @@ MemoryEntity (SwiftData)
 └── entriesJSON: Data           ← [MemoryEntry] сериализованы через JSONEncoder
 ```
 
-### UI — боковая панель тредов
+### UI — боковая панель тредов (IT-05 ✅)
 
-- Классическая боковая панель как в Claude/ChatGPT
-- Список тредов, сортировка по updatedAt (последний активный — сверху)
-- Кнопка "Новый тред" внизу панели
-- Название треда — первые слова первого сообщения (автогенерация)
+**Файлы:**
+- `Chappie/Views/Sidebar/ThreadListView.swift` — список тредов (ForEach)
+- `Chappie/Views/Sidebar/ThreadRowView.swift` — строка треда с hover/rename/delete
+- `Chappie/Views/Sidebar/SidebarView.swift` — обновлён, добавлена секция тредов + кнопка "Новый тред"
 
-### UI — плашки проектов в треде
+**Поведение:**
+- Список тредов сортируется по updatedAt DESC (самый свежий — сверху)
+- Активный тред подсвечивается акцентным цветом
+- Hover — показывается кнопка удаления
+- Двойной клик — inline переименование через TextField
+- Контекстное меню (правый клик) — переименовать, удалить
+- Кнопка "Новый тред" закреплена внизу панели
+- При удалении последнего треда — автоматически создаётся новый
+
+**Автоматическое управление тредами в ViewModel:**
+- При старте: loadThreadsAndSelectActive() — загружает треды и выбирает первый
+- При пустом списке: автоматически создаётся "Новый тред"
+- selectThread(): загружает историю + настройки + обновляет MemoryContext
+- После отправки сообщения: история сохраняется в активный тред через ThreadStore
+
+### UI — плашки проектов в треде (IT-06 — следующая)
 
 - В верхней части чата — горизонтальный ряд чипов/тегов с именами проектов
 - Кнопка `+` для добавления проекта из списка существующих
 - Кнопка `×` на каждом чипе для удаления проекта из треда
 - Чаппи сам может добавлять/удалять проекты через инструменты в процессе разговора
 
-### Инструменты управления тредом (новые MCP-инструменты)
+### Инструменты управления тредом (IT-07 — после IT-06)
 
 - `add_project_to_thread(projectId)` — Чаппи добавляет проект в текущий тред
 - `remove_project_from_thread(projectId)` — Чаппи удаляет проект из треда
@@ -314,95 +342,42 @@ MemoryEntity (SwiftData)
 | IT-02 | ThreadSettings + динамический AppConfig | ✅ ГОТОВО |
 | IT-03 | Трёхуровневая память в system prompt | ✅ ГОТОВО |
 | IT-04 | Миграция старых файлов → SwiftData | ✅ ГОТОВО |
-| IT-05 | UI: боковая панель тредов | 🔲 |
+| IT-05 | UI: боковая панель тредов | ✅ ГОТОВО |
 | IT-06 | UI: плашки проектов в треде | 🔲 |
 | IT-07 | Инструменты add/remove project | 🔲 |
 
 ---
 
-### IT-01: SwiftData модели + JSON-сериализация ✅ ГОТОВО
+### IT-05: UI — боковая панель тредов ✅ ГОТОВО
 
 **Созданные файлы:**
-- `ChappieCore/Sources/ChappieCore/Models/ThreadModels.swift`
-- `ChappieCore/Sources/ChappieCore/Models/ProjectModels.swift`
-- `ChappieCore/Sources/ChappieCore/Models/MemoryModels.swift`
-- `ChappieCore/Sources/ChappieCore/Services/ThreadStore.swift`
-- `ChappieCore/Sources/ChappieCore/Services/ProjectStore.swift`
-- `Chappie/ChappieApp.swift` — добавлен ModelContainer
-
----
-
-### IT-02: ThreadSettings + динамический AppConfig ✅ ГОТОВО
-
-**Изменённые файлы:**
-- `ChappieCore/Sources/ChappieCore/Models/AppConfig.swift`
-- `ChappieCore/Sources/ChappieCore/Services/AIOrchestrator.swift`
-- `Chappie/ChappieViewModel.swift`
-- `ChappieCoreTests/AppConfigTests.swift`
-
----
-
-### IT-03: Трёхуровневая память в system prompt ✅ ГОТОВО
-
-**Созданные файлы:**
-- `ChappieCore/Sources/ChappieCore/Services/MemoryStore.swift`
-
-**Изменённые файлы:**
-- `ChappieCore/Sources/ChappieCore/Services/MemoryManager.swift`
-- `ChappieCore/Sources/ChappieCore/Services/AIOrchestrator.swift`
-- `Chappie/ChappieViewModel.swift`
-- `Chappie/ContentView.swift`
-
----
-
-### IT-04: Миграция старых файлов → SwiftData ✅ ГОТОВО
-
-**Созданные файлы:**
-- `ChappieCore/Sources/ChappieCore/Services/MigrationService.swift`
-  — `migrate<T: Codable>()` — Generic, идемпотентный, флаг UserDefaults["migration_v1_done"]
-  — `migrateChatHistory()` — chat_history.json → ThreadEntity "Основной"
-  — `migrateSemanticMemory()` — semantic.json → MemoryEntity scope="global"
-  — `LegacyMemoryRecord` — приватный Codable тип для десериализации semantic.json
-- `ChappieCoreTests/MigrationServiceTests.swift`
-  — 5 тестов: идемпотентность, без файлов, с chat_history, с semantic, сброс флага
-
-**Изменённые файлы:**
-- `Chappie/ChappieViewModel.swift`
-  — добавлен `threadStore: ThreadStore?` (SwiftData бэкенд для тредов)
-  — `setModelContainer()` создаёт ThreadStore и запускает `runMigrationIfNeeded()`
-  — `runMigrationIfNeeded()` — определяет URL файлов и вызывает MigrationService
-
-**АРХИТЕКТУРНОЕ РЕШЕНИЕ — GENERIC ДЛЯ ChatMessage:**
-MigrationService не знает о ChatMessage (UI-тип). Принимает `T: Codable`.
-ChappieViewModel вызывает: `migrate(messageType: ChatMessage.self, ...)`
-
----
-
-### IT-05: UI — боковая панель тредов
-
-**Цель:** Классическая боковая панель с тредами как в Claude/ChatGPT.
-
-**Файлы к созданию:**
 - `Chappie/Views/Sidebar/ThreadListView.swift`
+  — ForEach по тредам, делегирует рендер ThreadRowView
 - `Chappie/Views/Sidebar/ThreadRowView.swift`
+  — строка треда: hover-кнопка удаления, inline-переименование, контекстное меню
+  — RelativeDateTimeFormatter для отображения даты (ru_RU)
 
-**Файлы к изменению:**
+**Изменённые файлы:**
 - `Chappie/Views/Sidebar/SidebarView.swift`
+  — добавлена секция "Треды" с ThreadListView
+  — кнопка "Новый тред" закреплена внизу (VStack + Divider)
+  — новые параметры: threads, selectedThreadId, onSelectThread, onCreateThread, onDeleteThread, onRenameThread
 - `Chappie/ChappieViewModel.swift`
-  — activeThread: ThreadMetadata?
-  — threads: [ThreadMetadata]
-  — createThread(), selectThread(), deleteThread()
-  — activeMemoryContext заполняется из активного треда
-- `Chappie/ContentView.swift` — NavigationSplitView
-
-**При завершении IT-05:**
-- `activeMemoryContext` заполняется из активного треда (threadId + projectIds)
-- `activeThreadSettings` загружается из ThreadStore
-- История сообщений загружается из ThreadStore (не из ChatHistoryManager)
-
-**Критерий готовности:** Проект компилируется. Можно создавать треды и переключаться между ними.
-
-**Зависимости:** IT-01, IT-04.
+  — threads: [ThreadMetadata] — список для боковой панели
+  — activeThread: ThreadMetadata? — активный тред
+  — isLoadingThread: Bool — флаг предотвращения записи в legacy при загрузке треда
+  — loadThreadsAndSelectActive() — загрузка и выбор активного треда
+  — selectThread() — переключение треда (загрузка истории + настроек + MemoryContext)
+  — createNewThread() — создание нового треда
+  — deleteThread() — удаление с защитой от пустого списка
+  — renameThread() — переименование
+  — saveMessages() — пропускает запись при isLoadingThread
+  — send() — после получения ответа сохраняет в ThreadStore
+- `Chappie/ContentView.swift`
+  — добавлен `import ChappieCore` (MemberImportVisibility Swift 6)
+  — SidebarView получает threads, selectedThreadId и все коллбэки
+- `ChappieCore/Sources/ChappieCore/Services/ThreadStore.swift`
+  — ThreadMetadata добавлен публичный memberwise init
 
 ---
 
@@ -454,6 +429,7 @@ ChappieViewModel вызывает: `migrate(messageType: ChatMessage.self, ...)`
 
 | Date | Change |
 |------|--------|
+| 2025-07-XX | IT-05 ГОТОВО: ThreadListView, ThreadRowView, SidebarView с тредами, ChappieViewModel управление тредами, ContentView + import ChappieCore |
 | 2025-07-XX | IT-04 ГОТОВО: MigrationService (chat_history.json + semantic.json → SwiftData), 5 тестов, ThreadStore добавлен в ChappieViewModel |
 | 2025-07-XX | IT-03 ГОТОВО: MemoryStore (SwiftData CRUD), buildSystemPrompt() с трёхуровневой памятью, MemoryContext, двойной бэкенд (legacy + SwiftData) |
 | 2025-07-XX | IT-02 ГОТОВО: динамический AppConfig, tokenBudget = maxMessages × 500 |
