@@ -21,13 +21,19 @@
 // Все данные — через параметры, все действия — через коллбэки.
 // Логика в ChappieViewModel.
 //
+// ИЗМЕНЕНИЯ (UI-FIX-01):
+// Добавлен параметр isThreadActive: Bool.
+// ПОЧЕМУ:
+// Раньше ProjectChipsView показывался только когда activeThread != nil (условный рендер).
+// Это вызывало Layout Shift — плашки появлялись с задержкой после асинхронной загрузки треда.
+// Теперь компонент ВСЕГДА присутствует в иерархии View.
+// isThreadActive = false → кнопка "+" заблокирована (нельзя добавить проект без треда).
+// isThreadActive = true → кнопка "+" активна.
+// Чипы существующих проектов показываются всегда когда projects не пустой.
+//
 // ПОВЕДЕНИЕ КНОПКИ "+":
 // Открывает NSOpenPanel → пользователь выбирает папку.
 // ViewModel создаёт/находит ProjectEntity, добавляет UUID в тред.
-//
-// ВИДИМОСТЬ:
-// Компонент показывается ТОЛЬКО когда activeThread != nil.
-// Если тред не выбран — скрываем (не должно быть, но защита от nil).
 
 import SwiftUI
 import ChappieCore
@@ -46,6 +52,15 @@ struct ProjectChipsView: View {
     /// Список проектов, привязанных к текущему треду.
     /// Пустой массив — показываем только кнопку "+".
     let projects: [ProjectMetadata]
+
+    /// Флаг: выбран ли активный тред.
+    ///
+    /// ПОЧЕМУ НУЖЕН ЭТОТ ПАРАМЕТР (UI-FIX-01):
+    /// Компонент теперь ВСЕГДА присутствует в иерархии (не скрывается).
+    /// Если тред не выбран — кнопка "+" заблокирована, чтобы не добавить проект
+    /// в никуда (без контекста треда).
+    /// Как только тред загружается (асинхронно) — кнопка активируется.
+    let isThreadActive: Bool
 
     // MARK: - Коллбэки
 
@@ -83,7 +98,10 @@ struct ProjectChipsView: View {
                     }
 
                     // Кнопка добавления нового проекта
+                    // disabled если тред не выбран — нельзя добавить проект без контекста
                     addButton
+                        .disabled(!isThreadActive)
+                        .opacity(isThreadActive ? 1.0 : 0.4)
                 }
                 .padding(.horizontal, 2)
             }
@@ -110,7 +128,7 @@ struct ProjectChipsView: View {
     ///
     /// ПОЧЕМУ onHover + @State:
     /// SwiftUI не имеет нативного hover-состояния для конкретного элемента в ForEach.
-    /// Используем .onHover(perform:) + @State словарь с UUID как ключом.
+    /// Используем .onHover(perform:) + @State с UUID как ключом.
     private func projectChip(for project: ProjectMetadata) -> some View {
         HStack(spacing: 4) {
             // Иконка папки
@@ -191,7 +209,9 @@ struct ProjectChipsView: View {
             )
         }
         .buttonStyle(.plain)
-        .help("Добавить папку проекта к этому треду")
+        .help(isThreadActive
+              ? "Добавить папку проекта к этому треду"
+              : "Выберите тред чтобы добавить проект")
     }
 
     // MARK: - Приватные методы
@@ -230,6 +250,7 @@ struct ProjectChipsView: View {
                 createdAt: Date()
             )
         ],
+        isThreadActive: true,
         onAddProject: { url in
             print("Добавить проект: \(url.lastPathComponent)")
         },
@@ -244,6 +265,18 @@ struct ProjectChipsView: View {
 #Preview("Пустой список") {
     ProjectChipsView(
         projects: [],
+        isThreadActive: true,
+        onAddProject: { _ in },
+        onRemoveProject: { _ in }
+    )
+    .frame(width: 600)
+    .background(Color(NSColor.windowBackgroundColor))
+}
+
+#Preview("Тред не выбран") {
+    ProjectChipsView(
+        projects: [],
+        isThreadActive: false,
         onAddProject: { _ in },
         onRemoveProject: { _ in }
     )

@@ -12,6 +12,12 @@
 // - Переименование двойным кликом / контекстным меню
 // - Удаление через кнопку hover / контекстное меню
 //
+// АРХИТЕКТУРНЫЕ ИЗМЕНЕНИЯ (UI-FIX-01):
+// Убрана секция "Контекст" (воркспейс) из боковой панели.
+// ПОЧЕМУ: воркспейс — глобальная настройка приложения, не per-тред.
+// Её место — в тулбаре (ToolbarContent), рядом с балансом и настройками.
+// Боковая панель теперь посвящена ТОЛЬКО тредам — как в ChatGPT/Claude.
+//
 // ПРИНЦИП "ТУПОГО КОМПОНЕНТА":
 // SidebarView не знает о ThreadStore и SwiftData. Все данные приходят через
 // параметры (threads, selectedThreadId), все действия — через коллбэки.
@@ -23,16 +29,15 @@ import ChappieCore
 /// Боковая панель приложения Чаппи.
 ///
 /// Показывает:
-/// - список тредов (IT-05)
-/// - текущий воркспейс (или кнопку выбора)
+/// - список тредов (IT-05) — главный контент
 /// - предупреждение если API-ключ не задан
 /// - кнопку "Новый тред" внизу
+///
+/// НЕ показывает (убрано в UI-FIX-01):
+/// - воркспейс / рабочую папку (перенесено в тулбар)
 struct SidebarView: View {
 
     // MARK: - Входные данные (состояние)
-
-    /// URL текущего выбранного воркспейса (nil если не выбран)
-    let workspaceURL: URL?
 
     /// Флаг: задан ли валидный API-ключ
     let isApiKeyValid: Bool
@@ -45,7 +50,6 @@ struct SidebarView: View {
 
     // MARK: - Коллбэки действий
 
-    let onSelectWorkspace: () -> Void
     let onOpenSettings: () -> Void
     let onSelectThread: (ThreadMetadata) -> Void
     let onCreateThread: () -> Void
@@ -57,7 +61,11 @@ struct SidebarView: View {
     var body: some View {
         VStack(spacing: 0) {
 
-            // MARK: Основной скроллируемый список
+            // MARK: Основной скроллируемый список тредов
+            // ПОЧЕМУ ТОЛЬКО ТРЕДЫ:
+            // Боковая панель — это навигация по истории разговоров.
+            // Воркспейс — глобальная настройка, не связанная с конкретным тредом.
+            // Смешивать их в одной панели создаёт путаницу.
             List {
 
                 // Секция тредов — показываем всегда (даже если пустая)
@@ -88,9 +96,6 @@ struct SidebarView: View {
                         .foregroundStyle(.secondary)
                         .textCase(nil) // Отключаем автоматический uppercase в заголовках секций
                 }
-
-                // Секция воркспейса
-                workspaceSection
 
                 // Предупреждение об API-ключе (только если не задан)
                 if !isApiKeyValid {
@@ -123,34 +128,6 @@ struct SidebarView: View {
         .navigationTitle("Чаппи")
     }
 
-    // MARK: - Секция воркспейса
-
-    /// Секция с информацией о текущем воркспейсе.
-    private var workspaceSection: some View {
-        Section("Контекст") {
-            if let workspaceURL = workspaceURL {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Рабочая папка:")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(workspaceURL.lastPathComponent)
-                        .font(.headline)
-                }
-
-                Button("Сменить папку...") {
-                    onSelectWorkspace()
-                }
-                .buttonStyle(.link)
-                .padding(.top, 4)
-
-            } else {
-                Button("Выбрать папку проекта...") {
-                    onSelectWorkspace()
-                }
-            }
-        }
-    }
-
     // MARK: - Секция предупреждения об API-ключе
 
     /// Секция-предупреждение — показывается только когда ключ не задан.
@@ -181,7 +158,6 @@ struct SidebarView: View {
 #Preview {
     NavigationSplitView {
         SidebarView(
-            workspaceURL: URL(fileURLWithPath: "/Users/sergej/Projects/Chappie"),
             isApiKeyValid: true,
             threads: [
                 ThreadMetadata(
@@ -200,7 +176,6 @@ struct SidebarView: View {
                 )
             ],
             selectedThreadId: nil,
-            onSelectWorkspace: {},
             onOpenSettings: {},
             onSelectThread: { _ in },
             onCreateThread: {},
