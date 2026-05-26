@@ -101,18 +101,28 @@ ChappieMCP
 
 ---
 
-## 6. Структура памяти (TD-03) — УСТАРЕВАЕТ
+## 6. Структура памяти (TD-03) — ОБНОВЛЕНО IT-03
 
 Три уровня памяти:
 
-| Уровень | Файл | Управляется |
+| Уровень | Хранилище | Управляется |
 |---|---|---|
-| Глобальная (кросс-проектная) | `~/Documents/Chappie/semantic.json` | `MemoryManager` (scope: global) |
-| Локальная (таргет) | `<target>/architecture.md` | Чаппи вручную через write_file |
-| История чата | `<workspaceURL>/chat_history.json` | `ChatHistoryManager` |
+| Глобальная (кросс-проектная) | SwiftData MemoryEntity scope="global" + legacy ~/Documents/Chappie/semantic.json | MemoryStore + MemoryManager |
+| Проектная | SwiftData MemoryEntity scope="<projectId>" | MemoryStore |
+| Тредовая | SwiftData MemoryEntity scope="<threadId>" | MemoryStore |
+| Документация таргетов | `<target>/architecture.md` | Чаппи вручную через write_file |
 
-Папки `AI_Docs/` во всех таргетах **упразднены** — они были избыточны.
-Каждый таргет имеет только `architecture.md` в своём корне.
+**АВТОМАТИЧЕСКОЕ ПОДМЕШИВАНИЕ В SYSTEM PROMPT (IT-03):**
+`MemoryManager.buildSystemPrompt(basePrompt:threadId:projectIds:)` собирает полный промпт:
+1. Базовый промпт (захардкоженные правила Чаппи)
+2. Глобальная память (scope="global") — из SwiftData + legacy файл
+3. Проектная память (scope="<projectId>") — для каждого проекта в треде
+4. Тредовая память (scope="<threadId>") — контекст текущей задачи
+
+**ДВОЙНОЙ БЭКЕНД (до IT-04):**
+- Инструменты memorize/recall → пишут в ~/Documents/Chappie/semantic.json (legacy)
+- buildSystemPrompt() → читает из MemoryStore (SwiftData) + legacy файл (дедупликация)
+- После IT-04 (MigrationService) → только SwiftData
 
 ---
 
@@ -136,35 +146,6 @@ ChappieMCP
 1. Новую строку `PBXFileReference` в секцию `/* Begin PBXFileReference section */`
 2. Новую строку в `children = (` группы `87DOCS0000000000000000000`
 
-**Правильная структура PBXGroup в pbxproj:**
-```
-87BAA46F2FBEED3A001DDBED = {          ← корневая группа (без имени)
-    isa = PBXGroup;
-    children = (
-        87DOCS0000000000000000000,    ← ссылка на группу Docs (ID объекта)
-        87BAA47A...,                  ← Chappie
-        874865FB...,                  ← ChappieCoreTests
-        ...
-    );
-};
-
-87DOCS0000000000000000000 = {         ← ОТДЕЛЬНЫЙ объект группы Docs
-    isa = PBXGroup;
-    name = "📚 Docs";
-    children = ( ... );
-};
-
-87BAA4792FBEED3A001DDBED = {          ← ОТДЕЛЬНЫЙ объект Products
-    isa = PBXGroup;
-    name = Products;
-    ...
-};
-```
-
-**КРИТИЧНО:** Каждый PBXGroup — это ОТДЕЛЬНЫЙ объект в секции `/* Begin PBXGroup section */`.
-Нельзя вкладывать определение одного объекта внутрь `children = (` другого!
-`children` содержит только ID (ссылки), сами объекты определяются отдельно.
-
 ---
 
 ## 8. Зависания build_project и run_tests — КОРНЕВАЯ ПРИЧИНА И РЕШЕНИЕ
@@ -185,40 +166,24 @@ Pipe имеет буфер ~64KB. xcodebuild пишет МНОГО вывода 
 
 **Решение:** читать stdout/stderr в отдельных DispatchQueue **параллельно** с waitUntilExit():
 ```swift
-// Запускаем параллельное чтение ДО process.run()
 readGroup.enter()
 DispatchQueue.global(qos: .utility).async {
     stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
     readGroup.leave()
 }
-// ... аналогично для stderr ...
-
 try process.run()
-process.waitUntilExit()   // теперь не зависает — Pipe читается параллельно
-readGroup.wait()           // ждём завершения чтения
+process.waitUntilExit()
+readGroup.wait()
 ```
 
 ### Причина 2: Нет явного destination (ИСПРАВЛЕНО 2025-07-11)
 
 Без явного `arch` xcodebuild на macOS 26 beta зависал, выбирая между устройствами.
-
 **Решение:** добавлен явный `-destination "platform=macOS,arch=arm64"` для обеих команд.
 
 ### Причина 3: Таймаут как последняя линия защиты
 
-Даже после исправления дедлока — таймаут 300с остаётся как страховка:
-```swift
-let killWorkItem = DispatchWorkItem {
-    if process.isRunning {
-        timedOut = true
-        process.terminate()
-    }
-}
-DispatchQueue.global(qos: .background).asyncAfter(
-    deadline: .now() + kBuildTimeoutSeconds,
-    execute: killWorkItem
-)
-```
+Таймаут 300с остаётся как страховка от зависания.
 
 ---
 
@@ -226,14 +191,14 @@ DispatchQueue.global(qos: .background).asyncAfter(
 
 | ID | Проблема | Приоритет |
 |----|----------|-----------|
-| TD-01 | `build_project` зависал — РЕШЕНО (2025-07-11): дедлок Pipe исправлен, параллельное чтение, таймаут 300с + явный destination arm64 | ✅ |
-| TD-02 | Тесты `ChappieCoreTests` требуют ручного выбора таргета в Xcode перед ⌘+U. Неочевидно для пользователя. | Низкий |
+| TD-01 | `build_project` зависал — РЕШЕНО (2025-07-11) | ✅ |
+| TD-02 | Тесты `ChappieCoreTests` требуют ручного выбора таргета в Xcode перед ⌘+U. | Низкий |
 
 ---
 
 ## 10. REFACTOR-THREADS — Большой рефакторинг: треды, проекты, SwiftData
 
-### Статус: 🔄 В ПРОЦЕССЕ (IT-01 ✅, IT-02 ✅)
+### Статус: 🔄 В ПРОЦЕССЕ (IT-01 ✅, IT-02 ✅, IT-03 ✅)
 
 ### Контекст и мотивация
 
@@ -249,28 +214,41 @@ DispatchQueue.global(qos: .background).asyncAfter(
 и хранятся как `Data`. При чтении — JSONDecoder. Это даёт нам свободу эволюции моделей
 без болезненных SwiftData-миграций.
 
-**Три уровня памяти в system prompt:**
+**Три уровня памяти в system prompt (IT-03 ✅):**
 1. Глобальная память — факты о пользователе, стиль общения, кросс-проектные знания
 2. Проектная память — архитектура конкретного проекта, пайплайны, договорённости
 3. Тредовая память — контекст текущей задачи, временные заметки
+
+**Автоматическое подмешивание (IT-03 ✅):**
+`MemoryManager.buildSystemPrompt()` вызывается перед каждым запросом в `AIOrchestrator.process()`.
+Чаппи ВСЕГДА видит всю свою память — не нужно явно вызывать recall.
+
+**Двойной бэкенд памяти (до IT-04):**
+- legacy: ~/Documents/Chappie/semantic.json (инструменты memorize/recall)
+- новый: SwiftData MemoryStore (buildSystemPrompt читает отсюда + из legacy)
+- После IT-04: только SwiftData
+
+**MemoryContext (IT-03 ✅):**
+```swift
+struct MemoryContext: Sendable {
+    let threadId: UUID?      // для тредовой памяти
+    let projectIds: [UUID]   // для проектной памяти
+    static let empty = MemoryContext()  // фолбэк без памяти
+}
+```
+Передаётся в `process()` как параметр. До IT-05 = `.empty`.
 
 **Формула tokenBudget (IT-02 ✅):**
 ```
 tokenBudget = maxMessagesInContext × 500
 ```
 Диапазон: 10 сообщений = 5,000 токенов ... 100 сообщений = 50,000 токенов.
-Механизм двойного отсечения наследуется без изменений:
-1. Жёсткий лимит по количеству (maxMessagesInContext) — применяется первым
-2. Мягкий лимит по токенам (tokenBudget) — применяется вторым
-3. Summary-сжатие старых длинных сообщений — работает под капотом
 
 **AppConfig — динамический (IT-02 ✅):**
 - `AppConfig.shared` — дефолт (20 сообщений, 10,000 токенов)
 - `AppConfig(maxMessagesInContext:)` — создаётся из настроек треда
 - `AppConfig(settings: ThreadSettings)` — фабричный метод из ThreadSettings
-- `AIOrchestrator.process()` принимает `config: AppConfig` как параметр (дефолт = `.shared`)
-- `ChappieViewModel.activeThreadSettings: ThreadSettings` — настройки активного треда
-- `ChappieViewModel.activeConfig: AppConfig` — вычисляемый конфиг из activeThreadSettings
+- `AIOrchestrator.process()` принимает `config: AppConfig` как параметр
 
 ### SwiftData схема (тонкий слой хранилища)
 
@@ -295,23 +273,6 @@ MemoryEntity (SwiftData)
 ├── id: UUID
 ├── scope: String               ← "global" | "<projectId>" | "<threadId>"
 └── entriesJSON: Data           ← [MemoryEntry] сериализованы через JSONEncoder
-```
-
-### ThreadSettings (Swift struct, Codable) — IT-01 ✅
-
-```swift
-struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
-    var maxMessagesInContext: Int   // 10...100, по умолчанию 20
-    var tokenBudget: Int { maxMessagesInContext * 500 }  // вычисляемый, не хранится
-}
-```
-
-### ProjectSettings (Swift struct, Codable) — IT-01 ✅
-
-```swift
-struct ProjectSettings: Codable {
-    var preferredLanguage: String   // язык комментариев и ответов
-}
 ```
 
 ### UI — боковая панель тредов
@@ -358,7 +319,7 @@ struct ProjectSettings: Codable {
 |---|---|---|
 | IT-01 | SwiftData модели + JSON-сериализация | ✅ ГОТОВО |
 | IT-02 | ThreadSettings + динамический AppConfig | ✅ ГОТОВО |
-| IT-03 | Трёхуровневая память в system prompt | 🔲 |
+| IT-03 | Трёхуровневая память в system prompt | ✅ ГОТОВО |
 | IT-04 | Миграция старых файлов → SwiftData | 🔲 |
 | IT-05 | UI: боковая панель тредов | 🔲 |
 | IT-06 | UI: плашки проектов в треде | 🔲 |
@@ -369,11 +330,11 @@ struct ProjectSettings: Codable {
 ### IT-01: SwiftData модели + JSON-сериализация ✅ ГОТОВО
 
 **Созданные файлы:**
-- `ChappieCore/Sources/ChappieCore/Models/ThreadModels.swift` — ThreadEntity, ThreadSettings
-- `ChappieCore/Sources/ChappieCore/Models/ProjectModels.swift` — ProjectEntity, ProjectSettings
-- `ChappieCore/Sources/ChappieCore/Models/MemoryModels.swift` — MemoryEntity, MemoryEntry
-- `ChappieCore/Sources/ChappieCore/Services/ThreadStore.swift` — actor, CRUD + Generic messages
-- `ChappieCore/Sources/ChappieCore/Services/ProjectStore.swift` — actor, CRUD + ProjectMetadata DTO
+- `ChappieCore/Sources/ChappieCore/Models/ThreadModels.swift`
+- `ChappieCore/Sources/ChappieCore/Models/ProjectModels.swift`
+- `ChappieCore/Sources/ChappieCore/Models/MemoryModels.swift`
+- `ChappieCore/Sources/ChappieCore/Services/ThreadStore.swift`
+- `ChappieCore/Sources/ChappieCore/Services/ProjectStore.swift`
 - `Chappie/ChappieApp.swift` — добавлен ModelContainer
 
 ---
@@ -382,35 +343,41 @@ struct ProjectSettings: Codable {
 
 **Изменённые файлы:**
 - `ChappieCore/Sources/ChappieCore/Models/AppConfig.swift`
-  — добавлен `init(maxMessagesInContext:)` и `init(settings: ThreadSettings)`
-  — `tokenBudget` вычисляется: `maxMessagesInContext × 500`
-  — `AppConfig.shared` = дефолт (20 сообщений, 10,000 токенов)
 - `ChappieCore/Sources/ChappieCore/Services/AIOrchestrator.swift`
-  — `process()` принимает `config: AppConfig = .shared` как параметр
-  — `buildContextWindow()` принимает `config:` и использует его параметры
 - `Chappie/ChappieViewModel.swift`
-  — добавлено `activeThreadSettings: ThreadSettings`
-  — добавлено `activeConfig: AppConfig` (вычисляемое)
-  — `send()` передаёт `config: activeConfig` в `process()`
 - `ChappieCoreTests/AppConfigTests.swift`
-  — добавлены тесты формулы tokenBudget, clamping, AppConfig(settings:)
 
 ---
 
-### IT-03: Трёхуровневая память в system prompt
+### IT-03: Трёхуровневая память в system prompt ✅ ГОТОВО
 
-**Цель:** System prompt автоматически включает глобальную + проектную + тредовую память.
+**Созданные файлы:**
+- `ChappieCore/Sources/ChappieCore/Services/MemoryStore.swift`
+  — actor для CRUD памяти в SwiftData
+  — readEntriesForScopes() — массовая загрузка для buildSystemPrompt()
+  — importEntries() — для MigrationService в IT-04
 
-**Файлы к изменению:**
+**Изменённые файлы:**
 - `ChappieCore/Sources/ChappieCore/Services/MemoryManager.swift`
-  — добавить методы `loadGlobalMemory()`, `loadProjectMemory(projectId:)`, `loadThreadMemory(threadId:)`
-  — добавить метод `buildSystemPrompt(threadId:projectIds:)` — собирает полный system prompt
+  — добавлен setMemoryStore(store: MemoryStore)
+  — добавлен buildSystemPrompt(basePrompt:threadId:projectIds:)
+  — добавлен loadLegacyMemoryForPrompt() — читает legacy semantic.json
+  — добавлен buildMemoryBlock() — форматирует блок памяти с дедупликацией SwiftData vs legacy
 - `ChappieCore/Sources/ChappieCore/Services/AIOrchestrator.swift`
-  — использует `buildSystemPrompt()` вместо захардкоженного промпта
-
-**Критерий готовности:** Проект компилируется. System prompt содержит все три уровня памяти.
-
-**Зависимости:** IT-01 (MemoryEntity), IT-02 (динамический конфиг).
+  — добавлен MemoryContext: Sendable struct (threadId + projectIds)
+  — systemPrompt переименован в baseSystemPrompt
+  — init принимает memoryManager: MemoryManager
+  — process() принимает memoryContext: MemoryContext = .empty
+  — вызывает buildSystemPrompt() перед каждым запросом
+- `Chappie/ChappieViewModel.swift`
+  — добавлен activeMemoryContext: MemoryContext = .empty
+  — добавлен setModelContainer(_ container: ModelContainer)
+  — добавлен memoryStore: MemoryStore? (опциональный)
+  — initializeServices() подключает MemoryStore к MemoryManager
+  — send() передаёт memoryContext в process()
+- `Chappie/ContentView.swift`
+  — @Environment(\.modelContext) private var modelContext
+  — .onAppear { viewModel.setModelContainer(modelContext.container) }
 
 ---
 
@@ -422,14 +389,14 @@ struct ProjectSettings: Codable {
 - `ChappieCore/Sources/ChappieCore/Services/MigrationService.swift`
   — `migrate()` — идемпотентный, проверяет флаг `UserDefaults["migration_v1_done"]`
   — читает `chat_history.json`, создаёт тред "Основной", переносит историю
-  — читает `semantic.json`, переносит в MemoryEntity с scope="global"
+  — читает `semantic.json`, переносит в MemoryEntity с scope="global" через MemoryStore.importEntries()
 
 **Файлы к изменению:**
-- `Chappie/ChappieApp.swift` — вызвать `MigrationService.migrate()` при старте
+- `Chappie/ChappieViewModel.swift` — вызвать MigrationService после setModelContainer()
 
 **Критерий готовности:** Проект компилируется. Старая история видна в новом треде.
 
-**Зависимости:** IT-01.
+**Зависимости:** IT-01, IT-03 (MemoryStore.importEntries()).
 
 ---
 
@@ -445,6 +412,10 @@ struct ProjectSettings: Codable {
 - `Chappie/Views/Sidebar/SidebarView.swift`
 - `Chappie/ChappieViewModel.swift` — activeThread, threads, createThread(), selectThread(), deleteThread()
 - `Chappie/ContentView.swift` — NavigationSplitView
+
+**При завершении IT-05:**
+- `activeMemoryContext` заполняется из активного треда (threadId + projectIds)
+- `activeThreadSettings` загружается из ThreadStore
 
 **Критерий готовности:** Проект компилируется. Можно создавать треды и переключаться между ними.
 
@@ -492,10 +463,7 @@ struct ProjectSettings: Codable {
 **Ключевые решения:**
 - Файл лежит в КОРНЕ воркспейса (не в AI_Docs/ — папка упразднена).
 - Автоматическое подрезание до 100 сообщений при каждом сохранении.
-- 100 сообщений = ~20-50 диалоговых пар, достаточно для работы.
 - Оркестратор берёт последние maxMessagesInContext (из ThreadSettings треда).
-
-**ВАЖНО:** При рефакторинге — путь нельзя менять без обновления `ChatHistoryManager.swift`.
 
 ---
 
@@ -503,13 +471,13 @@ struct ProjectSettings: Codable {
 
 | Date | Change |
 |------|--------|
-| 2025-07-XX | IT-02 ГОТОВО: динамический AppConfig, tokenBudget = maxMessages × 500, process() принимает config как параметр |
-| 2025-07-XX | IT-01 ГОТОВО: SwiftData модели (ThreadEntity, ProjectEntity, MemoryEntity), ThreadStore, ProjectStore, ModelContainer в ChappieApp |
-| 2025-07-11 | РЕШЕНО TD-01 корень: исправлен дедлок Pipe в BuildTools.swift — параллельное чтение stdout/stderr через DispatchQueue |
-| 2025-07-11 | РЕШЕНО TD-01: добавлен таймаут 300с + terminate() в BuildTools.swift; явный destination arm64 |
-| 2025-07-10 | КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: удалён XcodeDocsGroupManager, группа 📚 Docs теперь статическая |
-| 2025-07-10 | TD-01: зафиксированы зависания build_project; TD-02: тесты требуют выбора таргета |
-| 2025-07-10 | Починен сломанный project.pbxproj (неправильная вложенность PBXGroup вызывала "Failed to load container") |
-| 2025-07-10 | Добавлена группа 📚 Docs в project.pbxproj для навигации по architecture.md файлам |
-| 2025-06 | TD-03: рефакторинг AI_Docs/ → один файл architecture.md на таргет; chat_history.json переехал в корень воркспейса; подрезание до 100 сообщений |
+| 2025-07-XX | IT-03 ГОТОВО: MemoryStore (SwiftData CRUD), buildSystemPrompt() с трёхуровневой памятью, MemoryContext, двойной бэкенд (legacy + SwiftData) |
+| 2025-07-XX | IT-02 ГОТОВО: динамический AppConfig, tokenBudget = maxMessages × 500 |
+| 2025-07-XX | IT-01 ГОТОВО: SwiftData модели (ThreadEntity, ProjectEntity, MemoryEntity), ThreadStore, ProjectStore, ModelContainer |
+| 2025-07-11 | РЕШЕНО TD-01: исправлен дедлок Pipe в BuildTools.swift |
+| 2025-07-10 | КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: удалён XcodeDocsGroupManager |
+| 2025-07-10 | TD-01: зафиксированы зависания build_project |
+| 2025-07-10 | Починен сломанный project.pbxproj |
+| 2025-07-10 | Добавлена группа 📚 Docs в project.pbxproj |
+| 2025-06 | TD-03: рефакторинг AI_Docs/ → один файл architecture.md на таргет |
 | 2025-07-XX | REFACTOR-THREADS: зафиксирован план итераций IT-01..IT-07 |
