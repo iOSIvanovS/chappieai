@@ -75,6 +75,13 @@
 //     Перед каждым запросом MemoryManager.buildSystemPrompt() собирает полный промпт
 //     с подмешанной глобальной + проектной + тредовой памятью.
 //     Захардкоженный systemPrompt остаётся как BASE_PROMPT — основа для buildSystemPrompt().
+//
+// 12. ЗАЩИТА ОТ ПЕТЕЛЬ (УМНАЯ, НЕ СЕССИОННАЯ):
+//     Вместо блокировки любого повторного вызова за всю сессию — блокируем только
+//     два ПОДРЯД идущих одинаковых вызова (один и тот же инструмент с теми же аргументами
+//     без каких-либо других вызовов между ними).
+//     ПОЧЕМУ: сессионная блокировка мешала легитимным повторам (read_file после write_file,
+//     list_files после создания нового файла и т.д.). Подряд-блокировка ловит реальные петли.
 
 import Foundation
 
@@ -286,7 +293,21 @@ public actor AIOrchestrator {
         var totalCost: Double = 0.0
         var latestBalance: Double? = nil
         var stepCount = 0
-        var executedToolSignatures = Set<String>()
+
+        // ЗАЩИТА ОТ ПЕТЕЛЬ (умная, подряд-блокировка):
+        // Храним сигнатуру ТОЛЬКО последнего выполненного вызова инструмента.
+        // Если следующий вызов совпадает — это петля, блокируем.
+        // Если между ними был другой вызов — сигнатура сброшена, повтор разрешён.
+        //
+        // ПОЧЕМУ НЕ СЕССИОННАЯ БЛОКИРОВКА:
+        // Сессионная блокировка (Set<String> за всю сессию) мешала легитимным повторам:
+        // - read_file("foo.swift") после write_file("foo.swift") — нужно прочитать изменения
+        // - list_files() после создания нового файла — нужно увидеть обновлённый список
+        // - git_status() дважды для проверки состояния до и после операции
+        // Подряд-блокировка ловит реальные бесконечные петли (A→A→A→...)
+        // и не мешает нормальным паттернам (A→B→A или A→write→A).
+        var lastToolSignature: String? = nil
+
         let maxSteps = config.maxOrchestratorSteps
 
         // MARK: - Агентный цикл
@@ -320,7 +341,7 @@ public actor AIOrchestrator {
                 try await executeToolCalls(
                     toolCalls,
                     sessionHistory: &sessionHistory,
-                    executedToolSignatures: &executedToolSignatures,
+                    lastToolSignature: &lastToolSignature,
                     onToolCall: onToolCall
                 )
                 continue
@@ -464,10 +485,19 @@ public actor AIOrchestrator {
 
     // MARK: - Приватные методы агентного цикла
 
+    /// Выполняет список вызовов инструментов и добавляет результаты в историю.
+    ///
+    /// ЗАЩИТА ОТ ПЕТЕЛЬ (подряд-блокировка):
+    /// Если текущий вызов совпадает с предыдущим по сигнатуре (имя + аргументы) —
+    /// это петля. Возвращаем ошибку вместо реального выполнения.
+    /// После каждого успешного вызова обновляем lastToolSignature.
+    /// Если в пачке несколько вызовов — сигнатура последнего запоминается.
+    /// Это означает: A,B → A разрешено (между A и A был B).
+    /// Но A → A запрещено (подряд без ничего между ними).
     private func executeToolCalls(
         _ toolCalls: [AIToolCall],
         sessionHistory: inout [AIMessage],
-        executedToolSignatures: inout Set<String>,
+        lastToolSignature: inout String?,
         onToolCall: @Sendable (String, String) -> Void
     ) async throws {
         for toolCall in toolCalls {
@@ -477,13 +507,18 @@ public actor AIOrchestrator {
             let signature = "\(toolName)|\(arguments)"
             let resultString: String
 
-            if executedToolSignatures.contains(signature) {
+            if lastToolSignature == signature {
+                // ПЕТЛЯ ОБНАРУЖЕНА: тот же инструмент с теми же аргументами подряд.
+                // Возвращаем ошибку чтобы модель поняла что нужно изменить подход.
                 resultString = """
-                СИСТЕМНАЯ ОШИБКА: Ты уже вызывал инструмент `\(toolName)` с точно такими же аргументами в этой сессии.
-                ЗАПРЕЩЕНО ПОВТОРЯТЬ ОДНО И ТО ЖЕ ДЕЙСТВИЕ. ИСПОЛЬЗУЙ ДРУГОЙ ПОДХОД.
+                СИСТЕМНАЯ ОШИБКА: Ты только что вызывал инструмент `\(toolName)` с точно такими же \
+                аргументами прямо перед этим. Это бесконечная петля.
+                ЗАПРЕЩЕНО ПОВТОРЯТЬ ОДНО И ТО ЖЕ ДЕЙСТВИЕ ПОДРЯД. ИСПОЛЬЗУЙ ДРУГОЙ ПОДХОД.
                 """
+                print("[AIOrchestrator] ⚠️ Петля: \(toolName) вызван дважды подряд с теми же аргументами")
             } else {
-                executedToolSignatures.insert(signature)
+                // Нормальный вызов — выполняем и обновляем сигнатуру последнего вызова.
+                lastToolSignature = signature
                 onToolCall(toolName, targetPath)
                 resultString = await toolService.execute(call: toolCall)
             }
