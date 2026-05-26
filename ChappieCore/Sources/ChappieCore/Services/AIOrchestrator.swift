@@ -117,6 +117,12 @@
 //     Три железных запрета (git_diff, тесты до билда, коммит при красном) сохранены.
 //     Документирование архитектуры — только в программировании, пути по договорённости.
 //     Правила 5 (summary), 8 (language mirroring), 9 (memory english) — без изменений.
+//
+// 19. PROJECT SETTINGS В SYSTEM PROMPT (IT-09):
+//     MemoryContext.ProjectInfo расширен полем settings: ProjectSettings.
+//     buildSystemPrompt() вставляет блок "## Project Settings: <name>" перед блоком памяти.
+//     Агент знает свои права до начала работы — может заранее выбрать подход.
+//     Два источника информации о проекте: Settings (права) + Memory (знания).
 
 import Foundation
 
@@ -129,27 +135,27 @@ import Foundation
 /// (threadId, projectIds, projectNames) делает сигнатуру громоздкой.
 /// MemoryContext — чистый value type, инкапсулирующий всё что нужно для сборки промпта.
 ///
-/// ПОЧЕМУ projectInfos, А НЕ ПРОСТО projectIds (IT-08 финал):
-/// buildSystemPrompt() должен знать имена проектов чтобы показывать их в заголовках блоков.
-/// UUID нужен для поиска в SwiftData, имя — для отображения в промпте.
-///
-/// ОПЦИОНАЛЬНОСТЬ:
-/// Если memoryContext не передан (nil) — используется только захардкоженный базовый промпт.
-/// Это обратная совместимость: старый код без тредов продолжает работать.
+/// IT-09: ProjectInfo расширен полем settings: ProjectSettings.
+/// buildSystemPrompt() использует settings для формирования блока прав агента.
 public struct MemoryContext: Sendable {
 
-    /// Информация об одном проекте в контексте памяти: UUID + отображаемое имя.
+    /// Информация об одном проекте в контексте памяти: UUID + имя + настройки.
     ///
-    /// ПОЧЕМУ UUID + ИМЯ:
+    /// ПОЧЕМУ UUID + ИМЯ + SETTINGS:
     /// UUID нужен для поиска MemoryEntity в SwiftData.
     /// Имя нужно для заголовка блока памяти в system prompt.
+    /// Settings (IT-09) нужны для блока прав агента в system prompt.
     public struct ProjectInfo: Sendable {
         public let id: UUID
         public let name: String
+        /// Настройки проекта — права агента, флаги доступов (IT-09).
+        /// nil = настройки ещё не загружены, блок прав не вставляется.
+        public let settings: ProjectSettings?
 
-        public init(id: UUID, name: String) {
+        public init(id: UUID, name: String, settings: ProjectSettings? = nil) {
             self.id = id
             self.name = name
+            self.settings = settings
         }
     }
 
@@ -157,12 +163,7 @@ public struct MemoryContext: Sendable {
     /// nil = нет активного треда, тредовая память не подмешивается.
     public let threadId: UUID?
 
-    /// Информация о проектах в треде: UUID + имя каждого.
-    ///
-    /// МИГРАЦИЯ С projectIds:
-    /// Старый API принимал projectIds: [UUID] без имён.
-    /// Новый API принимает projectInfos: [ProjectInfo] — с именами для промпта.
-    /// Вычисляемое свойство projectIds обеспечивает обратную совместимость.
+    /// Информация о проектах в треде: UUID + имя + настройки каждого.
     public let projectInfos: [ProjectInfo]
 
     /// UUID всех проектов — для обратной совместимости с кодом использующим [UUID].
@@ -174,7 +175,6 @@ public struct MemoryContext: Sendable {
     }
 
     /// Дефолтный контекст — без треда и проектов.
-    /// Используется как фолбэк до IT-05 (UI тредов).
     public static let empty = MemoryContext(threadId: nil, projectInfos: [])
 }
 
@@ -207,10 +207,6 @@ public actor AIOrchestrator {
     private let fileSystem: FileSystemManager
 
     /// MemoryManager для сборки system prompt с трёхуровневой памятью.
-    ///
-    /// АРХИТЕКТУРНОЕ РЕШЕНИЕ (IT-03):
-    /// Оркестратор держит ссылку на MemoryManager, чтобы перед каждым запросом
-    /// вызывать buildSystemPrompt(). Это единственное место где собирается промпт.
     private let memoryManager: MemoryManager
 
     /// Дефолтный конфиг — используется если process() вызван без явного конфига.
@@ -218,26 +214,6 @@ public actor AIOrchestrator {
 
     // MARK: - Базовый системный промпт (English — token efficiency)
 
-    /// Базовый системный промпт — захардкоженные правила Чаппи.
-    ///
-    /// АРХИТЕКТУРНОЕ РЕШЕНИЕ (IT-03):
-    /// Это BASE_PROMPT — основа. Перед каждым запросом MemoryManager.buildSystemPrompt()
-    /// расширяет его блоками памяти (глобальной, проектной, тредовой).
-    ///
-    /// ПОЧЕМУ ЗАХАРДКОЖЕНО:
-    /// Все критически важные правила захардкожены здесь, а не передаются извне.
-    /// Память (SwiftData) может не загрузиться, история чата сжимается —
-    /// только хардкод является 100% надёжной гарантией соблюдения правил.
-    ///
-    /// ПОЧЕМУ НА АНГЛИЙСКОМ:
-    /// Английский токенизируется в 1.5–2 раза эффективнее кириллицы.
-    /// Экономия ~3000 токенов на каждом запросе.
-    /// Правило language mirroring в конце промпта гарантирует ответы на языке пользователя.
-    ///
-    /// РЕДИЗАЙН ПРАВИЛ (RULES-REDESIGN):
-    /// Правила 1–7 переработаны: убраны хардкод ролей, путей и пайплайнов.
-    /// Роль, комментарии, документация, пайплайны — всё по настройкам проекта.
-    /// Три железных запрета сохранены как абсолютные.
     private let baseSystemPrompt = """
     You are Chappie — a universal AI agent of the highest level.
     You are capable of anything: software engineering, architecture, writing,
@@ -357,22 +333,6 @@ public actor AIOrchestrator {
 
     // MARK: - Публичный API
 
-    /// Запускает агентный цикл для обработки пользовательского запроса.
-    ///
-    /// - Parameters:
-    ///   - prompt: Текст текущего сообщения пользователя (НОВОЕ сообщение, не из истории).
-    ///   - history: Полная история ЗАВЕРШЁННЫХ сообщений (без текущего prompt!).
-    ///   - config: Конфиг треда — определяет глубину контекста и токенный бюджет.
-    ///     По умолчанию AppConfig.shared (20 сообщений, 10,000 токенов).
-    ///   - memoryContext: Контекст треда для сборки system prompt с памятью.
-    ///     По умолчанию MemoryContext.empty — только базовый промпт без памяти.
-    ///   - onToolCall: Вызывается при каждом вызове инструмента — обновляет UI.
-    ///   - onToken: Вызывается для каждого нового токена финального ответа.
-    ///   - onCostUpdate: Вызывается после каждого внутреннего API-запроса с накопленной
-    ///     стоимостью нарастающим итогом.
-    ///
-    /// - Returns: Результат сессии: финальный ответ (с тегом <summary>), стоимость и баланс.
-    /// - Throws: `ChappieError.unknown` если превышен лимит шагов из AppConfig.
     public func process(
         prompt: String,
         history: [AIMessage],
@@ -383,13 +343,6 @@ public actor AIOrchestrator {
         onCostUpdate: (@Sendable (Double) -> Void)? = nil
     ) async throws -> AIOrchestratorResult {
 
-        // ТРЁХУРОВНЕВАЯ ПАМЯТЬ (IT-03, IT-08):
-        // Перед каждым запросом собираем актуальный system prompt с подмешанной памятью.
-        // buildSystemPrompt() читает из MemoryStore (SwiftData) + legacy файл.
-        // Если MemoryStore не подключён — возвращает только базовый промпт (фолбэк).
-        //
-        // ПЕРЕДАЁМ ПОЛНЫЙ MemoryContext с именами проектов (IT-08 финал):
-        // buildSystemPrompt() использует имена для заголовков блоков памяти.
         let systemPrompt = await memoryManager.buildSystemPrompt(
             basePrompt: baseSystemPrompt,
             memoryContext: memoryContext
@@ -400,24 +353,9 @@ public actor AIOrchestrator {
         var totalCost: Double = 0.0
         var latestBalance: Double? = nil
         var stepCount = 0
-
-        // ЗАЩИТА ОТ ПЕТЕЛЬ (умная, подряд-блокировка):
-        // Храним сигнатуру ТОЛЬКО последнего выполненного вызова инструмента.
-        // Если следующий вызов совпадает — это петля, блокируем.
-        // Если между ними был другой вызов — сигнатура сброшена, повтор разрешён.
-        //
-        // ПОЧЕМУ НЕ СЕССИОННАЯ БЛОКИРОВКА:
-        // Сессионная блокировка (Set<String> за всю сессию) мешала легитимным повторам:
-        // - read_file("foo.swift") после write_file("foo.swift") — нужно прочитать изменения
-        // - list_files() после создания нового файла — нужно увидеть обновлённый список
-        // - git_status() дважды для проверки состояния до и после операции
-        // Подряд-блокировка ловит реальные бесконечные петли (A→A→A→...)
-        // и не мешает нормальным паттернам (A→B→A или A→write→A).
         var lastToolSignature: String? = nil
 
         let maxSteps = config.maxOrchestratorSteps
-
-        // MARK: - Агентный цикл
 
         while stepCount < maxSteps {
             stepCount += 1
@@ -474,15 +412,6 @@ public actor AIOrchestrator {
 
     // MARK: - Умное контекстное окно
 
-    /// Собирает оптимальное контекстное окно из полной истории чата.
-    ///
-    /// ДВА УРОВНЯ ОГРАНИЧЕНИЙ (работают последовательно):
-    ///
-    /// 1. maxMessagesInContext — жёсткий лимит по количеству сообщений (из config треда).
-    ///    Применяется ПЕРВЫМ. Отбрасывает всё что старше последних N сообщений.
-    ///
-    /// 2. tokenBudget — мягкий лимит по объёму токенов (maxMessages × 500).
-    ///    Применяется ВТОРЫМ. Обрезает длинные сообщения если даже N штук не влезают.
     private func buildContextWindow(
         from history: [AIMessage],
         currentPrompt: String,
@@ -496,9 +425,6 @@ public actor AIOrchestrator {
         let totalTokensBefore = history.reduce(0) { $0 + estimateTokens($1) }
         print("[AIOrchestrator] Historia: \(history.count) msgs, ~\(totalTokensBefore) tokens | Budget: \(budget) (\(maxMessages) msgs x 500)")
 
-        // ШАГ 1: ДЕДУПЛИКАЦИЯ
-        // Защита от задвоения: если последнее сообщение в истории совпадает с текущим
-        // запросом — убираем его из истории, чтобы не отправить дважды.
         let deduplicatedHistory: [AIMessage]
         if let lastMessage = history.last,
            lastMessage.role == "user",
@@ -509,14 +435,10 @@ public actor AIOrchestrator {
             deduplicatedHistory = history
         }
 
-        // ШАГ 2: Жёсткий лимит по количеству сообщений из конфига треда.
         let cappedHistory = deduplicatedHistory.count > maxMessages
             ? Array(deduplicatedHistory.suffix(maxMessages))
             : deduplicatedHistory
 
-        // ШАГ 3: Разбиваем на "свежую" и "старую" зоны.
-        // Последние recentCount сообщений всегда идут полностью — они самые важные.
-        // Более старые — кандидаты на сжатие до summary.
         let recentMessages: [AIMessage]
         let olderMessages: [AIMessage]
 
@@ -530,8 +452,6 @@ public actor AIOrchestrator {
 
         var usedTokens = recentMessages.reduce(0) { $0 + estimateTokens($1) }
 
-        // ШАГ 4: Идём по старым сообщениям с конца (ближайшие — важнее).
-        // Для каждого: сжимаем до summary если длинное, добавляем пока влезает в бюджет.
         var selectedOlder: [AIMessage] = []
         for message in olderMessages.reversed() {
             let compressed = compressMessage(message, summaryThreshold: summaryThreshold)
@@ -554,11 +474,6 @@ public actor AIOrchestrator {
         return contextWindow
     }
 
-    /// Сжимает сообщение до его summary если оно достаточно длинное.
-    ///
-    /// ЗАЧЕМ: экономия токенов на старых сообщениях в контекстном окне.
-    /// Если сообщение содержит тег <summary> — используем его как сжатую версию.
-    /// Если нет — оставляем полным (нет summary = нечем заменять).
     private func compressMessage(_ message: AIMessage, summaryThreshold: Int) -> AIMessage {
         guard let fullText = message.contentString,
               estimateTokens(message) > summaryThreshold,
@@ -574,7 +489,6 @@ public actor AIOrchestrator {
         )
     }
 
-    /// Извлекает текст из тега <summary>...</summary>.
     private func extractSummary(from text: String) -> String? {
         let openTag = "<summary>"
         let closeTag = "</summary>"
@@ -591,12 +505,6 @@ public actor AIOrchestrator {
         return summary.isEmpty ? nil : summary
     }
 
-    /// Оценивает количество токенов в сообщении.
-    ///
-    /// ФОРМУЛА: UTF-8 байты / 4 × 1.5
-    /// Даёт реалистичную оценку для смешанного русско-английского текста с кодом.
-    /// Кириллица занимает 2 байта на символ → делим на 4 → примерно 0.5 токена на символ.
-    /// Коэффициент 1.5 добавляет запас для специальных символов и разметки.
     private func estimateTokens(_ message: AIMessage) -> Int {
         let text = message.contentString ?? ""
         let utf8ByteCount = text.utf8.count
@@ -606,15 +514,6 @@ public actor AIOrchestrator {
 
     // MARK: - Приватные методы агентного цикла
 
-    /// Выполняет список вызовов инструментов и добавляет результаты в историю.
-    ///
-    /// ЗАЩИТА ОТ ПЕТЕЛЬ (подряд-блокировка):
-    /// Если текущий вызов совпадает с предыдущим по сигнатуре (имя + аргументы) —
-    /// это петля. Возвращаем ошибку вместо реального выполнения.
-    /// После каждого успешного вызова обновляем lastToolSignature.
-    /// Если в пачке несколько вызовов — сигнатура последнего запоминается.
-    /// Это означает: A,B → A разрешено (между A и A был B).
-    /// Но A → A запрещено (подряд без ничего между ними).
     private func executeToolCalls(
         _ toolCalls: [AIToolCall],
         sessionHistory: inout [AIMessage],
@@ -629,15 +528,12 @@ public actor AIOrchestrator {
             let resultString: String
 
             if lastToolSignature == signature {
-                // ПЕТЛЯ ОБНАРУЖЕНА: тот же инструмент с теми же аргументами подряд.
-                // Возвращаем ошибку чтобы модель поняла что нужно изменить подход.
                 resultString = """
                 SYSTEM ERROR: You just called `\(toolName)` with the exact same arguments right before this. \
                 This is an infinite loop. DO NOT REPEAT THE SAME ACTION. USE A DIFFERENT APPROACH.
                 """
                 print("[AIOrchestrator] Loop detected: \(toolName) called twice in a row with same args")
             } else {
-                // Нормальный вызов — выполняем и обновляем сигнатуру последнего вызова.
                 lastToolSignature = signature
                 onToolCall(toolName, targetPath)
                 resultString = await toolService.execute(call: toolCall)
@@ -653,10 +549,6 @@ public actor AIOrchestrator {
         }
     }
 
-    /// Извлекает путь к файлу из JSON-аргументов вызова инструмента.
-    ///
-    /// ЗАЧЕМ: onToolCall получает имя инструмента и путь к файлу для отображения в UI.
-    /// Большинство инструментов работы с файлами используют параметр "path".
     private func extractTargetPath(from arguments: String) -> String {
         guard let data = arguments.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {

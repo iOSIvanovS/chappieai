@@ -14,6 +14,10 @@
 // ProjectChipsView показывается ТОЛЬКО когда activeThread != nil.
 // Это логично: без треда — некуда добавлять проекты.
 // Приложение всегда автоматически выбирает тред при старте.
+//
+// IT-09: Добавлен sheet настроек проекта.
+// Тап на чип → onOpenSettings(UUID) → selectedProjectForSettings = project →
+// .sheet показывает ProjectSettingsSheet → onSave → viewModel.updateProjectSettings().
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -27,6 +31,10 @@ struct ContentView: View {
     @State private var viewModel = ChappieViewModel()
     @State private var prompt: String = ""
     @State private var showSettings: Bool = false
+
+    /// IT-09: Проект, настройки которого сейчас открыты.
+    /// nil = sheet закрыт.
+    @State private var selectedProjectForSettings: ProjectMetadata? = nil
 
     /// ModelContext из SwiftUI-окружения — предоставляется .modelContainer() в ChappieApp.
     @Environment(\.modelContext) private var modelContext
@@ -58,11 +66,10 @@ struct ContentView: View {
         } detail: {
             VStack(spacing: 0) {
 
-                // MARK: Плашки проектов (IT-06, UI-FIX-02)
+                // MARK: Плашки проектов (IT-06, IT-09)
                 //
                 // Показываем строку проектов ТОЛЬКО когда тред активен.
-                // Параметр isThreadActive убран из ProjectChipsView — ContentView
-                // сам управляет видимостью через условный рендер.
+                // IT-09: onOpenSettings передаёт UUID проекта для открытия настроек.
                 if viewModel.activeThread != nil {
                     ProjectChipsView(
                         projects: viewModel.activeProjects,
@@ -71,6 +78,12 @@ struct ContentView: View {
                         },
                         onRemoveProject: { projectId in
                             viewModel.removeProject(id: projectId)
+                        },
+                        onOpenSettings: { projectId in
+                            // Находим ProjectMetadata по ID и открываем sheet
+                            if let project = viewModel.activeProjects.first(where: { $0.id == projectId }) {
+                                selectedProjectForSettings = project
+                            }
                         }
                     )
                     .transition(.opacity.combined(with: .move(edge: .top)))
@@ -95,8 +108,6 @@ struct ContentView: View {
             .animation(.easeInOut(duration: 0.2), value: viewModel.activeThread?.id)
             .animation(.easeInOut(duration: 0.25), value: viewModel.currentToolCall)
             .toolbar {
-                // MARK: Тулбар (UI-FIX-02)
-                // Минималистичный: только баланс и настройки.
                 ChappieToolbarContent(
                     balance: viewModel.currentBalance,
                     isApiKeyValid: SettingsManager.shared.isApiKeyValid,
@@ -111,10 +122,24 @@ struct ContentView: View {
                 .ignoresSafeArea()
                 .opacity(0.5)
         }
+        // Sheet настроек приложения
         .sheet(isPresented: $showSettings) {
             SettingsView { newKey in
                 viewModel.updateApiKey(newKey)
             }
+        }
+        // IT-09: Sheet настроек проекта — открывается по тапу на чип
+        .sheet(item: $selectedProjectForSettings) { project in
+            ProjectSettingsSheet(
+                project: project,
+                onSave: { newSettings in
+                    viewModel.updateProjectSettings(newSettings, forProjectId: project.id)
+                    selectedProjectForSettings = nil
+                },
+                onDismiss: {
+                    selectedProjectForSettings = nil
+                }
+            )
         }
         .onAppear {
             viewModel.setModelContainer(modelContext.container)

@@ -5,6 +5,9 @@
 // Горизонтальный ряд чипов-тегов с именами проектов, привязанных к текущему треду.
 // Отображается в верхней части чата, прямо над лентой сообщений.
 //
+// IT-09: Тап на чип открывает ProjectSettingsSheet.
+// Коллбэк onOpenSettings(UUID) добавлен для передачи ID проекта в ViewModel.
+//
 // ПОЧЕМУ ОТДЕЛЬНЫЙ КОМПОНЕНТ:
 // Логика добавления/удаления проектов достаточно сложна (NSOpenPanel, bookmark-ы,
 // список существующих проектов) чтобы не смешивать её с ChatScrollView.
@@ -23,12 +26,15 @@
 //
 // ВИДИМОСТЬ (UI-FIX-02):
 // Компонент показывается только когда тред активен (условие в ContentView).
-// Параметр isThreadActive убран — он больше не нужен.
 // ContentView сам решает показывать или нет через `if viewModel.activeThread != nil`.
 //
 // ПОВЕДЕНИЕ КНОПКИ "+":
 // Открывает NSOpenPanel → пользователь выбирает папку.
 // ViewModel создаёт/находит ProjectEntity, добавляет UUID в тред.
+//
+// ПОВЕДЕНИЕ ПО ТАПУ НА ЧИП (IT-09):
+// Тап на чип → вызывает onOpenSettings(project.id).
+// ContentView/родительский View показывает ProjectSettingsSheet.
 
 import SwiftUI
 import ChappieCore
@@ -40,30 +46,27 @@ import ChappieCore
 /// Показывает список проектов, привязанных к треду.
 /// Кнопка "+" добавляет новый проект через NSOpenPanel.
 /// Кнопка "×" на каждом чипе удаляет проект из треда.
-///
-/// Компонент показывается только когда тред активен — ContentView управляет видимостью.
+/// Тап на чип открывает настройки проекта (IT-09).
 struct ProjectChipsView: View {
 
     // MARK: - Входные данные
 
-    /// Список проектов, привязанных к текущему треду.
-    /// Пустой массив — показываем только кнопку "+".
     let projects: [ProjectMetadata]
 
     // MARK: - Коллбэки
 
     /// Вызывается когда пользователь нажимает "+" и выбирает папку.
-    /// Параметр — URL выбранной папки.
     let onAddProject: (URL) -> Void
 
     /// Вызывается когда пользователь нажимает "×" на чипе.
-    /// Параметр — UUID проекта для удаления из треда.
     let onRemoveProject: (UUID) -> Void
+
+    /// Вызывается когда пользователь тапает на чип для открытия настроек (IT-09).
+    let onOpenSettings: (UUID) -> Void
 
     // MARK: - Локальное состояние
 
     /// Hover-состояние для чипа — ключ это UUID проекта.
-    /// Нужно чтобы кнопка "×" появлялась только при наведении на конкретный чип.
     @State private var hoveredProjectId: UUID? = nil
 
     // MARK: - Body
@@ -71,21 +74,17 @@ struct ProjectChipsView: View {
     var body: some View {
         HStack(spacing: 6) {
 
-            // Заголовок секции — маленький, не мешает
             Text("Проекты:")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
 
-            // Горизонтальный скролл — на случай если проектов много
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
 
-                    // Чипы существующих проектов
                     ForEach(projects) { project in
                         projectChip(for: project)
                     }
 
-                    // Кнопка добавления нового проекта
                     addButton
                 }
                 .padding(.horizontal, 2)
@@ -94,7 +93,6 @@ struct ProjectChipsView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(
-            // Тонкий разделитель снизу — визуально отделяет чипы от ленты сообщений
             Rectangle()
                 .frame(height: 1)
                 .foregroundStyle(Color.primary.opacity(0.06)),
@@ -108,26 +106,24 @@ struct ProjectChipsView: View {
     ///
     /// HOVER-ПОВЕДЕНИЕ:
     /// При наведении — показывается кнопка "×" справа от названия.
-    /// Это стандартный паттерн macOS для деструктивных действий:
-    /// не показывать их постоянно, но делать доступными по hover.
     ///
-    /// ПОЧЕМУ onHover + @State:
-    /// SwiftUI не имеет нативного hover-состояния для конкретного элемента в ForEach.
-    /// Используем .onHover(perform:) + @State с UUID как ключом.
+    /// ТАП-ПОВЕДЕНИЕ (IT-09):
+    /// Тап на чип → onOpenSettings(project.id) → родитель показывает ProjectSettingsSheet.
+    /// Кнопка "×" при hover — удаляет проект из треда (не открывает настройки).
     private func projectChip(for project: ProjectMetadata) -> some View {
         HStack(spacing: 4) {
-            // Иконка папки
             Image(systemName: "folder.fill")
                 .font(.system(size: 10))
                 .foregroundStyle(Color.accentColor.opacity(0.8))
 
-            // Имя проекта — обрезаем если очень длинное
             Text(project.displayName)
                 .font(.system(size: 12, weight: .medium))
                 .lineLimit(1)
                 .foregroundStyle(.primary)
 
-            // Кнопка удаления — появляется только при hover
+            // Индикатор роли (IT-09) — маленькая иконка показывает текущую роль
+            roleIndicator(for: project.settings.agentRole)
+
             if hoveredProjectId == project.id {
                 Button {
                     onRemoveProject(project.id)
@@ -143,12 +139,10 @@ struct ProjectChipsView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(
-            // Фон чипа — лёгкий акцентный цвет
             Capsule()
                 .fill(Color.accentColor.opacity(hoveredProjectId == project.id ? 0.15 : 0.1))
         )
         .overlay(
-            // Тонкая рамка
             Capsule()
                 .stroke(Color.accentColor.opacity(0.25), lineWidth: 0.5)
         )
@@ -157,23 +151,34 @@ struct ProjectChipsView: View {
                 hoveredProjectId = isHovered ? project.id : nil
             }
         }
-        // Тултип с полным именем проекта
-        .help("Проект: \(project.displayName)\nНажмите × чтобы убрать из треда")
+        .onTapGesture {
+            // Тап на чип → открываем настройки проекта (IT-09)
+            onOpenSettings(project.id)
+        }
+        .help("Проект: \(project.displayName) (\(project.settings.agentRole.displayName))\nТап — настройки, × — убрать из треда")
+    }
+
+    /// Маленький индикатор роли агента рядом с именем проекта.
+    ///
+    /// ЗАЧЕМ:
+    /// Пользователь должен сразу видеть в каком режиме работает агент с каждым проектом.
+    /// Иконка замка = советник (только чтение), иконка молнии = исполнитель.
+    @ViewBuilder
+    private func roleIndicator(for role: AgentRole) -> some View {
+        switch role {
+        case .advisor:
+            Image(systemName: "lock.fill")
+                .font(.system(size: 8))
+                .foregroundStyle(.secondary)
+        case .executor:
+            Image(systemName: "bolt.fill")
+                .font(.system(size: 8))
+                .foregroundStyle(Color.accentColor.opacity(0.7))
+        }
     }
 
     // MARK: - Кнопка добавления
 
-    /// Кнопка "+" для добавления нового проекта.
-    ///
-    /// ПОЧЕМУ NSOpenPanel НАПРЯМУЮ:
-    /// Кнопка сама открывает NSOpenPanel — это стандартный паттерн macOS.
-    /// Результат (URL) передаётся в коллбэк onAddProject.
-    /// ViewModel создаёт ProjectEntity и добавляет UUID в тред.
-    ///
-    /// ПОЧЕМУ НЕ .fileImporter:
-    /// .fileImporter в SwiftUI имеет ограничения — не позволяет выбрать только папки
-    /// с нужными настройками (canChooseFiles: false, canChooseDirectories: true).
-    /// NSOpenPanel даёт полный контроль.
     private var addButton: some View {
         Button {
             openFolderPicker()
@@ -199,10 +204,6 @@ struct ProjectChipsView: View {
 
     // MARK: - Приватные методы
 
-    /// Открывает NSOpenPanel для выбора папки проекта.
-    ///
-    /// Вызывается по нажатию кнопки "+".
-    /// После выбора — вызывает коллбэк onAddProject(url).
     private func openFolderPicker() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -225,19 +226,22 @@ struct ProjectChipsView: View {
             ProjectMetadata(
                 id: UUID(),
                 displayName: "Chappie",
-                createdAt: Date()
+                settings: ProjectSettings(agentRole: .executor, isProgrammingProject: true)
             ),
             ProjectMetadata(
                 id: UUID(),
-                displayName: "MyAwesomeApp",
-                createdAt: Date()
+                displayName: "MyApp",
+                settings: ProjectSettings(agentRole: .advisor)
             )
         ],
         onAddProject: { url in
-            print("Добавить проект: \(url.lastPathComponent)")
+            print("Добавить: \(url.lastPathComponent)")
         },
         onRemoveProject: { id in
-            print("Удалить проект: \(id)")
+            print("Удалить: \(id)")
+        },
+        onOpenSettings: { id in
+            print("Настройки: \(id)")
         }
     )
     .frame(width: 600)
@@ -248,7 +252,8 @@ struct ProjectChipsView: View {
     ProjectChipsView(
         projects: [],
         onAddProject: { _ in },
-        onRemoveProject: { _ in }
+        onRemoveProject: { _ in },
+        onOpenSettings: { _ in }
     )
     .frame(width: 600)
     .background(Color(NSColor.windowBackgroundColor))
