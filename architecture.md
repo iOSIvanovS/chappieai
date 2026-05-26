@@ -97,23 +97,38 @@ ChappieMCP
 
 ---
 
-## 6. Структура памяти (TD-03) — ОБНОВЛЕНО IT-08
+## 6. Структура памяти — ФИНАЛЬНАЯ (IT-08 ✅)
 
-Три уровня памяти:
+Три уровня памяти, все в SwiftData:
 
-| Уровень | Хранилище | Управляется |
+| Уровень | Хранилище | Инструмент |
 |---|---|---|
-| Глобальная (кросс-проектная) | SwiftData MemoryEntity scope="global" | MemoryStore + MemoryManager |
-| Проектная | SwiftData MemoryEntity scope="<projectId>" | MemoryStore |
-| Тредовая | SwiftData MemoryEntity scope="<threadId>" | MemoryStore |
-| Документация таргетов | `<target>/architecture.md` | Чаппи вручную через write_file |
+| Глобальная | SwiftData MemoryEntity scope="global" | memorize(scope="global") |
+| Проектная | SwiftData MemoryEntity scope="<projectId UUID>" | memorize(targetName="Chappie") |
+| Тредовая | SwiftData MemoryEntity scope="<threadId UUID>" | memorize(scope="thread") |
+| Документация таргетов | `<target>/architecture.md` | write_file вручную |
 
-**АВТОМАТИЧЕСКОЕ ПОДМЕШИВАНИЕ В SYSTEM PROMPT (IT-03, обновлено IT-08):**
+**АВТОМАТИЧЕСКОЕ ПОДМЕШИВАНИЕ В SYSTEM PROMPT:**
 `MemoryManager.buildSystemPrompt(basePrompt:threadId:projectIds:)` собирает полный промпт:
 1. Базовый промпт (захардкоженные правила Чаппи)
 2. Глобальная память (scope="global") — из SwiftData
 3. Проектная память (scope="<projectId>") — для каждого проекта в треде
 4. Тредовая память (scope="<threadId>") — контекст текущей задачи
+
+**УМНЫЙ SCOPE-МАППИНГ (IT-08 ✅):**
+`ToolExecutionService.resolveScope()` маппирует параметры инструментов → UUID scope:
+- `scope="global"` → "global"
+- `scope="thread"` → UUID активного треда (из ActiveMemoryContext.threadId)
+- `targetName="Chappie"` → UUID проекта с именем "Chappie" (из ActiveMemoryContext.projects)
+
+**ActiveMemoryContext передаётся из ChappieViewModel:**
+`syncActiveMemoryContext()` собирает реальные UUID из activeThread + activeProjects
+и передаёт в ToolExecutionService через `setActiveMemoryContext()`.
+Вызывается при: selectThread(), addProject(), removeProject(), reloadAfterProjectChange().
+
+**РАЗРЕШЕНИЕ КОНФЛИКТОВ (IT-08 ✅):**
+Если инструкции в разных уровнях памяти противоречат — Чаппи ОСТАНАВЛИВАЕТСЯ,
+объясняет конфликт пользователю и ждёт решения. Правило в baseSystemPrompt.
 
 **МИГРАЦИЯ (IT-04 ✅):**
 - `MigrationService.migrate()` — идемпотентный, флаг `UserDefaults["migration_v1_done"]`
@@ -195,7 +210,7 @@ readGroup.wait()
 
 ## 10. REFACTOR-THREADS — Большой рефакторинг: треды, проекты, SwiftData
 
-### Статус: ✅ ЗАВЕРШЁН (IT-01 ✅, IT-02 ✅, IT-03 ✅, IT-04 ✅, IT-05 ✅, IT-06 ✅, IT-07 ✅)
+### Статус: ✅ ПОЛНОСТЬЮ ЗАВЕРШЁН (IT-01 ✅ → IT-08 ✅)
 
 ### Ключевые архитектурные решения
 
@@ -205,7 +220,7 @@ readGroup.wait()
 и хранятся как `Data`. При чтении — JSONDecoder. Это даёт нам свободу эволюции моделей
 без болезненных SwiftData-миграций.
 
-**Три уровня памяти в system prompt (IT-03 ✅):**
+**Три уровня памяти в system prompt (IT-03, IT-08 ✅):**
 1. Глобальная память — факты о пользователе, стиль общения, кросс-проектные знания
 2. Проектная память — архитектура конкретного проекта, пайплайны, договорённости
 3. Тредовая память — контекст текущей задачи, временные заметки
@@ -216,133 +231,14 @@ ToolExecutionService живёт в ChappieCore, ProjectStore/ThreadStore — т�
 Решение: ViewModel регистрирует @Sendable замыкания в ToolExecutionService через
 `registerProjectHandlers()`. Замыкания вызываются когда Чаппи использует инструменты.
 
----
-
-## 11. IT-08 — Переработка инструментов памяти (В ПЛАНЕ)
-
-### Контекст и мотивация
-
-Текущие инструменты `memorize/recall/search_memory/delete_memory` пишут в **legacy-файл**
-`~/Documents/Chappie/semantic.json` — они не используют SwiftData MemoryStore.
-Это разрыв: buildSystemPrompt() читает из SwiftData, а инструменты пишут в файл.
-
-Цель IT-08 — замкнуть петлю: инструменты памяти должны писать в SwiftData MemoryStore
-с умным маппингом scope через контекст активного треда/проектов.
-
-### Ключевые архитектурные решения IT-08
-
-**Модель связей — многие-ко-многим без владения:**
-```
-Тред ←→ Проект  (связь, не владение)
-Global ←→ всё   (кросс-проектные знания)
-```
-Тред не владеет проектами. Проекты не владеют тредами.
-Один проект может быть в нескольких тредах — у него свои правила/пайплайны.
-Один тред может вести несколько проектов параллельно.
-
-**Новый API scope инструментов:**
-
-| Параметр | Значение | Что происходит |
-|---|---|---|
-| `scope = "global"` | (нет targetName) | Пишет в scope="global" |
-| `scope = "thread"` | (нет targetName) | Пишет в scope=UUID активного треда |
-| (нет scope) + `targetName = "Chappie"` | имя проекта | Ищет проект по имени среди прикреплённых к треду → пишет в scope=UUID проекта |
-
-**УБИРАЕМ scope="project" как неоднозначный:**
-В треде может быть несколько проектов. "project" без имени — непонятно какой.
-Для проектной памяти ОБЯЗАТЕЛЕН явный `targetName`.
-Если targetName не указан при записи в проект — ошибка с подсказкой.
-
-**Контекст памяти в ToolExecutionService:**
-ToolExecutionService уже хранит `activeProjectNames: [String]` для PROJECT GUARD.
-Нужно расширить до `activeMemoryContext: MemoryContext` — тогда инструменты будут
-знать UUID треда и UUID каждого проекта для корректного маппинга scope.
-
-**Разрешение конфликтов:**
-Если инструкции в разных уровнях памяти противоречат друг другу —
-Чаппи ОСТАНАВЛИВАЕТСЯ, объясняет конфликт пользователю и ждёт решения.
-Это правило добавляется хардкодом в baseSystemPrompt оркестратора.
-
-### Что меняется в коде (IT-08)
-
-**1. ToolExecutionService.swift**
-- Заменить `activeProjectNames: [String]` на `activeMemoryContext: ActiveMemoryContext`
-  (новая структура: threadId + [(projectId, projectName)])
-- Добавить метод `setActiveMemoryContext(_ context: ActiveMemoryContext)`
-  (заменяет `setActiveProjectNames()`)
-- Инструменты `memorize/recall/search_memory/delete_memory` — переписать:
-  теперь они вызывают MemoryStore напрямую через новый обработчик
-- Добавить `memoryHandler: @Sendable (MemoryOperation) async -> String`
-  (аналог projectHandler — ViewModel регистрирует его когда MemoryStore готов)
-
-**2. MemoryStore.swift**
-- Добавить метод `searchEntries(type:scopes:)` — поиск по нескольким scope сразу
-  (нужен для search_memory когда нет явного targetName)
-
-**3. MemoryManager.swift**
-- Убрать legacy-блок из `buildSystemPrompt()` — теперь только SwiftData
-  (legacy semantic.json уже мигрирован в IT-04)
-- Убрать методы `saveMemory/readMemory/searchMemory/deleteMemory` (legacy)
-  или оставить как deprecated с предупреждением
-
-**4. AIOrchestrator.swift (baseSystemPrompt)**
-- Добавить правило 9: CONFLICT RESOLUTION
-  "If instructions in different memory levels (global/project/thread) contradict each other —
-   STOP, explain the conflict to the user, wait for resolution before proceeding."
-- Обновить правило 4 (MEMORY STRUCTURE) — новый API scope
-
-**5. ChappieViewModel.swift**
-- `setActiveProjectNames()` → `setActiveMemoryContext()` с полными UUID
-- Зарегистрировать `memoryHandler` аналогично `projectHandler`
-
-### Новая структура ActiveMemoryContext
-
-```swift
-/// Контекст активного треда для инструментов памяти.
-/// Хранится в ToolExecutionService, обновляется при смене треда/проектов.
-public struct ActiveMemoryContext: Sendable {
-    /// UUID активного треда.
-    let threadId: UUID?
-    
-    /// Список проектов треда: (UUID, displayName).
-    /// UUID нужен для scope памяти, displayName — для маппинга по targetName.
-    let projects: [(id: UUID, name: String)]
-    
-    static let empty = ActiveMemoryContext(threadId: nil, projects: [])
-}
-```
-
-### Маппинг scope при вызове memorize
-
-```
-memorize(key, type, json, scope="global")
-    → MemoryStore.saveEntry(scope: "global")
-
-memorize(key, type, json, scope="thread")
-    → MemoryStore.saveEntry(scope: activeMemoryContext.threadId.uuidString)
-    → Ошибка если threadId == nil
-
-memorize(key, type, json, targetName="Chappie")
-    → Найти проект с name=="Chappie" в activeMemoryContext.projects
-    → MemoryStore.saveEntry(scope: project.id.uuidString)
-    → Ошибка если проект не найден среди прикреплённых к треду
-```
-
-### Итерации IT-08
-
-| # | Шаг | Описание |
-|---|---|---|
-| IT-08-1 | ActiveMemoryContext | Заменить activeProjectNames на ActiveMemoryContext в ToolExecutionService |
-| IT-08-2 | MemoryHandler | Добавить memoryHandler в ToolExecutionService + регистрация в ViewModel |
-| IT-08-3 | Инструменты памяти | Переписать memorize/recall/search_memory/delete_memory через MemoryStore |
-| IT-08-4 | Промпт | Обновить baseSystemPrompt: правило конфликтов + новый API scope |
-| IT-08-5 | Очистка | Убрать legacy-блок из buildSystemPrompt(), deprecate saveMemory/readMemory |
+**UUID-based scope памяти (IT-08 ✅):**
+Инструменты памяти работают с реальными UUID из SwiftData.
+ActiveMemoryContext (threadId UUID + [ProjectInfo{id, name}]) передаётся из ViewModel.
+resolveScope() маппирует scope="thread"/"global" и targetName → UUID строку для MemoryStore.
 
 ---
 
-## 12. REFACTOR-THREADS — Пошаговый план итераций
-
-### ✅ / 🔲 Статус итераций
+## 11. Пошаговый план итераций REFACTOR-THREADS
 
 | # | Итерация | Статус |
 |---|---|---|
@@ -353,11 +249,11 @@ memorize(key, type, json, targetName="Chappie")
 | IT-05 | UI: боковая панель тредов | ✅ ГОТОВО |
 | IT-06 | UI: плашки проектов в треде | ✅ ГОТОВО |
 | IT-07 | Инструменты add/remove project | ✅ ГОТОВО |
-| IT-08 | Переработка инструментов памяти (SwiftData + умный scope) | 🔲 В ПЛАНЕ |
+| IT-08 | Переработка инструментов памяти (SwiftData + умный UUID scope) | ✅ ГОТОВО |
 
 ---
 
-## 13. История чата (TD-03)
+## 12. История чата (TD-03)
 
 **Путь:** `<workspaceURL>/chat_history.json` (прямо в корне проекта)
 
@@ -374,7 +270,7 @@ memorize(key, type, json, targetName="Chappie")
 
 | Date | Change |
 |------|--------|
-| 2025-07-XX | IT-08 ЗАПЛАНИРОВАН: переработка инструментов памяти, ActiveMemoryContext, умный scope-маппинг |
+| 2025-07-XX | IT-08 ✅ ЗАВЕРШЁН: ActiveMemoryContext, UUID-based scope, resolveScope(), syncActiveMemoryContext(), конфликт-резолюция в baseSystemPrompt |
 | 2025-07-XX | IT-07 ГОТОВО: add/remove/list_thread_projects инструменты, registerProjectHandlers() в ToolExecutionService |
 | 2025-07-XX | IT-06 ГОТОВО: ProjectChipsView, ChappieViewModel addProject/removeProject |
 | 2025-07-XX | IT-05 ГОТОВО: ThreadListView, ThreadRowView, SidebarView с тредами |
