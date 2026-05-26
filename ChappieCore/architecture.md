@@ -33,7 +33,7 @@ ChappieCore/Sources/ChappieCore/
 │   ├── ChappieError.swift              # Типизированные ошибки
 │   ├── ThreadModels.swift              # [IT-01] ThreadEntity, ThreadSettings, ProjectBinding
 │   ├── ProjectModels.swift             # [IT-01] ProjectEntity, ProjectSettings
-│   └── MemoryModels.swift              # [IT-01] MemoryEntity, MemoryEntry
+│   └── MemoryModels.swift              # [IT-01] MemoryEntity, MemoryEntry, ActiveMemoryContext
 └── Services/
     ├── AIOrchestrator.swift            # Агентный цикл: запрос → инструменты → ответ
     ├── AITunnelClient.swift            # HTTP-клиент к AITunnel API (стриминг SSE)
@@ -63,15 +63,18 @@ ChappieCore/Sources/ChappieCore/
 - Защита от зацикливания: подряд-блокировка (lastToolSignature)
 - **[IT-02]** Принимает `config: AppConfig` как параметр (с дефолтом `AppConfig.shared`)
 - **[IT-03]** Принимает `memoryContext: MemoryContext` для трёхуровневой памяти
+- **[IT-08 финал]** `MemoryContext.projectInfos: [ProjectInfo]` — UUID + имя каждого проекта
 
 ### MemoryManager
 Управляет файловой структурой памяти воркспейса.
 
-**[IT-03] Методы:**
-- `buildSystemPrompt(basePrompt:threadId:projectIds:)` — собирает полный трёхуровневый system prompt
+**[IT-08 ✅] Методы:**
+- `buildSystemPrompt(basePrompt:memoryContext:)` — ОСНОВНАЯ сигнатура, принимает полный MemoryContext
+- `buildSystemPrompt(basePrompt:threadId:projectIds:)` — LEGACY сигнатура для обратной совместимости
 - `setMemoryStore(_:)` — подключает SwiftData бэкенд (вызывается из ViewModel)
+- `saveMemoryEntry/readMemoryEntry/searchMemoryEntries/deleteMemoryEntry` — UUID-based методы (IT-08)
 
-**[УСТАРЕВАЕТ после IT-08]:**
+**[УСТАРЕВАЕТ]:**
 - `saveMemory/readMemory/searchMemory/deleteMemory` — legacy методы, пишут в файл
 
 ### MemoryStore [IT-01]
@@ -103,7 +106,7 @@ Actor. CRUD операции над проектами через SwiftData.
 
 ---
 
-## 4. Трёхуровневая память (IT-03, IT-08)
+## 4. Трёхуровневая память (IT-03, IT-08 ✅)
 
 ### Уровни и scope
 
@@ -113,7 +116,7 @@ Actor. CRUD операции над проектами через SwiftData.
 | Проектная | `"<projectId UUID>"` | memorize(targetName="Chappie") | buildSystemPrompt() |
 | Тредовая | `"<threadId UUID>"` | memorize(scope="thread") | buildSystemPrompt() |
 
-### Модель связей (IT-08)
+### Модель связей (IT-08 ✅)
 
 ```
 Тред ←→ Проект  (многие-ко-многим, без владения)
@@ -124,7 +127,7 @@ Global ←→ всё   (кросс-проектные знания)
 Один проект может быть в нескольких тредах.
 Один тред может вести несколько проектов параллельно.
 
-### Инструменты памяти — новый API (IT-08)
+### Инструменты памяти — финальный API (IT-08 ✅)
 
 **memorize:**
 ```
@@ -138,7 +141,27 @@ targetName="Chappie"          → найти проект по имени → sa
 - Для проектной памяти ОБЯЗАТЕЛЕН явный `targetName`
 - Если targetName не найден среди проектов треда — ошибка с подсказкой
 
-### Разрешение конфликтов памяти (IT-08)
+### Имена проектов в system prompt (IT-08 финал ✅)
+
+`MemoryContext.projectInfos: [ProjectInfo]` содержит UUID + имя каждого проекта.
+`buildSystemPrompt()` принимает полный MemoryContext и использует имена в заголовках:
+
+```
+## 📁 Память проекта: Chappie      ← имя проекта в заголовке
+- [fact] architecture: ...
+```
+
+Это особенно важно при нескольких проектах в одном треде (параллельная разработка):
+```
+## 📁 Память проекта: Chappie
+## 📁 Память проекта: MyOtherApp
+```
+
+`ChappieViewModel.buildAndSyncMemoryContext()` — единая точка сборки MemoryContext из
+`activeProjects` (ProjectMetadata с UUID + displayName). Вызывается при любом изменении
+треда или проектов.
+
+### Разрешение конфликтов памяти (IT-08 ✅)
 
 Если инструкции в разных уровнях памяти (global/project/thread) противоречат друг другу —
 Чаппи ОСТАНАВЛИВАЕТСЯ, объясняет конфликт пользователю и ждёт решения.
@@ -146,61 +169,12 @@ targetName="Chappie"          → найти проект по имени → sa
 
 ---
 
-## 5. IT-08 — Переработка инструментов памяти (В ПЛАНЕ)
-
-### Что меняется
-
-**ToolExecutionService.swift:**
-- Заменить `activeProjectNames: [String]` на `activeMemoryContext: ActiveMemoryContext`
-- Метод `setActiveProjectNames()` → `setActiveMemoryContext()`
-- Инструменты памяти переписать: вызывают MemoryStore через `memoryHandler`
-- Добавить `memoryHandler: @Sendable (MemoryOperation) async -> String`
-
-**MemoryStore.swift:**
-- Добавить `searchEntries(type:scopes:)` — поиск по нескольким scope одновременно
-
-**MemoryManager.swift:**
-- Убрать legacy-блок из `buildSystemPrompt()` (только SwiftData)
-- Deprecate `saveMemory/readMemory/searchMemory/deleteMemory`
-
-**AIOrchestrator.swift (baseSystemPrompt):**
-- Добавить правило CONFLICT RESOLUTION
-- Обновить правило MEMORY STRUCTURE — новый API scope
-
-**ChappieViewModel.swift:**
-- `setActiveProjectNames()` → `setActiveMemoryContext()` с полными UUID
-- Зарегистрировать `memoryHandler`
-
-### ActiveMemoryContext (новая структура)
-
-```swift
-/// Контекст активного треда для инструментов памяти.
-/// Хранится в ToolExecutionService, обновляется при смене треда/проектов.
-public struct ActiveMemoryContext: Sendable {
-    let threadId: UUID?
-    let projects: [(id: UUID, name: String)]  // UUID для scope, name для маппинга
-    static let empty = ActiveMemoryContext(threadId: nil, projects: [])
-}
-```
-
-### Итерации IT-08
-
-| # | Шаг | Описание |
-|---|---|---|
-| IT-08-1 | ActiveMemoryContext | Заменить activeProjectNames → ActiveMemoryContext |
-| IT-08-2 | MemoryHandler | Добавить memoryHandler в ToolExecutionService + ViewModel |
-| IT-08-3 | Инструменты памяти | Переписать memorize/recall/search/delete через MemoryStore |
-| IT-08-4 | Промпт | Обновить baseSystemPrompt: конфликты + новый API scope |
-| IT-08-5 | Очистка | Убрать legacy из buildSystemPrompt(), deprecate старые методы |
-
----
-
-## 6. Агентный цикл (детали)
+## 5. Агентный цикл (детали)
 
 ```
 process(prompt:history:config:memoryContext:onToolCall:onToken:)
     ↓
-buildSystemPrompt()           ← MemoryManager: base + global + project + thread
+buildSystemPrompt(basePrompt:memoryContext:)  ← MemoryManager: base + global + project + thread
     ↓
 buildContextWindow()          ← дедупликация + tokenBudget + maxMessages
     ↓
@@ -216,7 +190,7 @@ while stepCount < maxSteps:
 
 ---
 
-## 7. Контекстное окно (AppConfig параметры)
+## 6. Контекстное окно (AppConfig параметры)
 
 | Параметр | Источник | Диапазон |
 |----------|----------|----------|
@@ -230,7 +204,7 @@ while stepCount < maxSteps:
 
 ---
 
-## 8. SwiftData схема
+## 7. SwiftData схема
 
 ```swift
 ThreadEntity (SwiftData)
@@ -261,7 +235,7 @@ MemoryEntity (SwiftData)
 
 ---
 
-## 9. Кэширование промптов
+## 8. Кэширование промптов
 
 **TOP-LEVEL cache_control** — единственный правильный способ:
 ```json
@@ -278,12 +252,11 @@ TTL 1h оптимален для разработки — сессии коро�
 
 ---
 
-## 10. Технический долг
+## 9. Технический долг
 
 | # | Описание | Приоритет | Статус |
 |---|----------|-----------|--------|
-| IT-08 | Переработка инструментов памяти (SwiftData + умный scope) | 🔴 | 🔲 В плане |
-| ТД-TEST | Unit-тесты для XcodeDocsGroupManager | 🟡 | 🔲 Открыт |
+| ТД-TEST | Unit-тесты для ключевых сервисов | 🟡 | 🔲 Открыт |
 
 ---
 
@@ -291,7 +264,7 @@ TTL 1h оптимален для разработки — сессии коро�
 
 | Date | Change |
 |------|--------|
-| 2025-07-XX | IT-08 ЗАПЛАНИРОВАН: ActiveMemoryContext, memoryHandler, умный scope-маппинг, конфликт-резолюция |
+| 2025-07-XX | IT-08 ✅ ПОЛНОСТЬЮ ЗАВЕРШЁН: UUID-based scope, ActiveMemoryContext, resolveScope(), buildAndSyncMemoryContext(), имена проектов в заголовках блоков памяти |
 | 2025-07-XX | REFACTOR-THREADS IT-01..IT-07 завершён |
 | 2025-07-XX | TOP-LEVEL-CACHE: добавлено поле cache_control в AITunnelRequest, TTL 1h |
 | 2025-07-XX | ИНЦИДЕНТ: Gemini убрал кэширование при фиксе cancelled. Восстановлено через top-level cache_control |
