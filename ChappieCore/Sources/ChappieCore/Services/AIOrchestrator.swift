@@ -70,7 +70,7 @@
 //     Это позволяет разным тредам иметь разные параметры контекста.
 //     ChappieViewModel создаёт AppConfig из настроек активного треда и передаёт его сюда.
 //
-// 11. ТРЁХУРОВНЕВАЯ ПАМЯТЬ В SYSTEM PROMPT (IT-03, REFACTOR-THREADS):
+// 11. ТРЁХУРОВНЕВАЯ ПАМЯТЬ В SYSTEM PROMPT (IT-03, IT-08, REFACTOR-THREADS):
 //     process() принимает memoryContext: MemoryContext — описание треда и проектов.
 //     Перед каждым запросом MemoryManager.buildSystemPrompt() собирает полный промпт
 //     с подмешанной глобальной + проектной + тредовой памятью.
@@ -87,9 +87,14 @@
 //     baseSystemPrompt переведён на английский язык.
 //     ПРИЧИНА: английский токенизируется в 1.5–2 раза эффективнее кириллицы.
 //     Экономия ~3000 токенов на каждом запросе (~35% от общего промпта).
-//     Правило language mirroring: Чаппи отвечает пользователю на том языке,
-//     на котором тот пишет. Внутренние рассуждения — автоматически на английском.
-//     Архитектурная память (architecture.md, semantic.json) — постепенно переводится на EN.
+//     Правило language mirroring в конце промпта гарантирует ответы на языке пользователя.
+//
+// 14. UUID-BASED ПАМЯТЬ (IT-08):
+//     Инструменты memorize/recall/search_memory/delete_memory работают с UUID-based scope.
+//     ToolExecutionService получает ActiveMemoryContext (threadId UUID + [ProjectInfo{id,name}])
+//     через setActiveMemoryContext() от ChappieViewModel.syncActiveMemoryContext().
+//     resolveScope() маппирует scope="thread" → UUID треда, targetName="Name" → UUID проекта.
+//     Конфликт инструкций между уровнями памяти — останавливаемся, объясняем пользователю.
 
 import Foundation
 
@@ -197,11 +202,22 @@ public actor AIOrchestrator {
     3. SYNTAX AND COMPILATION:
        Always verify Swift 6 syntax before saving code. Code must be fully compilable and ready to run. Return only complete files via write_file — never cut lines or leave unfinished blocks!
 
-    4. MEMORY STRUCTURE:
-       You work with two types of memory:
-       A) Global memory: general facts and cross-project knowledge (semantic.json files in Documents). Tools: memorize, recall with scope = "global".
-       B) Target-local memory: architecture.md file at the root of each target. Always read the relevant target's architecture.md before complex tasks.
-       Paths to architecture.md: Chappie/architecture.md, ChappieCore/architecture.md, ChappieMCP/architecture.md, ChappieCoreTests/architecture.md, architecture.md (project root).
+    4. THREE-LEVEL MEMORY SYSTEM (IT-08):
+       Memory is stored in SwiftData and automatically injected into your system prompt.
+       THREE LEVELS — use the right level for each piece of information:
+         A) Global memory (scope="global"): cross-project facts, user preferences, universal rules.
+            Tools: memorize/recall/search_memory/delete_memory with scope="global"
+         B) Thread memory (scope="thread"): context of the current task, temporary notes, session agreements.
+            Tools: memorize/recall/search_memory/delete_memory with scope="thread"
+         C) Project memory (targetName="ProjectName"): architecture decisions, pipelines, project-specific rules.
+            Tools: memorize/recall/search_memory/delete_memory with targetName="Chappie" (or any attached project name)
+       DEFAULT: if neither scope nor targetName is specified → saves to global memory.
+       CONFLICT RESOLUTION: If instructions from different memory levels contradict each other —
+         STOP, explain the conflict to the user, wait for their decision, then update memory to resolve it.
+       Architecture documentation: architecture.md files at the root of each target.
+       Always read the relevant target's architecture.md before complex tasks.
+       Paths: Chappie/architecture.md, ChappieCore/architecture.md, ChappieMCP/architecture.md,
+              ChappieCoreTests/architecture.md, architecture.md (project root).
 
     5. MANDATORY SELF-SUMMARY (CRITICALLY IMPORTANT — NEVER VIOLATE):
        At the very end of EACH of your final responses to the user you MUST add the tag:
@@ -296,7 +312,7 @@ public actor AIOrchestrator {
         onCostUpdate: (@Sendable (Double) -> Void)? = nil
     ) async throws -> AIOrchestratorResult {
 
-        // ТРЁХУРОВНЕВАЯ ПАМЯТЬ (IT-03):
+        // ТРЁХУРОВНЕВАЯ ПАМЯТЬ (IT-03, IT-08):
         // Перед каждым запросом собираем актуальный system prompt с подмешанной памятью.
         // buildSystemPrompt() читает из MemoryStore (SwiftData) + legacy файл.
         // Если MemoryStore не подключён — возвращает только базовый промпт (фолбэк).

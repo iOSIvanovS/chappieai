@@ -27,11 +27,18 @@
 // ViewModel создаёт AppConfig из настроек активного треда и передаёт его в process().
 // AppConfig.shared используется как дефолт пока тред не выбран (до IT-05).
 //
-// ТРЁХУРОВНЕВАЯ ПАМЯТЬ (IT-03):
+// ТРЁХУРОВНЕВАЯ ПАМЯТЬ (IT-03, IT-08):
 // MemoryStore (SwiftData) подключается к MemoryManager через setMemoryStore().
 // AIOrchestrator.process() получает MemoryContext (threadId + projectIds).
 // Перед каждым запросом MemoryManager.buildSystemPrompt() автоматически подмешивает
 // глобальную + проектную + тредовую память в system prompt.
+//
+// ТРЁХУРОВНЕВАЯ ПАМЯТЬ — UUID-BASED (IT-08):
+// ToolExecutionService работает с ActiveMemoryContext (threadId UUID + [ProjectInfo{id,name}]).
+// syncActiveMemoryContext() собирает реальные UUID из activeThread и activeProjects и
+// передаёт их в ToolExecutionService через setActiveMemoryContext().
+// Это позволяет инструментам memorize/recall/search_memory/delete_memory корректно
+// маппировать scope="thread" → UUID треда, targetName="Chappie" → UUID проекта.
 //
 // СИСТЕМА ТРЕДОВ (IT-05):
 // Каждый тред — это отдельная история сообщений в SwiftData.
@@ -509,32 +516,54 @@ final class ChappieViewModel {
                 // Перезагружаем список проектов для ProjectChipsView
                 await loadProjectsForThread(updatedThread)
 
-                // Синхронизируем PROJECT GUARD в ToolExecutionService.
+                // IT-08: синхронизируем ActiveMemoryContext в ToolExecutionService.
                 // ПОЧЕМУ ЗДЕСЬ: после add/remove через инструменты Чаппи список проектов
-                // изменился — нужно обновить hasActiveProjects в ToolExecutionService.
-                await syncProjectGuard()
+                // изменился — нужно обновить контекст с реальными UUID в ToolExecutionService.
+                await syncActiveMemoryContext()
             }
         } catch {
             print("[ChappieViewModel] ⚠️ Ошибка обновления после изменения проектов: \(error)")
         }
     }
 
-    // MARK: - Синхронизация PROJECT GUARD (FIX-CANCELLED)
+    // MARK: - Синхронизация ActiveMemoryContext в ToolExecutionService (IT-08)
 
-    /// Синхронизирует список активных проектов в ToolExecutionService.
+    /// Синхронизирует полный ActiveMemoryContext (UUID треда + UUID+имя каждого проекта)
+    /// в ToolExecutionService.
     ///
-    /// ЗАЧЕМ:
-    /// ToolExecutionService.hasActiveProjects используется как guard для файловых инструментов.
-    /// При каждом изменении activeProjects нужно обновить этот список в сервисе.
+    /// ЗАЧЕМ (IT-08):
+    /// ToolExecutionService.resolveScope() маппирует:
+    ///   - scope="thread"       → UUID активного треда
+    ///   - targetName="Chappie" → UUID проекта с именем "Chappie"
+    /// Для этого ToolExecutionService должен знать реальные UUID, а не только имена.
+    ///
+    /// РАЗНИЦА С ПРЕДЫДУЩИМ ПОДХОДОМ:
+    /// Старый метод syncProjectGuard() вызывал setActiveProjectNames([String]) —
+    /// без UUID. Инструменты памяти получали заглушки UUID и не могли корректно
+    /// маппировать targetName → scope.
+    /// Новый метод syncActiveMemoryContext() передаёт полный ActiveMemoryContext
+    /// с реальными UUID из ProjectMetadata и activeThread.
     ///
     /// КОГДА ВЫЗЫВАТЬ:
     /// - После selectThread() — загружены проекты нового треда
     /// - После addProject() / removeProject() — список изменился
     /// - После reloadAfterProjectChange() — Чаппи изменил проекты через инструменты
-    private func syncProjectGuard() async {
+    private func syncActiveMemoryContext() async {
         guard let ts = toolService else { return }
-        let names = activeProjects.map { $0.displayName }
-        await ts.setActiveProjectNames(names)
+
+        // Собираем ProjectInfo с реальными UUID из activeProjects (ProjectMetadata).
+        // ProjectMetadata.id — это UUID из SwiftData ProjectEntity, тот же UUID
+        // что хранится в MemoryEntity.scope для памяти этого проекта.
+        let projectInfos = activeProjects.map { project in
+            ActiveMemoryContext.ProjectInfo(id: project.id, name: project.displayName)
+        }
+
+        let context = ActiveMemoryContext(
+            threadId: activeThread?.id,
+            projects: projectInfos
+        )
+
+        await ts.setActiveMemoryContext(context)
     }
 
     // MARK: - Управление тредами (IT-05)
@@ -591,7 +620,7 @@ final class ChappieViewModel {
     /// 3. Загружаем историю сообщений → messages
     /// 4. Обновляем activeMemoryContext (threadId + projectIds)
     /// 5. Загружаем проекты треда → activeProjects (IT-06)
-    /// 6. Синхронизируем PROJECT GUARD в ToolExecutionService (FIX-CANCELLED)
+    /// 6. Синхронизируем ActiveMemoryContext в ToolExecutionService (IT-08)
     func selectThread(_ thread: ThreadMetadata) async {
         guard let store = threadStore else { return }
 
@@ -632,9 +661,11 @@ final class ChappieViewModel {
         // Делаем это ПОСЛЕ загрузки истории — не блокируем основной поток
         await loadProjectsForThread(thread)
 
-        // Синхронизируем PROJECT GUARD после загрузки проектов.
-        // ПОЧЕМУ ПОСЛЕ loadProjectsForThread: нам нужен актуальный activeProjects.
-        await syncProjectGuard()
+        // IT-08: синхронизируем ActiveMemoryContext после загрузки проектов.
+        // ПОЧЕМУ ПОСЛЕ loadProjectsForThread: нам нужен актуальный activeProjects с UUID.
+        // setActiveMemoryContext() передаёт реальные UUID в ToolExecutionService для
+        // корректного маппинга scope="thread" и targetName="ProjectName".
+        await syncActiveMemoryContext()
     }
 
     /// Флаг: идёт загрузка треда — не сохранять в legacy ChatHistoryManager.
@@ -667,8 +698,8 @@ final class ChappieViewModel {
                     self.isLoadingThread = false
                     // Сбрасываем проекты — новый тред начинается без проектов
                     self.activeProjects = []
-                    // Синхронизируем PROJECT GUARD — новый тред без проектов
-                    await syncProjectGuard()
+                    // IT-08: синхронизируем пустой контекст — новый тред без проектов
+                    await syncActiveMemoryContext()
                 }
 
                 print("[ChappieViewModel] ✅ Создан новый тред")
@@ -837,8 +868,8 @@ final class ChappieViewModel {
                     )
                     // Перезагружаем проекты треда
                     await loadProjectsForThread(updatedThread)
-                    // Синхронизируем PROJECT GUARD после добавления проекта
-                    await syncProjectGuard()
+                    // IT-08: синхронизируем ActiveMemoryContext с реальными UUID после добавления
+                    await syncActiveMemoryContext()
                 }
 
                 print("[ChappieViewModel] ✅ Проект '\(displayName)' добавлен в тред '\(thread.title)'")
@@ -880,8 +911,8 @@ final class ChappieViewModel {
                     )
                     // Перезагружаем проекты треда
                     await loadProjectsForThread(updatedThread)
-                    // Синхронизируем PROJECT GUARD после удаления проекта
-                    await syncProjectGuard()
+                    // IT-08: синхронизируем ActiveMemoryContext с реальными UUID после удаления
+                    await syncActiveMemoryContext()
                 }
 
                 print("[ChappieViewModel] 🗑 Проект убран из треда '\(thread.title)'")
@@ -1169,10 +1200,10 @@ final class ChappieViewModel {
             registerProjectToolHandlers(toolService: ts, projectStore: pStore, threadStore: tStore)
         }
 
-        // FIX-CANCELLED: синхронизируем PROJECT GUARD с текущими проектами.
-        // При пересоздании сервисов (setWorkspace) activeProjects уже может быть заполнен.
+        // IT-08: синхронизируем ActiveMemoryContext с реальными UUID при пересоздании сервисов.
+        // При setWorkspace() activeProjects и activeThread уже могут быть заполнены.
         Task {
-            await syncProjectGuard()
+            await syncActiveMemoryContext()
         }
     }
 
