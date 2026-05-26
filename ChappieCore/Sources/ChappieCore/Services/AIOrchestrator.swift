@@ -7,7 +7,7 @@
 //
 // 1. МОНОФИЗИТНАЯ АРХИТЕКТУРА:
 //    Чаппи работает один, без саб-агентов и делегирования. Вся ответственность
-//    за код, архитектуру, верстку и рефакторинг лежит на одном агенте.
+//    лежит на одном агенте — он же исполнитель, он же советник, он же партнёр.
 //    Причина: саб-агенты порождают хаос, несогласованность и дублирование контекста.
 //
 // 2. ЕДИНЫЙ СТРИМИНГОВЫЙ ЦИКЛ (ИСПРАВЛЕНИЕ ДВОЙНОГО ЗАПРОСА):
@@ -46,75 +46,61 @@
 //    Формула estimateTokens() использует UTF-8 байты / 4 × 1.5.
 //    Это даёт реалистичную оценку для смешанного русско-английского текста с кодом.
 //
-// 8. ОБЯЗАТЕЛЬНЫЙ ПАЙПЛАЙН ИЗМЕНЕНИЙ (железное правило):
-//    Перед каждым изменением кода Чаппи ОБЯЗАН соблюдать строгий порядок:
-//    1. git_status — проверить незакоммиченные изменения от прошлой сессии.
-//    2. git_add + git_commit — CHECKPOINT коммит (точка отката).
-//    3. write_file — внести изменения в код.
-//    4. build_project — компиляция. Если упала — ЧИНИТЬ, не идти дальше.
-//    5. run_tests — тесты ТОЛЬКО если сборка прошла. Если упали — ЧИНИТЬ, не идти дальше.
-//    6. git_add + git_commit — RESULT коммит только если всё зелёное.
-//    7. Сообщить пользователю что можно жать треугольник в Xcode.
-//    ОТКАТ: если build/tests упали и быстро не чинится — предложить git reset --hard к checkpoint.
-//    ЗАПРЕЩЕНО: git_diff (загружает весь проект в контекст, стоит сотни рублей).
-//    ЗАПРЕЩЕНО: run_tests до build_project (двойная компиляция).
-//    ЗАПРЕЩЕНО: финальный коммит если тесты или сборка не зелёные.
-//
-// 9. НАКОПИТЕЛЬНАЯ СТОИМОСТЬ (UX-RUNNING-COST):
+// 8. НАКОПИТЕЛЬНАЯ СТОИМОСТЬ (UX-RUNNING-COST):
 //    Добавлен callback onCostUpdate — вызывается после каждого внутреннего API-запроса.
 //    Передаёт накопленную стоимость нарастающим итогом (не стоимость одного шага!).
 //    Это позволяет UI показывать цену в реальном времени прямо в стриминговом пузыре.
 //
-// 10. ДИНАМИЧЕСКИЙ КОНФИГ (IT-02, REFACTOR-THREADS):
-//     process() теперь принимает config: AppConfig как параметр (с дефолтом AppConfig.shared).
-//     Это позволяет разным тредам иметь разные параметры контекста.
-//     ChappieViewModel создаёт AppConfig из настроек активного треда и передаёт его сюда.
+// 9. ДИНАМИЧЕСКИЙ КОНФИГ (IT-02, REFACTOR-THREADS):
+//    process() теперь принимает config: AppConfig как параметр (с дефолтом AppConfig.shared).
+//    Это позволяет разным тредам иметь разные параметры контекста.
+//    ChappieViewModel создаёт AppConfig из настроек активного треда и передаёт его сюда.
 //
-// 11. ТРЁХУРОВНЕВАЯ ПАМЯТЬ В SYSTEM PROMPT (IT-03, IT-08, REFACTOR-THREADS):
+// 10. ТРЁХУРОВНЕВАЯ ПАМЯТЬ В SYSTEM PROMPT (IT-03, IT-08, REFACTOR-THREADS):
 //     process() принимает memoryContext: MemoryContext — описание треда и проектов.
 //     Перед каждым запросом MemoryManager.buildSystemPrompt() собирает полный промпт
 //     с подмешанной глобальной + проектной + тредовой памятью.
 //     Захардкоженный systemPrompt остаётся как BASE_PROMPT — основа для buildSystemPrompt().
 //
-// 12. ЗАЩИТА ОТ ПЕТЕЛЬ (УМНАЯ, НЕ СЕССИОННАЯ):
+// 11. ЗАЩИТА ОТ ПЕТЕЛЬ (УМНАЯ, НЕ СЕССИОННАЯ):
 //     Вместо блокировки любого повторного вызова за всю сессию — блокируем только
 //     два ПОДРЯД идущих одинаковых вызова (один и тот же инструмент с теми же аргументами
 //     без каких-либо других вызовов между ними).
 //     ПОЧЕМУ: сессионная блокировка мешала легитимным повторам (read_file после write_file,
 //     list_files после создания нового файла и т.д.). Подряд-блокировка ловит реальные петли.
 //
-// 13. АНГЛИЙСКИЙ СИСТЕМНЫЙ ПРОМПТ (ОПТИМИЗАЦИЯ ТОКЕНОВ):
+// 12. АНГЛИЙСКИЙ СИСТЕМНЫЙ ПРОМПТ (ОПТИМИЗАЦИЯ ТОКЕНОВ):
 //     baseSystemPrompt переведён на английский язык.
 //     ПРИЧИНА: английский токенизируется в 1.5–2 раза эффективнее кириллицы.
 //     Экономия ~3000 токенов на каждом запросе (~35% от общего промпта).
 //     Правило language mirroring в конце промпта гарантирует ответы на языке пользователя.
 //
-// 14. UUID-BASED ПАМЯТЬ (IT-08):
+// 13. UUID-BASED ПАМЯТЬ (IT-08):
 //     Инструменты memorize/recall/search_memory/delete_memory работают с UUID-based scope.
 //     ToolExecutionService получает ActiveMemoryContext (threadId UUID + [ProjectInfo{id,name}])
 //     через setActiveMemoryContext() от ChappieViewModel.syncActiveMemoryContext().
 //     resolveScope() маппирует scope="thread" → UUID треда, targetName="Name" → UUID проекта.
 //     Конфликт инструкций между уровнями памяти — останавливаемся, объясняем пользователю.
 //
-// 15. ИМЕНА ПРОЕКТОВ В SYSTEM PROMPT (IT-08 финал):
+// 14. ИМЕНА ПРОЕКТОВ В SYSTEM PROMPT (IT-08 финал):
 //     MemoryContext теперь содержит projectInfos: [(id: UUID, name: String)] вместо [UUID].
 //     buildSystemPrompt() показывает имя проекта в заголовке блока памяти.
 //     ChappieViewModel заполняет projectInfos из activeProjects (ProjectMetadata).
 //
-// 16. ПАМЯТЬ ТОЛЬКО НА АНГЛИЙСКОМ (MEMORY-ENGLISH):
+// 15. ПАМЯТЬ ТОЛЬКО НА АНГЛИЙСКОМ (MEMORY-ENGLISH):
 //     В baseSystemPrompt добавлено жёсткое правило: все записи в память (memorize)
 //     ОБЯЗАНЫ быть на английском языке. Причина: память — это "мышление" Чаппи,
 //     а не общение с пользователем. Как американский инженер думает по-английски,
 //     но может говорить на любом языке — так и Чаппи: думает по-английски,
 //     отвечает на языке пользователя.
 //
-// 17. БЕЗ ЭМОДЗИ В SYSTEM PROMPT (TOKEN-EFFICIENCY):
+// 16. БЕЗ ЭМОДЗИ В SYSTEM PROMPT (TOKEN-EFFICIENCY):
 //     Все эмодзи убраны из заголовков секций памяти в buildSystemPrompt().
 //     ПРИЧИНА: каждый эмодзи = 2-4 токена. При ~30 эмодзи в промпте = ~90 токенов впустую.
 //     При 1000 запросов в месяц = ~90k токенов = реальные деньги.
 //     Чистый текст без эмодзи — эффективнее и для кэширования промпта.
 //
-// 18. РЕДИЗАЙН МАНИФЕСТА (MANIFEST-REDESIGN):
+// 17. РЕДИЗАЙН МАНИФЕСТА (MANIFEST-REDESIGN):
 //     Вводная часть baseSystemPrompt переписана: убраны хардкод личности (macOS/iOS developer),
 //     технологического стека (Swift/SwiftUI/macOS), ссылка на конкретную модель (Claude Sonnet).
 //     Чаппи теперь — универсальный агент, адаптирующийся к любой задаче.
@@ -122,6 +108,15 @@
 //     Монофизитное правило ("no sub-agents") СОХРАНЕНО — оно архитектурно обосновано.
 //     ПРИЧИНА ИЗМЕНЕНИЙ: пользователь может использовать Чаппи для любых задач,
 //     а не только iOS/macOS разработки. Стек проекта должен узнаваться из памяти проекта.
+//
+// 18. РЕДИЗАЙН ПРАВИЛ (RULES-REDESIGN):
+//     Правила 1–7 переписаны: убраны хардкод и абсолютные пути, добавлена гибкость.
+//     Роль агента (исполнитель/советник) теперь определяется настройками проекта.
+//     Комментарии в коде — только при включении в настройках и только в программировании.
+//     Пайплайны — по договорённости с пользователем, записываются в память проекта.
+//     Три железных запрета (git_diff, тесты до билда, коммит при красном) сохранены.
+//     Документирование архитектуры — только в программировании, пути по договорённости.
+//     Правила 5 (summary), 8 (language mirroring), 9 (memory english) — без изменений.
 
 import Foundation
 
@@ -231,18 +226,18 @@ public actor AIOrchestrator {
     ///
     /// ПОЧЕМУ ЗАХАРДКОЖЕНО:
     /// Все критически важные правила захардкожены здесь, а не передаются извне.
-    /// Память (semantic.json) может не загрузиться, история чата сжимается —
+    /// Память (SwiftData) может не загрузиться, история чата сжимается —
     /// только хардкод является 100% надёжной гарантией соблюдения правил.
     ///
-    /// ПОЧЕМУ НА АНГЛИЙСКОМ (IT-13):
+    /// ПОЧЕМУ НА АНГЛИЙСКОМ:
     /// Английский токенизируется в 1.5–2 раза эффективнее кириллицы.
     /// Экономия ~3000 токенов на каждом запросе.
     /// Правило language mirroring в конце промпта гарантирует ответы на языке пользователя.
     ///
-    /// РЕДИЗАЙН МАНИФЕСТА (MANIFEST-REDESIGN):
-    /// Вводная часть переписана: убраны хардкод личности, стека и модели.
-    /// Чаппи = универсальный агент-партнёр, а не "одинокий iOS-разработчик".
-    /// Монофизитное правило сохранено — оно архитектурно обосновано.
+    /// РЕДИЗАЙН ПРАВИЛ (RULES-REDESIGN):
+    /// Правила 1–7 переработаны: убраны хардкод ролей, путей и пайплайнов.
+    /// Роль, комментарии, документация, пайплайны — всё по настройкам проекта.
+    /// Три железных запрета сохранены как абсолютные.
     private let baseSystemPrompt = """
     You are Chappie — a universal AI agent of the highest level.
     You are capable of anything: software engineering, architecture, writing,
@@ -257,15 +252,27 @@ public actor AIOrchestrator {
 
     YOUR INVIOLABLE RULES:
 
-    1. ABSOLUTE AUTONOMY:
-       All responsibility for the project lies with you. Use tools directly to read, analyze, and rewrite files. Your decisions are final.
+    1. ROLE IN PROJECT:
+       Your role is defined by the project settings set by the user.
+       EXECUTOR role: you have full access to all tools — file system, git, console, and others
+         agreed upon with the user. You act autonomously within the project scope.
+       ADVISOR role: you may only read files (read_file, list_files). You do not modify anything.
+         You give recommendations, code snippets, and advice — but the user applies them.
+       If no role is specified — ask the user which mode they prefer before using any tools.
+       In both roles: always act in the user's best interest. Your decisions serve the user, not replace them.
 
-    2. CODE ALIENABILITY PRINCIPLE:
-       All code you create MUST be densely covered with clear and detailed comments in perfect Russian language.
-       Comments must explain WHY this code was written, not just WHAT it does.
+    2. COMMENTS IN CODE:
+       Write comments in code ONLY if the user has enabled commenting in the project settings.
+       Comment language is set by the user in project settings (English or user's native language).
+       Comments apply ONLY to programming tasks. In documents, contracts, reports, or any
+       non-code content — do NOT add comments. Instead, explain your reasoning verbally if needed.
+       When commenting is enabled: be dense, clear, and explain WHY — not just WHAT.
 
-    3. SYNTAX AND COMPILATION:
-       Always verify Swift 6 syntax before saving code. Code must be fully compilable and ready to run. Return only complete files via write_file — never cut lines or leave unfinished blocks!
+    3. PROFESSIONALISM AND FILE INTEGRITY:
+       Always follow the guidelines and best practices of the relevant technology stack or domain.
+       Be professional in the subject area — whether it's Swift, law, biology, or copywriting.
+       Handle user files with care: always write complete files via write_file, never truncated
+       or partial content. Never leave unfinished blocks or placeholder stubs.
 
     4. THREE-LEVEL MEMORY SYSTEM (IT-08):
        Memory is stored in SwiftData and automatically injected into your system prompt.
@@ -274,15 +281,16 @@ public actor AIOrchestrator {
             Tools: memorize/recall/search_memory/delete_memory with scope="global"
          B) Thread memory (scope="thread"): context of the current task, temporary notes, session agreements.
             Tools: memorize/recall/search_memory/delete_memory with scope="thread"
-         C) Project memory (targetName="ProjectName"): architecture decisions, pipelines, project-specific rules.
-            Tools: memorize/recall/search_memory/delete_memory with targetName="Chappie" (or any attached project name)
+         C) Project memory (targetName="ProjectName"): decisions, agreements, and project-specific rules.
+            Tools: memorize/recall/search_memory/delete_memory with targetName="ProjectName"
        DEFAULT: if neither scope nor targetName is specified → saves to global memory.
        CONFLICT RESOLUTION: If instructions from different memory levels contradict each other —
          STOP, explain the conflict to the user, wait for their decision, then update memory to resolve it.
-       Architecture documentation: architecture.md files at the root of each target.
-       Always read the relevant target's architecture.md before complex tasks.
-       Paths: Chappie/architecture.md, ChappieCore/architecture.md, ChappieMCP/architecture.md,
-              ChappieCoreTests/architecture.md, architecture.md (project root).
+       ARCHITECTURE FILES: In programming projects only, and only if enabled in project settings.
+         When enabled: discuss with the user where to create architecture files, how many,
+         and how they relate to each other — based on the project structure and IDE in use.
+         Save the agreed file paths to project memory. Do NOT auto-create architecture files
+         without explicit agreement with the user.
 
     5. MANDATORY SELF-SUMMARY (CRITICALLY IMPORTANT — NEVER VIOLATE):
        At the very end of EACH of your final responses to the user you MUST add the tag:
@@ -294,37 +302,26 @@ public actor AIOrchestrator {
        - Never explain to the user what this tag is — they don't see it.
        - Violating this rule destroys the token-saving system. This is unacceptable.
 
-    6. MANDATORY RECORDING OF ARCHITECTURAL DECISIONS (CRITICALLY IMPORTANT):
-       When ANY key architectural decision is made, an important nuance or implementation detail is discussed — you MUST immediately record it in the architecture.md file of the corresponding target via the write_file tool.
+    6. RECORDING DECISIONS (CRITICALLY IMPORTANT):
+       Any key decision, important agreement, or significant nuance discussed with the user
+       MUST be recorded immediately — either in memory (memorize tool) or in architecture files.
+       Use project memory for project-specific decisions. Use thread memory for session context.
        WHY THIS IS CRITICAL:
        - Chat history is aggressively compressed (budget 12,000 tokens).
-       - Discussion details are lost during summarization.
-       - Files are the only reliable long-term memory of the system.
-       - Without this rule, important decisions will be lost forever.
-       WHAT TO RECORD: architectural patterns, reasons for choosing an approach, rejected alternatives, important constraints, implementation nuances, agreements with the user.
+       - Details are lost during summarization.
+       - Memory and files are the only reliable long-term storage.
+       WHAT TO RECORD: chosen approaches, rejected alternatives, constraints, agreements with user,
+       important implementation nuances — anything that must survive context compression.
 
-    7. MANDATORY PIPELINE BEFORE EACH CODE CHANGE (IRON RULE):
-       Every time code needs to be changed — STRICTLY follow this order:
+    7. PIPELINES AND TOOL USAGE:
+       Pipelines (sequences of tool calls for recurring tasks) are established by agreement
+       with the user and recorded in project memory. Follow the agreed pipeline for the project.
+       If no pipeline is defined — discuss with the user before starting complex multi-step work.
 
-       STEP 1: git_status — check for uncommitted changes from the previous session.
-               If there are any — deal with them BEFORE starting a new change.
-       STEP 2: git_add + git_commit — make a CHECKPOINT commit (rollback point).
-               Commit message: "checkpoint: before [description of change]"
-       STEP 3: write_file — apply changes to the code.
-       STEP 4: build_project — compile. If it fails — FIX IT, do not proceed.
-       STEP 5: run_tests — tests ONLY if the build succeeded.
-               If they fail — FIX IT, do not proceed.
-       STEP 6: git_add + git_commit — RESULT commit ONLY if everything is green.
-               Commit message: "feat/fix: [description of what was done]"
-       STEP 7: Tell the user they can press the triangle in Xcode to restart.
-
-       ROLLBACK: If build or tests fail and cannot be fixed quickly —
-                 notify the user and offer rollback: git reset --hard to the checkpoint commit.
-
-       IRON PROHIBITIONS (violation is unacceptable):
-       🚫 git_diff — FORBIDDEN FOREVER. Loads the entire project into AI context, costs hundreds of rubles.
-       🚫 run_tests before build_project — tests compile themselves, resulting in double compilation.
-       🚫 Final RESULT commit if tests or build are not green.
+       THREE ABSOLUTE PROHIBITIONS (violation is unacceptable under any circumstances):
+       FORBIDDEN: git_diff — loads the entire project into AI context, costs real money.
+       FORBIDDEN: run_tests before build_project — causes double compilation.
+       FORBIDDEN: final commit if build or tests are not green.
 
     8. LANGUAGE MIRRORING (IMPORTANT):
        Always respond to the user in the same language they are writing to you in.
@@ -500,6 +497,8 @@ public actor AIOrchestrator {
         print("[AIOrchestrator] Historia: \(history.count) msgs, ~\(totalTokensBefore) tokens | Budget: \(budget) (\(maxMessages) msgs x 500)")
 
         // ШАГ 1: ДЕДУПЛИКАЦИЯ
+        // Защита от задвоения: если последнее сообщение в истории совпадает с текущим
+        // запросом — убираем его из истории, чтобы не отправить дважды.
         let deduplicatedHistory: [AIMessage]
         if let lastMessage = history.last,
            lastMessage.role == "user",
@@ -510,12 +509,14 @@ public actor AIOrchestrator {
             deduplicatedHistory = history
         }
 
-        // ШАГ 2: Жёсткий лимит по количеству
+        // ШАГ 2: Жёсткий лимит по количеству сообщений из конфига треда.
         let cappedHistory = deduplicatedHistory.count > maxMessages
             ? Array(deduplicatedHistory.suffix(maxMessages))
             : deduplicatedHistory
 
-        // ШАГ 3: Разбиваем на "свежую" и "старую" зоны
+        // ШАГ 3: Разбиваем на "свежую" и "старую" зоны.
+        // Последние recentCount сообщений всегда идут полностью — они самые важные.
+        // Более старые — кандидаты на сжатие до summary.
         let recentMessages: [AIMessage]
         let olderMessages: [AIMessage]
 
@@ -529,7 +530,8 @@ public actor AIOrchestrator {
 
         var usedTokens = recentMessages.reduce(0) { $0 + estimateTokens($1) }
 
-        // ШАГ 4: Идём по старым сообщениям с конца (ближайшие — важнее)
+        // ШАГ 4: Идём по старым сообщениям с конца (ближайшие — важнее).
+        // Для каждого: сжимаем до summary если длинное, добавляем пока влезает в бюджет.
         var selectedOlder: [AIMessage] = []
         for message in olderMessages.reversed() {
             let compressed = compressMessage(message, summaryThreshold: summaryThreshold)
@@ -553,6 +555,10 @@ public actor AIOrchestrator {
     }
 
     /// Сжимает сообщение до его summary если оно достаточно длинное.
+    ///
+    /// ЗАЧЕМ: экономия токенов на старых сообщениях в контекстном окне.
+    /// Если сообщение содержит тег <summary> — используем его как сжатую версию.
+    /// Если нет — оставляем полным (нет summary = нечем заменять).
     private func compressMessage(_ message: AIMessage, summaryThreshold: Int) -> AIMessage {
         guard let fullText = message.contentString,
               estimateTokens(message) > summaryThreshold,
@@ -586,6 +592,11 @@ public actor AIOrchestrator {
     }
 
     /// Оценивает количество токенов в сообщении.
+    ///
+    /// ФОРМУЛА: UTF-8 байты / 4 × 1.5
+    /// Даёт реалистичную оценку для смешанного русско-английского текста с кодом.
+    /// Кириллица занимает 2 байта на символ → делим на 4 → примерно 0.5 токена на символ.
+    /// Коэффициент 1.5 добавляет запас для специальных символов и разметки.
     private func estimateTokens(_ message: AIMessage) -> Int {
         let text = message.contentString ?? ""
         let utf8ByteCount = text.utf8.count
@@ -642,6 +653,10 @@ public actor AIOrchestrator {
         }
     }
 
+    /// Извлекает путь к файлу из JSON-аргументов вызова инструмента.
+    ///
+    /// ЗАЧЕМ: onToolCall получает имя инструмента и путь к файлу для отображения в UI.
+    /// Большинство инструментов работы с файлами используют параметр "path".
     private func extractTargetPath(from arguments: String) -> String {
         guard let data = arguments.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
