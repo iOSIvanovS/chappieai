@@ -95,7 +95,7 @@ ChappieMCP
 - Файл лежит в КОРНЕ воркспейса (не в AI_Docs/ — папка упразднена).
 - Автоматическое подрезание до 100 сообщений при каждом сохранении.
 - 100 сообщений = ~20-50 диалоговых пар, достаточно для работы.
-- Оркестратор всё равно берёт только последние 12 (maxMessagesInContext).
+- Оркестратор всё равно берёт только последние maxMessagesInContext (теперь из ThreadSettings).
 
 **ВАЖНО:** При рефакторинге — путь нельзя менять без обновления `ChatHistoryManager.swift`.
 
@@ -233,7 +233,7 @@ DispatchQueue.global(qos: .background).asyncAfter(
 
 ## 10. REFACTOR-THREADS — Большой рефакторинг: треды, проекты, SwiftData
 
-### Статус: 🔲 НЕ НАЧАТ
+### Статус: 🔄 В ПРОЦЕССЕ (IT-01 ✅, IT-02 ✅)
 
 ### Контекст и мотивация
 
@@ -254,7 +254,7 @@ DispatchQueue.global(qos: .background).asyncAfter(
 2. Проектная память — архитектура конкретного проекта, пайплайны, договорённости
 3. Тредовая память — контекст текущей задачи, временные заметки
 
-**Формула tokenBudget:**
+**Формула tokenBudget (IT-02 ✅):**
 ```
 tokenBudget = maxMessagesInContext × 500
 ```
@@ -264,10 +264,13 @@ tokenBudget = maxMessagesInContext × 500
 2. Мягкий лимит по токенам (tokenBudget) — применяется вторым
 3. Summary-сжатие старых длинных сообщений — работает под капотом
 
-**AppConfig становится динамическим:**
-Вместо глобального синглтона с захардкоженными значениями — конфиг создаётся
-из настроек треда и передаётся в `AIOrchestrator.process()` как параметр.
-`AppConfig.shared` остаётся как дефолтный конфиг для обратной совместимости.
+**AppConfig — динамический (IT-02 ✅):**
+- `AppConfig.shared` — дефолт (20 сообщений, 10,000 токенов)
+- `AppConfig(maxMessagesInContext:)` — создаётся из настроек треда
+- `AppConfig(settings: ThreadSettings)` — фабричный метод из ThreadSettings
+- `AIOrchestrator.process()` принимает `config: AppConfig` как параметр (дефолт = `.shared`)
+- `ChappieViewModel.activeThreadSettings: ThreadSettings` — настройки активного треда
+- `ChappieViewModel.activeConfig: AppConfig` — вычисляемый конфиг из activeThreadSettings
 
 ### SwiftData схема (тонкий слой хранилища)
 
@@ -294,23 +297,20 @@ MemoryEntity (SwiftData)
 └── entriesJSON: Data           ← [MemoryEntry] сериализованы через JSONEncoder
 ```
 
-### ThreadSettings (Swift struct, Codable)
+### ThreadSettings (Swift struct, Codable) — IT-01 ✅
 
 ```swift
-struct ThreadSettings: Codable {
+struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
     var maxMessagesInContext: Int   // 10...100, по умолчанию 20
-    // tokenBudget вычисляется: maxMessagesInContext × 500
-    // recentFullMessages, summaryThreshold — под капотом, не меняются
-    // Будущие расширения: язык ответа, режим, доступные инструменты
+    var tokenBudget: Int { maxMessagesInContext * 500 }  // вычисляемый, не хранится
 }
 ```
 
-### ProjectSettings (Swift struct, Codable)
+### ProjectSettings (Swift struct, Codable) — IT-01 ✅
 
 ```swift
 struct ProjectSettings: Codable {
     var preferredLanguage: String   // язык комментариев и ответов
-    // Будущие расширения: пайплайн, архитектурные ограничения
 }
 ```
 
@@ -356,8 +356,8 @@ struct ProjectSettings: Codable {
 
 | # | Итерация | Статус |
 |---|---|---|
-| IT-01 | SwiftData модели + JSON-сериализация | 🔲 |
-| IT-02 | ThreadSettings + динамический AppConfig | 🔲 |
+| IT-01 | SwiftData модели + JSON-сериализация | ✅ ГОТОВО |
+| IT-02 | ThreadSettings + динамический AppConfig | ✅ ГОТОВО |
 | IT-03 | Трёхуровневая память в system prompt | 🔲 |
 | IT-04 | Миграция старых файлов → SwiftData | 🔲 |
 | IT-05 | UI: боковая панель тредов | 🔲 |
@@ -366,48 +366,34 @@ struct ProjectSettings: Codable {
 
 ---
 
-### IT-01: SwiftData модели + JSON-сериализация
+### IT-01: SwiftData модели + JSON-сериализация ✅ ГОТОВО
 
-**Цель:** Создать фундамент — SwiftData схему с JSON-сериализацией.
-
-**Файлы к созданию:**
-- `ChappieCore/Sources/ChappieCore/Models/ThreadModels.swift`
-  — `ThreadEntity`, `ThreadSettings`, `ChatMessage` расширение с Codable
-- `ChappieCore/Sources/ChappieCore/Models/ProjectModels.swift`
-  — `ProjectEntity`, `ProjectSettings`
-- `ChappieCore/Sources/ChappieCore/Models/MemoryModels.swift`
-  — `MemoryEntity`, `MemoryEntry`
-- `ChappieCore/Sources/ChappieCore/Services/ThreadStore.swift`
-  — actor, CRUD операции над тредами через SwiftData
-- `ChappieCore/Sources/ChappieCore/Services/ProjectStore.swift`
-  — actor, CRUD операции над проектами через SwiftData
-
-**Файлы к изменению:**
-- `ChappieCore/Sources/ChappieCore/ChappieCore.swift` — добавить публичный API новых сервисов
-- `Chappie/ChappieApp.swift` — добавить `.modelContainer()` для SwiftData
-
-**Критерий готовности:** Проект компилируется. Можно создать тред и прочитать его обратно.
-
-**Зависимости:** Нет. Это фундамент.
+**Созданные файлы:**
+- `ChappieCore/Sources/ChappieCore/Models/ThreadModels.swift` — ThreadEntity, ThreadSettings
+- `ChappieCore/Sources/ChappieCore/Models/ProjectModels.swift` — ProjectEntity, ProjectSettings
+- `ChappieCore/Sources/ChappieCore/Models/MemoryModels.swift` — MemoryEntity, MemoryEntry
+- `ChappieCore/Sources/ChappieCore/Services/ThreadStore.swift` — actor, CRUD + Generic messages
+- `ChappieCore/Sources/ChappieCore/Services/ProjectStore.swift` — actor, CRUD + ProjectMetadata DTO
+- `Chappie/ChappieApp.swift` — добавлен ModelContainer
 
 ---
 
-### IT-02: ThreadSettings + динамический AppConfig
+### IT-02: ThreadSettings + динамический AppConfig ✅ ГОТОВО
 
-**Цель:** `AppConfig` принимается в `process()` как параметр, `tokenBudget` вычисляется из `maxMessagesInContext`.
-
-**Файлы к изменению:**
+**Изменённые файлы:**
 - `ChappieCore/Sources/ChappieCore/Models/AppConfig.swift`
-  — добавить `init(maxMessagesInContext:)`, вычисляемый `tokenBudget`
-  — `AppConfig.shared` остаётся как дефолт (20 сообщений = 10,000 токенов)
+  — добавлен `init(maxMessagesInContext:)` и `init(settings: ThreadSettings)`
+  — `tokenBudget` вычисляется: `maxMessagesInContext × 500`
+  — `AppConfig.shared` = дефолт (20 сообщений, 10,000 токенов)
 - `ChappieCore/Sources/ChappieCore/Services/AIOrchestrator.swift`
-  — `process()` принимает `config: AppConfig` как параметр (с дефолтом `AppConfig.shared`)
+  — `process()` принимает `config: AppConfig = .shared` как параметр
+  — `buildContextWindow()` принимает `config:` и использует его параметры
 - `Chappie/ChappieViewModel.swift`
-  — при вызове `process()` передаёт конфиг из настроек активного треда
-
-**Критерий готовности:** Проект компилируется. `tokenBudget` вычисляется корректно.
-
-**Зависимости:** IT-01 (нужен `ThreadSettings`).
+  — добавлено `activeThreadSettings: ThreadSettings`
+  — добавлено `activeConfig: AppConfig` (вычисляемое)
+  — `send()` передаёт `config: activeConfig` в `process()`
+- `ChappieCoreTests/AppConfigTests.swift`
+  — добавлены тесты формулы tokenBudget, clamping, AppConfig(settings:)
 
 ---
 
@@ -453,21 +439,12 @@ struct ProjectSettings: Codable {
 
 **Файлы к созданию:**
 - `Chappie/Views/Sidebar/ThreadListView.swift`
-  — список тредов с сортировкой по updatedAt
-  — кнопка "Новый тред"
-  — выбор активного треда
 - `Chappie/Views/Sidebar/ThreadRowView.swift`
-  — одна строка треда: название + дата
 
 **Файлы к изменению:**
 - `Chappie/Views/Sidebar/SidebarView.swift`
-  — интегрировать `ThreadListView` вместо текущего содержимого
-- `Chappie/ChappieViewModel.swift`
-  — добавить `activeThread: ThreadEntity?`
-  — добавить `threads: [ThreadEntity]`
-  — методы `createThread()`, `selectThread(_:)`, `deleteThread(_:)`
-- `Chappie/ContentView.swift`
-  — подключить `NavigationSplitView` с боковой панелью
+- `Chappie/ChappieViewModel.swift` — activeThread, threads, createThread(), selectThread(), deleteThread()
+- `Chappie/ContentView.swift` — NavigationSplitView
 
 **Критерий готовности:** Проект компилируется. Можно создавать треды и переключаться между ними.
 
@@ -481,15 +458,10 @@ struct ProjectSettings: Codable {
 
 **Файлы к созданию:**
 - `Chappie/Views/Chat/ProjectChipsView.swift`
-  — горизонтальный ScrollView с чипами
-  — кнопка `+` → sheet со списком проектов для добавления
-  — кнопка `×` на каждом чипе для удаления
 
 **Файлы к изменению:**
 - `Chappie/Views/Chat/ChatScrollView.swift`
-  — добавить `ProjectChipsView` в верхней части
-- `Chappie/ChappieViewModel.swift`
-  — методы `addProject(_:toThread:)`, `removeProject(_:fromThread:)`
+- `Chappie/ChappieViewModel.swift` — addProject(), removeProject()
 
 **Критерий готовности:** Проект компилируется. Можно добавлять/удалять проекты в треде через UI.
 
@@ -503,9 +475,7 @@ struct ProjectSettings: Codable {
 
 **Файлы к изменению:**
 - `ChappieCore/Sources/ChappieCore/Services/ToolExecutionService.swift`
-  — добавить обработку `add_project_to_thread` и `remove_project_from_thread`
 - `ChappieCore/Sources/ChappieCore/Services/AIOrchestrator.swift`
-  — добавить описание новых инструментов в список tools
 
 **Критерий готовности:** Проект компилируется. Чаппи может управлять проектами через tool_use.
 
@@ -523,7 +493,7 @@ struct ProjectSettings: Codable {
 - Файл лежит в КОРНЕ воркспейса (не в AI_Docs/ — папка упразднена).
 - Автоматическое подрезание до 100 сообщений при каждом сохранении.
 - 100 сообщений = ~20-50 диалоговых пар, достаточно для работы.
-- Оркестратор всё равно берёт только последние 12 (maxMessagesInContext).
+- Оркестратор берёт последние maxMessagesInContext (из ThreadSettings треда).
 
 **ВАЖНО:** При рефакторинге — путь нельзя менять без обновления `ChatHistoryManager.swift`.
 
@@ -533,6 +503,8 @@ struct ProjectSettings: Codable {
 
 | Date | Change |
 |------|--------|
+| 2025-07-XX | IT-02 ГОТОВО: динамический AppConfig, tokenBudget = maxMessages × 500, process() принимает config как параметр |
+| 2025-07-XX | IT-01 ГОТОВО: SwiftData модели (ThreadEntity, ProjectEntity, MemoryEntity), ThreadStore, ProjectStore, ModelContainer в ChappieApp |
 | 2025-07-11 | РЕШЕНО TD-01 корень: исправлен дедлок Pipe в BuildTools.swift — параллельное чтение stdout/stderr через DispatchQueue |
 | 2025-07-11 | РЕШЕНО TD-01: добавлен таймаут 300с + terminate() в BuildTools.swift; явный destination arm64 |
 | 2025-07-10 | КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: удалён XcodeDocsGroupManager, группа 📚 Docs теперь статическая |
