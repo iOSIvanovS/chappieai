@@ -22,9 +22,10 @@
 //   2. Конвертацию .message → AIMessage (сетевой тип) БЕЗ сжатия
 //   3. Парсинг <summary> из финального ответа
 //
-// ПАРАМЕТРЫ — ОДИН ИСТОЧНИК ИСТИНЫ:
-// Все параметры (tokenBudget, recentFullMessages, summaryThreshold) живут ТОЛЬКО в AppConfig.
-// ViewModel и Orchestrator читают их оттуда. Никаких дублирующих констант.
+// ПАРАМЕТРЫ — ОДИН ИСТОЧНИК ИСТИНЫ (IT-02):
+// С IT-02 все параметры контекста (tokenBudget, maxMessagesInContext) хранятся в ThreadSettings.
+// ViewModel создаёт AppConfig из настроек активного треда и передаёт его в process().
+// AppConfig.shared используется как дефолт пока тред не выбран (до IT-05).
 //
 // АРХИТЕКТУРА ЗАПУСКА ХЕЛПЕРА (MCPHelperLauncher):
 // ПРОБЛЕМА: если запускать MCPHelperLauncher.shared.launch() без пути (из ChappieApp.onAppear),
@@ -138,6 +139,27 @@ final class ChappieViewModel {
         didSet { UserDefaults.standard.set(currentBalance, forKey: "savedBalance") }
     }
 
+    // MARK: - Настройки активного треда (IT-02)
+
+    /// Настройки активного треда — определяют глубину контекста и токенный бюджет.
+    ///
+    /// АРХИТЕКТУРНОЕ РЕШЕНИЕ (IT-02):
+    /// Вместо глобального AppConfig.shared — каждый тред имеет свои ThreadSettings.
+    /// ViewModel создаёт AppConfig из этих настроек и передаёт в AIOrchestrator.process().
+    ///
+    /// ДЕФОЛТ: ThreadSettings() — 20 сообщений, 10,000 токенов.
+    /// Заполняется из активного треда в IT-05 (UI боковой панели).
+    /// До IT-05 — используется дефолт.
+    var activeThreadSettings: ThreadSettings = ThreadSettings()
+
+    /// Создаёт AppConfig из настроек активного треда.
+    ///
+    /// Вычисляемое свойство — всегда актуально при изменении activeThreadSettings.
+    /// Используется в send() при вызове orchestrator.process().
+    private var activeConfig: AppConfig {
+        AppConfig(settings: activeThreadSettings)
+    }
+
     // MARK: - Зависимости (Сервисы)
 
     private var fileSystem: FileSystemManager?
@@ -211,8 +233,11 @@ final class ChappieViewModel {
     /// ViewModel вызывает `buildRawNetworkHistory()` — это ТОЛЬКО конвертация
     /// ChatMessage → AIMessage без какого-либо сжатия или обрезки.
     /// AIOrchestrator.process() получает сырую историю и сам применяет
-    /// buildContextWindow() с параметрами из AppConfig.
-    /// Это единственный источник истины для логики сжатия.
+    /// buildContextWindow() с параметрами из activeConfig (настройки треда).
+    ///
+    /// ПЕРЕДАЧА КОНФИГА (IT-02):
+    /// В process() передаётся activeConfig — AppConfig созданный из activeThreadSettings.
+    /// Это позволяет каждому треду иметь свою глубину контекста.
     func send(prompt: String) {
         guard !prompt.isEmpty else { return }
         guard let orchestrator = orchestrator else {
@@ -238,11 +263,17 @@ final class ChappieViewModel {
         // Сжатие и токенное окно — ответственность AIOrchestrator.
         let networkHistory = buildRawNetworkHistory()
 
+        // Захватываем конфиг активного треда ДО входа в Task.
+        // Это необходимо для Swift 6 Sendable: Task захватывает значение (struct),
+        // а не ссылку на @MainActor self. Struct AppConfig — Sendable, безопасно.
+        let config = activeConfig
+
         Task {
             do {
                 let result = try await orchestrator.process(
                     prompt: prompt,
                     history: networkHistory,
+                    config: config,
                     onToolCall: { toolName, targetPath in
                         Task { @MainActor in
                             if targetPath.isEmpty {

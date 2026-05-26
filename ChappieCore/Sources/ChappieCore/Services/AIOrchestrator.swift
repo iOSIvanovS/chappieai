@@ -28,8 +28,8 @@
 //
 // 5. УМНОЕ КОНТЕКСТНОЕ ОКНО (оптимизация стоимости):
 //    Два уровня ограничений работают одновременно:
-//    а) maxMessagesInContext (12) — жёсткий лимит по количеству сообщений.
-//    б) tokenBudget (6,000) — мягкий лимит по объёму токенов.
+//    а) maxMessagesInContext — жёсткий лимит по количеству сообщений (из конфига треда).
+//    б) tokenBudget — мягкий лимит по объёму токенов (вычисляется как maxMessages × 500).
 //    Последние recentFullMessages (3) всегда отправляются полностью.
 //    Более старые — заменяются на summary если доступен.
 //
@@ -64,6 +64,13 @@
 //    Добавлен callback onCostUpdate — вызывается после каждого внутреннего API-запроса.
 //    Передаёт накопленную стоимость нарастающим итогом (не стоимость одного шага!).
 //    Это позволяет UI показывать цену в реальном времени прямо в стриминговом пузыре.
+//
+// 10. ДИНАМИЧЕСКИЙ КОНФИГ (IT-02, REFACTOR-THREADS):
+//     process() теперь принимает config: AppConfig как параметр (с дефолтом AppConfig.shared).
+//     Это позволяет разным тредам иметь разные параметры контекста.
+//     ChappieViewModel создаёт AppConfig из настроек активного треда и передаёт его сюда.
+//     Хранимый self.config используется только для параметров не связанных с тредом
+//     (requestTimeoutSeconds, connectionTimeoutSeconds).
 
 import Foundation
 
@@ -90,7 +97,14 @@ public actor AIOrchestrator {
     private let aiClient: AITunnelClient
     private let toolService: ToolExecutionService
     private let fileSystem: FileSystemManager
-    private let config: AppConfig
+
+    /// Дефолтный конфиг — используется если process() вызван без явного конфига.
+    ///
+    /// АРХИТЕКТУРНОЕ РЕШЕНИЕ (IT-02):
+    /// Конфиг больше не хранится как единственный источник истины в акторе.
+    /// Каждый вызов process() получает свой конфиг из настроек треда.
+    /// self.defaultConfig — только фолбэк для обратной совместимости.
+    private let defaultConfig: AppConfig
 
     // MARK: - Системный промпт
 
@@ -179,7 +193,7 @@ public actor AIOrchestrator {
         self.aiClient = aiClient
         self.toolService = toolService
         self.fileSystem = fileSystem
-        self.config = config
+        self.defaultConfig = config
     }
 
     // MARK: - Публичный API
@@ -190,10 +204,14 @@ public actor AIOrchestrator {
     ///   - prompt: Текст текущего сообщения пользователя (НОВОЕ сообщение, не из истории).
     ///   - history: Полная история ЗАВЕРШЁННЫХ сообщений (без текущего prompt!).
     ///     Перед отправкой автоматически сжимается через buildContextWindow().
+    ///   - config: Конфиг треда — определяет глубину контекста и токенный бюджет.
+    ///     По умолчанию AppConfig.shared (20 сообщений, 10,000 токенов).
+    ///     АРХИТЕКТУРНОЕ РЕШЕНИЕ (IT-02): конфиг передаётся извне, а не берётся из self.
+    ///     Это позволяет каждому треду иметь свои параметры без изменения оркестратора.
     ///   - onToolCall: Вызывается при каждом вызове инструмента — обновляет UI.
     ///   - onToken: Вызывается для каждого нового токена финального ответа.
     ///   - onCostUpdate: Вызывается после каждого внутреннего API-запроса с накопленной
-    ///     стоимостью нарастающим итогом. Позволяет UI показывать цену в реальном времени.
+    ///     стоимостью нарастающим итогом.
     ///
     /// ВАЖНО О ДУБЛИРОВАНИИ:
     /// history должна содержать только завершённые пары user/assistant.
@@ -206,15 +224,15 @@ public actor AIOrchestrator {
     public func process(
         prompt: String,
         history: [AIMessage],
+        config: AppConfig = .shared,
         onToolCall: @escaping @Sendable (String, String) -> Void,
         onToken: (@Sendable (String) -> Void)? = nil,
         onCostUpdate: (@Sendable (Double) -> Void)? = nil
     ) async throws -> AIOrchestratorResult {
 
-        // Собираем контекстное окно: два уровня фильтрации (количество + токены),
-        // добавляем текущий запрос пользователя в конец.
-        // history здесь — это ПРОШЛЫЕ сообщения, prompt — НОВОЕ сообщение.
-        var sessionHistory = buildContextWindow(from: history, currentPrompt: prompt)
+        // Собираем контекстное окно используя конфиг ТРЕДА, а не дефолтный конфиг.
+        // Это ключевое изменение IT-02: каждый тред может иметь разную глубину контекста.
+        var sessionHistory = buildContextWindow(from: history, currentPrompt: prompt, config: config)
 
         var totalCost: Double = 0.0
         var latestBalance: Double? = nil
@@ -313,10 +331,10 @@ public actor AIOrchestrator {
     ///
     /// ДВА УРОВНЯ ОГРАНИЧЕНИЙ (работают последовательно):
     ///
-    /// 1. maxMessagesInContext — жёсткий лимит по количеству сообщений.
+    /// 1. maxMessagesInContext — жёсткий лимит по количеству сообщений (из config треда).
     ///    Применяется ПЕРВЫМ. Отбрасывает всё что старше последних N сообщений.
     ///
-    /// 2. tokenBudget — мягкий лимит по объёму токенов.
+    /// 2. tokenBudget — мягкий лимит по объёму токенов (maxMessages × 500).
     ///    Применяется ВТОРЫМ. Обрезает длинные сообщения если даже N штук не влезают.
     ///
     /// АЛГОРИТМ:
@@ -326,7 +344,16 @@ public actor AIOrchestrator {
     /// 4. Более старые — сжимаем через summary если доступен.
     /// 5. Идём назад пока не исчерпан tokenBudget.
     /// 6. Добавляем currentPrompt как последнее сообщение.
-    private func buildContextWindow(from history: [AIMessage], currentPrompt: String) -> [AIMessage] {
+    ///
+    /// - Parameters:
+    ///   - history: Полная история завершённых сообщений
+    ///   - currentPrompt: Текущий запрос пользователя (добавляется в конец)
+    ///   - config: Конфиг треда — определяет tokenBudget и maxMessagesInContext
+    private func buildContextWindow(
+        from history: [AIMessage],
+        currentPrompt: String,
+        config: AppConfig
+    ) -> [AIMessage] {
         let budget = config.tokenBudget
         let recentCount = config.recentFullMessages
         let summaryThreshold = config.summaryThreshold
@@ -334,7 +361,7 @@ public actor AIOrchestrator {
 
         // Диагностика ПЕРЕД сжатием
         let totalTokensBefore = history.reduce(0) { $0 + estimateTokens($1) }
-        print("[AIOrchestrator] 📥 История: \(history.count) сообщений, ~\(totalTokensBefore) токенов | Бюджет: \(budget), лимит: \(maxMessages) сообщений")
+        print("[AIOrchestrator] 📥 История: \(history.count) сообщений, ~\(totalTokensBefore) токенов | Бюджет: \(budget) (\(maxMessages) сообщений × 500)")
 
         // ШАГ 1: ДЕДУПЛИКАЦИЯ — убираем последнее сообщение если оно совпадает с currentPrompt.
         //
@@ -356,7 +383,7 @@ public actor AIOrchestrator {
             deduplicatedHistory = history
         }
 
-        // ШАГ 2: Жёсткий лимит по количеству
+        // ШАГ 2: Жёсткий лимит по количеству (из конфига треда)
         let cappedHistory = deduplicatedHistory.count > maxMessages
             ? Array(deduplicatedHistory.suffix(maxMessages))
             : deduplicatedHistory
