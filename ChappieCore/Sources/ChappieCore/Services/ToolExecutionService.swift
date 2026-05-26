@@ -72,6 +72,17 @@
 // ViewModel вызывает setActiveMemoryContext() при каждой смене треда или изменении проектов.
 // execute() проверяет activeMemoryContext.hasProjects перед выполнением файловых инструментов.
 // Инструменты памяти и управления проектами — работают всегда.
+//
+// АРХИТЕКТУРНОЕ РЕШЕНИЕ — ЖЕЛЕЗНЫЙ БАРЬЕР АНГЛИЙСКОГО ЯЗЫКА В ПАМЯТИ (MEMORY-ENGLISH):
+// Инструмент memorize проверяет все входящие строки (key, type, jsonString) на наличие
+// символов кириллицы. Если найдены — возвращает жёсткую ошибку с требованием переписать
+// на английском. Это КОДОВЫЙ барьер — не зависит от системного промпта и памяти.
+// ПОЧЕМУ ИМЕННО КОД, А НЕ ПРОМПТ:
+//   - Промпт можно "забыть" при сжатии истории.
+//   - Правило в памяти исчезнет при смене пользователя/сессии.
+//   - Только код — абсолютно надёжен и не зависит от контекста.
+// ДЕТЕКТОР: Unicode scalar range U+0400–U+04FF (основная кириллица).
+// Проверяются: key, type, jsonString — все три обязательных поля.
 
 import Foundation
 
@@ -251,12 +262,12 @@ public actor ToolExecutionService {
             } else {
                 // Проект не найден — информативная ошибка с подсказкой
                 let attached = activeMemoryContext.projectNames.isEmpty
-                    ? "нет прикреплённых проектов"
+                    ? "no attached projects"
                     : activeMemoryContext.projectNames.joined(separator: ", ")
                 return .failed(
-                    "Проект '\(name)' не найден в текущем треде. " +
-                    "Прикреплённые проекты: \(attached). " +
-                    "Используй add_project_to_thread чтобы добавить проект."
+                    "Project '\(name)' not found in current thread. " +
+                    "Attached projects: \(attached). " +
+                    "Use add_project_to_thread to add the project first."
                 )
             }
         }
@@ -273,15 +284,73 @@ public actor ToolExecutionService {
                 return .resolved(threadId.uuidString)
             } else {
                 return .failed(
-                    "Нет активного треда. Тредовая память недоступна. " +
-                    "Используй scope=\"global\" для глобальной памяти."
+                    "No active thread. Thread memory unavailable. " +
+                    "Use scope=\"global\" for global memory."
                 )
             }
         }
 
         // Дефолт: неизвестный scope → глобальная память (безопасный фолбэк)
-        print("[ToolExecutionService] ⚠️ Неизвестный scope='\(scope)', используем 'global'")
+        print("[ToolExecutionService] ⚠️ Unknown scope='\(scope)', falling back to 'global'")
         return .resolved("global")
+    }
+
+    // MARK: - Детектор кириллицы (MEMORY-ENGLISH барьер)
+
+    /// Проверяет строку на наличие символов кириллицы.
+    ///
+    /// ЗАЧЕМ ЭТОТ МЕТОД (MEMORY-ENGLISH):
+    /// Является частью железного барьера "память только на английском".
+    /// Вызывается в execute() перед записью в memorize — если найдена кириллица,
+    /// операция блокируется и модель получает жёсткую ошибку.
+    ///
+    /// ПОЧЕМУ КОД, А НЕ ТОЛЬКО ПРОМПТ:
+    /// Системный промпт сжимается в истории чата → правила "забываются".
+    /// Память нового пользователя не содержит это правило.
+    /// Код — единственный абсолютно надёжный барьер, не зависящий от контекста.
+    ///
+    /// ДИАПАЗОН: U+0400–U+04FF — основной блок кириллицы в Unicode.
+    /// Покрывает русский, украинский, белорусский и другие кириллические алфавиты.
+    ///
+    /// - Parameter string: Строка для проверки.
+    /// - Returns: true если строка содержит хотя бы один кириллический символ.
+    private func containsCyrillic(_ string: String) -> Bool {
+        return string.unicodeScalars.contains { scalar in
+            // U+0400–U+04FF: основной кириллический блок Unicode
+            (0x0400...0x04FF).contains(scalar.value)
+        }
+    }
+
+    /// Проверяет все поля записи памяти на наличие кириллицы.
+    ///
+    /// ЗАЧЕМ ПРОВЕРЯТЬ ВСЕ ТРИ ПОЛЯ:
+    /// Модель может написать кириллицу в любом из полей:
+    ///   - key: "моё_правило" вместо "my_rule"
+    ///   - type: "факт" вместо "fact"
+    ///   - jsonString: значение на русском вместо английского
+    /// Проверяем все три — барьер абсолютный.
+    ///
+    /// - Parameters:
+    ///   - key: Ключ записи памяти.
+    ///   - type: Тип записи памяти.
+    ///   - jsonString: JSON-значение записи памяти.
+    /// - Returns: Строка с ошибкой если найдена кириллица, nil если всё ок.
+    private func validateMemoryEnglish(key: String, type: String, jsonString: String) -> String? {
+        // Определяем какие именно поля нарушают правило — для информативной ошибки
+        var violatingFields: [String] = []
+        if containsCyrillic(key) { violatingFields.append("key") }
+        if containsCyrillic(type) { violatingFields.append("type") }
+        if containsCyrillic(jsonString) { violatingFields.append("jsonString") }
+
+        guard !violatingFields.isEmpty else { return nil }
+
+        // Возвращаем жёсткую ошибку — модель обязана переписать на английском
+        return """
+        MEMORY LANGUAGE VIOLATION: Fields [\(violatingFields.joined(separator: ", "))] contain Cyrillic characters.
+        RULE: ALL memory writes MUST be in English — no exceptions.
+        Memory is internal thinking, not user communication. Think like an American engineer.
+        ACTION REQUIRED: Rewrite the memorize call with all fields in English and try again.
+        """
     }
 
     // MARK: - Доступные инструменты
@@ -366,14 +435,15 @@ public actor ToolExecutionService {
                   scope="thread" — память активного треда (контекст текущей задачи).
                   targetName="ProjectName" — память конкретного проекта (архитектура, пайплайны).
                 Если scope и targetName не заданы — сохраняется в глобальную память.
+                IMPORTANT: ALL fields (key, type, jsonString) MUST be in English. Cyrillic is REJECTED.
                 """,
                 parameters: AIToolParameters(
                     properties: [
-                        "key": AIToolProperty(type: "string", description: "Уникальный ключ/тема для запоминания"),
-                        "type": AIToolProperty(type: "string", description: "Тип данных (например: rule, fact, persona, project_map)"),
-                        "jsonString": AIToolProperty(type: "string", description: "Данные в формате JSON строки"),
-                        "scope": AIToolProperty(type: "string", description: "Область видимости: global (по умолчанию) или thread"),
-                        "targetName": AIToolProperty(type: "string", description: "Имя конкретного проекта среди прикреплённых к треду (например, Chappie или ChappieCore) для сохранения памяти строго в этом проекте")
+                        "key": AIToolProperty(type: "string", description: "Unique key/topic for memorization (English only)"),
+                        "type": AIToolProperty(type: "string", description: "Data type (e.g.: rule, fact, persona, project_map) (English only)"),
+                        "jsonString": AIToolProperty(type: "string", description: "Data in JSON string format (English only)"),
+                        "scope": AIToolProperty(type: "string", description: "Scope: global (default) or thread"),
+                        "targetName": AIToolProperty(type: "string", description: "Name of a specific project attached to the thread (e.g., Chappie or ChappieCore) to save memory strictly in that project")
                     ],
                     required: ["key", "type", "jsonString"]
                 )
@@ -569,6 +639,11 @@ public actor ToolExecutionService {
     /// Если проектов нет — возвращаем информативную ошибку, а не выполняем операцию.
     /// Инструменты памяти и управления проектами не требуют привязанного проекта.
     ///
+    /// MEMORY-ENGLISH GUARD:
+    /// Перед записью в memorize проверяем все поля на кириллицу через validateMemoryEnglish().
+    /// Если найдена — возвращаем жёсткую ошибку, модель обязана переписать на английском.
+    /// Это КОДОВЫЙ барьер — работает независимо от системного промпта и истории чата.
+    ///
     /// - Parameter call: Объект вызова инструмента с именем и JSON-аргументами.
     /// - Returns: Результат выполнения в виде строки (успех или описание ошибки).
     public func execute(call: AIToolCall) async -> String {
@@ -636,13 +711,26 @@ public actor ToolExecutionService {
             // НОВЫЙ API: scope="global"|"thread" или targetName="ProjectName"
             // resolveScope() преобразует параметры в строку scope для MemoryManager.
             // MemoryManager пишет/читает из MemoryStore (SwiftData) по UUID-scope.
+            //
+            // MEMORY-ENGLISH GUARD (MEMORY-ENGLISH):
+            // Перед записью — validateMemoryEnglish() проверяет все поля на кириллицу.
+            // Кириллица найдена → жёсткая ошибка → модель переписывает на английском.
+            // Это КОДОВЫЙ барьер, работающий независимо от промпта.
 
             case "memorize":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let key = args["key"],
                       let type = args["type"],
                       let jsonString = args["jsonString"] else {
-                    return "Ошибка: Неверные аргументы для memorize (обязательны: key, type, jsonString)"
+                    return "Error: Invalid arguments for memorize (required: key, type, jsonString)"
+                }
+
+                // MEMORY-ENGLISH GUARD: блокируем кириллицу на уровне кода.
+                // validateMemoryEnglish() проверяет key, type и jsonString.
+                // Если найдена кириллица — возвращаем жёсткую ошибку, НЕ пишем в память.
+                if let cyrillicError = validateMemoryEnglish(key: key, type: type, jsonString: jsonString) {
+                    print("[ToolExecutionService] ❌ MEMORY-ENGLISH violation blocked: key='\(key)'")
+                    return cyrillicError
                 }
 
                 switch resolveScope(scopeParam: args["scope"], targetName: args["targetName"]) {
@@ -657,14 +745,14 @@ public actor ToolExecutionService {
                     // Формируем читаемую метку scope для ответа
                     let scopeLabel: String
                     if scopeString == "global" {
-                        scopeLabel = "глобальной памяти"
+                        scopeLabel = "global memory"
                     } else if scopeString == activeMemoryContext.threadId?.uuidString {
-                        scopeLabel = "памяти треда"
+                        scopeLabel = "thread memory"
                     } else {
                         let projectName = args["targetName"] ?? scopeString
-                        scopeLabel = "памяти проекта '\(projectName)'"
+                        scopeLabel = "project memory '\(projectName)'"
                     }
-                    return "✅ Запись '\(key)' сохранена в \(scopeLabel)."
+                    return "✅ Entry '\(key)' saved to \(scopeLabel)."
                 }
 
             case "recall":
@@ -680,7 +768,7 @@ public actor ToolExecutionService {
                     if let value = await memoryManager.readMemoryEntry(key: key, scope: scopeString) {
                         return value
                     } else {
-                        return "Запись по ключу '\(key)' не найдена в scope '\(scopeString)'."
+                        return "Entry for key '\(key)' not found in scope '\(scopeString)'."
                     }
                 }
 
@@ -714,7 +802,7 @@ public actor ToolExecutionService {
                     if let error = await memoryManager.deleteMemoryEntry(key: key, scope: scopeString) {
                         return "❌ delete_memory: \(error)"
                     }
-                    return "✅ Запись '\(key)' удалена из scope '\(scopeString)'."
+                    return "✅ Entry '\(key)' deleted from scope '\(scopeString)'."
                 }
 
             // MARK: - MCP: Git инструменты
