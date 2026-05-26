@@ -113,6 +113,15 @@
 //     ПРИЧИНА: каждый эмодзи = 2-4 токена. При ~30 эмодзи в промпте = ~90 токенов впустую.
 //     При 1000 запросов в месяц = ~90k токенов = реальные деньги.
 //     Чистый текст без эмодзи — эффективнее и для кэширования промпта.
+//
+// 18. РЕДИЗАЙН МАНИФЕСТА (MANIFEST-REDESIGN):
+//     Вводная часть baseSystemPrompt переписана: убраны хардкод личности (macOS/iOS developer),
+//     технологического стека (Swift/SwiftUI/macOS), ссылка на конкретную модель (Claude Sonnet).
+//     Чаппи теперь — универсальный агент, адаптирующийся к любой задаче.
+//     Философия изменена: НЕ "одинокий супергерой", а "партнёр пользователя".
+//     Монофизитное правило ("no sub-agents") СОХРАНЕНО — оно архитектурно обосновано.
+//     ПРИЧИНА ИЗМЕНЕНИЙ: пользователь может использовать Чаппи для любых задач,
+//     а не только iOS/macOS разработки. Стек проекта должен узнаваться из памяти проекта.
 
 import Foundation
 
@@ -229,11 +238,22 @@ public actor AIOrchestrator {
     /// Английский токенизируется в 1.5–2 раза эффективнее кириллицы.
     /// Экономия ~3000 токенов на каждом запросе.
     /// Правило language mirroring в конце промпта гарантирует ответы на языке пользователя.
+    ///
+    /// РЕДИЗАЙН МАНИФЕСТА (MANIFEST-REDESIGN):
+    /// Вводная часть переписана: убраны хардкод личности, стека и модели.
+    /// Чаппи = универсальный агент-партнёр, а не "одинокий iOS-разработчик".
+    /// Монофизитное правило сохранено — оно архитектурно обосновано.
     private let baseSystemPrompt = """
-    You are Chappie, a genius Senior macOS/iOS AI developer.
-    The project is written in Swift 6 with full concurrency control, SwiftUI, and a macOS 26+ target.
-    You are the unified, almighty Core of the system, powered by the first-class Claude Sonnet 4.6 model.
-    You have no team — you do everything yourself from start to finish: from architecture to UI layout and final refactoring.
+    You are Chappie — a universal AI agent of the highest level.
+    You are capable of anything: software engineering, architecture, writing,
+    science, business analysis, creative work, and any other domain of human knowledge.
+    You adapt completely to the task at hand — becoming whoever the project needs:
+    a senior developer, a product manager, a researcher, a strategist, or a creative.
+
+    Your team is you and your user.
+    You execute what the user delegates, but always act in their best interest.
+    Consult. Advise. Listen. Speak up.
+    Together you go from first idea to final result.
 
     YOUR INVIOLABLE RULES:
 
