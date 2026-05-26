@@ -98,9 +98,21 @@
 //
 // 15. ИМЕНА ПРОЕКТОВ В SYSTEM PROMPT (IT-08 финал):
 //     MemoryContext теперь содержит projectInfos: [(id: UUID, name: String)] вместо [UUID].
-//     buildSystemPrompt() показывает имя проекта в заголовке блока памяти:
-//     "📁 Память проекта: Chappie" вместо безымянного "📁 Память проекта".
+//     buildSystemPrompt() показывает имя проекта в заголовке блока памяти.
 //     ChappieViewModel заполняет projectInfos из activeProjects (ProjectMetadata).
+//
+// 16. ПАМЯТЬ ТОЛЬКО НА АНГЛИЙСКОМ (MEMORY-ENGLISH):
+//     В baseSystemPrompt добавлено жёсткое правило: все записи в память (memorize)
+//     ОБЯЗАНЫ быть на английском языке. Причина: память — это "мышление" Чаппи,
+//     а не общение с пользователем. Как американский инженер думает по-английски,
+//     но может говорить на любом языке — так и Чаппи: думает по-английски,
+//     отвечает на языке пользователя.
+//
+// 17. БЕЗ ЭМОДЗИ В SYSTEM PROMPT (TOKEN-EFFICIENCY):
+//     Все эмодзи убраны из заголовков секций памяти в buildSystemPrompt().
+//     ПРИЧИНА: каждый эмодзи = 2-4 токена. При ~30 эмодзи в промпте = ~90 токенов впустую.
+//     При 1000 запросов в месяц = ~90k токенов = реальные деньги.
+//     Чистый текст без эмодзи — эффективнее и для кэширования промпта.
 
 import Foundation
 
@@ -115,7 +127,6 @@ import Foundation
 ///
 /// ПОЧЕМУ projectInfos, А НЕ ПРОСТО projectIds (IT-08 финал):
 /// buildSystemPrompt() должен знать имена проектов чтобы показывать их в заголовках блоков.
-/// "📁 Память проекта: Chappie" — информативнее чем безымянное "📁 Память проекта".
 /// UUID нужен для поиска в SwiftData, имя — для отображения в промпте.
 ///
 /// ОПЦИОНАЛЬНОСТЬ:
@@ -302,6 +313,15 @@ public actor AIOrchestrator {
        If the user writes in Arabic, French, or any other language — respond in that same language.
        Your internal reasoning and tool call planning happen in English for token efficiency.
        Only the final response to the user follows their language.
+
+    9. MEMORY LANGUAGE (CRITICAL — NEVER VIOLATE):
+       ALL memory writes (memorize tool) MUST be in English — no exceptions.
+       Memory is your internal thinking, not communication with the user.
+       Think like an American engineer: always think in English, speak in any language.
+       Keys, types, values, notes — everything stored in memory must be in English.
+       This rule exists because: memory is injected into system prompt (token efficiency),
+       memory persists across sessions and projects (consistency), and English compresses
+       2x better than Cyrillic in LLM tokenizers (cost savings).
     """
 
     public init(
@@ -457,7 +477,7 @@ public actor AIOrchestrator {
         let maxMessages = config.maxMessagesInContext
 
         let totalTokensBefore = history.reduce(0) { $0 + estimateTokens($1) }
-        print("[AIOrchestrator] 📥 История: \(history.count) сообщений, ~\(totalTokensBefore) токенов | Бюджет: \(budget) (\(maxMessages) сообщений × 500)")
+        print("[AIOrchestrator] Historia: \(history.count) msgs, ~\(totalTokensBefore) tokens | Budget: \(budget) (\(maxMessages) msgs x 500)")
 
         // ШАГ 1: ДЕДУПЛИКАЦИЯ
         let deduplicatedHistory: [AIMessage]
@@ -465,7 +485,7 @@ public actor AIOrchestrator {
            lastMessage.role == "user",
            lastMessage.contentString == currentPrompt {
             deduplicatedHistory = Array(history.dropLast())
-            print("[AIOrchestrator] 🔧 Дедупликация: убрано задвоенное последнее сообщение")
+            print("[AIOrchestrator] Dedup: removed duplicate last message")
         } else {
             deduplicatedHistory = history
         }
@@ -507,7 +527,7 @@ public actor AIOrchestrator {
         contextWindow.append(AIMessage(role: "user", content: currentPrompt))
 
         let totalTokensAfter = contextWindow.reduce(0) { $0 + estimateTokens($1) }
-        print("[AIOrchestrator] 📤 Отправляю: \(contextWindow.count) сообщений, ~\(totalTokensAfter) токенов (сжато с \(totalTokensBefore) → \(totalTokensAfter))")
+        print("[AIOrchestrator] Sending: \(contextWindow.count) msgs, ~\(totalTokensAfter) tokens (compressed from \(totalTokensBefore))")
 
         return contextWindow
     }
@@ -581,11 +601,10 @@ public actor AIOrchestrator {
                 // ПЕТЛЯ ОБНАРУЖЕНА: тот же инструмент с теми же аргументами подряд.
                 // Возвращаем ошибку чтобы модель поняла что нужно изменить подход.
                 resultString = """
-                СИСТЕМНАЯ ОШИБКА: Ты только что вызывал инструмент `\(toolName)` с точно такими же \
-                аргументами прямо перед этим. Это бесконечная петля.
-                ЗАПРЕЩЕНО ПОВТОРЯТЬ ОДНО И ТО ЖЕ ДЕЙСТВИЕ ПОДРЯД. ИСПОЛЬЗУЙ ДРУГОЙ ПОДХОД.
+                SYSTEM ERROR: You just called `\(toolName)` with the exact same arguments right before this. \
+                This is an infinite loop. DO NOT REPEAT THE SAME ACTION. USE A DIFFERENT APPROACH.
                 """
-                print("[AIOrchestrator] ⚠️ Петля: \(toolName) вызван дважды подряд с теми же аргументами")
+                print("[AIOrchestrator] Loop detected: \(toolName) called twice in a row with same args")
             } else {
                 // Нормальный вызов — выполняем и обновляем сигнатуру последнего вызова.
                 lastToolSignature = signature

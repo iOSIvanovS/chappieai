@@ -50,10 +50,11 @@
 // read_file/write_file как обычный текстовый файл. MemoryManager его не трогает
 // (только создаёт шаблон при первом обнаружении нового таргета).
 //
-// ИМЕНА ПРОЕКТОВ В ПРОМПТЕ (IT-08 финал):
-// buildSystemPrompt() теперь принимает MemoryContext с projectInfos: [ProjectInfo].
-// Каждый блок проектной памяти получает заголовок с именем: "📁 Память проекта: Chappie".
-// Это делает промпт читаемым и понятным для модели.
+// БЕЗ ЭМОДЗИ В SYSTEM PROMPT (MEMORY-ENGLISH + TOKEN-EFFICIENCY):
+// Все заголовки секций памяти в buildSystemPrompt() — только чистый текст без эмодзи.
+// ПРИЧИНА: каждый эмодзи = 2-4 токена, ~30 эмодзи в промпте = ~90 токенов впустую.
+// Плюс: кэширование промпта работает лучше на стабильном ASCII-тексте.
+// Формат заголовков: "## Global Memory", "## Project Memory: Chappie", "## Thread Context".
 
 import Foundation
 
@@ -197,7 +198,7 @@ public actor MemoryManager {
     /// - Инструменты memorize/recall/search/delete работают через MemoryStore
     public func setMemoryStore(_ store: MemoryStore) {
         self.memoryStore = store
-        print("[MemoryManager] ✅ MemoryStore подключён (SwiftData бэкенд активен)")
+        print("[MemoryManager] MemoryStore connected (SwiftData backend active)")
     }
 
     // MARK: - Публичный метод инициализации
@@ -206,7 +207,7 @@ public actor MemoryManager {
     public func initializeWorkspaceMemory() async {
         guard !isInitialized else { return }
 
-        print("[MemoryManager] Начало инициализации структуры памяти...")
+        print("[MemoryManager] Initializing workspace memory structure...")
 
         setupGlobalMemory()
 
@@ -220,28 +221,33 @@ public actor MemoryManager {
         cleanupLegacyFiles()
 
         isInitialized = true
-        print("[MemoryManager] ✅ Инициализация завершена. Таргетов: \(targets.count). Память: ~/Documents/Chappie/semantic.json")
+        print("[MemoryManager] Initialization complete. Targets: \(targets.count). Memory: ~/Documents/Chappie/semantic.json")
     }
 
     // MARK: - ТРЁХУРОВНЕВАЯ ПАМЯТЬ: Сборка System Prompt (IT-03, IT-08)
 
     /// Собирает полный system prompt с подмешанной трёхуровневой памятью.
     ///
-    /// СТРУКТУРА ИТОГОВОГО ПРОМПТА:
+    /// СТРУКТУРА ИТОГОВОГО ПРОМПТА (без эмодзи — token efficiency):
     /// ```
     /// [базовый промпт — захардкоженные правила Чаппи]
     ///
     /// ---
-    /// ## 🧠 Глобальная память
-    /// - [fact] user_name: Алексей
-    /// - [rule] pipeline_rules: { ... }
+    /// ## Memory Context
     ///
-    /// ## 📁 Память проекта: Chappie
+    /// ## Global Memory
+    /// - [fact] user_name: Alexey
+    ///
+    /// ## Project Memory: Chappie
     /// - [project_map] architecture: { ... }
     ///
-    /// ## 💬 Контекст треда
-    /// - [task] current_task: Рефакторинг тредов
+    /// ## Thread Context
+    /// - [task] current_task: Thread refactoring
     /// ```
+    ///
+    /// ПОЧЕМУ БЕЗ ЭМОДЗИ (MEMORY-ENGLISH + TOKEN-EFFICIENCY):
+    /// Эмодзи = 2-4 токена каждый. При ~30 эмодзи в промпте = ~90 токенов впустую.
+    /// Чистый ASCII лучше кэшируется и стабильнее токенизируется.
     ///
     /// ПОЧЕМУ ПОДМЕШИВАЕМ В ПРОМПТ, А НЕ ЧИТАЕМ ПО ТРЕБОВАНИЮ:
     /// Чаппи не может "вспомнить" то, о чём не знает. Если память не подмешана
@@ -263,7 +269,7 @@ public actor MemoryManager {
         // Если SwiftData бэкенд не подключён — возвращаем базовый промпт как есть.
         // Это нормальная ситуация при первом запуске или в тестах.
         guard let store = memoryStore else {
-            print("[MemoryManager] ℹ️ MemoryStore не подключён, используем базовый промпт")
+            print("[MemoryManager] MemoryStore not connected, using base prompt only")
             return basePrompt
         }
 
@@ -285,7 +291,7 @@ public actor MemoryManager {
         do {
             entriesByScope = try await store.readEntriesForScopes(scopes)
         } catch {
-            print("[MemoryManager] ⚠️ Ошибка загрузки памяти из MemoryStore: \(error)")
+            print("[MemoryManager] Error loading memory from MemoryStore: \(error)")
             return basePrompt
         }
 
@@ -293,11 +299,12 @@ public actor MemoryManager {
         var memoryBlocks: [String] = []
 
         // --- БЛОК 1: Глобальная память ---
-        // Объединяем SwiftData записи и legacy-записи из файла
+        // Объединяем SwiftData записи и legacy-записи из файла.
+        // Заголовок без эмодзи — чистый ASCII для эффективного кэширования.
         let globalSwiftDataEntries = entriesByScope["global"] ?? []
         let legacyEntries = loadLegacyMemoryForPrompt()
         let globalBlock = buildMemoryBlock(
-            title: "🧠 Глобальная память",
+            title: "Global Memory",
             swiftDataEntries: globalSwiftDataEntries,
             legacyEntries: legacyEntries
         )
@@ -307,28 +314,28 @@ public actor MemoryManager {
 
         // --- БЛОК 2: Проектная память ---
         // Для каждого проекта — отдельный блок с именем проекта в заголовке.
+        // Заголовок: "Project Memory: Chappie" — без эмодзи, чистый ASCII.
         //
         // ПОЧЕМУ ИМЕНА (IT-08 финал):
-        // Раньше заголовок был безымянным "📁 Память проекта".
-        // Теперь: "📁 Память проекта: Chappie" — модель понимает КАКОЙ проект.
-        // Особенно важно при нескольких проектах в одном треде (параллельная разработка).
+        // Модель понимает КАКОЙ проект — особенно важно при нескольких проектах в треде.
         for info in memoryContext.projectInfos {
             let projectEntries = entriesByScope[info.id.uuidString] ?? []
             guard !projectEntries.isEmpty else { continue }
 
             let tempEntity = MemoryEntity(scope: info.id.uuidString, entries: projectEntries)
-            // Заголовок содержит имя проекта — информативно и однозначно
-            if let block = tempEntity.formatForPrompt(title: "📁 Память проекта: \(info.name)") {
+            // Заголовок: "Project Memory: Chappie" — информативно, без эмодзи
+            if let block = tempEntity.formatForPrompt(title: "Project Memory: \(info.name)") {
                 memoryBlocks.append(block)
             }
         }
 
         // --- БЛОК 3: Тредовая память ---
+        // Заголовок: "Thread Context" — без эмодзи.
         if let threadId = memoryContext.threadId {
             let threadEntries = entriesByScope[threadId.uuidString] ?? []
             if !threadEntries.isEmpty {
                 let tempEntity = MemoryEntity(scope: threadId.uuidString, entries: threadEntries)
-                if let block = tempEntity.formatForPrompt(title: "💬 Контекст треда") {
+                if let block = tempEntity.formatForPrompt(title: "Thread Context") {
                     memoryBlocks.append(block)
                 }
             }
@@ -339,8 +346,9 @@ public actor MemoryManager {
             return basePrompt
         }
 
-        // Собираем финальный промпт: базовый + разделитель + блоки памяти
-        let memorySectionHeader = "---\n## 📚 Контекст и память"
+        // Собираем финальный промпт: базовый + разделитель + блоки памяти.
+        // Заголовок секции без эмодзи — чистый ASCII.
+        let memorySectionHeader = "---\n## Memory Context"
         let memorySection = ([memorySectionHeader] + memoryBlocks).joined(separator: "\n\n")
 
         return basePrompt + "\n\n" + memorySection
@@ -354,14 +362,14 @@ public actor MemoryManager {
     /// Некоторые тесты и старый код могут вызывать buildSystemPrompt с отдельными параметрами.
     /// Этот метод создаёт MemoryContext из переданных параметров и делегирует новому методу.
     ///
-    /// ОГРАНИЧЕНИЕ: projectIds без имён — заголовки блоков будут безымянными.
-    /// Используй buildSystemPrompt(basePrompt:memoryContext:) для полноценных заголовков.
+    /// ОГРАНИЧЕНИЕ: projectIds без имён — заголовки блоков будут "Project Memory: <UUID>".
+    /// Используй buildSystemPrompt(basePrompt:memoryContext:) для правильных имён.
     public func buildSystemPrompt(
         basePrompt: String,
         threadId: UUID?,
         projectIds: [UUID]
     ) async -> String {
-        // Создаём MemoryContext без имён — заголовки будут "📁 Память проекта: <UUID>"
+        // Создаём MemoryContext без имён — заголовки будут "Project Memory: <UUID>"
         // Это лучше чем ничего, но для правильных имён нужна новая сигнатура.
         let projectInfos = projectIds.map { id in
             MemoryContext.ProjectInfo(id: id, name: id.uuidString)
@@ -387,7 +395,7 @@ public actor MemoryManager {
         guard let store = memoryStore else {
             // Фолбэк на legacy если SwiftData недоступен
             writeRecord(key: key, type: type, data: jsonString, to: globalFileURL)
-            print("[MemoryManager] ⚠️ MemoryStore недоступен, сохранено в legacy файл")
+            print("[MemoryManager] MemoryStore unavailable, saved to legacy file")
             return nil
         }
 
@@ -395,7 +403,7 @@ public actor MemoryManager {
             try await store.saveEntry(key: key, type: type, jsonString: jsonString, scope: scope)
             return nil
         } catch {
-            return "Ошибка сохранения в память: \(error.localizedDescription)"
+            return "Memory save error: \(error.localizedDescription)"
         }
     }
 
@@ -417,7 +425,7 @@ public actor MemoryManager {
         do {
             return try await store.readEntry(key: key, scope: scope)
         } catch {
-            print("[MemoryManager] ⚠️ Ошибка чтения из MemoryStore: \(error)")
+            print("[MemoryManager] Error reading from MemoryStore: \(error)")
             return nil
         }
     }
@@ -444,7 +452,7 @@ public actor MemoryManager {
         do {
             return try await store.searchEntries(type: type, scope: scope)
         } catch {
-            print("[MemoryManager] ⚠️ Ошибка поиска в MemoryStore: \(error)")
+            print("[MemoryManager] Error searching MemoryStore: \(error)")
             return [:]
         }
     }
@@ -470,7 +478,7 @@ public actor MemoryManager {
             try await store.deleteEntry(key: key, scope: scope)
             return nil
         } catch {
-            return "Ошибка удаления из памяти: \(error.localizedDescription)"
+            return "Memory delete error: \(error.localizedDescription)"
         }
     }
 
@@ -615,7 +623,7 @@ public actor MemoryManager {
         if !fileManager.fileExists(atPath: target.architectureFileURL.path) {
             let template = makeArchitectureTemplate(for: target)
             try? template.write(to: target.architectureFileURL, atomically: true, encoding: .utf8)
-            print("[MemoryManager] 📄 Создан шаблон: \(target.name)/architecture.md")
+            print("[MemoryManager] Created template: \(target.name)/architecture.md")
         }
     }
 
@@ -629,9 +637,9 @@ public actor MemoryManager {
                 }
                 do {
                     try fileManager.removeItem(at: legacyAIDocsURL)
-                    print("[MemoryManager] 🗑️ Удалена устаревшая папка: \(target.name)/AI_Docs/")
+                    print("[MemoryManager] Removed legacy folder: \(target.name)/AI_Docs/")
                 } catch {
-                    print("[MemoryManager] ⚠️ Не удалось удалить \(target.name)/AI_Docs/: \(error)")
+                    print("[MemoryManager] Failed to remove \(target.name)/AI_Docs/: \(error)")
                 }
             }
 
@@ -640,9 +648,9 @@ public actor MemoryManager {
                 migrateSemanticFile(from: targetSemanticURL, label: "\(target.name)/semantic.json")
                 do {
                     try fileManager.removeItem(at: targetSemanticURL)
-                    print("[MemoryManager] 🗑️ Удалён устаревший файл: \(target.name)/semantic.json")
+                    print("[MemoryManager] Removed legacy file: \(target.name)/semantic.json")
                 } catch {
-                    print("[MemoryManager] ⚠️ Не удалось удалить \(target.name)/semantic.json: \(error)")
+                    print("[MemoryManager] Failed to remove \(target.name)/semantic.json: \(error)")
                 }
             }
         }
@@ -657,9 +665,9 @@ public actor MemoryManager {
             if !fileManager.fileExists(atPath: chatHistoryURL.path) {
                 do {
                     try fileManager.removeItem(at: rootAIDocsURL)
-                    print("[MemoryManager] 🗑️ Удалена корневая устаревшая папка AI_Docs/")
+                    print("[MemoryManager] Removed root legacy folder AI_Docs/")
                 } catch {
-                    print("[MemoryManager] ⚠️ Не удалось удалить корневую AI_Docs/: \(error)")
+                    print("[MemoryManager] Failed to remove root AI_Docs/: \(error)")
                 }
             }
         }
@@ -677,7 +685,7 @@ public actor MemoryManager {
         }
         if migratedCount > 0 {
             writeStorage(globalStorage, to: globalFileURL)
-            print("[MemoryManager] 📦 Мигрировано \(migratedCount) записей из \(label)")
+            print("[MemoryManager] Migrated \(migratedCount) entries from \(label)")
         }
     }
 
