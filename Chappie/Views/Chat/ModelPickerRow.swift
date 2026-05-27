@@ -4,9 +4,10 @@
 // Row displayed above ProjectChipsView showing the active AI provider + model.
 // Tapping opens a popover with two-level provider → model selection.
 //
-// CHIP WIDTH:
-//   No lineLimit(1) on model name — text wraps or expands the chip naturally.
-//   The chip uses .fixedSize() so it never clips model names with ellipsis.
+// CHIP STYLE:
+//   White opaque background (NSColor.textBackgroundColor) with a drop shadow
+//   — matches the project chips and the bottom input panel aesthetic.
+//   No divider at the bottom — the floating panel relies on shadow for separation.
 //
 // ORPHANED STATE:
 // If the active provider or model is no longer in the providers list,
@@ -37,10 +38,17 @@ struct ModelPickerRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Text("Модель:")
+            // "Модель" label — white chip matching project chips
+            Text("Модель")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
-                .fixedSize()
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(Color(NSColor.textBackgroundColor))
+                )
+                .shadow(color: .black.opacity(0.18), radius: 6, x: 0, y: 2)
 
             Button {
                 showPopover.toggle()
@@ -60,19 +68,18 @@ struct ModelPickerRow: View {
                 .padding(.vertical, 4)
                 .background(
                     Capsule()
-                        .fill(isOrphaned
-                              ? Color.orange.opacity(0.1)
-                              : Color.accentColor.opacity(0.1))
+                        .fill(Color(NSColor.textBackgroundColor))
                 )
                 .overlay(
                     Capsule()
                         .stroke(
                             isOrphaned
-                                ? Color.orange.opacity(0.4)
-                                : Color.accentColor.opacity(0.25),
+                                ? Color.orange.opacity(0.3)
+                                : Color.accentColor.opacity(0.2),
                             lineWidth: 0.5
                         )
                 )
+                .shadow(color: .black.opacity(0.18), radius: 6, x: 0, y: 2)
             }
             .buttonStyle(.plain)
             .fixedSize() // Let chip grow to fit full model name — no truncation
@@ -92,12 +99,7 @@ struct ModelPickerRow: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
-        .background(
-            Rectangle()
-                .frame(height: 1)
-                .foregroundStyle(Color.primary.opacity(0.06)),
-            alignment: .bottom
-        )
+        // No divider — shadow from the parent panel provides visual separation
     }
 
     // MARK: - Chip Label

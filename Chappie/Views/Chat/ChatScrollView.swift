@@ -21,6 +21,9 @@
 //   3. onChange(streamingText) — Chappie is streaming a response (live bubble grows).
 // Intentionally NOT scrolling when footerHeight changes after initial scroll
 // so the user can freely read mid-chat while typing a long message.
+//
+// SCROLLBAR:
+// Hidden via scrollIndicators(.never) — not needed in this chat UI aesthetic.
 
 import SwiftUI
 
@@ -116,6 +119,8 @@ struct ChatScrollView: View {
                 .animation(.easeInOut(duration: 0.25), value: isThinking)
                 .animation(.easeInOut(duration: 0.3), value: streamingText.isEmpty)
             }
+            // Hide scrollbar — not needed in this chat UI aesthetic
+            .scrollIndicators(.never)
             // INITIAL SCROLL: fires once when footerHeight first becomes non-zero.
             // This is the true "layout ready" moment — the bottom panel has reported
             // its real height and the footer spacer has settled to its final size.

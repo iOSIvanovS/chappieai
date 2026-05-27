@@ -1,72 +1,57 @@
 // ProjectChipsView.swift
 // Chappie
 //
-// НАЗНАЧЕНИЕ (IT-06 — REFACTOR-THREADS):
-// Горизонтальный ряд чипов-тегов с именами проектов, привязанных к текущему треду.
-// Отображается в верхней части чата, прямо над лентой сообщений.
+// Horizontal row of project chips for the current thread.
+// Displayed in the top floating panel above the message list.
 //
-// IT-09: Тап на чип открывает ProjectSettingsSheet.
-// Коллбэк onOpenSettings(UUID) добавлен для передачи ID проекта в ViewModel.
+// CHIP STYLE:
+//   White opaque background (NSColor.textBackgroundColor) with a drop shadow
+//   — matches ModelPickerRow chips and the bottom input panel aesthetic.
+//   No divider — the floating panel shadow provides visual separation.
 //
-// ПОЧЕМУ ОТДЕЛЬНЫЙ КОМПОНЕНТ:
-// Логика добавления/удаления проектов достаточно сложна (NSOpenPanel, bookmark-ы,
-// список существующих проектов) чтобы не смешивать её с ChatScrollView.
-// Принцип единственной ответственности — каждый View-файл делает одно.
+// IT-09: Tap on chip opens ProjectSettingsSheet.
+// onOpenSettings(UUID) callback passes project ID to ViewModel.
 //
-// АРХИТЕКТУРА ДАННЫХ (IT-01 + IT-06):
-// Чипы показывают ProjectMetadata из ProjectStore.
-// При добавлении нового проекта — сначала создаётся ProjectEntity в ProjectStore,
-// затем его UUID добавляется в ThreadEntity.projectBindingsJSON.
-// При удалении — UUID убирается из projectBindingsJSON (ProjectEntity НЕ удаляется).
+// ARCHITECTURE (IT-01 + IT-06):
+// Chips show ProjectMetadata from ProjectStore.
+// On add — ProjectEntity is created in ProjectStore, UUID added to ThreadEntity.projectBindingsJSON.
+// On remove — UUID removed from projectBindingsJSON (ProjectEntity is NOT deleted).
 //
-// ПРИНЦИП "ТУПОГО КОМПОНЕНТА":
-// ProjectChipsView не знает о SwiftData, ProjectStore или ThreadStore напрямую.
-// Все данные — через параметры, все действия — через коллбэки.
-// Логика в ChappieViewModel.
-//
-// ВИДИМОСТЬ (UI-FIX-02):
-// Компонент показывается только когда тред активен (условие в ContentView).
-// ContentView сам решает показывать или нет через `if viewModel.activeThread != nil`.
-//
-// ПОВЕДЕНИЕ КНОПКИ "+":
-// Открывает NSOpenPanel → пользователь выбирает папку.
-// ViewModel создаёт/находит ProjectEntity, добавляет UUID в тред.
-//
-// ПОВЕДЕНИЕ ПО ТАПУ НА ЧИП (IT-09):
-// Тап на чип → вызывает onOpenSettings(project.id).
-// ContentView/родительский View показывает ProjectSettingsSheet.
+// DUMB COMPONENT PRINCIPLE:
+// ProjectChipsView has no direct knowledge of SwiftData, ProjectStore or ThreadStore.
+// All data via parameters, all actions via callbacks. Logic lives in ChappieViewModel.
 
 import SwiftUI
 import ChappieCore
 
 // MARK: - ProjectChipsView
 
-/// Горизонтальный ряд чипов проектов для текущего треда.
+/// Horizontal row of project chips for the current thread.
 ///
-/// Показывает список проектов, привязанных к треду.
-/// Кнопка "+" добавляет новый проект через NSOpenPanel.
-/// Кнопка "×" на каждом чипе удаляет проект из треда.
-/// Тап на чип открывает настройки проекта (IT-09).
+/// Shows projects bound to the thread.
+/// "+" button adds a new project via NSOpenPanel.
+/// "×" button on each chip removes the project from the thread.
+/// Tap on chip opens project settings (IT-09).
 struct ProjectChipsView: View {
 
-    // MARK: - Входные данные
+    // MARK: - Input
 
     let projects: [ProjectMetadata]
 
-    // MARK: - Коллбэки
+    // MARK: - Callbacks
 
-    /// Вызывается когда пользователь нажимает "+" и выбирает папку.
+    /// Called when the user taps "+" and selects a folder.
     let onAddProject: (URL) -> Void
 
-    /// Вызывается когда пользователь нажимает "×" на чипе.
+    /// Called when the user taps "×" on a chip.
     let onRemoveProject: (UUID) -> Void
 
-    /// Вызывается когда пользователь тапает на чип для открытия настроек (IT-09).
+    /// Called when the user taps a chip to open settings (IT-09).
     let onOpenSettings: (UUID) -> Void
 
-    // MARK: - Локальное состояние
+    // MARK: - Local state
 
-    /// Hover-состояние для чипа — ключ это UUID проекта.
+    /// Hover state per chip — key is project UUID.
     @State private var hoveredProjectId: UUID? = nil
 
     // MARK: - Body
@@ -74,9 +59,17 @@ struct ProjectChipsView: View {
     var body: some View {
         HStack(spacing: 6) {
 
-            Text("Проекты:")
+            // "Проекты" label — white chip matching model picker label
+            Text("Проекты")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(Color(NSColor.textBackgroundColor))
+                )
+                .shadow(color: .black.opacity(0.18), radius: 6, x: 0, y: 2)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
@@ -92,24 +85,19 @@ struct ProjectChipsView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .background(
-            Rectangle()
-                .frame(height: 1)
-                .foregroundStyle(Color.primary.opacity(0.06)),
-            alignment: .bottom
-        )
+        // No divider — shadow from the parent panel provides visual separation
     }
 
-    // MARK: - Чип проекта
+    // MARK: - Project chip
 
-    /// Отдельный чип для одного проекта.
+    /// Individual chip for one project.
     ///
-    /// HOVER-ПОВЕДЕНИЕ:
-    /// При наведении — показывается кнопка "×" справа от названия.
+    /// HOVER BEHAVIOUR:
+    /// On hover — the "×" button appears to the right of the name.
     ///
-    /// ТАП-ПОВЕДЕНИЕ (IT-09):
-    /// Тап на чип → onOpenSettings(project.id) → родитель показывает ProjectSettingsSheet.
-    /// Кнопка "×" при hover — удаляет проект из треда (не открывает настройки).
+    /// TAP BEHAVIOUR (IT-09):
+    /// Tap → onOpenSettings(project.id) → parent shows ProjectSettingsSheet.
+    /// "×" on hover — removes project from thread (does not open settings).
     private func projectChip(for project: ProjectMetadata) -> some View {
         HStack(spacing: 4) {
             Image(systemName: "folder.fill")
@@ -121,7 +109,7 @@ struct ProjectChipsView: View {
                 .lineLimit(1)
                 .foregroundStyle(.primary)
 
-            // Индикатор роли (IT-09) — маленькая иконка показывает текущую роль
+            // Role indicator (IT-09) — small icon shows current agent role
             roleIndicator(for: project.settings.agentRole)
 
             if hoveredProjectId == project.id {
@@ -140,29 +128,30 @@ struct ProjectChipsView: View {
         .padding(.vertical, 4)
         .background(
             Capsule()
-                .fill(Color.accentColor.opacity(hoveredProjectId == project.id ? 0.15 : 0.1))
+                .fill(Color(NSColor.textBackgroundColor))
         )
         .overlay(
             Capsule()
-                .stroke(Color.accentColor.opacity(0.25), lineWidth: 0.5)
+                .stroke(Color.accentColor.opacity(0.2), lineWidth: 0.5)
         )
+        .shadow(color: .black.opacity(0.18), radius: 6, x: 0, y: 2)
         .onHover { isHovered in
             withAnimation(.easeInOut(duration: 0.15)) {
                 hoveredProjectId = isHovered ? project.id : nil
             }
         }
         .onTapGesture {
-            // Тап на чип → открываем настройки проекта (IT-09)
+            // Tap on chip → open project settings (IT-09)
             onOpenSettings(project.id)
         }
         .help("Проект: \(project.displayName) (\(project.settings.agentRole.displayName))\nТап — настройки, × — убрать из треда")
     }
 
-    /// Маленький индикатор роли агента рядом с именем проекта.
+    /// Small agent role indicator next to the project name.
     ///
-    /// ЗАЧЕМ:
-    /// Пользователь должен сразу видеть в каком режиме работает агент с каждым проектом.
-    /// Иконка замка = советник (только чтение), иконка молнии = исполнитель.
+    /// WHY:
+    /// User should immediately see in which mode the agent works with each project.
+    /// Lock icon = advisor (read-only), bolt icon = executor.
     @ViewBuilder
     private func roleIndicator(for role: AgentRole) -> some View {
         switch role {
@@ -177,7 +166,7 @@ struct ProjectChipsView: View {
         }
     }
 
-    // MARK: - Кнопка добавления
+    // MARK: - Add button
 
     private var addButton: some View {
         Button {
@@ -194,15 +183,19 @@ struct ProjectChipsView: View {
             .foregroundStyle(Color.accentColor)
             .background(
                 Capsule()
-                    .stroke(Color.accentColor.opacity(0.4), lineWidth: 1)
-                    .background(Capsule().fill(Color.accentColor.opacity(0.05)))
+                    .fill(Color(NSColor.textBackgroundColor))
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.accentColor.opacity(0.35), lineWidth: 1)
+                    )
             )
+            .shadow(color: .black.opacity(0.18), radius: 6, x: 0, y: 2)
         }
         .buttonStyle(.plain)
         .help("Добавить папку проекта к этому треду")
     }
 
-    // MARK: - Приватные методы
+    // MARK: - Private helpers
 
     private func openFolderPicker() {
         let panel = NSOpenPanel()
