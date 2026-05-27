@@ -5,8 +5,8 @@
 // Tapping opens a popover with two-level provider → model selection.
 //
 // CHIP STYLE:
-//   White opaque background (NSColor.textBackgroundColor) with a drop shadow
-//   — matches the project chips and the bottom input panel aesthetic.
+//   No individual shadow — the parent top panel provides the shared shadow.
+//   White opaque background (NSColor.textBackgroundColor) for legibility over messages.
 //   No divider at the bottom — the floating panel relies on shadow for separation.
 //
 // ORPHANED STATE:
@@ -38,7 +38,7 @@ struct ModelPickerRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            // "Модель" label — white chip matching project chips
+            // "Модель" label — chip with opaque background for legibility
             Text("Модель")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
@@ -48,7 +48,7 @@ struct ModelPickerRow: View {
                     Capsule()
                         .fill(Color(NSColor.textBackgroundColor))
                 )
-                .shadow(color: .black.opacity(0.18), radius: 6, x: 0, y: 2)
+                // No individual shadow — parent panel shadow handles separation
 
             Button {
                 showPopover.toggle()
@@ -79,7 +79,7 @@ struct ModelPickerRow: View {
                             lineWidth: 0.5
                         )
                 )
-                .shadow(color: .black.opacity(0.18), radius: 6, x: 0, y: 2)
+                // No individual shadow — parent panel shadow handles separation
             }
             .buttonStyle(.plain)
             .fixedSize() // Let chip grow to fit full model name — no truncation

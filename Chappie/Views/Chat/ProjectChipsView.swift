@@ -5,8 +5,8 @@
 // Displayed in the top floating panel above the message list.
 //
 // CHIP STYLE:
-//   White opaque background (NSColor.textBackgroundColor) with a drop shadow
-//   — matches ModelPickerRow chips and the bottom input panel aesthetic.
+//   White opaque background (NSColor.textBackgroundColor) for legibility over messages.
+//   No individual shadow — the parent top panel provides the shared shadow.
 //   No divider — the floating panel shadow provides visual separation.
 //
 // IT-09: Tap on chip opens ProjectSettingsSheet.
@@ -59,7 +59,7 @@ struct ProjectChipsView: View {
     var body: some View {
         HStack(spacing: 6) {
 
-            // "Проекты" label — white chip matching model picker label
+            // "Проекты" label — chip with opaque background for legibility
             Text("Проекты")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
@@ -69,7 +69,7 @@ struct ProjectChipsView: View {
                     Capsule()
                         .fill(Color(NSColor.textBackgroundColor))
                 )
-                .shadow(color: .black.opacity(0.18), radius: 6, x: 0, y: 2)
+                // No individual shadow — parent panel shadow handles separation
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
@@ -134,7 +134,7 @@ struct ProjectChipsView: View {
             Capsule()
                 .stroke(Color.accentColor.opacity(0.2), lineWidth: 0.5)
         )
-        .shadow(color: .black.opacity(0.18), radius: 6, x: 0, y: 2)
+        // No individual shadow — parent panel shadow handles separation
         .onHover { isHovered in
             withAnimation(.easeInOut(duration: 0.15)) {
                 hoveredProjectId = isHovered ? project.id : nil
@@ -189,7 +189,7 @@ struct ProjectChipsView: View {
                             .stroke(Color.accentColor.opacity(0.35), lineWidth: 1)
                     )
             )
-            .shadow(color: .black.opacity(0.18), radius: 6, x: 0, y: 2)
+            // No individual shadow — parent panel shadow handles separation
         }
         .buttonStyle(.plain)
         .help("Добавить папку проекта к этому треду")

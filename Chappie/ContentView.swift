@@ -9,9 +9,13 @@
 //   - Back layer: ChatScrollView fills the entire area (ignores safe area).
 //   - Front layer: FloatingPanelsView — top panel (model picker + project chips)
 //     and bottom panel (input / tool status) float over the scroll view.
-// Both panels are transparent with a strong drop shadow.
-// ChatScrollView reserves matching transparent header/footer spacers so the
-// first and last messages are always fully readable.
+//
+// TOP PANEL STYLE:
+//   .ultraThinMaterial background — frosted glass matching the toolbar above.
+//   Single shared shadow on the panel VStack — chips have no individual shadows.
+//
+// BOTTOM PANEL STYLE:
+//   .ultraThinMaterial background — matches top panel and toolbar.
 //
 // BACKGROUND IMAGE:
 // Image("Chappie") is applied as .background() directly on NavigationSplitView.
@@ -23,8 +27,7 @@
 //
 // TOOLBAR BACKGROUND:
 // .toolbarBackground(.ultraThinMaterial, for: .windowToolbar) gives the title bar
-// a frosted-glass look that matches the sidebar's NSVisualEffectView — consistent
-// visual language across the whole window top area.
+// a frosted-glass look that matches the sidebar's NSVisualEffectView material.
 //
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
@@ -150,7 +153,7 @@ struct ContentView: View {
                 )
                 .ignoresSafeArea(edges: .top)
 
-                // FRONT LAYER: transparent floating panels with drop shadows
+                // FRONT LAYER: frosted glass floating panels
                 VStack(spacing: 0) {
                     topPanel
                     Spacer()
@@ -177,14 +180,15 @@ struct ContentView: View {
                 .opacity(0.5)
         )
         // ultraThinMaterial gives the title bar a frosted-glass look —
-        // consistent with the sidebar's NSVisualEffectView material.
+        // consistent with the top panel and sidebar NSVisualEffectView material.
         .toolbarBackground(.ultraThinMaterial, for: .windowToolbar)
     }
 
     // MARK: - Top Floating Panel
 
     /// Top panel: model picker + project chips.
-    /// Transparent background, strong shadow cast downward.
+    /// ultraThinMaterial background — frosted glass matching toolbar and bottom panel.
+    /// Single shared shadow cast downward — chips have no individual shadows.
     private var topPanel: some View {
         VStack(spacing: 0) {
             if viewModel.activeThread != nil && !viewModel.providers.isEmpty {
@@ -219,8 +223,10 @@ struct ContentView: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        // Strong shadow cast downward from the bottom edge of the panel
-        .shadow(color: .black.opacity(0.35), radius: 20, x: 0, y: 8)
+        // ultraThinMaterial — frosted glass, consistent with toolbar and bottom panel
+        .background(.ultraThinMaterial)
+        // Single shared shadow cast downward — separates panel from message list
+        .shadow(color: .black.opacity(0.25), radius: 12, x: 0, y: 6)
         // Report height for ChatScrollView headerHeight
         .background(
             GeometryReader { geo in
@@ -234,7 +240,7 @@ struct ContentView: View {
     // MARK: - Bottom Floating Panel
 
     /// Bottom panel: InputMorphView.
-    /// Transparent background, strong shadow cast upward.
+    /// ultraThinMaterial background — matches top panel and toolbar.
     private var bottomPanel: some View {
         InputMorphView(
             prompt: $prompt,
@@ -244,8 +250,6 @@ struct ContentView: View {
             onSend: sendMessage,
             onCancel: { viewModel.cancelCurrentRequest() }
         )
-        // Strong shadow cast upward from the top edge of the panel
-        .shadow(color: .black.opacity(0.35), radius: 20, x: 0, y: -8)
         // Report height for ChatScrollView footerHeight
         .background(
             GeometryReader { geo in
