@@ -186,6 +186,9 @@ struct ContentView: View {
                 .transition(.move(edge: .leading).combined(with: .opacity))
             }
         }
+        // Constrain ZStack to window bounds — prevents scaledToFill image from
+        // expanding the layout beyond the window size on macOS
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         // ultraThinMaterial gives the title bar a frosted-glass look
         .toolbarBackground(.ultraThinMaterial, for: .windowToolbar)
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: isSidebarVisible)
@@ -215,6 +218,8 @@ struct ContentView: View {
                 bottomPanel
             }
         }
+        // Constrain inner ZStack to parent bounds as well
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.easeInOut(duration: 0.2), value: viewModel.activeThread?.id)
     }
 
