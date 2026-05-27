@@ -9,9 +9,60 @@
 // SidebarView doesn't know about ThreadStore or SwiftData.
 // All data comes via parameters, all actions via callbacks.
 // Business logic lives in ChappieViewModel.
+//
+// TRANSPARENT SIDEBAR:
+// macOS NavigationSplitView renders sidebar with a system NSVisualEffectView background.
+// We walk the NSView hierarchy upward to find the NSSplitViewItem container,
+// then locate its direct NSVisualEffectView child and make it transparent —
+// so the app's background image shows through the sidebar column.
 
 import SwiftUI
+import AppKit
 import ChappieCore
+
+// MARK: - Transparent Sidebar Background
+
+/// Zero-size NSView that, once placed in the hierarchy, walks upward to find
+/// the NSSplitViewItem's background NSVisualEffectView and clears it.
+private struct TransparentSidebarBackground: NSViewRepresentable {
+
+    func makeNSView(context: Context) -> NSView {
+        let marker = NSView()
+        marker.frame = .zero
+        DispatchQueue.main.async {
+            Self.clearSidebarEffectView(startingFrom: marker)
+        }
+        return marker
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    /// Walks up the view tree. When we reach a NSSplitView we know we've
+    /// crossed the sidebar boundary. We then look for the first
+    /// NSVisualEffectView that is a *direct* child of the NSSplitView —
+    /// that is the sidebar background panel — and make it transparent.
+    private static func clearSidebarEffectView(startingFrom view: NSView) {
+        var current: NSView? = view.superview
+        while let v = current {
+            if v is NSSplitView {
+                // The sidebar background is the first NSVisualEffectView
+                // that is a direct subview of NSSplitView
+                for sub in v.subviews {
+                    if let effect = sub as? NSVisualEffectView {
+                        effect.material = .underWindowBackground
+                        effect.blendingMode = .behindWindow
+                        effect.alphaValue = 0
+                        break
+                    }
+                }
+                return
+            }
+            current = v.superview
+        }
+    }
+}
+
+// MARK: - SidebarView
 
 /// Sidebar of the Chappie app.
 ///
@@ -96,6 +147,8 @@ struct SidebarView: View {
             .background(Color.primary.opacity(0.03))
         }
         .navigationTitle("Чаппи")
+        // Inject transparent background helper — clears the sidebar NSVisualEffectView
+        .background(TransparentSidebarBackground())
     }
 
     // MARK: - API Key Warning
