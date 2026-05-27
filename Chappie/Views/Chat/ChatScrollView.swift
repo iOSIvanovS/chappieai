@@ -6,7 +6,7 @@
 // directly in ContentView's body. This component owns all message list rendering.
 //
 // FLOATING PANELS LAYOUT:
-// ChatScrollView fills the entire ZStack behind FloatingPanelsView.
+// ChatScrollView fills the entire ZStack behind the floating panels.
 // It does NOT know about InputMorphView height directly.
 // Instead it receives headerHeight and footerHeight — transparent spacers at the
 // top and bottom of the VStack inside ScrollView.
@@ -15,12 +15,12 @@
 //
 // AUTO-SCROLL POLICY:
 // Scroll to bottom happens in exactly three cases:
-//   1. onAppear — initial load (fired twice to catch footer height settling).
+//   1. footerHeight first becomes non-zero — this is the true "layout ready" moment.
+//      After that, initial scroll is marked done and footerHeight changes are ignored.
 //   2. onChange(messages) — new message added to the chat.
 //   3. onChange(streamingText) — Chappie is streaming a response (live bubble grows).
-// Intentionally NOT scrolling when footerHeight changes (input field expands/shrinks)
+// Intentionally NOT scrolling when footerHeight changes after initial scroll
 // so the user can freely read mid-chat while typing a long message.
-// The initial footer-height scroll is handled by the delayed onAppear fire.
 
 import SwiftUI
 
@@ -59,6 +59,10 @@ struct ChatScrollView: View {
 
     /// Extra breathing room below the last message.
     private let bottomGap: CGFloat = 12
+
+    /// True after the very first non-zero footerHeight triggers the initial scroll.
+    /// Prevents subsequent footerHeight changes (input field growing) from scrolling.
+    @State private var initialScrollDone = false
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -112,16 +116,15 @@ struct ChatScrollView: View {
                 .animation(.easeInOut(duration: 0.25), value: isThinking)
                 .animation(.easeInOut(duration: 0.3), value: streamingText.isEmpty)
             }
-            .onAppear {
-                // First fire: immediate scroll on appear.
-                proxy.scrollTo("BottomSpacer", anchor: .bottom)
-                // Second fire (delayed): catches the moment when the bottom floating panel
-                // has reported its real height and the footer spacer has settled.
-                // This is the ONLY place where footerHeight growth triggers a scroll.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo("BottomSpacer", anchor: .bottom)
-                    }
+            // INITIAL SCROLL: fires once when footerHeight first becomes non-zero.
+            // This is the true "layout ready" moment — the bottom panel has reported
+            // its real height and the footer spacer has settled to its final size.
+            // After this, footerHeight changes (user typing) do NOT trigger scrolling.
+            .onChange(of: footerHeight) { _, newHeight in
+                guard !initialScrollDone, newHeight > 0 else { return }
+                initialScrollDone = true
+                withAnimation(.easeOut(duration: 0.3)) {
+                    proxy.scrollTo("BottomSpacer", anchor: .bottom)
                 }
             }
             // Case 2: new message sent or received → scroll to bottom.
@@ -142,8 +145,6 @@ struct ChatScrollView: View {
             .onChange(of: streamingText) { _, _ in
                 proxy.scrollTo("BottomSpacer", anchor: .bottom)
             }
-            // NOTE: footerHeight changes (input field expanding) do NOT trigger scroll.
-            // The user may be reading mid-chat while composing a long message.
         }
     }
 
