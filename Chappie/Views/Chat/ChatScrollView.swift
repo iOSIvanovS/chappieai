@@ -12,6 +12,15 @@
 // top and bottom of the VStack inside ScrollView.
 // This guarantees the first and last messages are always fully readable
 // regardless of the panel heights (including dynamic growth of the input editor).
+//
+// AUTO-SCROLL POLICY:
+// Scroll to bottom happens in exactly three cases:
+//   1. onAppear — initial load (fired twice to catch footer height settling).
+//   2. onChange(messages) — new message added to the chat.
+//   3. onChange(streamingText) — Chappie is streaming a response (live bubble grows).
+// Intentionally NOT scrolling when footerHeight changes (input field expands/shrinks)
+// so the user can freely read mid-chat while typing a long message.
+// The initial footer-height scroll is handled by the delayed onAppear fire.
 
 import SwiftUI
 
@@ -104,20 +113,24 @@ struct ChatScrollView: View {
                 .animation(.easeInOut(duration: 0.3), value: streamingText.isEmpty)
             }
             .onAppear {
-                // Scroll to bottom on appear — fire twice to catch the final layout position
-                // after FloatingPanelsView has reported its height.
+                // First fire: immediate scroll on appear.
                 proxy.scrollTo("BottomSpacer", anchor: .bottom)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                // Second fire (delayed): catches the moment when the bottom floating panel
+                // has reported its real height and the footer spacer has settled.
+                // This is the ONLY place where footerHeight growth triggers a scroll.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     withAnimation(.easeOut(duration: 0.2)) {
                         proxy.scrollTo("BottomSpacer", anchor: .bottom)
                     }
                 }
             }
+            // Case 2: new message sent or received → scroll to bottom.
             .onChange(of: messages) { _, _ in
                 withAnimation(.easeOut(duration: 0.3)) {
                     proxy.scrollTo("BottomSpacer", anchor: .bottom)
                 }
             }
+            // Scroll when thinking starts so the spinner/bubble is visible.
             .onChange(of: isThinking) { _, isThinking in
                 if isThinking {
                     withAnimation(.easeOut(duration: 0.3)) {
@@ -125,15 +138,12 @@ struct ChatScrollView: View {
                     }
                 }
             }
+            // Case 3: streaming response is growing → keep bottom pinned.
             .onChange(of: streamingText) { _, _ in
                 proxy.scrollTo("BottomSpacer", anchor: .bottom)
             }
-            // When footer height changes (input panel grows/shrinks) — re-pin to bottom
-            .onChange(of: footerHeight) { _, _ in
-                withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo("BottomSpacer", anchor: .bottom)
-                }
-            }
+            // NOTE: footerHeight changes (input field expanding) do NOT trigger scroll.
+            // The user may be reading mid-chat while composing a long message.
         }
     }
 
