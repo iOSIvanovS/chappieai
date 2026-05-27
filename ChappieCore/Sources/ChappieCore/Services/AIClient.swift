@@ -9,12 +9,13 @@
 // - endpoint is now a parameter (no hardcode)
 // - modelName is now a parameter (no hardcode)
 // - fetchAvailableModels() added: GET /models to populate model list
-// - validateConnection() added: test request used during provider setup
+// - validateProvider() added: validates endpoint+key WITHOUT needing a model name
+// - validateConnection() kept: validates endpoint+key+model (used when model is known)
 // - All streaming/tool-call logic preserved intact
 //
 // BACKWARD COMPATIBILITY:
 // AIOrchestrator now takes AIClient instead of AITunnelClient.
-// ChappieViewModel creates AIClient from the active AIProvider.
+// ChappieViewModel creates AIClient from the active AIProvider + selected model.
 
 import Foundation
 
@@ -101,11 +102,54 @@ public struct AIClient: Sendable {
         }
     }
 
-    // MARK: - Provider Management: Validate Connection
+    // MARK: - Provider Management: Validate Provider (no model required)
+
+    /// Validates an endpoint + API key WITHOUT needing a specific model name.
+    ///
+    /// Strategy: try GET /v1/models first (lightweight, no model needed).
+    /// If /models returns 200 → provider is valid.
+    /// If /models fails (e.g. endpoint doesn't support it) → try a minimal chat request
+    /// with a placeholder model name and accept any non-401/403 response as valid.
+    ///
+    /// Used in AddProviderSheet step 1 (before models are added).
+    /// Throws ChappieError on authentication failure or unreachable endpoint.
+    public func validateProvider() async throws {
+        let modelsURL = baseURL.appendingPathComponent("v1/models")
+        var modelsRequest = URLRequest(url: modelsURL)
+        modelsRequest.httpMethod = "GET"
+        modelsRequest.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        modelsRequest.timeoutInterval = 15
+
+        do {
+            let (_, response) = try await urlSession.data(for: modelsRequest)
+            if let http = response as? HTTPURLResponse {
+                // 401/403 → bad key; anything else (200, 404, 500) → endpoint is reachable
+                if http.statusCode == 401 || http.statusCode == 403 {
+                    throw ChappieError.networkError("HTTP \(http.statusCode): Invalid API key or unauthorized.")
+                }
+                // 200-299 → explicit success
+                if (200...299).contains(http.statusCode) {
+                    print("[AIClient] Provider validated via /models: \(baseURL.host ?? "")")
+                    return
+                }
+                // Other status codes (404, 405, 500…) — endpoint is alive, key accepted
+                print("[AIClient] Provider reachable (HTTP \(http.statusCode)): \(baseURL.host ?? "")")
+                return
+            }
+        } catch let error as ChappieError {
+            // Re-throw auth errors immediately
+            throw error
+        } catch {
+            // Network error — endpoint unreachable
+            throw ChappieError.networkError("Cannot reach provider: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Provider Management: Validate Connection (endpoint + key + model)
 
     /// Sends a minimal test request to validate the endpoint + key + model combination.
     ///
-    /// Used during provider setup to confirm everything works before saving.
+    /// Used during model validation to confirm a specific model works.
     /// Throws ChappieError on failure with a descriptive message.
     public func validateConnection() async throws {
         let testMessages = [AIMessage(role: "user", content: "hi")]
@@ -120,7 +164,6 @@ public struct AIClient: Sendable {
         let request = try buildURLRequest(body: requestBody)
         let (data, response) = try await performRequest(request)
         try validateHTTPResponse(response, data: data)
-        // If we get here — connection is valid
         print("[AIClient] Connection validated: \(endpointURL.host ?? "") / \(modelName)")
     }
 

@@ -8,6 +8,11 @@
 // - API keys live exclusively in Keychain, keyed by provider.id.uuidString
 // - This class is the single source of truth for provider management
 //
+// DELETION POLICY (providers refactor):
+// Deletion is ALWAYS allowed — even the last provider, even if threads depend on it.
+// Orphaned threads (provider or model missing) show a warning banner in the chat view.
+// No blocking guards here — freedom to the user, smart warnings in the UI.
+//
 // THREAD SAFETY:
 // All async methods run in a detached Task with ModelContainer actor isolation.
 // Same pattern as ThreadStore and ProjectStore.
@@ -25,6 +30,8 @@ import Security
 /// - addProvider(_ provider:, apiKey:) → UUID
 /// - updateProvider(_ provider:, apiKey:)
 /// - deleteProvider(id:)
+/// - addModel(_ modelName:, toProviderId:)
+/// - deleteModel(_ modelName:, fromProviderId:)
 /// - setDefault(id:)
 /// - loadDefaultProvider() → AIProvider?
 /// - loadApiKey(for providerID:) → String?
@@ -104,7 +111,7 @@ public actor AIProviderStore {
         // Store API key in Keychain
         saveApiKey(apiKey, for: provider.id)
 
-        print("[AIProviderStore] Added provider '\(provider.displayLabel)' (id: \(provider.id))")
+        print("[AIProviderStore] Added provider '\(provider.displayName)' (id: \(provider.id))")
         return provider.id
     }
 
@@ -129,22 +136,16 @@ public actor AIProviderStore {
             saveApiKey(key, for: provider.id)
         }
 
-        print("[AIProviderStore] Updated provider '\(provider.displayLabel)'")
+        print("[AIProviderStore] Updated provider '\(provider.displayName)'")
     }
 
     // MARK: - Delete
 
     /// Deletes a provider and its API key from Keychain.
-    /// Throws if trying to delete the last remaining provider.
+    /// ALWAYS succeeds — even if this is the last provider.
+    /// Threads that depended on this provider become orphaned (UI shows warning).
     public func deleteProvider(id: UUID) async throws {
         let context = ModelContext(modelContainer)
-        let allDescriptor = FetchDescriptor<AIProviderEntity>()
-        let allEntities = try context.fetch(allDescriptor)
-
-        guard allEntities.count > 1 else {
-            throw AIProviderStoreError.cannotDeleteLast
-        }
-
         let descriptor = FetchDescriptor<AIProviderEntity>(
             predicate: #Predicate { $0.id == id }
         )
@@ -171,6 +172,48 @@ public actor AIProviderStore {
         deleteApiKey(for: id)
 
         print("[AIProviderStore] Deleted provider id: \(id)")
+    }
+
+    // MARK: - Model Management
+
+    /// Adds a model name to a provider's saved model list (if not already present).
+    public func addModel(_ modelName: String, toProviderId providerId: UUID) async throws {
+        let context = ModelContext(modelContainer)
+        let descriptor = FetchDescriptor<AIProviderEntity>(
+            predicate: #Predicate { $0.id == providerId }
+        )
+        guard let entity = try context.fetch(descriptor).first,
+              var provider = entity.toProvider() else {
+            throw AIProviderStoreError.notFound(providerId)
+        }
+
+        let trimmed = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !provider.models.contains(trimmed) else { return }
+
+        provider.models.append(trimmed)
+        entity.update(from: provider)
+        try context.save()
+
+        print("[AIProviderStore] Added model '\(trimmed)' to provider '\(provider.displayName)'")
+    }
+
+    /// Removes a model name from a provider's saved model list.
+    /// Threads using this model become orphaned — no blocking here.
+    public func deleteModel(_ modelName: String, fromProviderId providerId: UUID) async throws {
+        let context = ModelContext(modelContainer)
+        let descriptor = FetchDescriptor<AIProviderEntity>(
+            predicate: #Predicate { $0.id == providerId }
+        )
+        guard let entity = try context.fetch(descriptor).first,
+              var provider = entity.toProvider() else {
+            throw AIProviderStoreError.notFound(providerId)
+        }
+
+        provider.models.removeAll { $0 == modelName }
+        entity.update(from: provider)
+        try context.save()
+
+        print("[AIProviderStore] Deleted model '\(modelName)' from provider '\(provider.displayName)'")
     }
 
     // MARK: - Default
@@ -250,14 +293,11 @@ public actor AIProviderStore {
 
 public enum AIProviderStoreError: LocalizedError {
     case notFound(UUID)
-    case cannotDeleteLast
 
     public var errorDescription: String? {
         switch self {
         case .notFound(let id):
             return "Provider not found: \(id)"
-        case .cannotDeleteLast:
-            return "Cannot delete the last remaining provider. At least one provider must exist."
         }
     }
 }

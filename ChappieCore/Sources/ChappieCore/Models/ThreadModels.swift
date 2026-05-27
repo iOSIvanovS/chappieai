@@ -2,7 +2,7 @@
 // ChappieCore
 //
 // Data models for the multi-thread system (REFACTOR-THREADS IT-01).
-// IT-10: ThreadSettings now includes activeProviderId: UUID? for per-thread model selection.
+// IT-10: ThreadSettings includes activeProviderId + activeModelName for per-thread selection.
 //
 // JSON SERIALIZATION PRINCIPLE:
 // SwiftData stores only primitives and Data. Complex objects (message arrays,
@@ -92,8 +92,8 @@ public final class ThreadEntity {
 
 /// Settings for a single thread — serialized to JSON and stored in ThreadEntity.settingsJSON.
 ///
-/// IT-10: Added activeProviderId: UUID? — the AI provider selected for this thread.
-/// nil = use the default provider from AIProviderStore.
+/// IT-10: Added activeProviderId + activeModelName for per-thread model selection.
+/// Both nil = use the default provider and its first model.
 ///
 /// WHY STRUCT, NOT @Model:
 /// ThreadSettings is configuration, not a standalone entity.
@@ -120,7 +120,7 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
         maxMessagesInContext * 500
     }
 
-    // MARK: - IT-10: Active AI Provider
+    // MARK: - IT-10: Active AI Provider + Model
 
     /// UUID of the AI provider selected for this thread.
     ///
@@ -132,13 +132,22 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
     /// and ensures the thread always reflects the latest provider config.
     public var activeProviderId: UUID?
 
+    /// Name of the specific model selected for this thread within the active provider.
+    ///
+    /// nil = use the first model from the provider's saved model list.
+    /// Stored as a plain string — if the model is deleted from the provider,
+    /// the thread becomes orphaned and shows a warning banner.
+    public var activeModelName: String?
+
     // MARK: - Init
 
     public init(
         maxMessagesInContext: Int = 20,
-        activeProviderId: UUID? = nil
+        activeProviderId: UUID? = nil,
+        activeModelName: String? = nil
     ) {
         self.maxMessagesInContext = max(10, min(100, maxMessagesInContext))
         self.activeProviderId = activeProviderId
+        self.activeModelName = activeModelName
     }
 }

@@ -1,8 +1,7 @@
 // OnboardingView.swift
 // Chappie
 //
-// IT-10: First-launch onboarding screen.
-// Replaces the old SettingsView-based onboarding (which only asked for an API key).
+// First-launch onboarding screen.
 //
 // FLOW:
 // Step 1: User name (optional) — saved directly to global memory via viewModel.saveUserName()
@@ -11,6 +10,8 @@
 //
 // The app does NOT allow entry until at least one provider is configured.
 // User name is written straight to SwiftData global memory — no UserDefaults staging.
+//
+// NOTE: "Popular services" hint block removed — services change, hints go stale.
 
 import SwiftUI
 import ChappieCore
@@ -21,7 +22,6 @@ struct OnboardingView: View {
 
     // MARK: - Dependencies
 
-    // @Observable ViewModel — passed as a plain parameter (not @ObservedObject)
     var viewModel: ChappieViewModel
 
     // MARK: - State
@@ -109,7 +109,6 @@ struct OnboardingView: View {
             }
 
             Button {
-                // Save directly to global memory — no UserDefaults staging needed.
                 viewModel.saveUserName(userName)
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                     step = .provider
@@ -144,27 +143,11 @@ struct OnboardingView: View {
                 Text("Настройте AI-провайдера")
                     .font(.largeTitle.bold())
 
-                Text("Чаппи работает с любым сервисом, совместимым с протоколом OpenAI.\nДобавьте эндпойнт, ключ и выберите модель.")
+                Text("Чаппи работает с любым сервисом, совместимым с протоколом OpenAI.\nДобавьте эндпойнт, ключ и выберите модели.")
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Популярные сервисы:")
-                    .font(.subheadline.bold())
-                    .foregroundStyle(.secondary)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    hintRow(name: "AITunnel", url: "https://api.aitunnel.ru/v1/chat/completions")
-                    hintRow(name: "OpenAI", url: "https://api.openai.com/v1/chat/completions")
-                    hintRow(name: "Groq", url: "https://api.groq.com/openai/v1/chat/completions")
-                    hintRow(name: "Ollama (local)", url: "http://localhost:11434/v1/chat/completions")
-                }
-            }
-            .padding(16)
-            .background(.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
-            .frame(maxWidth: 420)
 
             Button {
                 showAddProvider = true
@@ -195,21 +178,6 @@ struct OnboardingView: View {
         }
         .padding(40)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
-        .frame(maxWidth: 520)
-    }
-
-    // MARK: - Hint Row
-
-    private func hintRow(name: String, url: String) -> some View {
-        HStack(spacing: 8) {
-            Text(name)
-                .font(.system(size: 12, weight: .semibold))
-                .frame(width: 90, alignment: .leading)
-            Text(url)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
+        .frame(maxWidth: 480)
     }
 }

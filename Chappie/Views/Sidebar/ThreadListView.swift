@@ -1,49 +1,33 @@
 // ThreadListView.swift
 // Chappie
 //
-// НАЗНАЧЕНИЕ:
-// Список тредов в боковой панели — главный навигационный элемент IT-05.
-// Классический вид как в Claude/ChatGPT: каждый тред — строка с названием и датой.
+// List of threads in the sidebar — main navigation element (IT-05).
+// Classic view like Claude/ChatGPT: each thread is a row with title and date.
 //
-// АРХИТЕКТУРНЫЕ РЕШЕНИЯ:
-// - Компонент "тупой" — только отображает данные, все действия через коллбэки.
-// - Активный тред подсвечивается через selectedThreadId.
-// - Свайп для удаления — стандартный macOS/iOS паттерн (onDelete).
-// - Двойной клик для переименования — будет добавлен в IT-06.
+// ARCHITECTURE:
+// - "Dumb" component — only displays data, all actions via callbacks.
+// - Active thread highlighted via selectedThreadId.
+// - orphanedThreadIds: threads whose provider/model was deleted get a ⚠️ indicator.
 
 import SwiftUI
 import ChappieCore
 
-/// Список тредов для боковой панели.
-///
-/// ПОЧЕМУ ОТДЕЛЬНЫЙ КОМПОНЕНТ:
-/// ThreadListView — самостоятельная единица UI с собственным состоянием
-/// (редактирование названия). Вынесен из SidebarView для чистоты и тестируемости.
+/// List of threads for the sidebar.
 struct ThreadListView: View {
 
-    // MARK: - Входные данные
+    // MARK: - Input
 
-    /// Список тредов для отображения (от ViewModel, уже отсортированы по updatedAt DESC)
     let threads: [ThreadMetadata]
-
-    /// UUID активного треда — подсвечивается в списке
     let selectedThreadId: UUID?
+    let orphanedThreadIds: Set<UUID>
 
-    /// Коллбэк: пользователь выбрал тред
     let onSelect: (ThreadMetadata) -> Void
-
-    /// Коллбэк: пользователь удалил тред (через свайп или контекстное меню)
     let onDelete: (ThreadMetadata) -> Void
-
-    /// Коллбэк: пользователь переименовал тред
     let onRename: (ThreadMetadata, String) -> Void
 
-    // MARK: - Локальное состояние
+    // MARK: - State
 
-    /// UUID треда в режиме переименования (nil = нет активного редактирования)
     @State private var editingThreadId: UUID? = nil
-
-    /// Временный текст при переименовании
     @State private var editingTitle: String = ""
 
     // MARK: - Body
@@ -54,6 +38,7 @@ struct ThreadListView: View {
                 thread: thread,
                 isSelected: thread.id == selectedThreadId,
                 isEditing: editingThreadId == thread.id,
+                isOrphaned: orphanedThreadIds.contains(thread.id),
                 editingTitle: $editingTitle,
                 onTap: {
                     onSelect(thread)

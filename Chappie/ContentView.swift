@@ -5,10 +5,12 @@
 // and passes data from ViewModel to the right places.
 //
 // IT-09: Added project settings sheet.
-// IT-10: Universal AI Provider.
+// IT-10: Universal AI Provider (two-level: provider → model).
 //   - OnboardingView shown when no providers configured
-//   - ModelPickerRow added above ProjectChipsView
-//   - NewThreadProviderSheet shown when creating a new thread
+//   - ModelPickerRow shows active provider+model, supports orphaned state
+//   - NewThreadProviderSheet picks provider AND model
+//   - SettingsView is now general settings (name + providers shortcut)
+//   - Sidebar receives orphanedThreadIds for ⚠️ indicators
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -24,19 +26,23 @@ struct ContentView: View {
     @State private var showSettings: Bool = false
     @State private var isReady: Bool = false
 
-    /// IT-09: Project whose settings are currently open.
     @State private var selectedProjectForSettings: ProjectMetadata? = nil
 
     @Environment(\.modelContext) private var modelContext
 
+    // MARK: - Computed: Orphaned Thread IDs
+    //
+    // NOTE: Full orphaned detection requires loading all thread settings asynchronously.
+    // That's a future backlog task. For now we return an empty set — the active thread's
+    // orphaned state is shown via ModelPickerRow warning instead.
+    private var orphanedThreadIds: Set<UUID> { [] }
+
     var body: some View {
         Group {
             if !isReady {
-                // Loading state while SwiftData initializes
                 ProgressView("Загрузка...")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if viewModel.providers.isEmpty {
-                // IT-10: Onboarding — no providers configured yet
                 OnboardingView(viewModel: viewModel)
             } else {
                 mainContent
@@ -44,13 +50,11 @@ struct ContentView: View {
         }
         .onAppear {
             viewModel.setModelContainer(modelContext.container)
-            // Give SwiftData a moment to load providers before deciding which screen to show
             Task {
-                try? await Task.sleep(nanoseconds: 300_000_000) // 0.3s
+                try? await Task.sleep(nanoseconds: 300_000_000)
                 isReady = true
             }
         }
-        // React to providers being added (onboarding → main app transition)
         .onChange(of: viewModel.providers.count) { _, newCount in
             if newCount > 0 && !isReady {
                 isReady = true
@@ -66,6 +70,7 @@ struct ContentView: View {
                 isApiKeyValid: !viewModel.providers.isEmpty,
                 threads: viewModel.threads,
                 selectedThreadId: viewModel.activeThread?.id,
+                orphanedThreadIds: orphanedThreadIds,
                 onOpenSettings: { showSettings = true },
                 onSelectThread: { thread in
                     Task { await viewModel.selectThread(thread) }
@@ -84,13 +89,20 @@ struct ContentView: View {
         } detail: {
             VStack(spacing: 0) {
 
-                // IT-10: Model picker row
+                // IT-10: Model picker row (with orphaned support)
                 if viewModel.activeThread != nil && !viewModel.providers.isEmpty {
                     ModelPickerRow(
                         activeProvider: viewModel.activeProvider,
+                        activeModelName: viewModel.activeModelName,
                         providers: viewModel.providers,
-                        onSelectProvider: { id in
-                            viewModel.switchProvider(id: id)
+                        isOrphaned: viewModel.isThreadOrphaned,
+                        onSelectProvider: { providerId, modelName in
+                            if let provider = viewModel.providers.first(where: { $0.id == providerId }),
+                               let store = viewModel.providerStore {
+                                Task {
+                                    await viewModel.switchProvider(provider, modelName: modelName, from: store)
+                                }
+                            }
                         }
                     )
                     .transition(.opacity.combined(with: .move(edge: .top)))
@@ -148,11 +160,9 @@ struct ContentView: View {
                 .ignoresSafeArea()
                 .opacity(0.5)
         }
-        // IT-10: Settings sheet shows ProvidersSettingsView
         .sheet(isPresented: $showSettings) {
-            ProvidersSettingsView(viewModel: viewModel)
+            SettingsView(viewModel: viewModel)
         }
-        // IT-09: Project settings sheet
         .sheet(item: $selectedProjectForSettings) { project in
             ProjectSettingsSheet(
                 project: project,
@@ -165,13 +175,13 @@ struct ContentView: View {
                 }
             )
         }
-        // IT-10: New thread provider picker sheet
         .sheet(isPresented: $viewModel.showNewThreadProviderPicker) {
             NewThreadProviderSheet(
                 providers: viewModel.providers,
                 currentProvider: viewModel.activeProvider,
-                onConfirm: { providerId in
-                    Task { await viewModel.confirmNewThread(with: providerId) }
+                currentModelName: viewModel.activeModelName,
+                onConfirm: { providerId, modelName in
+                    Task { await viewModel.confirmNewThread(with: providerId, modelName: modelName) }
                 },
                 onCancel: {
                     viewModel.cancelNewThread()

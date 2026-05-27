@@ -1,31 +1,29 @@
 // ModelPickerRow.swift
 // Chappie
 //
-// IT-10: Row displayed above ProjectChipsView showing the active AI model.
-// Tapping opens a popover with provider + model selection (like Xcode Intelligence).
+// Row displayed above ProjectChipsView showing the active AI provider + model.
+// Tapping opens a popover with two-level provider → model selection.
 //
-// LAYOUT:
-// "Модель: <host> <modelName>"  [row with same style as "Проекты:"]
-//
-// INTERACTION:
-// Tap → popover with list of providers
-// Each provider → shows selected model name
-// Tap provider → immediately switches to it (uses its currently selected model)
+// ORPHANED STATE:
+// If the active provider or model is no longer in the providers list,
+// the row shows a warning style. User can pick a new provider+model inline.
 
 import SwiftUI
 import ChappieCore
 
 // MARK: - ModelPickerRow
 
-/// Horizontal row showing the active AI model.
-/// Tapping opens a provider+model selection popover.
+/// Horizontal row showing the active AI provider + model.
+/// Tapping opens a two-level provider+model selection popover.
 struct ModelPickerRow: View {
 
     // MARK: - Input
 
     let activeProvider: AIProvider?
+    let activeModelName: String?
     let providers: [AIProvider]
-    let onSelectProvider: (UUID) -> Void
+    let isOrphaned: Bool
+    let onSelectProvider: (UUID, String) -> Void
 
     // MARK: - State
 
@@ -43,12 +41,21 @@ struct ModelPickerRow: View {
                 showPopover.toggle()
             } label: {
                 HStack(spacing: 4) {
-                    Image(systemName: "cpu")
+                    Image(systemName: isOrphaned ? "exclamationmark.triangle.fill" : "cpu")
                         .font(.system(size: 10))
-                        .foregroundStyle(Color.accentColor.opacity(0.8))
+                        .foregroundStyle(isOrphaned ? Color.orange : Color.accentColor.opacity(0.8))
 
-                    if let provider = activeProvider {
-                        Text(provider.displayLabel)
+                    if isOrphaned {
+                        Text("Модель недоступна — выберите другую")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.orange)
+                    } else if let provider = activeProvider, let model = activeModelName {
+                        Text("\(provider.displayName) · \(model)")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                    } else if let provider = activeProvider {
+                        Text(provider.displayName)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
@@ -66,20 +73,28 @@ struct ModelPickerRow: View {
                 .padding(.vertical, 4)
                 .background(
                     Capsule()
-                        .fill(Color.accentColor.opacity(0.1))
+                        .fill(isOrphaned
+                              ? Color.orange.opacity(0.1)
+                              : Color.accentColor.opacity(0.1))
                 )
                 .overlay(
                     Capsule()
-                        .stroke(Color.accentColor.opacity(0.25), lineWidth: 0.5)
+                        .stroke(
+                            isOrphaned
+                                ? Color.orange.opacity(0.4)
+                                : Color.accentColor.opacity(0.25),
+                            lineWidth: 0.5
+                        )
                 )
             }
             .buttonStyle(.plain)
             .popover(isPresented: $showPopover, arrowEdge: .top) {
-                ProviderPickerPopover(
+                ModelPickerPopover(
                     providers: providers,
                     activeProviderId: activeProvider?.id,
-                    onSelect: { id in
-                        onSelectProvider(id)
+                    activeModelName: activeModelName,
+                    onSelect: { providerId, modelName in
+                        onSelectProvider(providerId, modelName)
                         showPopover = false
                     }
                 )
@@ -98,92 +113,185 @@ struct ModelPickerRow: View {
     }
 }
 
-// MARK: - ProviderPickerPopover
+// MARK: - ModelPickerPopover
 
-/// Popover content: list of providers with their selected models.
-/// Tapping a provider switches to it immediately.
-private struct ProviderPickerPopover: View {
+/// Two-level popover: left = providers, right = models of selected provider.
+private struct ModelPickerPopover: View {
 
     let providers: [AIProvider]
     let activeProviderId: UUID?
-    let onSelect: (UUID) -> Void
+    let activeModelName: String?
+    let onSelect: (UUID, String) -> Void
+
+    @State private var hoveredProviderId: UUID?
+
+    // The provider currently shown on the right panel
+    private var displayedProvider: AIProvider? {
+        if let hovered = hoveredProviderId {
+            return providers.first { $0.id == hovered }
+        }
+        if let active = activeProviderId {
+            return providers.first { $0.id == active }
+        }
+        return providers.first
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Header
-            Text("Выбор модели")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-                .padding(.bottom, 6)
+        HStack(alignment: .top, spacing: 0) {
+
+            // Left: provider list
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Провайдер")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 10)
+                    .padding(.bottom, 6)
+
+                Divider()
+
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(providers) { provider in
+                            PopoverProviderRow(
+                                provider: provider,
+                                isActive: provider.id == activeProviderId,
+                                isHovered: hoveredProviderId == provider.id
+                            )
+                            .onHover { hovering in
+                                if hovering { hoveredProviderId = provider.id }
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                .frame(maxHeight: 280)
+            }
+            .frame(width: 180)
 
             Divider()
 
-            // Provider list
-            ScrollView {
-                VStack(spacing: 0) {
-                    ForEach(providers) { provider in
-                        ProviderRow(
-                            provider: provider,
-                            isActive: provider.id == activeProviderId,
-                            onSelect: { onSelect(provider.id) }
-                        )
+            // Right: model list for displayed provider
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Модель")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 10)
+                    .padding(.bottom, 6)
+
+                Divider()
+
+                if let provider = displayedProvider {
+                    if provider.models.isEmpty {
+                        VStack {
+                            Spacer()
+                            Text("Нет моделей")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: 280)
+                    } else {
+                        ScrollView {
+                            VStack(spacing: 0) {
+                                ForEach(provider.models, id: \.self) { model in
+                                    PopoverModelRow(
+                                        model: model,
+                                        isActive: provider.id == activeProviderId && model == activeModelName,
+                                        onSelect: { onSelect(provider.id, model) }
+                                    )
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                        .frame(maxHeight: 280)
                     }
+                } else {
+                    Spacer()
                 }
             }
-            .frame(maxHeight: 300)
+            .frame(width: 200)
         }
-        .frame(width: 320)
-        .padding(.bottom, 8)
+        .frame(width: 380)
+        .padding(.bottom, 4)
     }
 }
 
-// MARK: - ProviderRow
+// MARK: - PopoverProviderRow
 
-/// One provider entry in the picker popover.
-private struct ProviderRow: View {
+private struct PopoverProviderRow: View {
 
     let provider: AIProvider
     let isActive: Bool
+    let isHovered: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 13))
+                .foregroundStyle(isActive ? Color.accentColor : Color.secondary.opacity(0.3))
+                .frame(width: 16)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(provider.displayName)
+                    .font(.system(size: 12, weight: isActive ? .semibold : .regular))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text(provider.displayHost)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9))
+                .foregroundStyle(.secondary.opacity(0.4))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 5)
+                .fill(isHovered || isActive
+                      ? Color.accentColor.opacity(0.08)
+                      : Color.clear)
+                .padding(.horizontal, 4)
+        )
+    }
+}
+
+// MARK: - PopoverModelRow
+
+private struct PopoverModelRow: View {
+
+    let model: String
+    let isActive: Bool
     let onSelect: () -> Void
 
-    @State private var isHovered: Bool = false
+    @State private var isHovered = false
 
     var body: some View {
         Button(action: onSelect) {
-            HStack(spacing: 10) {
-                // Active indicator
+            HStack(spacing: 8) {
                 Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 14))
-                    .foregroundStyle(isActive ? Color.accentColor : Color.secondary.opacity(0.4))
-                    .frame(width: 18)
+                    .font(.system(size: 13))
+                    .foregroundStyle(isActive ? Color.accentColor : Color.secondary.opacity(0.3))
+                    .frame(width: 16)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    // Model name — primary label
-                    Text(provider.modelName)
-                        .font(.system(size: 13, weight: isActive ? .semibold : .regular))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-
-                    // Host — secondary label
-                    Text(provider.displayHost)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+                // weight before design — correct argument order for .system()
+                Text(model)
+                    .font(.system(size: 12, weight: isActive ? .semibold : .regular, design: .monospaced))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
 
                 Spacer()
-
-                // Arrow hint — Xcode Intelligence style
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary.opacity(0.5))
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
             .background(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 5)
                     .fill(isHovered ? Color.accentColor.opacity(0.08) : Color.clear)
                     .padding(.horizontal, 4)
             )
@@ -191,31 +299,4 @@ private struct ProviderRow: View {
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
     }
-}
-
-// MARK: - Preview
-
-#Preview {
-    ModelPickerRow(
-        activeProvider: AIProvider(
-            id: UUID(),
-            endpoint: "https://api.aitunnel.ru/v1/chat/completions",
-            modelName: "claude-sonnet-4.6"
-        ),
-        providers: [
-            AIProvider(
-                id: UUID(),
-                endpoint: "https://api.aitunnel.ru/v1/chat/completions",
-                modelName: "claude-sonnet-4.6"
-            ),
-            AIProvider(
-                id: UUID(),
-                endpoint: "https://api.openai.com/v1/chat/completions",
-                modelName: "gpt-4o"
-            )
-        ],
-        onSelectProvider: { _ in }
-    )
-    .frame(width: 600)
-    .background(Color(NSColor.windowBackgroundColor))
 }

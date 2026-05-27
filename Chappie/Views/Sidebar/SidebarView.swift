@@ -1,54 +1,35 @@
 // SidebarView.swift
 // Chappie
 //
-// НАЗНАЧЕНИЕ:
-// Боковая панель приложения — навигация по тредам (IT-05).
+// Sidebar — thread navigation (IT-05).
 //
-// АРХИТЕКТУРНЫЕ ИЗМЕНЕНИЯ (IT-05):
-// Добавлен список тредов как в Claude/ChatGPT:
-// - Секция "Треды" со списком всех тредов (ThreadListView)
-// - Кнопка "Новый тред" внизу панели
-// - Подсветка активного треда
-// - Переименование двойным кликом / контекстным меню
-// - Удаление через кнопку hover / контекстное меню
+// IT-10 (providers refactor): receives orphanedThreadIds to show ⚠️ on affected threads.
 //
-// АРХИТЕКТУРНЫЕ ИЗМЕНЕНИЯ (UI-FIX-01):
-// Убрана секция "Контекст" (воркспейс) из боковой панели.
-// ПОЧЕМУ: воркспейс — глобальная настройка приложения, не per-тред.
-// Её место — в тулбаре (ToolbarContent), рядом с балансом и настройками.
-// Боковая панель теперь посвящена ТОЛЬКО тредам — как в ChatGPT/Claude.
-//
-// ПРИНЦИП "ТУПОГО КОМПОНЕНТА":
-// SidebarView не знает о ThreadStore и SwiftData. Все данные приходят через
-// параметры (threads, selectedThreadId), все действия — через коллбэки.
-// Бизнес-логика — в ChappieViewModel.
+// PRINCIPLE "DUMB COMPONENT":
+// SidebarView doesn't know about ThreadStore or SwiftData.
+// All data comes via parameters, all actions via callbacks.
+// Business logic lives in ChappieViewModel.
 
 import SwiftUI
 import ChappieCore
 
-/// Боковая панель приложения Чаппи.
+/// Sidebar of the Chappie app.
 ///
-/// Показывает:
-/// - список тредов (IT-05) — главный контент
-/// - предупреждение если API-ключ не задан
-/// - кнопку "Новый тред" внизу
-///
-/// НЕ показывает (убрано в UI-FIX-01):
-/// - воркспейс / рабочую папку (перенесено в тулбар)
+/// Shows:
+/// - list of threads (IT-05) — main content
+/// - warning if no providers configured
+/// - "New Thread" button at the bottom
 struct SidebarView: View {
 
-    // MARK: - Входные данные (состояние)
+    // MARK: - Input
 
-    /// Флаг: задан ли валидный API-ключ
     let isApiKeyValid: Bool
-
-    /// Список тредов для отображения (отсортированы по updatedAt DESC)
     let threads: [ThreadMetadata]
-
-    /// UUID активного треда
     let selectedThreadId: UUID?
+    /// Thread IDs whose provider or model was deleted — shown with ⚠️ indicator.
+    let orphanedThreadIds: Set<UUID>
 
-    // MARK: - Коллбэки действий
+    // MARK: - Callbacks
 
     let onOpenSettings: () -> Void
     let onSelectThread: (ThreadMetadata) -> Void
@@ -61,17 +42,9 @@ struct SidebarView: View {
     var body: some View {
         VStack(spacing: 0) {
 
-            // MARK: Основной скроллируемый список тредов
-            // ПОЧЕМУ ТОЛЬКО ТРЕДЫ:
-            // Боковая панель — это навигация по истории разговоров.
-            // Воркспейс — глобальная настройка, не связанная с конкретным тредом.
-            // Смешивать их в одной панели создаёт путаницу.
             List {
-
-                // Секция тредов — показываем всегда (даже если пустая)
                 Section {
                     if threads.isEmpty {
-                        // Плейсхолдер когда тредов ещё нет
                         Text("Нет тредов")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -81,11 +54,11 @@ struct SidebarView: View {
                         ThreadListView(
                             threads: threads,
                             selectedThreadId: selectedThreadId,
+                            orphanedThreadIds: orphanedThreadIds,
                             onSelect: onSelectThread,
                             onDelete: onDeleteThread,
                             onRename: onRenameThread
                         )
-                        // Убираем стандартные отступы ListRow — ThreadRowView рисует свои
                         .listRowInsets(EdgeInsets(top: 2, leading: 6, bottom: 2, trailing: 6))
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
@@ -94,10 +67,9 @@ struct SidebarView: View {
                     Text("Треды")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
-                        .textCase(nil) // Отключаем автоматический uppercase в заголовках секций
+                        .textCase(nil)
                 }
 
-                // Предупреждение об API-ключе (только если не задан)
                 if !isApiKeyValid {
                     apiKeyWarningSection
                 }
@@ -107,8 +79,6 @@ struct SidebarView: View {
 
             Divider()
 
-            // MARK: Кнопка "Новый тред" внизу панели
-            // Закреплена внизу — всегда видна независимо от скролла
             Button(action: onCreateThread) {
                 HStack(spacing: 6) {
                     Image(systemName: "plus.circle.fill")
@@ -128,17 +98,16 @@ struct SidebarView: View {
         .navigationTitle("Чаппи")
     }
 
-    // MARK: - Секция предупреждения об API-ключе
+    // MARK: - API Key Warning
 
-    /// Секция-предупреждение — показывается только когда ключ не задан.
     private var apiKeyWarningSection: some View {
         Section("⚠️ Внимание") {
             VStack(alignment: .leading, spacing: 8) {
-                Text("API-ключ не задан")
+                Text("Нет настроенных провайдеров")
                     .font(.subheadline.bold())
                     .foregroundStyle(.orange)
 
-                Text("Без ключа AITunnel Чаппи не сможет отвечать.")
+                Text("Без AI-провайдера Чаппи не сможет отвечать.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -176,6 +145,7 @@ struct SidebarView: View {
                 )
             ],
             selectedThreadId: nil,
+            orphanedThreadIds: [],
             onOpenSettings: {},
             onSelectThread: { _ in },
             onCreateThread: {},

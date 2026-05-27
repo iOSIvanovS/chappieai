@@ -12,33 +12,40 @@
 // API keys are stored in Keychain, NOT in SwiftData.
 // Key per provider: provider.id.uuidString
 // This keeps secrets out of the database entirely.
+//
+// TWO-LEVEL STRUCTURE (providers refactor):
+// AIProvider — one endpoint + API key + user-defined name + list of saved model names.
+// Thread stores (activeProviderId, activeModelName) — picks one model from provider's list.
+// Deleting provider or model is always allowed — orphaned threads show a warning banner.
 
 import Foundation
 import SwiftData
 
 // MARK: - AIProvider (Domain Model)
 
-/// A single AI provider configuration — one endpoint + one selected model.
+/// A single AI provider configuration — one endpoint, one API key, multiple saved models.
 ///
 /// IMMUTABLE BY DESIGN:
 /// All mutations go through AIProviderStore which re-serializes to JSON.
 /// This ensures consistency between in-memory and persisted state.
-public struct AIProvider: Codable, Sendable, Identifiable, Equatable {
+public struct AIProvider: Codable, Sendable, Identifiable, Equatable, Hashable {
 
     // MARK: - Fields
 
     /// Stable unique identifier. Never changes after creation.
     public let id: UUID
 
+    /// User-defined display name for this provider, e.g. "Work OpenAI", "Personal Groq".
+    /// Defaults to the host name if not set by user.
+    public var name: String
+
     /// Full endpoint URL, e.g. "https://api.aitunnel.ru/v1/chat/completions"
     public var endpoint: String
 
-    /// Currently selected model name, e.g. "claude-sonnet-4.6"
-    public var modelName: String
-
-    /// List of available models fetched from the endpoint's /models API.
-    /// Empty if not yet fetched or fetch failed (user may have typed model manually).
-    public var availableModels: [String]
+    /// List of model names the user has saved for this provider.
+    /// Can be populated from GET /v1/models or entered manually.
+    /// User can add/remove individual models.
+    public var models: [String]
 
     // MARK: - Computed
 
@@ -48,23 +55,30 @@ public struct AIProvider: Codable, Sendable, Identifiable, Equatable {
         URL(string: endpoint)?.host ?? endpoint
     }
 
-    /// Short display string: "host modelName"
-    public var displayLabel: String {
-        "\(displayHost) \(modelName)"
+    /// The label shown in lists — user name if set, otherwise the host.
+    public var displayName: String {
+        name.isEmpty ? displayHost : name
     }
 
     // MARK: - Init
 
     public init(
         id: UUID = UUID(),
+        name: String = "",
         endpoint: String,
-        modelName: String,
-        availableModels: [String] = []
+        models: [String] = []
     ) {
         self.id = id
+        self.name = name
         self.endpoint = endpoint
-        self.modelName = modelName
-        self.availableModels = availableModels
+        self.models = models
+    }
+
+    // MARK: - Hashable
+
+    /// Hash based on id only — id is the stable identity.
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
     }
 }
 

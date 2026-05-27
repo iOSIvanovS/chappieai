@@ -12,11 +12,13 @@
 // - AITunnelClient replaced with AIClient (provider-agnostic)
 // - AIProviderStore manages provider list + Keychain keys
 // - activeProvider: AIProvider? — currently selected provider for the active thread
-// - createNewThread() now triggers provider selection sheet before entering chat
-// - init() no longer reads SettingsManager.shared.apiKey (legacy)
+// - activeModelName: String? — currently selected model within the active provider
+// - createNewThread() triggers provider+model selection sheet before entering chat
 //
-// IT-10 (user name): saveUserName() writes directly to SwiftData global memory.
-// No UserDefaults staging — name is available in every system prompt immediately.
+// ORPHANED THREADS:
+// Deletion of providers/models is always allowed.
+// isThreadOrphaned computed property detects when activeProvider or activeModelName
+// is missing from the current providers list. Chat view shows a warning banner.
 
 import SwiftUI
 import ChappieCore
@@ -81,11 +83,31 @@ final class ChappieViewModel {
     /// nil = no provider configured yet (onboarding required).
     var activeProvider: AIProvider? = nil
 
-    /// Controls the new-thread provider picker sheet (IT-10).
+    /// The model name currently active for this thread.
+    /// Must be one of activeProvider.models, or the thread is considered orphaned.
+    var activeModelName: String? = nil
+
+    /// True when the active thread's provider or model is no longer available.
+    /// Chat view shows a warning banner and model picker to recover.
+    var isThreadOrphaned: Bool {
+        guard let provider = activeProvider else {
+            // No provider at all — orphaned if there was one set in settings
+            return activeThreadSettings.activeProviderId != nil
+        }
+        // Provider exists in our list?
+        guard providers.contains(where: { $0.id == provider.id }) else { return true }
+        // Model exists in provider's list?
+        if let model = activeModelName {
+            return !provider.models.contains(model)
+        }
+        // No model selected but provider has models — not orphaned, just needs selection
+        return false
+    }
+
+    /// Controls the new-thread provider+model picker sheet (IT-10).
     var showNewThreadProviderPicker: Bool = false
 
-    /// Pending thread waiting for provider selection (IT-10).
-    /// After user picks provider → selectThread(pendingNewThread).
+    /// Pending thread waiting for provider+model selection (IT-10).
     var pendingNewThread: ThreadMetadata? = nil
 
     // MARK: - Dependencies
@@ -94,7 +116,6 @@ final class ChappieViewModel {
     private var memoryManager: MemoryManager?
     private var toolService: ToolExecutionService?
 
-    // IT-10: AIClient instead of AITunnelClient
     private var aiClient: AIClient?
     private var orchestrator: AIOrchestrator?
     private var chatHistoryManager: ChatHistoryManager
@@ -105,7 +126,6 @@ final class ChappieViewModel {
     private var memoryStore: MemoryStore?
     private var threadStore: ThreadStore?
     private var projectStore: ProjectStore?
-    // IT-10: Provider store (public for access from settings views)
     var providerStore: AIProviderStore?
 
     // MARK: - Init
@@ -137,7 +157,6 @@ final class ChappieViewModel {
         let pStore = ProjectStore(modelContainer: container)
         self.projectStore = pStore
 
-        // IT-10: AIProviderStore
         let provStore = AIProviderStore(modelContainer: container)
         self.providerStore = provStore
 
@@ -161,15 +180,12 @@ final class ChappieViewModel {
     // MARK: - IT-10: User Name
 
     /// Saves the user's name directly to global SwiftData memory.
-    /// Called from OnboardingView — no UserDefaults staging, no MemoryManager wrapper needed.
-    /// The name is injected into every system prompt via buildSystemPrompt().
+    /// Called from OnboardingView and SettingsView — no UserDefaults staging needed.
     func saveUserName(_ name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
         guard let store = memoryStore else {
-            // MemoryStore not yet connected — retry after a short delay.
-            // Rare case: onboarding finishes before setModelContainer() completes.
             print("[ChappieViewModel] MemoryStore not ready, retrying saveUserName in 1s")
             Task {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
@@ -178,7 +194,6 @@ final class ChappieViewModel {
             return
         }
 
-        // Escape any quotes in the name to produce valid JSON.
         let escaped = trimmed.replacingOccurrences(of: "\"", with: "\\\"")
 
         Task {
@@ -204,7 +219,8 @@ final class ChappieViewModel {
             let loaded = try await store.loadProviders()
             self.providers = loaded
             if let defaultProvider = try await store.loadDefaultProvider() {
-                await switchProvider(defaultProvider, from: store)
+                let defaultModel = defaultProvider.models.first
+                await switchProvider(defaultProvider, modelName: defaultModel, from: store)
             }
             print("[ChappieViewModel] Loaded \(loaded.count) providers")
         } catch {
@@ -212,16 +228,17 @@ final class ChappieViewModel {
         }
     }
 
-    /// Switches the active AI provider — recreates AIClient and AIOrchestrator.
-    func switchProvider(_ provider: AIProvider, from store: AIProviderStore? = nil) async {
+    /// Switches the active AI provider and model — recreates AIClient and AIOrchestrator.
+    func switchProvider(_ provider: AIProvider, modelName: String?, from store: AIProviderStore? = nil) async {
         let provStore = store ?? self.providerStore
         guard let provStore else { return }
 
-        // loadApiKey is synchronous in the actor — call with await
         let apiKey = await provStore.loadApiKey(for: provider.id) ?? ""
-        let client = AIClient(endpoint: provider.endpoint, apiKey: apiKey, modelName: provider.modelName)
+        let model = modelName ?? provider.models.first ?? ""
+        let client = AIClient(endpoint: provider.endpoint, apiKey: apiKey, modelName: model)
         self.aiClient = client
         self.activeProvider = provider
+        self.activeModelName = model.isEmpty ? nil : model
 
         // Rebuild orchestrator with the new client
         if let ts = toolService, let fs = fileSystem, let mm = memoryManager {
@@ -233,25 +250,36 @@ final class ChappieViewModel {
             )
         }
 
-        // Save active provider to thread settings
+        // Persist selection to thread settings
         if activeThread != nil {
             var settings = activeThreadSettings
             settings.activeProviderId = provider.id
+            settings.activeModelName = model.isEmpty ? nil : model
             activeThreadSettings = settings
             if let threadId = activeThread?.id, let tStore = threadStore {
                 try? await tStore.updateSettings(settings, forThreadId: threadId)
             }
         }
 
-        print("[ChappieViewModel] Switched to provider: \(provider.displayLabel)")
+        print("[ChappieViewModel] Switched to provider: \(provider.displayName) / model: \(model)")
     }
 
     /// Switches provider by ID — used from ModelPickerRow.
     func switchProvider(id: UUID) {
         guard let provider = providers.first(where: { $0.id == id }),
               let provStore = providerStore else { return }
+        let model = provider.models.first
         Task {
-            await switchProvider(provider, from: provStore)
+            await switchProvider(provider, modelName: model, from: provStore)
+        }
+    }
+
+    /// Switches to a specific model within the current provider.
+    func switchModel(to modelName: String) {
+        guard let provider = activeProvider,
+              let provStore = providerStore else { return }
+        Task {
+            await switchProvider(provider, modelName: modelName, from: provStore)
         }
     }
 
@@ -262,6 +290,11 @@ final class ChappieViewModel {
             do {
                 let loaded = try await store.loadProviders()
                 self.providers = loaded
+                // If active provider was updated — refresh it
+                if let active = activeProvider,
+                   let updated = loaded.first(where: { $0.id == active.id }) {
+                    self.activeProvider = updated
+                }
                 print("[ChappieViewModel] Providers reloaded: \(loaded.count)")
             } catch {
                 print("[ChappieViewModel] Failed to reload providers: \(error)")
@@ -529,13 +562,13 @@ final class ChappieViewModel {
             let settings = try await store.loadSettings(forThreadId: thread.id)
             self.activeThreadSettings = settings
 
-            // IT-10: restore provider for this thread
+            // Restore provider+model for this thread
             if let providerId = settings.activeProviderId,
                let provider = providers.first(where: { $0.id == providerId }) {
-                await switchProvider(provider)
+                await switchProvider(provider, modelName: settings.activeModelName)
             } else if activeProvider == nil, let provStore = providerStore {
                 if let defaultProvider = try? await provStore.loadDefaultProvider() {
-                    await switchProvider(defaultProvider, from: provStore)
+                    await switchProvider(defaultProvider, modelName: defaultProvider.models.first, from: provStore)
                 }
             }
 
@@ -561,7 +594,7 @@ final class ChappieViewModel {
     private var isLoadingThread: Bool = false
 
     /// Creates a new thread.
-    /// IT-10: If providers exist — shows provider picker sheet before entering chat.
+    /// Shows provider+model picker sheet before entering chat (if providers exist).
     func createNewThread() {
         guard let store = threadStore else { return }
 
@@ -573,7 +606,6 @@ final class ChappieViewModel {
 
                 if let newThread = refreshed.first(where: { $0.id == newId }) {
                     if !providers.isEmpty {
-                        // IT-10: show provider picker before entering the thread
                         self.pendingNewThread = newThread
                         self.showNewThreadProviderPicker = true
                     } else {
@@ -594,14 +626,14 @@ final class ChappieViewModel {
         }
     }
 
-    /// Called after user picks a provider in the new-thread sheet.
-    func confirmNewThread(with providerId: UUID) async {
+    /// Called after user picks a provider+model in the new-thread sheet.
+    func confirmNewThread(with providerId: UUID, modelName: String) async {
         guard let thread = pendingNewThread else { return }
         self.pendingNewThread = nil
         self.showNewThreadProviderPicker = false
 
         if let provider = providers.first(where: { $0.id == providerId }) {
-            await switchProvider(provider)
+            await switchProvider(provider, modelName: modelName)
         }
 
         await selectThread(thread)
@@ -1021,7 +1053,6 @@ final class ChappieViewModel {
         let ts = ToolExecutionService(fileSystem: fs, memoryManager: mm, socketPath: socketPath)
         self.toolService = ts
 
-        // IT-10: Create orchestrator only if we have an active provider
         if let client = aiClient {
             self.orchestrator = AIOrchestrator(
                 aiClient: client,

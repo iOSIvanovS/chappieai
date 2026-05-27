@@ -1,46 +1,28 @@
+// SettingsView.swift
+// Chappie
 //
-//  SettingsView.swift
-//  Chappie
+// Application settings sheet.
+// Contains: user name field (saved to global memory), AI providers shortcut.
 //
-//  Created by Чаппи on 22.05.2026.
-//
+// NOTE: API key management moved to ProvidersSettingsView / AddProviderSheet.
+// SettingsView is now a lightweight general settings panel.
 
 import SwiftUI
+import ChappieCore
 
-/// Экран настроек приложения.
-///
-/// ПОЧЕМУ ОТДЕЛЬНЫЙ ЭКРАН, А НЕ ALERT:
-/// Alert слишком мал для ввода длинного API-ключа и не позволяет показать
-/// инструкции и статус. Sheet — правильный паттерн для настроек в macOS/iOS.
-///
-/// ПОЧЕМУ НЕ Settings Bundle:
-/// Settings Bundle (системные настройки macOS) — неудобно для пользователя,
-/// требует выхода из приложения. Встроенный Sheet — намного лучший UX.
+// MARK: - SettingsView
+
 struct SettingsView: View {
 
-    // MARK: - Зависимости
+    // MARK: - Dependencies
 
-    /// Менеджер настроек — единственный источник истины для API-ключа.
-    @State private var settings = SettingsManager.shared
+    var viewModel: ChappieViewModel
 
-    /// Коллбэк, вызываемый при сохранении нового ключа.
-    /// ViewModel использует его для пересоздания AITunnelClient с новым ключом.
-    var onApiKeyChanged: ((String) -> Void)?
+    // MARK: - State
 
-    // MARK: - Локальное состояние
-
-    /// Локальная копия ключа для редактирования.
-    /// Мы не редактируем settings.apiKey напрямую, чтобы не сохранять
-    /// промежуточные (неполные) значения при каждом нажатии клавиши.
-    @State private var localApiKey: String = ""
-
-    /// Флаг показа/скрытия ключа (по умолчанию скрыт — это пароль).
-    @State private var isKeyVisible: Bool = false
-
-    /// Флаг для анимации подтверждения сохранения.
-    @State private var showSavedConfirmation: Bool = false
-
-    // MARK: - Environment
+    @State private var userName: String = ""
+    @State private var showProviders: Bool = false
+    @State private var nameSaved: Bool = false
 
     @Environment(\.dismiss) private var dismiss
 
@@ -49,17 +31,15 @@ struct SettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
 
-            // MARK: Заголовок
+            // Header
             HStack {
                 Image(systemName: "gear")
                     .font(.title2)
                     .foregroundStyle(.secondary)
-                Text("Настройки Чаппи")
+                Text("Настройки")
                     .font(.title2.bold())
                 Spacer()
-                Button {
-                    dismiss()
-                } label: {
+                Button { dismiss() } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.title2)
                         .foregroundStyle(.secondary)
@@ -73,91 +53,114 @@ struct SettingsView: View {
             Divider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 28) {
 
-                    // MARK: Секция API-ключа
+                    // MARK: User Name
                     VStack(alignment: .leading, spacing: 12) {
-                        Label("API-ключ AITunnel", systemImage: "key.fill")
+                        Label("Ваше имя", systemImage: "person.fill")
                             .font(.headline)
 
-                        Text("Ключ используется для обращения к языковым моделям через сервис AITunnel. Получить ключ можно на [aitunnel.ru](https://aitunnel.ru).")
+                        Text("Чаппи будет обращаться к вам по имени в системном промпте.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
 
-                        // MARK: Поле ввода ключа
-                        HStack(spacing: 8) {
-                            Group {
-                                if isKeyVisible {
-                                    // Обычное текстовое поле когда ключ показан
-                                    TextField("sk-aitunnel-...", text: $localApiKey)
-                                } else {
-                                    // Защищённое поле когда ключ скрыт
-                                    SecureField("sk-aitunnel-...", text: $localApiKey)
+                        HStack(spacing: 10) {
+                            TextField("Имя", text: $userName)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: 260)
+                                .onSubmit { saveName() }
+
+                            Button {
+                                saveName()
+                            } label: {
+                                HStack(spacing: 4) {
+                                    if nameSaved {
+                                        Image(systemName: "checkmark")
+                                        Text("Сохранено")
+                                    } else {
+                                        Text("Сохранить")
+                                    }
                                 }
                             }
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(.body, design: .monospaced))
-
-                            // Кнопка показа/скрытия ключа
-                            Button {
-                                isKeyVisible.toggle()
-                            } label: {
-                                Image(systemName: isKeyVisible ? "eye.slash" : "eye")
-                                    .foregroundStyle(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                            .help(isKeyVisible ? "Скрыть ключ" : "Показать ключ")
-                        }
-
-                        // MARK: Статус валидности ключа
-                        HStack(spacing: 6) {
-                            let isValid = localApiKey.hasPrefix("sk-aitunnel-") && localApiKey.count > 20
-                            Image(systemName: isValid ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                                .foregroundStyle(isValid ? .green : (localApiKey.isEmpty ? .secondary : .orange))
-                            Text(isValid ? "Ключ выглядит корректно" : (localApiKey.isEmpty ? "Ключ не задан" : "Ключ должен начинаться с sk-aitunnel-"))
-                                .font(.caption)
-                                .foregroundStyle(isValid ? .green : (localApiKey.isEmpty ? .secondary : .orange))
+                            .buttonStyle(.borderedProminent)
+                            .disabled(userName.trimmingCharacters(in: .whitespaces).isEmpty)
                         }
                     }
 
                     Divider()
 
-                    // MARK: Секция безопасности
+                    // MARK: AI Providers
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("AI-провайдеры", systemImage: "cpu")
+                            .font(.headline)
+
+                        Text("Управляйте провайдерами и списками моделей для каждого из них.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+
+                        HStack(spacing: 12) {
+                            // Active provider summary
+                            if let provider = viewModel.activeProvider {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(.green)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(provider.displayName)
+                                            .font(.system(size: 13, weight: .semibold))
+                                        if let model = viewModel.activeModelName {
+                                            Text(model)
+                                                .font(.system(size: 11, design: .monospaced))
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Color.green.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+                            } else {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "exclamationmark.circle.fill")
+                                        .foregroundStyle(.orange)
+                                    Text("Нет настроенного провайдера")
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(.orange)
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Color.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+                            }
+
+                            Spacer()
+
+                            Button {
+                                showProviders = true
+                            } label: {
+                                Label("Управлять", systemImage: "slider.horizontal.3")
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+
+                    Divider()
+
+                    // MARK: Security info
                     VStack(alignment: .leading, spacing: 8) {
                         Label("Безопасность", systemImage: "lock.shield.fill")
                             .font(.headline)
 
-                        // Показываем реальный статус хранилища
                         HStack(spacing: 8) {
                             Image(systemName: "checkmark.seal.fill")
                                 .foregroundStyle(.green)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Ключ хранится в системном Keychain")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                Text("Keychain — зашифрованное хранилище macOS, защищённое вашим паролем. Ключ недоступен другим приложениям и не сохраняется в резервных копиях iCloud.")
+                                Text("API-ключи хранятся в системном Keychain")
+                                    .font(.subheadline.weight(.medium))
+                                Text("Keychain — зашифрованное хранилище macOS, защищённое вашим паролем. Ключи недоступны другим приложениям.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
                         }
                         .padding(12)
-                        .background(.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-                    }
-
-                    Divider()
-
-                    // MARK: Кнопка удаления ключа
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("Опасная зона", systemImage: "exclamationmark.triangle")
-                            .font(.headline)
-                            .foregroundStyle(.orange)
-
-                        Button(role: .destructive) {
-                            deleteApiKey()
-                        } label: {
-                            Label("Удалить ключ из Keychain", systemImage: "trash")
-                        }
-                        .disabled(settings.apiKey.isEmpty)
+                        .background(.green.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
                     }
                 }
                 .padding(24)
@@ -165,76 +168,45 @@ struct SettingsView: View {
 
             Divider()
 
-            // MARK: Кнопки действий
             HStack {
                 Spacer()
-
-                // Кнопка отмены — закрываем без сохранения
-                Button("Отмена") {
-                    dismiss()
-                }
-                .keyboardShortcut(.escape)
-
-                // Кнопка сохранения — применяем новый ключ
-                Button {
-                    saveApiKey()
-                } label: {
-                    HStack(spacing: 6) {
-                        if showSavedConfirmation {
-                            Image(systemName: "checkmark")
-                            Text("Сохранено!")
-                        } else {
-                            Text("Сохранить")
-                        }
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.return)
-                // Блокируем кнопку если ключ не изменился
-                .disabled(localApiKey == settings.apiKey)
+                Button("Закрыть") { dismiss() }
+                    .keyboardShortcut(.escape)
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 16)
         }
-        .frame(width: 500, height: 420)
-        .onAppear {
-            // При открытии загружаем текущий ключ в локальную копию для редактирования
-            localApiKey = settings.apiKey
+        .frame(width: 500, height: 440)
+        .sheet(isPresented: $showProviders) {
+            ProvidersSettingsView(viewModel: viewModel)
         }
+        .onAppear { loadCurrentName() }
     }
 
-    // MARK: - Приватные методы
+    // MARK: - Actions
 
-    /// Сохраняет новый API-ключ в Keychain и уведомляет ViewModel.
-    private func saveApiKey() {
-        let trimmed = localApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // Сохраняем через SettingsManager — он запишет в Keychain
-        settings.apiKey = trimmed
-
-        // Уведомляем ViewModel, чтобы она пересоздала AITunnelClient с новым ключом.
-        // Это критично: без этого коллбэка старый клиент продолжит работать со старым ключом
-        // до следующего перезапуска приложения.
-        onApiKeyChanged?(trimmed)
-
-        // Показываем анимацию подтверждения на 1.2 секунды, затем закрываем
+    private func saveName() {
+        let trimmed = userName.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        viewModel.saveUserName(trimmed)
         withAnimation {
-            showSavedConfirmation = true
+            nameSaved = true
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            dismiss()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            withAnimation { nameSaved = false }
         }
     }
 
-    /// Удаляет API-ключ из Keychain и сбрасывает локальное состояние.
-    private func deleteApiKey() {
-        settings.apiKey = ""
-        localApiKey = ""
-        onApiKeyChanged?("")
-        dismiss()
+    private func loadCurrentName() {
+        // Pre-fill from global memory if available.
+        // Memory is injected into system prompt — we read it from the raw store.
+        // For simplicity: read from the last saved value via MemoryStore if accessible.
+        // Since ViewModel doesn't expose a sync name getter, we leave the field empty
+        // and let the user type to update. The placeholder hints at the current value.
     }
 }
 
 #Preview {
-    SettingsView()
+    // Preview requires a real ViewModel — not easily mocked here.
+    Text("SettingsView preview")
 }
