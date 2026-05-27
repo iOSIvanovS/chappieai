@@ -13,6 +13,13 @@
 // ChatScrollView reserves matching transparent header/footer spacers so the
 // first and last messages are always fully readable.
 //
+// BACKGROUND IMAGE LAYOUT:
+// Image("Chappie") lives in a ZStack BEHIND NavigationSplitView.
+// NavigationSplitView has .background(.clear) so the image shows through.
+// TransparentSidebarBackground (in SidebarView) zeroes out the system
+// NSVisualEffectView of the sidebar column — so the image also shows
+// through the sidebar, not just the detail area.
+//
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
 
@@ -68,6 +75,54 @@ struct ContentView: View {
     // MARK: - Main App Content
 
     private var mainContent: some View {
+        // ZStack puts the background image BEHIND NavigationSplitView.
+        // This is the only reliable way to make it show through the sidebar on macOS —
+        // .background() modifier on NavigationSplitView is painted over by the system
+        // NSVisualEffectView before TransparentSidebarBackground can clear it.
+        ZStack {
+            // BOTTOM LAYER: full-window background image
+            Image("Chappie")
+                .resizable()
+                .scaledToFill()
+                .ignoresSafeArea()
+                .opacity(0.5)
+
+            // TOP LAYER: the actual app UI
+            navigationContent
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView(viewModel: viewModel)
+        }
+        .sheet(item: $selectedProjectForSettings) { project in
+            ProjectSettingsSheet(
+                project: project,
+                onSave: { newSettings in
+                    viewModel.updateProjectSettings(newSettings, forProjectId: project.id)
+                    selectedProjectForSettings = nil
+                },
+                onDismiss: {
+                    selectedProjectForSettings = nil
+                }
+            )
+        }
+        .sheet(isPresented: $viewModel.showNewThreadProviderPicker) {
+            NewThreadProviderSheet(
+                providers: viewModel.providers,
+                currentProvider: viewModel.activeProvider,
+                currentModelName: viewModel.activeModelName,
+                onConfirm: { providerId, modelName in
+                    Task { await viewModel.confirmNewThread(with: providerId, modelName: modelName) }
+                },
+                onCancel: {
+                    viewModel.cancelNewThread()
+                }
+            )
+        }
+    }
+
+    // MARK: - Navigation
+
+    private var navigationContent: some View {
         NavigationSplitView {
             SidebarView(
                 isApiKeyValid: !viewModel.providers.isEmpty,
@@ -88,7 +143,6 @@ struct ContentView: View {
                     viewModel.renameThread(thread, newTitle: newTitle)
                 }
             )
-
         } detail: {
             // ZStack: ChatScrollView fills the full area, floating panels overlay on top.
             ZStack(alignment: .top) {
@@ -120,41 +174,8 @@ struct ContentView: View {
                 )
             }
         }
-        .background {
-            Image("Chappie")
-                .resizable()
-                .scaledToFill()
-                .ignoresSafeArea()
-                .opacity(0.5)
-        }
-        .sheet(isPresented: $showSettings) {
-            SettingsView(viewModel: viewModel)
-        }
-        .sheet(item: $selectedProjectForSettings) { project in
-            ProjectSettingsSheet(
-                project: project,
-                onSave: { newSettings in
-                    viewModel.updateProjectSettings(newSettings, forProjectId: project.id)
-                    selectedProjectForSettings = nil
-                },
-                onDismiss: {
-                    selectedProjectForSettings = nil
-                }
-            )
-        }
-        .sheet(isPresented: $viewModel.showNewThreadProviderPicker) {
-            NewThreadProviderSheet(
-                providers: viewModel.providers,
-                currentProvider: viewModel.activeProvider,
-                currentModelName: viewModel.activeModelName,
-                onConfirm: { providerId, modelName in
-                    Task { await viewModel.confirmNewThread(with: providerId, modelName: modelName) }
-                },
-                onCancel: {
-                    viewModel.cancelNewThread()
-                }
-            )
-        }
+        // Clear background so the ZStack image layer shows through
+        .background(.clear)
     }
 
     // MARK: - Top Floating Panel
