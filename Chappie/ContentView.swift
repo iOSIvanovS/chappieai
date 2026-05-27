@@ -118,19 +118,20 @@ struct ContentView: View {
     // MARK: - Navigation
 
     private var navigationContent: some View {
-        // GeometryReader anchors the ZStack to the actual window size.
-        // Without it, scaledToFill on the background image would expand
-        // the layout to the image's intrinsic size on macOS.
+        // GeometryReader is placed OUTSIDE safe area so geometry.size equals
+        // the full window size including toolbar and bottom insets.
+        // This prevents white strips at top/bottom when background image is sized
+        // to geometry.size — without ignoresSafeArea the image would only fill
+        // the safe area, leaving toolbar and bottom areas uncovered.
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
 
-                // BACK LAYER: background image — clipped to window bounds
+                // BACK LAYER: background image — sized to full window, no safe area gaps
                 Image("Chappie")
                     .resizable()
                     .scaledToFill()
                     .frame(width: geometry.size.width, height: geometry.size.height)
                     .clipped()
-                    .ignoresSafeArea()
                     .opacity(0.5)
 
                 // MIDDLE LAYER: main app content — chat + floating panels
@@ -193,6 +194,9 @@ struct ContentView: View {
                 }
             }
         }
+        // Expand GeometryReader to cover the full window including toolbar area —
+        // this is what makes geometry.size report the true full-window dimensions.
+        .ignoresSafeArea()
         // ultraThinMaterial gives the title bar a frosted-glass look
         .toolbarBackground(.ultraThinMaterial, for: .windowToolbar)
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: isSidebarVisible)
