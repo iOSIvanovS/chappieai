@@ -11,6 +11,8 @@
 // STEP 2 — Models:
 //   Fetch available models from the provider (auto-populated if /models works).
 //   User can select from the list OR type model names manually.
+//   Search bar filters the visible list in real time.
+//   "Select all / deselect all" toggle at the top.
 //   Each added model is saved to provider.models list.
 //   Must add at least one model to proceed.
 //
@@ -46,17 +48,18 @@ struct AddProviderSheet: View {
     @State private var isKeyVisible: Bool = false
     @State private var isValidating: Bool = false
     @State private var validationError: String? = nil
-    @State private var validatedProvider: AIProvider? = nil // confirmed after step 1
+    @State private var validatedProvider: AIProvider? = nil
 
     // MARK: - Step 2 State
 
-    @State private var fetchedModels: [String] = []       // from GET /models
-    @State private var selectedModels: Set<String> = []   // checked in the list
+    @State private var fetchedModels: [String] = []
+    @State private var selectedModels: Set<String> = []
     @State private var manualModelInput: String = ""
     @State private var isFetchingModels: Bool = false
     @State private var fetchError: String? = nil
     @State private var isSaving: Bool = false
     @State private var saveError: String? = nil
+    @State private var modelSearchText: String = ""
 
     // MARK: - Computed
 
@@ -68,7 +71,7 @@ struct AddProviderSheet: View {
         (!apiKey.trimmingCharacters(in: .whitespaces).isEmpty || isEditing)
     }
 
-    // All models to show in step 2: fetched list + any already saved on the provider
+    // All models: fetched + manually added + existing (for edit mode)
     private var allModels: [String] {
         var combined = fetchedModels
         if let existing = editingProvider {
@@ -79,7 +82,19 @@ struct AddProviderSheet: View {
         return combined
     }
 
+    // Filtered by search text
+    private var filteredModels: [String] {
+        let q = modelSearchText.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return allModels }
+        return allModels.filter { $0.lowercased().contains(q) }
+    }
+
     private var canSave: Bool { !selectedModels.isEmpty }
+
+    // Whether all visible (filtered) models are selected
+    private var allFilteredSelected: Bool {
+        !filteredModels.isEmpty && filteredModels.allSatisfy { selectedModels.contains($0) }
+    }
 
     // MARK: - Body
 
@@ -120,7 +135,6 @@ struct AddProviderSheet: View {
 
             Divider()
 
-            // Footer
             footerButtons
         }
         .frame(width: 520)
@@ -134,20 +148,17 @@ struct AddProviderSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
 
-                // Name (optional)
                 fieldSection(label: "Название", icon: "tag", hint: "Необязательно. Например: «Work OpenAI» или «Personal Groq»") {
                     TextField("Мой провайдер", text: $providerName)
                         .textFieldStyle(.roundedBorder)
                 }
 
-                // Endpoint
                 fieldSection(label: "Эндпойнт", icon: "link", hint: "Полный URL, например: https://api.aitunnel.ru/v1/chat/completions") {
                     TextField("https://...", text: $endpoint)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.body, design: .monospaced))
                 }
 
-                // API Key
                 fieldSection(
                     label: "API-ключ",
                     icon: "key.fill",
@@ -172,7 +183,6 @@ struct AddProviderSheet: View {
                     }
                 }
 
-                // Validation error
                 if let err = validationError {
                     errorBanner(err)
                 }
@@ -186,7 +196,7 @@ struct AddProviderSheet: View {
     private var modelsStep: some View {
         VStack(alignment: .leading, spacing: 0) {
 
-            // Fetch button
+            // Top controls: fetch + counters
             HStack(spacing: 12) {
                 Button {
                     fetchModels()
@@ -197,14 +207,14 @@ struct AddProviderSheet: View {
                         } else {
                             Image(systemName: "arrow.clockwise")
                         }
-                        Text(isFetchingModels ? "Загружаем модели..." : "Загрузить список моделей")
+                        Text(isFetchingModels ? "Загружаем..." : "Загрузить список")
                     }
                 }
                 .buttonStyle(.bordered)
                 .disabled(isFetchingModels)
 
                 if !fetchedModels.isEmpty {
-                    Text("\(fetchedModels.count) доступно")
+                    Text("\(allModels.count) моделей")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -230,6 +240,57 @@ struct AddProviderSheet: View {
 
             Divider()
 
+            if !allModels.isEmpty {
+                // Search bar
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                        .font(.system(size: 13))
+                    TextField("Поиск по названию…", text: $modelSearchText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13))
+                    if !modelSearchText.isEmpty {
+                        Button {
+                            modelSearchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                                .font(.system(size: 12))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(Color.primary.opacity(0.04))
+
+                // Select all / deselect all
+                Button {
+                    toggleSelectAll()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: allFilteredSelected ? "checkmark.square.fill" : "square")
+                            .font(.system(size: 14))
+                            .foregroundStyle(allFilteredSelected ? Color.accentColor : Color.secondary.opacity(0.5))
+                        Text(allFilteredSelected ? "Снять выделение" : "Выбрать все")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        if !modelSearchText.isEmpty {
+                            Text("(\(filteredModels.count) из \(allModels.count))")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary.opacity(0.7))
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 6)
+                }
+                .buttonStyle(.plain)
+                .background(Color.primary.opacity(0.02))
+
+                Divider()
+            }
+
             // Models list
             if allModels.isEmpty {
                 VStack(spacing: 8) {
@@ -246,10 +307,21 @@ struct AddProviderSheet: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 32)
+            } else if filteredModels.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 28))
+                        .foregroundStyle(.secondary.opacity(0.4))
+                    Text("Ничего не найдено")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 2) {
-                        ForEach(allModels, id: \.self) { model in
+                        ForEach(filteredModels, id: \.self) { model in
                             ModelCheckRow(
                                 model: model,
                                 isSelected: selectedModels.contains(model),
@@ -266,7 +338,7 @@ struct AddProviderSheet: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
                 }
-                .frame(maxHeight: 260)
+                .frame(maxHeight: 240)
             }
 
             Divider()
@@ -287,7 +359,6 @@ struct AddProviderSheet: View {
             .padding(.horizontal, 24)
             .padding(.vertical, 12)
 
-            // Save error
             if let err = saveError {
                 errorBanner(err)
                     .padding(.horizontal, 24)
@@ -300,7 +371,6 @@ struct AddProviderSheet: View {
 
     private var footerButtons: some View {
         HStack {
-            // Back / Cancel
             Button(step == .provider ? "Отмена" : "Назад") {
                 if step == .provider {
                     onCancel()
@@ -312,7 +382,6 @@ struct AddProviderSheet: View {
 
             Spacer()
 
-            // Primary action
             if step == .provider {
                 Button {
                     validateAndProceed()
@@ -384,8 +453,19 @@ struct AddProviderSheet: View {
         guard let provider = editingProvider else { return }
         providerName = provider.name
         endpoint = provider.endpoint
-        // Pre-select all existing models
         selectedModels = Set(provider.models)
+    }
+
+    // MARK: - Select All Toggle
+
+    private func toggleSelectAll() {
+        if allFilteredSelected {
+            // Deselect all visible
+            for m in filteredModels { selectedModels.remove(m) }
+        } else {
+            // Select all visible
+            for m in filteredModels { selectedModels.insert(m) }
+        }
     }
 
     // MARK: - Step 1: Validate Provider
@@ -399,7 +479,6 @@ struct AddProviderSheet: View {
             return
         }
 
-        // For editing: if no new key, use existing from Keychain
         isValidating = true
         validationError = nil
 
@@ -420,12 +499,10 @@ struct AddProviderSheet: View {
                 return
             }
 
-            // Validate provider without a model
             let client = AIClient(endpoint: trimmedEndpoint, apiKey: keyToUse, modelName: "")
             do {
                 try await client.validateProvider()
 
-                // Build a provisional provider to carry into step 2
                 let provisional = AIProvider(
                     id: editingProvider?.id ?? UUID(),
                     name: providerName.trimmingCharacters(in: .whitespaces),
@@ -436,7 +513,6 @@ struct AddProviderSheet: View {
                 await MainActor.run {
                     isValidating = false
                     validatedProvider = provisional
-                    // Kick off model fetch in the background while user sees step 2
                     withAnimation { step = .models }
                     fetchModels()
                 }
@@ -480,7 +556,7 @@ struct AddProviderSheet: View {
                 } else {
                     fetchedModels = models
                     fetchError = nil
-                    // Auto-select all fetched if nothing selected yet
+                    // Auto-select all fetched only if nothing was pre-selected (new provider)
                     if selectedModels.isEmpty {
                         selectedModels = Set(models)
                     }

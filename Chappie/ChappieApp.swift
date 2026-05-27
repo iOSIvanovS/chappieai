@@ -27,6 +27,11 @@
 // - ProjectEntity: projects with security-scoped bookmarks
 // - MemoryEntity: three-level memory (global/project/thread)
 // - AIProviderEntity: AI provider configurations (IT-10, NEW)
+//
+// WINDOW SIZE:
+// .defaultSize(width:height:) sets the initial window size on first launch.
+// .defaultPosition(.center) ensures the window appears centered on screen.
+// These are hints — the system may override them if the user has resized/moved.
 
 import SwiftUI
 import AppKit
@@ -54,7 +59,6 @@ struct ChappieApp: App {
     /// In this case we try to recreate from scratch (deleteExistingFile: true).
     /// This means data loss, but it's better than a full app crash.
     let modelContainer: ModelContainer = {
-        // IT-10: Added AIProviderEntity to the schema
         let schema = Schema([
             ThreadEntity.self,
             ProjectEntity.self,
@@ -94,15 +98,17 @@ struct ChappieApp: App {
             ContentView()
         }
         .modelContainer(modelContainer)
+        // Initial window size — reasonable default for the split-view layout
+        .defaultSize(width: 1100, height: 720)
+        // Center the window on first launch
+        .defaultPosition(.center)
         .commands {
             // Standard macOS commands (Quit, Minimize, etc.)
         }
 
-        // IT-10: Settings scene now shows ProvidersSettingsView
-        // (accessed via Cmd+, or the gear button in the toolbar)
         Settings {
             // Settings scene is intentionally minimal — main settings are in the sheet
-            // opened from the toolbar gear button (ProvidersSettingsView)
+            // opened from the toolbar gear button
             EmptyView()
         }
     }

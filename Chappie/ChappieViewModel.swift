@@ -91,16 +91,12 @@ final class ChappieViewModel {
     /// Chat view shows a warning banner and model picker to recover.
     var isThreadOrphaned: Bool {
         guard let provider = activeProvider else {
-            // No provider at all — orphaned if there was one set in settings
             return activeThreadSettings.activeProviderId != nil
         }
-        // Provider exists in our list?
         guard providers.contains(where: { $0.id == provider.id }) else { return true }
-        // Model exists in provider's list?
         if let model = activeModelName {
             return !provider.models.contains(model)
         }
-        // No model selected but provider has models — not orphaned, just needs selection
         return false
     }
 
@@ -211,6 +207,28 @@ final class ChappieViewModel {
         }
     }
 
+    /// Reads the user's name from global SwiftData memory.
+    /// Parses JSON string {"name": "..."} to extract the value.
+    /// Returns nil if not set yet.
+    func loadUserName() async -> String? {
+        guard let store = memoryStore else { return nil }
+        do {
+            guard let json = try await store.readEntry(key: "user_name", scope: "global") else {
+                return nil
+            }
+            // Parse {"name": "Sergey"} — simple extraction without full JSON decoder
+            guard let data = json.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: String],
+                  let name = obj["name"] else {
+                return nil
+            }
+            return name
+        } catch {
+            print("[ChappieViewModel] Failed to load user name: \(error)")
+            return nil
+        }
+    }
+
     // MARK: - IT-10: Provider Management
 
     /// Loads all providers and sets the active one from the default.
@@ -240,7 +258,6 @@ final class ChappieViewModel {
         self.activeProvider = provider
         self.activeModelName = model.isEmpty ? nil : model
 
-        // Rebuild orchestrator with the new client
         if let ts = toolService, let fs = fileSystem, let mm = memoryManager {
             self.orchestrator = AIOrchestrator(
                 aiClient: client,
@@ -250,7 +267,6 @@ final class ChappieViewModel {
             )
         }
 
-        // Persist selection to thread settings
         if activeThread != nil {
             var settings = activeThreadSettings
             settings.activeProviderId = provider.id
@@ -290,7 +306,6 @@ final class ChappieViewModel {
             do {
                 let loaded = try await store.loadProviders()
                 self.providers = loaded
-                // If active provider was updated — refresh it
                 if let active = activeProvider,
                    let updated = loaded.first(where: { $0.id == active.id }) {
                     self.activeProvider = updated
@@ -562,7 +577,6 @@ final class ChappieViewModel {
             let settings = try await store.loadSettings(forThreadId: thread.id)
             self.activeThreadSettings = settings
 
-            // Restore provider+model for this thread
             if let providerId = settings.activeProviderId,
                let provider = providers.first(where: { $0.id == providerId }) {
                 await switchProvider(provider, modelName: settings.activeModelName)
@@ -593,8 +607,6 @@ final class ChappieViewModel {
 
     private var isLoadingThread: Bool = false
 
-    /// Creates a new thread.
-    /// Shows provider+model picker sheet before entering chat (if providers exist).
     func createNewThread() {
         guard let store = threadStore else { return }
 
@@ -626,7 +638,6 @@ final class ChappieViewModel {
         }
     }
 
-    /// Called after user picks a provider+model in the new-thread sheet.
     func confirmNewThread(with providerId: UUID, modelName: String) async {
         guard let thread = pendingNewThread else { return }
         self.pendingNewThread = nil
@@ -645,7 +656,6 @@ final class ChappieViewModel {
         await syncActiveMemoryContext()
     }
 
-    /// Called when user cancels the new-thread provider picker.
     func cancelNewThread() {
         guard let thread = pendingNewThread else { return }
         self.pendingNewThread = nil
@@ -974,7 +984,7 @@ final class ChappieViewModel {
         }
     }
 
-    // MARK: - Build Network History (no compression)
+    // MARK: - Build Network History
 
     private func buildRawNetworkHistory() -> [AIMessage] {
         return messages.compactMap { msg -> AIMessage? in

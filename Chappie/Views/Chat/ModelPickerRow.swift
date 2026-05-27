@@ -4,6 +4,10 @@
 // Row displayed above ProjectChipsView showing the active AI provider + model.
 // Tapping opens a popover with two-level provider → model selection.
 //
+// CHIP WIDTH:
+//   No lineLimit(1) on model name — text wraps or expands the chip naturally.
+//   The chip uses .fixedSize() so it never clips model names with ellipsis.
+//
 // ORPHANED STATE:
 // If the active provider or model is no longer in the providers list,
 // the row shows a warning style. User can pick a new provider+model inline.
@@ -36,6 +40,7 @@ struct ModelPickerRow: View {
             Text("Модель:")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
+                .fixedSize()
 
             Button {
                 showPopover.toggle()
@@ -45,25 +50,7 @@ struct ModelPickerRow: View {
                         .font(.system(size: 10))
                         .foregroundStyle(isOrphaned ? Color.orange : Color.accentColor.opacity(0.8))
 
-                    if isOrphaned {
-                        Text("Модель недоступна — выберите другую")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.orange)
-                    } else if let provider = activeProvider, let model = activeModelName {
-                        Text("\(provider.displayName) · \(model)")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                    } else if let provider = activeProvider {
-                        Text(provider.displayName)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                    } else {
-                        Text("Не выбрана")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
+                    chipLabel
 
                     Image(systemName: "chevron.down")
                         .font(.system(size: 9, weight: .semibold))
@@ -88,6 +75,7 @@ struct ModelPickerRow: View {
                 )
             }
             .buttonStyle(.plain)
+            .fixedSize() // Let chip grow to fit full model name — no truncation
             .popover(isPresented: $showPopover, arrowEdge: .top) {
                 ModelPickerPopover(
                     providers: providers,
@@ -111,6 +99,29 @@ struct ModelPickerRow: View {
             alignment: .bottom
         )
     }
+
+    // MARK: - Chip Label
+
+    @ViewBuilder
+    private var chipLabel: some View {
+        if isOrphaned {
+            Text("Модель недоступна — выберите другую")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.orange)
+        } else if let provider = activeProvider, let model = activeModelName {
+            Text("\(provider.displayName) · \(model)")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.primary)
+        } else if let provider = activeProvider {
+            Text(provider.displayName)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.primary)
+        } else {
+            Text("Не выбрана")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+        }
+    }
 }
 
 // MARK: - ModelPickerPopover
@@ -125,7 +136,7 @@ private struct ModelPickerPopover: View {
 
     @State private var hoveredProviderId: UUID?
 
-    // The provider currently shown on the right panel
+    // Provider shown on the right panel: hovered > active > first
     private var displayedProvider: AIProvider? {
         if let hovered = hoveredProviderId {
             return providers.first { $0.id == hovered }
@@ -211,9 +222,9 @@ private struct ModelPickerPopover: View {
                     Spacer()
                 }
             }
-            .frame(width: 200)
+            .frame(width: 220)
         }
-        .frame(width: 380)
+        .frame(width: 400)
         .padding(.bottom, 4)
     }
 }
@@ -280,7 +291,6 @@ private struct PopoverModelRow: View {
                     .foregroundStyle(isActive ? Color.accentColor : Color.secondary.opacity(0.3))
                     .frame(width: 16)
 
-                // weight before design — correct argument order for .system()
                 Text(model)
                     .font(.system(size: 12, weight: isActive ? .semibold : .regular, design: .monospaced))
                     .foregroundStyle(.primary)

@@ -8,9 +8,14 @@
 //   Add / delete providers freely (no "can't delete last" guard).
 //
 // LEVEL 2 — Provider detail (ProviderDetailView):
-//   Shows provider info (name, endpoint, default badge).
+//   Shows provider info (name, endpoint).
 //   Shows list of saved models — add new ones, delete existing ones.
 //   Edit provider (name, endpoint, key) via AddProviderSheet.
+//
+// NAVIGATION:
+//   Uses if/else state switch instead of NavigationStack — NavigationStack
+//   inside a sheet on macOS does not behave as drill-down navigation,
+//   it creates a full navigation window which breaks the sheet layout.
 //
 // ORPHANED THREADS:
 //   Deleting a provider or model is always allowed.
@@ -30,7 +35,7 @@ struct ProvidersSettingsView: View {
     // MARK: - State
 
     @State private var showAddProvider: Bool = false
-    @State private var selectedProvider: AIProvider? = nil  // drill into detail
+    @State private var selectedProvider: AIProvider? = nil
     @State private var deleteConfirmId: UUID? = nil
     @State private var errorMessage: String? = nil
 
@@ -39,71 +44,18 @@ struct ProvidersSettingsView: View {
     // MARK: - Body
 
     var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 0) {
-
-                // Header
-                HStack {
-                    Image(systemName: "cpu")
-                        .font(.title2)
-                        .foregroundStyle(.secondary)
-                    Text("AI-провайдеры")
-                        .font(.title2.bold())
-                    Spacer()
-                    Button { dismiss() } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.title2)
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.horizontal, 24)
-                .padding(.top, 24)
-                .padding(.bottom, 20)
-
-                Divider()
-
-                if viewModel.providers.isEmpty {
-                    emptyState
-                } else {
-                    providerList
-                }
-
-                Divider()
-
-                // Footer
-                HStack {
-                    Button {
-                        showAddProvider = true
-                    } label: {
-                        Label("Добавить провайдера", systemImage: "plus.circle.fill")
-                    }
-                    .buttonStyle(.borderedProminent)
-
-                    Spacer()
-
-                    if let err = errorMessage {
-                        Text(err)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                            .lineLimit(1)
-                    }
-
-                    Button("Закрыть") { dismiss() }
-                        .keyboardShortcut(.escape)
-                }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 16)
-            }
-            .frame(width: 560, height: 440)
-            .navigationDestination(item: $selectedProvider) { provider in
+        Group {
+            if let provider = selectedProvider {
                 ProviderDetailView(
                     provider: provider,
                     viewModel: viewModel,
                     onBack: { selectedProvider = nil }
                 )
+            } else {
+                providerListView
             }
         }
+        .frame(width: 560, height: 440)
         .sheet(isPresented: $showAddProvider) {
             AddProviderSheet(
                 providerStore: viewModel.providerStore,
@@ -125,6 +77,66 @@ struct ProvidersSettingsView: View {
             Button("Отмена", role: .cancel) { deleteConfirmId = nil }
         } message: {
             Text("Провайдер и его API-ключ будут удалены. Треды, использующие этого провайдера, покажут предупреждение.")
+        }
+    }
+
+    // MARK: - Provider List View
+
+    private var providerListView: some View {
+        VStack(alignment: .leading, spacing: 0) {
+
+            // Header
+            HStack {
+                Image(systemName: "cpu")
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+                Text("AI-провайдеры")
+                    .font(.title2.bold())
+                Spacer()
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 24)
+            .padding(.bottom, 20)
+
+            Divider()
+
+            if viewModel.providers.isEmpty {
+                emptyState
+            } else {
+                providerList
+            }
+
+            Divider()
+
+            // Footer
+            HStack {
+                Button {
+                    showAddProvider = true
+                } label: {
+                    Label("Добавить провайдера", systemImage: "plus.circle.fill")
+                }
+                .buttonStyle(.borderedProminent)
+
+                Spacer()
+
+                if let err = errorMessage {
+                    Text(err)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .lineLimit(1)
+                }
+
+                Button("Закрыть") { dismiss() }
+                    .keyboardShortcut(.escape)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
         }
     }
 
@@ -192,12 +204,10 @@ private struct ProviderListRow: View {
     var body: some View {
         HStack(spacing: 12) {
 
-            // Active indicator
             Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
                 .font(.system(size: 16))
                 .foregroundStyle(isActive ? Color.accentColor : Color.secondary.opacity(0.25))
 
-            // Info
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(provider.displayName)
@@ -229,7 +239,7 @@ private struct ProviderListRow: View {
 
             Spacer()
 
-            // Delete
+            // Delete button — visible on hover
             Button(action: onDelete) {
                 Image(systemName: "trash")
                     .font(.system(size: 12))
@@ -239,7 +249,6 @@ private struct ProviderListRow: View {
             .help("Удалить провайдера")
             .opacity(isHovered ? 1 : 0)
 
-            // Chevron
             Image(systemName: "chevron.right")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary.opacity(0.4))
@@ -273,8 +282,8 @@ struct ProviderDetailView: View {
 
     @State private var currentProvider: AIProvider
     @State private var showEditProvider: Bool = false
-    @State private var showAddModel: Bool = false
     @State private var newModelName: String = ""
+    @State private var showAddModelAlert: Bool = false
     @State private var deleteModelName: String? = nil
     @State private var errorMessage: String? = nil
 
@@ -290,13 +299,13 @@ struct ProviderDetailView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
 
-            // Header
+            // Header with back button
             HStack {
                 Button(action: onBack) {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 13, weight: .semibold))
-                        Text("Назад")
+                        Text("Провайдеры")
                     }
                     .foregroundStyle(Color.accentColor)
                 }
@@ -316,21 +325,26 @@ struct ProviderDetailView: View {
             .padding(.top, 20)
             .padding(.bottom, 12)
 
+            Divider()
+
             // Provider info card
             providerInfoCard
+                .padding(.vertical, 12)
 
             Divider()
-                .padding(.vertical, 12)
 
             // Models section header
             HStack {
                 Text("Модели")
                     .font(.headline)
+                Text("(\(currentProvider.models.count))")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
 
                 Spacer()
 
                 Button {
-                    showAddModel = true
+                    showAddModelAlert = true
                 } label: {
                     Label("Добавить", systemImage: "plus")
                         .font(.subheadline)
@@ -338,7 +352,9 @@ struct ProviderDetailView: View {
                 .buttonStyle(.bordered)
             }
             .padding(.horizontal, 24)
-            .padding(.bottom, 8)
+            .padding(.vertical, 10)
+
+            Divider()
 
             if currentProvider.models.isEmpty {
                 modelsEmptyState
@@ -351,12 +367,11 @@ struct ProviderDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.red)
                     .padding(.horizontal, 24)
-                    .padding(.bottom, 8)
+                    .padding(.vertical, 8)
             }
 
             Spacer(minLength: 0)
         }
-        .frame(width: 560)
         .sheet(isPresented: $showEditProvider) {
             AddProviderSheet(
                 providerStore: viewModel.providerStore,
@@ -369,7 +384,7 @@ struct ProviderDetailView: View {
                 onCancel: { showEditProvider = false }
             )
         }
-        .alert("Добавить модель", isPresented: $showAddModel) {
+        .alert("Добавить модель", isPresented: $showAddModelAlert) {
             TextField("Название модели", text: $newModelName)
             Button("Добавить") { addModel() }
             Button("Отмена", role: .cancel) { newModelName = "" }
@@ -422,7 +437,7 @@ struct ProviderDetailView: View {
             Spacer()
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)
         .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
         .padding(.horizontal, 24)
     }
@@ -442,13 +457,13 @@ struct ProviderDetailView: View {
             }
         }
         .listStyle(.inset)
-        .frame(maxHeight: 240)
     }
 
     // MARK: - Models Empty State
 
     private var modelsEmptyState: some View {
         VStack(spacing: 10) {
+            Spacer()
             Image(systemName: "square.stack.3d.up.slash")
                 .font(.system(size: 32))
                 .foregroundStyle(.secondary.opacity(0.4))
@@ -458,6 +473,7 @@ struct ProviderDetailView: View {
             Text("Нажмите «Добавить» чтобы добавить модель")
                 .font(.caption)
                 .foregroundStyle(.secondary.opacity(0.7))
+            Spacer()
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
@@ -519,7 +535,6 @@ private struct ModelListRow: View {
     var body: some View {
         HStack(spacing: 12) {
 
-            // Active indicator / select button
             Button(action: onSelect) {
                 Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 16))
@@ -543,7 +558,6 @@ private struct ModelListRow: View {
 
             Spacer()
 
-            // Delete
             Button(action: onDelete) {
                 Image(systemName: "trash")
                     .font(.system(size: 12))

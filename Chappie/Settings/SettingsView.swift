@@ -4,6 +4,11 @@
 // Application settings sheet.
 // Contains: user name field (saved to global memory), AI providers shortcut.
 //
+// USER NAME:
+//   On appear — reads current name from global SwiftData memory (key "user_name").
+//   Parses JSON string {"name": "..."} to extract the value.
+//   On save — calls viewModel.saveUserName() which writes back to global memory.
+//
 // NOTE: API key management moved to ProvidersSettingsView / AddProviderSheet.
 // SettingsView is now a lightweight general settings panel.
 
@@ -99,7 +104,6 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
 
                         HStack(spacing: 12) {
-                            // Active provider summary
                             if let provider = viewModel.activeProvider {
                                 HStack(spacing: 8) {
                                     Image(systemName: "checkmark.circle.fill")
@@ -198,15 +202,21 @@ struct SettingsView: View {
     }
 
     private func loadCurrentName() {
-        // Pre-fill from global memory if available.
-        // Memory is injected into system prompt — we read it from the raw store.
-        // For simplicity: read from the last saved value via MemoryStore if accessible.
-        // Since ViewModel doesn't expose a sync name getter, we leave the field empty
-        // and let the user type to update. The placeholder hints at the current value.
+        // providerStore being non-nil means ModelContainer is connected and memoryStore is ready.
+        // If not ready yet — retry after a short delay.
+        guard viewModel.providerStore != nil else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { loadCurrentName() }
+            return
+        }
+        Task {
+            let name = await viewModel.loadUserName()
+            if let name, !name.isEmpty {
+                userName = name
+            }
+        }
     }
 }
 
 #Preview {
-    // Preview requires a real ViewModel — not easily mocked here.
     Text("SettingsView preview")
 }
