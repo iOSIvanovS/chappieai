@@ -13,9 +13,10 @@
 //   SwiftUI's onKeyPress on TextEditor is unreliable — AppKit consumes events first.
 //   Subclassing is the ONLY guaranteed approach on macOS.
 // - Plain Enter → send. Shift+Enter or Option+Enter → insert newline.
-// - Dynamic height: line count × lineHeight, capped at maxLines, with spring animation.
-// - On send: height collapses to collapsedHeight, morphs to thinking state.
-// - On finish/cancel: height restores; editor auto-focuses via coordinator.
+// - Dynamic height: measured via NSLayoutManager (handles word-wrap correctly),
+//   capped at maxLines, with spring animation.
+// - On send: editorHeight resets to minEditorHeight immediately; morph animates to collapsedHeight.
+// - On finish/cancel: height restores from editorHeight; editor auto-focuses via coordinator.
 
 import SwiftUI
 import AppKit
@@ -87,7 +88,6 @@ struct ChappieTextEditorView: NSViewRepresentable {
         let coordinator = context.coordinator
 
         let textView = ChappieTextView()
-        // coordinator is a class — safe to capture weakly in the closure
         textView.onSend = { [weak coordinator] in
             coordinator?.parent.onSend()
         }
@@ -113,7 +113,6 @@ struct ChappieTextEditorView: NSViewRepresentable {
 
         coordinator.textView = textView
 
-        // Surface coordinator to parent after view is set up
         DispatchQueue.main.async {
             coordinator.parent.onCoordinatorReady?(coordinator)
         }
@@ -124,8 +123,6 @@ struct ChappieTextEditorView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? ChappieTextView else { return }
 
-        // Refresh onSend so the closure always sees the latest canSend state.
-        // We extract coordinator first — context is a struct, cannot use weak.
         let coordinator = context.coordinator
         textView.onSend = { [weak coordinator] in
             coordinator?.parent.onSend()
@@ -134,7 +131,10 @@ struct ChappieTextEditorView: NSViewRepresentable {
         // Sync text only when changed externally (e.g. cleared after send)
         if textView.string != text {
             textView.string = text
-            coordinator.recalculateHeight(textView)
+            // Recalculate height after layout pass so layoutManager has fresh data
+            DispatchQueue.main.async {
+                coordinator.recalculateHeight(textView)
+            }
         }
 
         textView.isEditable = isEnabled
@@ -164,11 +164,24 @@ struct ChappieTextEditorView: NSViewRepresentable {
             parent.onFocusChange?(false)
         }
 
+        /// Measures real rendered height using NSLayoutManager.
+        /// This correctly handles word-wrap — unlike counting "\n" characters.
         func recalculateHeight(_ textView: NSTextView) {
-            let lineCount = max(1, textView.string.components(separatedBy: "\n").count)
-            let clamped = min(lineCount, Layout.maxLines)
-            let newHeight = CGFloat(clamped) * Layout.lineHeight + Layout.editorVerticalPadding * 2
-            parent.onHeightChange(newHeight)
+            guard
+                let layoutManager = textView.layoutManager,
+                let textContainer = textView.textContainer
+            else { return }
+
+            // Force layout to be up to date before measuring
+            layoutManager.ensureLayout(for: textContainer)
+
+            let usedRect = layoutManager.usedRect(for: textContainer)
+            // usedRect.height reflects actual rendered lines including word-wrap
+            let contentHeight = usedRect.height + Layout.editorVerticalPadding * 2
+            let clamped = min(contentHeight, Layout.maxEditorHeight)
+            let final = max(clamped, Layout.minEditorHeight)
+
+            parent.onHeightChange(final)
         }
 
         /// Makes the underlying NSTextView first responder.
@@ -206,6 +219,7 @@ struct InputMorphView: View {
     }
 
     private var contentHeight: CGFloat {
+        // While thinking: always collapsed. Otherwise: use real editor height.
         isThinking ? Layout.collapsedHeight : editorHeight
     }
 
@@ -238,6 +252,13 @@ struct InputMorphView: View {
                 }
             }
         }
+        .onChange(of: prompt) { _, newValue in
+            // When prompt is cleared externally (after send) — reset editor height immediately.
+            // This ensures the panel doesn't stay tall when morphing back from thinking state.
+            if newValue.isEmpty {
+                editorHeight = Layout.minEditorHeight
+            }
+        }
     }
 
     // MARK: - Idle View
@@ -249,7 +270,8 @@ struct InputMorphView: View {
                 isEnabled: isWorkspaceSelected && !isThinking,
                 onSend: { if canSend { onSend() } },
                 onHeightChange: { newHeight in
-                    if abs(newHeight - editorHeight) > 1 {
+                    // Only update while not thinking — avoids fighting the collapse animation
+                    if !isThinking, abs(newHeight - editorHeight) > 1 {
                         editorHeight = newHeight
                     }
                 },
