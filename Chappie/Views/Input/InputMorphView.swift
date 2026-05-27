@@ -5,17 +5,41 @@
 // Replaces the old InputBarView + StatusBarView pair with a single morphing component.
 // The idea: the input bar IS the status bar — it transforms in place.
 //
-// IDLE state:    [ TextField                     ] [▶ Send]
-// THINKING state: [ ⚙ write_file → ContentView… ] [✕ Cancel]
+// IDLE state:    [ TextEditor (1–10 lines, scrollable) ] [▶ Send]
+// THINKING state: [ ⚙ write_file → ContentView…       ] [✕ Cancel]
 //
 // DESIGN DECISIONS:
-// - Single fixed-height container — no layout jumps during transition.
-// - crossfade (.opacity transition) between inner views — smooth, non-distracting.
+// - TextEditor instead of TextField: gives us real scroll when content > 10 lines.
+// - Dynamic height: measured via GeometryReader, capped at maxIdleHeight.
+// - On send: height animates DOWN to collapsedHeight (single line) before morphing.
+// - On finish/cancel: height animates back to whatever the editor needs.
 // - Cancel button calls viewModel.cancelCurrentRequest() — real Task cancellation.
-// - After cancel/error/completion — morphs back to idle, TextField auto-focuses.
-// - The component owns no state besides @FocusState — all state lives in ViewModel.
+// - After cancel/error/completion — morphs back to idle, TextEditor auto-focuses.
 
 import SwiftUI
+
+// MARK: - Constants
+
+private enum Layout {
+    /// Single-line height of the thinking bar (gear + label + cancel).
+    static let collapsedHeight: CGFloat = 28
+    /// Line height approximation for the TextEditor (font size + padding).
+    static let lineHeight: CGFloat = 20
+    /// Vertical padding inside the TextEditor frame.
+    static let editorVerticalPadding: CGFloat = 6
+    /// Maximum number of visible lines before scroll kicks in.
+    static let maxLines: Int = 10
+    /// Maximum height of the TextEditor frame.
+    static var maxEditorHeight: CGFloat {
+        CGFloat(maxLines) * lineHeight + editorVerticalPadding * 2
+    }
+    /// Minimum height of the TextEditor frame (one line).
+    static var minEditorHeight: CGFloat {
+        lineHeight + editorVerticalPadding * 2
+    }
+}
+
+// MARK: - InputMorphView
 
 struct InputMorphView: View {
 
@@ -34,7 +58,7 @@ struct InputMorphView: View {
     /// nil = no tool call running.
     let currentToolCall: String?
 
-    /// Called when the user taps Send or presses Enter.
+    /// Called when the user taps Send or presses Enter (without Option).
     let onSend: () -> Void
 
     /// Called when the user taps Cancel during thinking.
@@ -42,8 +66,12 @@ struct InputMorphView: View {
 
     // MARK: - Private State
 
-    /// Tracks focus on the text field so we can restore it after cancel/error.
-    @FocusState private var isTextFieldFocused: Bool
+    /// Tracks focus on the text editor so we can restore it after cancel/error.
+    @FocusState private var isEditorFocused: Bool
+
+    /// Computed height of the TextEditor based on current text line count.
+    /// Capped between minEditorHeight and maxEditorHeight.
+    @State private var editorHeight: CGFloat = Layout.minEditorHeight
 
     // MARK: - Computed
 
@@ -53,11 +81,18 @@ struct InputMorphView: View {
         && !isThinking
     }
 
+    /// Height used for the inner content area.
+    /// - Thinking: collapsed to single line.
+    /// - Idle: dynamic based on text content.
+    private var contentHeight: CGFloat {
+        isThinking ? Layout.collapsedHeight : editorHeight
+    }
+
     // MARK: - Body
 
     var body: some View {
-        ZStack {
-            // Idle state: text field + send button
+        ZStack(alignment: .bottom) {
+            // Idle state: text editor + send button
             idleView
                 .opacity(isThinking ? 0 : 1)
                 .scaleEffect(isThinking ? 0.96 : 1, anchor: .bottom)
@@ -67,23 +102,29 @@ struct InputMorphView: View {
                 .opacity(isThinking ? 1 : 0)
                 .scaleEffect(isThinking ? 1 : 0.96, anchor: .bottom)
         }
-        // Shared container — same padding and background in both states
+        // Height morphs smoothly between collapsed and expanded
+        .frame(height: contentHeight)
         .padding(12)
         .background(Color(NSColor.windowBackgroundColor))
         .cornerRadius(12)
         .shadow(color: .black.opacity(0.15), radius: 3, x: 0, y: 2)
         .padding(.horizontal)
         .padding(.bottom, 16)
-        // Single smooth animation driven by isThinking toggle
+        // Single smooth spring animation drives both opacity/scale AND height
         .animation(.spring(response: 0.38, dampingFraction: 0.82), value: isThinking)
+        .animation(.spring(response: 0.25, dampingFraction: 0.85), value: editorHeight)
         // Restore focus when Chappie finishes thinking
         .onChange(of: isThinking) { _, nowThinking in
             if !nowThinking {
                 // Small delay so SwiftUI finishes the transition before focusing
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-                    isTextFieldFocused = true
+                    isEditorFocused = true
                 }
             }
+        }
+        // Recalculate editor height whenever prompt text changes
+        .onChange(of: prompt) { _, newValue in
+            updateEditorHeight(for: newValue)
         }
     }
 
@@ -91,23 +132,59 @@ struct InputMorphView: View {
 
     private var idleView: some View {
         HStack(alignment: .bottom, spacing: 12) {
-            TextField(
-                "Напиши сообщение... (Enter — отправить, ⌥+Enter — перенос)",
-                text: $prompt,
-                axis: .vertical
+            // TextEditor gives real scroll when content exceeds maxLines.
+            // We fix its frame height and let it scroll internally.
+            ScrollView(.vertical, showsIndicators: true) {
+                TextEditor(text: $prompt)
+                    .font(.system(size: 13))
+                    .focused($isEditorFocused)
+                    .scrollContentBackground(.hidden)
+                    .background(Color.clear)
+                    // Intercept Enter key: send on plain Enter, newline on ⌥+Enter
+                    .onKeyPress(.return) {
+                        if NSEvent.modifierFlags.contains(.option) {
+                            // ⌥+Enter — insert newline, let TextEditor handle it
+                            return .ignored
+                        }
+                        // Plain Enter — send message
+                        if canSend { onSend() }
+                        return .handled
+                    }
+                    .disabled(!isWorkspaceSelected || isThinking)
+                    // Inner frame matches the outer animated height exactly
+                    .frame(height: editorHeight)
+            }
+            // Outer frame clips scroll view to our animated height
+            .frame(height: editorHeight)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(NSColor.textBackgroundColor))
             )
-            .textFieldStyle(.roundedBorder)
-            .lineLimit(1...10)
-            .focused($isTextFieldFocused)
-            .onSubmit { onSend() }
-            .disabled(!isWorkspaceSelected || isThinking)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(isEditorFocused
+                        ? Color.accentColor.opacity(0.6)
+                        : Color(NSColor.separatorColor),
+                        lineWidth: 1)
+            )
+            // Placeholder text when prompt is empty
+            .overlay(alignment: .topLeading) {
+                if prompt.isEmpty {
+                    Text("Напиши сообщение… (Enter — отправить, ⌥+Enter — перенос)")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color(NSColor.placeholderTextColor))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, Layout.editorVerticalPadding)
+                        .allowsHitTesting(false)
+                }
+            }
 
             Button(action: onSend) {
                 Image(systemName: "paperplane.fill")
             }
             .buttonStyle(.borderedProminent)
             .disabled(!canSend)
-            // Align button to the bottom edge of the (possibly multiline) text field
+            // Align button to the bottom edge of the (possibly multiline) editor
             .padding(.bottom, 2)
         }
     }
@@ -143,14 +220,26 @@ struct InputMorphView: View {
             .foregroundStyle(.secondary)
             .help("Прервать текущий запрос")
         }
-        // Match the height of the idle text field (single-line baseline)
-        .frame(minHeight: 28)
+        .frame(height: Layout.collapsedHeight)
+    }
+
+    // MARK: - Height Calculation
+
+    /// Recalculates editorHeight based on the number of lines in the text.
+    /// Uses approximate line height — good enough for smooth animation.
+    private func updateEditorHeight(for text: String) {
+        let lineCount = max(1, text.components(separatedBy: "\n").count)
+        let clamped = min(lineCount, Layout.maxLines)
+        let newHeight = CGFloat(clamped) * Layout.lineHeight + Layout.editorVerticalPadding * 2
+        if abs(newHeight - editorHeight) > 1 {
+            editorHeight = newHeight
+        }
     }
 }
 
 // MARK: - Preview
 
-#Preview("Idle") {
+#Preview("Idle — empty") {
     VStack {
         Spacer()
         InputMorphView(
@@ -162,7 +251,22 @@ struct InputMorphView: View {
             onCancel: {}
         )
     }
-    .frame(width: 600, height: 120)
+    .frame(width: 600, height: 160)
+}
+
+#Preview("Idle — multiline") {
+    VStack {
+        Spacer()
+        InputMorphView(
+            prompt: .constant("Строка 1\nСтрока 2\nСтрока 3\nСтрока 4\nСтрока 5"),
+            isWorkspaceSelected: true,
+            isThinking: false,
+            currentToolCall: nil,
+            onSend: {},
+            onCancel: {}
+        )
+    }
+    .frame(width: 600, height: 260)
 }
 
 #Preview("Thinking — tool call") {
