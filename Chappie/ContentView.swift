@@ -31,6 +31,12 @@
 //   ultraThinMaterial background — frosted glass matching the panels.
 //   Contains: sidebar toggle (list.bullet), balance pill, settings gear.
 //
+// HEADER HEIGHT:
+//   headerHeight = topPanelHeight + safeAreaTop.
+//   safeAreaTop is read from GeometryReader inside mainChatArea — it equals
+//   the toolbar height as reported by SwiftUI layout system.
+//   This ensures the first message is fully readable below both toolbar AND top panel.
+//
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
 
@@ -54,6 +60,10 @@ struct ContentView: View {
     // Heights reported by floating panels — used as transparent spacers in ChatScrollView.
     @State private var topPanelHeight: CGFloat = 0
     @State private var bottomPanelHeight: CGFloat = 0
+
+    // Safe area top inset (= toolbar height) — read from GeometryReader inside mainChatArea.
+    // Added to topPanelHeight to form the total headerHeight for ChatScrollView.
+    @State private var safeAreaTop: CGFloat = 0
 
     @Environment(\.modelContext) private var modelContext
 
@@ -196,16 +206,23 @@ struct ContentView: View {
     private var mainChatArea: some View {
         ZStack(alignment: .top) {
 
-            // BACK: full-screen scroll view
-            // threadId is passed so ChatScrollView can detect thread switches
-            // and reset its scroll state to jump to the bottom of the new thread.
+            // BACK: full-screen scroll view.
+            // headerHeight = topPanelHeight + safeAreaTop so the first message
+            // is readable below BOTH the toolbar and the top floating panel.
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { safeAreaTop = geo.safeAreaInsets.top }
+                    .onChange(of: geo.safeAreaInsets.top) { _, v in safeAreaTop = v }
+            }
+            .frame(height: 0) // Zero-height probe — does not affect layout
+
             ChatScrollView(
                 threadId: viewModel.activeThread?.id,
                 messages: viewModel.visibleMessages,
                 isThinking: viewModel.isThinking,
                 streamingText: viewModel.streamingText,
                 runningCost: viewModel.runningCost,
-                headerHeight: topPanelHeight,
+                headerHeight: topPanelHeight + safeAreaTop,
                 footerHeight: bottomPanelHeight
             )
             .ignoresSafeArea(edges: .top)
