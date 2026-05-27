@@ -5,11 +5,12 @@
 // Replaces the old SettingsView-based onboarding (which only asked for an API key).
 //
 // FLOW:
-// Step 1: User name (optional) — staged in UserDefaults, saved to global memory on first send
+// Step 1: User name (optional) — saved directly to global memory via viewModel.saveUserName()
 // Step 2: First AI provider setup (required) — uses AddProviderSheet
 //         Cannot proceed until at least one provider is validated and saved.
 //
 // The app does NOT allow entry until at least one provider is configured.
+// User name is written straight to SwiftData global memory — no UserDefaults staging.
 
 import SwiftUI
 import ChappieCore
@@ -108,7 +109,8 @@ struct OnboardingView: View {
             }
 
             Button {
-                saveUserNameIfNeeded()
+                // Save directly to global memory — no UserDefaults staging needed.
+                viewModel.saveUserName(userName)
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                     step = .provider
                 }
@@ -209,15 +211,5 @@ struct OnboardingView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
-    }
-
-    // MARK: - Save User Name
-
-    private func saveUserNameIfNeeded() {
-        let trimmed = userName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        // Stage in UserDefaults — will be saved to global memory on first send
-        UserDefaults.standard.set(trimmed, forKey: "pendingUserName")
-        print("[OnboardingView] User name staged: \(trimmed)")
     }
 }

@@ -14,6 +14,9 @@
 // - activeProvider: AIProvider? — currently selected provider for the active thread
 // - createNewThread() now triggers provider selection sheet before entering chat
 // - init() no longer reads SettingsManager.shared.apiKey (legacy)
+//
+// IT-10 (user name): saveUserName() writes directly to SwiftData global memory.
+// No UserDefaults staging — name is available in every system prompt immediately.
 
 import SwiftUI
 import ChappieCore
@@ -152,6 +155,44 @@ final class ChappieViewModel {
             await runMigrationIfNeeded(threadStore: tStore, memoryStore: store)
             await loadProvidersAndSetActive(from: provStore)
             await loadThreadsAndSelectActive(from: tStore)
+        }
+    }
+
+    // MARK: - IT-10: User Name
+
+    /// Saves the user's name directly to global SwiftData memory.
+    /// Called from OnboardingView — no UserDefaults staging, no MemoryManager wrapper needed.
+    /// The name is injected into every system prompt via buildSystemPrompt().
+    func saveUserName(_ name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        guard let store = memoryStore else {
+            // MemoryStore not yet connected — retry after a short delay.
+            // Rare case: onboarding finishes before setModelContainer() completes.
+            print("[ChappieViewModel] MemoryStore not ready, retrying saveUserName in 1s")
+            Task {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                self.saveUserName(trimmed)
+            }
+            return
+        }
+
+        // Escape any quotes in the name to produce valid JSON.
+        let escaped = trimmed.replacingOccurrences(of: "\"", with: "\\\"")
+
+        Task {
+            do {
+                try await store.saveEntry(
+                    key: "user_name",
+                    type: "fact",
+                    jsonString: "{\"name\": \"\(escaped)\"}",
+                    scope: "global"
+                )
+                print("[ChappieViewModel] User name saved to global memory: \(trimmed)")
+            } catch {
+                print("[ChappieViewModel] Failed to save user name: \(error)")
+            }
         }
     }
 
