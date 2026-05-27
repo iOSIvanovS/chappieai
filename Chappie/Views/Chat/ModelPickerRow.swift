@@ -5,9 +5,9 @@
 // Tapping opens a popover with two-level provider → model selection.
 //
 // CHIP STYLE:
-//   No individual shadow — the parent top panel provides the shared shadow.
-//   White opaque background (NSColor.textBackgroundColor) for legibility over messages.
-//   No divider at the bottom — the floating panel relies on shadow for separation.
+//   The entire row is a floating rounded pill with ultraThinMaterial background.
+//   Consistent with ProjectChipsView and the bottom InputMorphView panel.
+//   No divider — shadow provides visual separation from the chat content.
 //
 // ORPHANED STATE:
 // If the active provider or model is no longer in the providers list,
@@ -38,7 +38,7 @@ struct ModelPickerRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            // "Модель" label — chip with opaque background for legibility
+            // "Модель" label
             Text("Модель")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
@@ -46,9 +46,8 @@ struct ModelPickerRow: View {
                 .padding(.vertical, 4)
                 .background(
                     Capsule()
-                        .fill(Color(NSColor.textBackgroundColor))
+                        .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
                 )
-                // No individual shadow — parent panel shadow handles separation
 
             Button {
                 showPopover.toggle()
@@ -68,7 +67,7 @@ struct ModelPickerRow: View {
                 .padding(.vertical, 4)
                 .background(
                     Capsule()
-                        .fill(Color(NSColor.textBackgroundColor))
+                        .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
                 )
                 .overlay(
                     Capsule()
@@ -79,10 +78,9 @@ struct ModelPickerRow: View {
                             lineWidth: 0.5
                         )
                 )
-                // No individual shadow — parent panel shadow handles separation
             }
             .buttonStyle(.plain)
-            .fixedSize() // Let chip grow to fit full model name — no truncation
+            .fixedSize()
             .popover(isPresented: $showPopover, arrowEdge: .top) {
                 ModelPickerPopover(
                     providers: providers,
@@ -97,9 +95,12 @@ struct ModelPickerRow: View {
 
             Spacer()
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
-        // No divider — shadow from the parent panel provides visual separation
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        // Floating pill: frosted glass consistent with bottom panel and sidebar
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 4)
     }
 
     // MARK: - Chip Label

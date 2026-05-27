@@ -2,12 +2,13 @@
 // Chappie
 //
 // Horizontal row of project chips for the current thread.
-// Displayed in the top floating panel above the message list.
+// Displayed as a floating rounded pill above the message list.
 //
 // CHIP STYLE:
-//   White opaque background (NSColor.textBackgroundColor) for legibility over messages.
-//   No individual shadow — the parent top panel provides the shared shadow.
-//   No divider — the floating panel shadow provides visual separation.
+//   The entire row is a floating rounded pill with ultraThinMaterial background.
+//   Consistent with ModelPickerRow and the bottom InputMorphView panel.
+//   Individual chips use semi-transparent NSColor.textBackgroundColor for legibility.
+//   No divider — shadow provides visual separation from the chat content.
 //
 // IT-09: Tap on chip opens ProjectSettingsSheet.
 // onOpenSettings(UUID) callback passes project ID to ViewModel.
@@ -59,7 +60,7 @@ struct ProjectChipsView: View {
     var body: some View {
         HStack(spacing: 6) {
 
-            // "Проекты" label — chip with opaque background for legibility
+            // "Проекты" label
             Text("Проекты")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
@@ -67,9 +68,8 @@ struct ProjectChipsView: View {
                 .padding(.vertical, 4)
                 .background(
                     Capsule()
-                        .fill(Color(NSColor.textBackgroundColor))
+                        .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
                 )
-                // No individual shadow — parent panel shadow handles separation
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
@@ -83,9 +83,12 @@ struct ProjectChipsView: View {
                 .padding(.horizontal, 2)
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        // No divider — shadow from the parent panel provides visual separation
+        // Floating pill: frosted glass consistent with ModelPickerRow and bottom panel
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 4)
     }
 
     // MARK: - Project chip
@@ -128,13 +131,12 @@ struct ProjectChipsView: View {
         .padding(.vertical, 4)
         .background(
             Capsule()
-                .fill(Color(NSColor.textBackgroundColor))
+                .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
         )
         .overlay(
             Capsule()
                 .stroke(Color.accentColor.opacity(0.2), lineWidth: 0.5)
         )
-        // No individual shadow — parent panel shadow handles separation
         .onHover { isHovered in
             withAnimation(.easeInOut(duration: 0.15)) {
                 hoveredProjectId = isHovered ? project.id : nil
@@ -183,13 +185,12 @@ struct ProjectChipsView: View {
             .foregroundStyle(Color.accentColor)
             .background(
                 Capsule()
-                    .fill(Color(NSColor.textBackgroundColor))
+                    .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
                     .overlay(
                         Capsule()
                             .stroke(Color.accentColor.opacity(0.35), lineWidth: 1)
                     )
             )
-            // No individual shadow — parent panel shadow handles separation
         }
         .buttonStyle(.plain)
         .help("Добавить папку проекта к этому треду")
@@ -237,7 +238,7 @@ struct ProjectChipsView: View {
             print("Настройки: \(id)")
         }
     )
-    .frame(width: 600)
+    .padding()
     .background(Color(NSColor.windowBackgroundColor))
 }
 
@@ -248,6 +249,6 @@ struct ProjectChipsView: View {
         onRemoveProject: { _ in },
         onOpenSettings: { _ in }
     )
-    .frame(width: 600)
+    .padding()
     .background(Color(NSColor.windowBackgroundColor))
 }

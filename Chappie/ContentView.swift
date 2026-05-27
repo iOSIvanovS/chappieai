@@ -23,7 +23,8 @@
 // Animation: spring, consistent with macOS feel.
 //
 // FLOATING PANELS:
-//   Top panel: ModelPickerRow + ProjectChipsView — ultraThinMaterial.
+//   Top panel: ModelPickerRow + ProjectChipsView — each is an independent floating
+//   rounded pill with ultraThinMaterial. The outer VStack is transparent.
 //   Bottom panel: InputMorphView — ultraThinMaterial.
 //   Both panels report their heights so ChatScrollView can add matching spacers.
 //
@@ -227,7 +228,7 @@ struct ContentView: View {
             )
             .ignoresSafeArea(edges: .top)
 
-            // FRONT: frosted glass floating panels
+            // FRONT: floating panels — transparent container, each pill floats independently
             VStack(spacing: 0) {
                 topPanel
                 Spacer()
@@ -240,9 +241,11 @@ struct ContentView: View {
 
     // MARK: - Top Floating Panel
 
-    /// Top panel: model picker + project chips — ultraThinMaterial frosted glass.
+    /// Top panel: transparent container holding floating pill rows.
+    /// Each row (ModelPickerRow, ProjectChipsView) has its own ultraThinMaterial pill.
+    /// The outer VStack is transparent — pills appear to float independently over the chat.
     private var topPanel: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 6) {
             if viewModel.activeThread != nil && !viewModel.providers.isEmpty {
                 ModelPickerRow(
                     activeProvider: viewModel.activeProvider,
@@ -275,9 +278,9 @@ struct ContentView: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        // ultraThinMaterial — frosted glass consistent with toolbar and bottom panel
-        .background(.ultraThinMaterial)
-        .shadow(color: .black.opacity(0.25), radius: 12, x: 0, y: 6)
+        // Horizontal padding so pills don't touch the window edges
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
         // Report height for ChatScrollView headerHeight
         .background(
             GeometryReader { geo in
