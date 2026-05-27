@@ -35,6 +35,11 @@
 // On switchProvider — the stored balance for the new provider is loaded.
 // On balance update — saved under the active provider's key.
 // This ensures each endpoint shows its own balance, not a shared global value.
+//
+// BALANCE ON STARTUP (UX-BALANCE-STARTUP):
+// selectThread() always calls refreshBalanceForActiveProvider() at the end,
+// regardless of which code path was taken. This guarantees the pill is visible
+// after app launch even if switchProvider() was not called during thread selection.
 
 import SwiftUI
 import ChappieCore
@@ -172,6 +177,14 @@ final class ChappieViewModel {
         let key = balanceKey(for: providerId)
         // object(forKey:) returns nil when key is absent; cast to Double? handles that.
         return UserDefaults.standard.object(forKey: key) as? Double
+    }
+
+    /// Refreshes currentBalance from UserDefaults for the currently active provider.
+    /// Called at the end of selectThread() to guarantee the balance pill is visible on startup,
+    /// regardless of which switchProvider() path was taken (or skipped).
+    private func refreshBalanceForActiveProvider() {
+        guard let provider = activeProvider else { return }
+        self.currentBalance = loadBalance(for: provider.id)
     }
 
     // MARK: - Connect SwiftData
@@ -610,12 +623,17 @@ final class ChappieViewModel {
 
             if let providerId = settings.activeProviderId,
                let provider = providers.first(where: { $0.id == providerId }) {
+                // Thread has a saved provider — switch to it (also loads balance).
                 await switchProvider(provider, modelName: settings.activeModelName)
             } else if activeProvider == nil, let provStore = providerStore {
+                // No active provider yet — load the default one (also loads balance).
                 if let defaultProvider = try? await provStore.loadDefaultProvider() {
                     await switchProvider(defaultProvider, modelName: defaultProvider.models.first, from: provStore)
                 }
             }
+            // If neither branch ran (thread has no saved provider but activeProvider is already set
+            // from loadProvidersAndSetActive), we still need to surface the balance for that provider.
+            // refreshBalanceForActiveProvider() below handles this case unconditionally.
 
             let loaded = try await store.loadMessages(
                 fromThreadId: thread.id,
@@ -634,6 +652,10 @@ final class ChappieViewModel {
         await loadProjectsForThread(thread)
         buildAndSyncMemoryContext()
         await syncActiveMemoryContext()
+
+        // Always sync balance from UserDefaults for the active provider.
+        // Guarantees the balance pill appears on startup even when switchProvider() was skipped.
+        refreshBalanceForActiveProvider()
     }
 
     private var isLoadingThread: Bool = false
