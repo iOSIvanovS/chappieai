@@ -269,6 +269,12 @@ public actor AIOrchestrator {
        This rule exists because: memory is injected into system prompt (token efficiency),
        memory persists across sessions and projects (consistency), and English compresses
        2x better than Cyrillic in LLM tokenizers (cost savings).
+
+    10. BACKLOG AND TECH DEBT (MEMORY HYGIENE):
+        Backlog items and tech debt are tracked in project memory using type="backlog" or type="tech_debt".
+        When a backlog item is implemented and committed — DELETE it from memory immediately. No exceptions.
+        This prevents stale backlog from polluting the system prompt and wasting tokens.
+        Rule: if it's done and committed → it does not exist in memory.
     """
 
     // MARK: - Init

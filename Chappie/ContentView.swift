@@ -11,6 +11,11 @@
 //   - NewThreadProviderSheet picks provider AND model
 //   - SettingsView is now general settings (name + providers shortcut)
 //   - Sidebar receives orphanedThreadIds for ⚠️ indicators
+//
+// INPUT MORPH:
+//   StatusBarView + InputBarView replaced with InputMorphView.
+//   The input bar transforms in-place into a tool call status strip while Chappie thinks.
+//   Cancel button triggers viewModel.cancelCurrentRequest() — real Task cancellation.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -134,17 +139,17 @@ struct ContentView: View {
                     runningCost: viewModel.runningCost
                 )
 
-                StatusBarView(toolCall: viewModel.currentToolCall)
-
-                InputBarView(
+                // INPUT MORPH: single component that transforms between input and status modes
+                InputMorphView(
                     prompt: $prompt,
                     isWorkspaceSelected: viewModel.workspaceURL != nil,
                     isThinking: viewModel.isThinking,
-                    onSend: sendMessage
+                    currentToolCall: viewModel.currentToolCall,
+                    onSend: sendMessage,
+                    onCancel: { viewModel.cancelCurrentRequest() }
                 )
             }
             .animation(.easeInOut(duration: 0.2), value: viewModel.activeThread?.id)
-            .animation(.easeInOut(duration: 0.25), value: viewModel.currentToolCall)
             .toolbar {
                 ChappieToolbarContent(
                     balance: viewModel.currentBalance,

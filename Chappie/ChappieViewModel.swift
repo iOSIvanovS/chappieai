@@ -19,6 +19,11 @@
 // Deletion of providers/models is always allowed.
 // isThreadOrphaned computed property detects when activeProvider or activeModelName
 // is missing from the current providers list. Chat view shows a warning banner.
+//
+// CANCEL SUPPORT:
+// currentRequestTask holds the active Task from send().
+// cancelCurrentRequest() cancels it — triggers CancellationError inside process().
+// AIOrchestrator propagates Swift structured concurrency cancellation automatically.
 
 import SwiftUI
 import ChappieCore
@@ -52,6 +57,12 @@ final class ChappieViewModel {
     var currentBalance: Double? {
         didSet { UserDefaults.standard.set(currentBalance, forKey: "savedBalance") }
     }
+
+    // MARK: - Active Request Task
+    //
+    // Stored so cancelCurrentRequest() can cancel it at any time.
+    // Nil when no request is in flight.
+    private var currentRequestTask: Task<Void, Never>? = nil
 
     // MARK: - Threads (IT-05)
 
@@ -857,8 +868,10 @@ final class ChappieViewModel {
         }
     }
 
-    // MARK: - Send Messages
+    // MARK: - Send & Cancel
 
+    /// Sends a prompt to the orchestrator.
+    /// Stores the Task in currentRequestTask so it can be cancelled at any time.
     func send(prompt: String) {
         guard !prompt.isEmpty else { return }
         guard let orchestrator = orchestrator else {
@@ -882,7 +895,8 @@ final class ChappieViewModel {
         let memoryContext = activeMemoryContext
         let activeThreadId = activeThread?.id
 
-        Task {
+        // Store the task so cancelCurrentRequest() can cancel it
+        currentRequestTask = Task {
             do {
                 let result = try await orchestrator.process(
                     prompt: prompt,
@@ -942,7 +956,7 @@ final class ChappieViewModel {
                 }
 
             } catch is CancellationError {
-                print("[ChappieViewModel] Request cancelled (CancellationError)")
+                print("[ChappieViewModel] Request cancelled by user (CancellationError)")
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
                     self.streamingText = ""
                     self.currentToolCall = nil
@@ -963,8 +977,18 @@ final class ChappieViewModel {
                 }
             }
 
-            isThinking = false
+            self.isThinking = false
+            self.currentRequestTask = nil
         }
+    }
+
+    /// Cancels the currently running AI request.
+    /// Swift structured concurrency propagates cancellation into the orchestrator automatically.
+    func cancelCurrentRequest() {
+        guard let task = currentRequestTask else { return }
+        print("[ChappieViewModel] Cancelling current request...")
+        task.cancel()
+        // isThinking and currentToolCall are reset inside the task's catch block
     }
 
     // MARK: - History Management
