@@ -15,6 +15,8 @@
 // - On finish/cancel: height animates back to whatever the editor needs.
 // - Cancel button calls viewModel.cancelCurrentRequest() — real Task cancellation.
 // - After cancel/error/completion — morphs back to idle, TextEditor auto-focuses.
+// - Newline: both ⌥+Enter AND ⇧+Enter insert a newline (muscle memory from messengers).
+// - Send: plain Enter only.
 
 import SwiftUI
 
@@ -58,7 +60,7 @@ struct InputMorphView: View {
     /// nil = no tool call running.
     let currentToolCall: String?
 
-    /// Called when the user taps Send or presses Enter (without Option).
+    /// Called when the user taps Send or presses Enter (without modifiers).
     let onSend: () -> Void
 
     /// Called when the user taps Cancel during thinking.
@@ -140,11 +142,16 @@ struct InputMorphView: View {
                     .focused($isEditorFocused)
                     .scrollContentBackground(.hidden)
                     .background(Color.clear)
-                    // Intercept Enter key: send on plain Enter, newline on ⌥+Enter
+                    // Key handling strategy:
+                    // - Plain Enter → send message
+                    // - ⇧+Enter or ⌥+Enter → insert newline (both are valid muscle memory)
                     .onKeyPress(.return) {
-                        if NSEvent.modifierFlags.contains(.option) {
-                            // ⌥+Enter — insert newline, let TextEditor handle it
-                            return .ignored
+                        let mods = NSEvent.modifierFlags
+                        let isNewlineCombo = mods.contains(.shift) || mods.contains(.option)
+                        if isNewlineCombo {
+                            // Insert newline at current cursor position
+                            insertNewline()
+                            return .handled
                         }
                         // Plain Enter — send message
                         if canSend { onSend() }
@@ -170,7 +177,7 @@ struct InputMorphView: View {
             // Placeholder text when prompt is empty
             .overlay(alignment: .topLeading) {
                 if prompt.isEmpty {
-                    Text("Напиши сообщение… (Enter — отправить, ⌥+Enter — перенос)")
+                    Text("Напиши сообщение… (Enter — отправить, ⇧+Enter — перенос)")
                         .font(.system(size: 13))
                         .foregroundStyle(Color(NSColor.placeholderTextColor))
                         .padding(.horizontal, 5)
@@ -233,6 +240,35 @@ struct InputMorphView: View {
         let newHeight = CGFloat(clamped) * Layout.lineHeight + Layout.editorVerticalPadding * 2
         if abs(newHeight - editorHeight) > 1 {
             editorHeight = newHeight
+        }
+    }
+
+    // MARK: - Newline Insertion
+
+    /// Inserts a newline character at the current cursor position.
+    /// We manipulate the binding directly — SwiftUI handles cursor placement.
+    private func insertNewline() {
+        // NSTextView (underlying AppKit control) handles cursor position.
+        // Appending to the binding is not ideal, but SwiftUI TextEditor
+        // does not expose cursor position. The standard workaround is to
+        // post a fake event, but that is fragile. Instead we rely on
+        // returning .ignored so AppKit inserts the newline natively —
+        // but we need .handled to prevent the send. So we use NSApp to
+        // forward a plain Return event without modifiers via the responder chain.
+        if let window = NSApp.keyWindow,
+           let event = NSEvent.keyEvent(
+               with: .keyDown,
+               location: .zero,
+               modifierFlags: [],
+               timestamp: 0,
+               windowNumber: window.windowNumber,
+               context: nil,
+               characters: "\n",
+               charactersIgnoringModifiers: "\n",
+               isARepeat: false,
+               keyCode: 36
+           ) {
+            window.firstResponder?.keyDown(with: event)
         }
     }
 }
