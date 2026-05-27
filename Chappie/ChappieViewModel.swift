@@ -29,6 +29,12 @@
 // onBalanceUpdate callback passed to orchestrator.process() — fires after each streaming
 // step that returns a balance. Updates currentBalance in real time so the balance pill
 // in ModelPickerRow ticks down visibly during the response.
+//
+// BALANCE STORAGE (UX-BALANCE-PER-PROVIDER):
+// Balance is stored per provider in UserDefaults under key "balance_<provider.id>".
+// On switchProvider — the stored balance for the new provider is loaded.
+// On balance update — saved under the active provider's key.
+// This ensures each endpoint shows its own balance, not a shared global value.
 
 import SwiftUI
 import ChappieCore
@@ -59,9 +65,9 @@ final class ChappieViewModel {
     var runningCost: Double = 0.0
     var currentToolCall: String? = nil
 
-    var currentBalance: Double? {
-        didSet { UserDefaults.standard.set(currentBalance, forKey: "savedBalance") }
-    }
+    // Balance is NOT persisted via didSet — use saveBalance(for:) / loadBalance(for:) explicitly.
+    // This prevents the old global "savedBalance" key from being written accidentally.
+    var currentBalance: Double?
 
     // MARK: - Active Request Task
     //
@@ -145,12 +151,27 @@ final class ChappieViewModel {
     public init() {
         self.chatHistoryManager = ChatHistoryManager.shared
         loadMessages()
-
-        if let savedBalance = UserDefaults.standard.object(forKey: "savedBalance") as? Double {
-            self.currentBalance = savedBalance
-        }
-
+        // Balance is loaded per-provider in switchProvider — not here globally.
         loadWorkspaceWithSecurityScope()
+    }
+
+    // MARK: - Balance Storage (per-provider)
+
+    /// UserDefaults key scoped to a specific provider id.
+    private func balanceKey(for providerId: UUID) -> String {
+        "balance_\(providerId.uuidString)"
+    }
+
+    /// Persists balance for the given provider.
+    private func saveBalance(_ balance: Double, for providerId: UUID) {
+        UserDefaults.standard.set(balance, forKey: balanceKey(for: providerId))
+    }
+
+    /// Loads the last known balance for the given provider. Returns nil if never set.
+    private func loadBalance(for providerId: UUID) -> Double? {
+        let key = balanceKey(for: providerId)
+        // object(forKey:) returns nil when key is absent; cast to Double? handles that.
+        return UserDefaults.standard.object(forKey: key) as? Double
     }
 
     // MARK: - Connect SwiftData
@@ -267,6 +288,9 @@ final class ChappieViewModel {
         self.aiClient = client
         self.activeProvider = provider
         self.activeModelName = model.isEmpty ? nil : model
+
+        // Load the last known balance for this specific provider.
+        self.currentBalance = loadBalance(for: provider.id)
 
         if let ts = toolService, let fs = fileSystem, let mm = memoryManager {
             self.orchestrator = AIOrchestrator(
@@ -890,6 +914,8 @@ final class ChappieViewModel {
         let config = activeConfig
         let memoryContext = activeMemoryContext
         let activeThreadId = activeThread?.id
+        // Capture provider id so balance can be saved to the right key even if provider changes mid-flight.
+        let activeProviderId = activeProvider?.id
 
         // Store the task so cancelCurrentRequest() can cancel it
         currentRequestTask = Task {
@@ -919,10 +945,14 @@ final class ChappieViewModel {
                             self.runningCost = cumulativeCost
                         }
                     },
-                    // Live balance update — ticks the balance pill in ModelPickerRow during streaming
+                    // Live balance update — ticks the balance pill in ModelPickerRow during streaming.
+                    // Also persists the value under the active provider's key.
                     onBalanceUpdate: { newBalance in
                         Task { @MainActor in
                             self.currentBalance = newBalance
+                            if let pid = activeProviderId {
+                                self.saveBalance(newBalance, for: pid)
+                            }
                         }
                     }
                 )
@@ -942,9 +972,13 @@ final class ChappieViewModel {
                     ))
                 }
 
-                // Final balance from orchestrator result (may differ from last streaming update)
+                // Final balance from orchestrator result (may differ from last streaming update).
+                // Persist under the provider's key.
                 if let newBalance = result.newBalance {
                     self.currentBalance = newBalance
+                    if let pid = activeProviderId {
+                        self.saveBalance(newBalance, for: pid)
+                    }
                 }
 
                 if let threadId = activeThreadId, let store = self.threadStore {
