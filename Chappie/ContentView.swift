@@ -16,6 +16,11 @@
 //   StatusBarView + InputBarView replaced with InputMorphView.
 //   The input bar transforms in-place into a tool call status strip while Chappie thinks.
 //   Cancel button triggers viewModel.cancelCurrentRequest() — real Task cancellation.
+//
+// SCROLL FIX:
+//   InputMorphView reports its rendered height via inputBarHeight binding.
+//   ChatScrollView uses this as bottomPadding so the last message is never hidden
+//   under the input panel — including on launch and when the editor grows.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -32,6 +37,10 @@ struct ContentView: View {
     @State private var isReady: Bool = false
 
     @State private var selectedProjectForSettings: ProjectMetadata? = nil
+
+    // Height reported by InputMorphView — used as bottom padding in ChatScrollView
+    // so the last message is never hidden under the input panel.
+    @State private var inputBarHeight: CGFloat = 0
 
     @Environment(\.modelContext) private var modelContext
 
@@ -132,21 +141,28 @@ struct ContentView: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
+                // Chat scroll area — bottomPadding keeps the last message visible
+                // above the InputMorphView regardless of its current height.
                 ChatScrollView(
                     messages: viewModel.visibleMessages,
                     isThinking: viewModel.isThinking,
                     streamingText: viewModel.streamingText,
-                    runningCost: viewModel.runningCost
+                    runningCost: viewModel.runningCost,
+                    bottomPadding: inputBarHeight
                 )
 
-                // INPUT MORPH: single component that transforms between input and status modes
+                // INPUT MORPH: single component that transforms between input and status modes.
+                // Reports its rendered height so ChatScrollView can pad accordingly.
                 InputMorphView(
                     prompt: $prompt,
                     isWorkspaceSelected: viewModel.workspaceURL != nil,
                     isThinking: viewModel.isThinking,
                     currentToolCall: viewModel.currentToolCall,
                     onSend: sendMessage,
-                    onCancel: { viewModel.cancelCurrentRequest() }
+                    onCancel: { viewModel.cancelCurrentRequest() },
+                    onHeightChange: { height in
+                        inputBarHeight = height
+                    }
                 )
             }
             .animation(.easeInOut(duration: 0.2), value: viewModel.activeThread?.id)

@@ -1,92 +1,69 @@
+// ChatScrollView.swift
+// Chappie
 //
-//  ChatScrollView.swift
-//  Chappie
+// WHY THIS FILE EXISTS:
+// Scroll logic (auto-scroll on new messages, thinking indicator) was embedded
+// directly in ContentView's body. This component owns all message list rendering.
 //
-//  ПОЧЕМУ ЭТОТ ФАЙЛ СУЩЕСТВУЕТ:
-//  Логика скролла чата (автоскролл при новых сообщениях, индикатор "думает")
-//  была вшита прямо в body ContentView. Это делало ContentView сложным для
-//  понимания и изменения. Здесь собрана вся логика отображения ленты сообщений.
-//
-//  ИЗМЕНЕНИЕ (Этап 6 — ТД-6):
-//  #Preview обновлён под новый enum ChatMessage.
-//
-//  ИЗМЕНЕНИЕ (ТД-7 — Стриминг):
-//  Добавлен параметр `streamingText: String`.
-//  Когда streamingText не пуст — показываем "живой" стриминговый пузырь
-//  вместо спиннера ProgressView.
-//
-//  ИЗМЕНЕНИЕ (ТД-UX-PERF — Оптимизация производительности UI):
-//  ChatScrollView теперь принимает `visibleMessages` — уже отфильтрованный
-//  и обрезанный до 30 элементов список.
-//
-//  ИЗМЕНЕНИЕ (UX-ANIMATION — Плавные анимации):
-//  Spring-анимации для появления пузырей, easeInOut для спиннера.
-//
-//  ИЗМЕНЕНИЕ (UX-SMOOTH-ANIMATION — Плавное нарастание текста):
-//  .contentTransition(.interpolate) на стриминговом пузыре.
-//
-//  ИЗМЕНЕНИЕ (UX-TYPOGRAPHY — Типографика):
-//  Стриминговый пузырь теперь использует MarkdownTextView вместо Text() —
-//  код подсвечивается в реальном времени по мере нарастания токенов.
-//
-//  ИЗМЕНЕНИЕ (UX-RUNNING-COST — Накопительная стоимость в пузыре):
-//  Стоимость перенесена ВНУТРЬ пузыря — в правый нижний угол через overlay.
-//  Показывается ВСЕГДА (даже 0.00 ₽ в начале запроса).
-//  Нарастает с каждым API-вызовом оркестратора — эффект "счётчика такси".
-//  .contentTransition(.numericText) анимирует перекатывание цифр.
+// BOTTOM PADDING:
+// Accepts `bottomPadding` from ContentView — the real rendered height of InputMorphView.
+// This prevents the last message from being hidden under the input panel on launch,
+// when the editor grows, or when the panel morphs between states.
+// Auto-scroll fires on bottomPadding change so the view stays pinned to the bottom.
 
 import SwiftUI
 
-/// Прокручиваемая лента сообщений чата с автоскроллом и индикатором размышления.
+/// Scrollable message list with auto-scroll and thinking indicator.
 ///
-/// Компонент самодостаточен: он сам следит за изменениями в массиве сообщений
-/// и автоматически прокручивается вниз при появлении нового сообщения или
-/// при включении индикатора "Чаппи думает".
-///
-/// ВАЖНО: Принимает `visibleMessages` — уже отфильтрованный список (только .message,
-/// максимум 30 штук). Фильтрация происходит в ViewModel, а не здесь.
+/// IMPORTANT: Accepts `visibleMessages` — already filtered list (only .message, max 30).
+/// Filtering happens in ViewModel, not here.
 struct ChatScrollView: View {
 
-    /// Отфильтрованный список сообщений для отображения (только .message, макс. 30)
+    /// Filtered message list (only .message, max 30)
     let messages: [ChatMessage]
 
-    /// Флаг: Чаппи сейчас думает (показываем спиннер или стриминговый пузырь)
+    /// Flag: Chappie is thinking (show spinner or streaming bubble)
     let isThinking: Bool
 
-    /// Накопленный текст стримингового ответа.
+    /// Accumulated streaming response text.
     ///
-    /// Пока пуст — показываем спиннер (Чаппи вызывает инструменты).
-    /// Когда появляются первые символы — заменяем спиннер на "живой" пузырь.
-    /// После завершения стриминга ViewModel сбросит это в "" и добавит .message в историю.
+    /// Empty → show spinner (Chappie is calling tools).
+    /// Non-empty → show live streaming bubble.
+    /// After streaming ends ViewModel resets this to "" and appends .message to history.
     let streamingText: String
 
-    /// Накопительная стоимость текущего запроса — нарастающий итог.
+    /// Cumulative cost of the current request — running total.
     ///
-    /// Обновляется после каждого внутреннего API-вызова оркестратора.
-    /// Отображается в правом нижнем углу стримингового пузыря.
-    /// 0.0 — в начале запроса (до первого ответа API).
+    /// Updated after each internal orchestrator API call.
+    /// Displayed in the bottom-right corner of the streaming bubble.
     let runningCost: Double
+
+    /// Height of InputMorphView reported by ContentView.
+    ///
+    /// Used as bottom padding so the last message stays visible above the input panel.
+    /// Auto-scroll fires whenever this changes (panel grows/shrinks).
+    let bottomPadding: CGFloat
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 16) {
 
-                    // Приветственный экран — показываем только если чат пуст.
+                    // Welcome screen — shown only when chat is empty
                     if messages.isEmpty && !isThinking {
                         welcomeMessage
                             .transition(.opacity)
                     } else {
-                        // ForEach теперь работает с максимум 30 элементами.
+                        // ForEach works with at most 30 items
                         ForEach(messages) { msg in
                             MessageBubbleView(msg: msg)
                         }
                     }
 
-                    // СТРИМИНГОВЫЙ БЛОК:
-                    // 1. isThinking == false → ничего
-                    // 2. isThinking == true, streamingText == "" → спиннер
-                    // 3. isThinking == true, streamingText != "" → живой пузырь
+                    // STREAMING BLOCK:
+                    // 1. isThinking == false → nothing
+                    // 2. isThinking == true, streamingText == "" → spinner
+                    // 3. isThinking == true, streamingText != "" → live bubble
                     if isThinking {
                         if streamingText.isEmpty {
                             thinkingIndicator
@@ -102,18 +79,27 @@ struct ChatScrollView: View {
                         }
                     }
 
-                    // Невидимый якорь в самом низу ленты
+                    // Invisible anchor at the very bottom of the list
                     Spacer(minLength: 0)
                         .id("BottomSpacer")
                 }
                 .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+                .padding(.top, 12)
+                // Bottom padding = input panel height so the last message is never hidden under it
+                .padding(.bottom, max(bottomPadding, 12))
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: messages)
                 .animation(.easeInOut(duration: 0.25), value: isThinking)
                 .animation(.easeInOut(duration: 0.3), value: streamingText.isEmpty)
             }
             .onAppear {
+                // Scroll to bottom on appear — InputMorphView may not be laid out yet,
+                // so we fire a second scroll after a short delay to catch the final position.
                 proxy.scrollTo("BottomSpacer", anchor: .bottom)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo("BottomSpacer", anchor: .bottom)
+                    }
+                }
             }
             .onChange(of: messages) { _, _ in
                 withAnimation(.easeOut(duration: 0.3)) {
@@ -130,15 +116,19 @@ struct ChatScrollView: View {
             .onChange(of: streamingText) { _, _ in
                 proxy.scrollTo("BottomSpacer", anchor: .bottom)
             }
+            // When the input panel grows or shrinks — re-pin to bottom immediately
+            .onChange(of: bottomPadding) { _, _ in
+                proxy.scrollTo("BottomSpacer", anchor: .bottom)
+            }
         }
     }
 
-    // MARK: - Вспомогательные подвью
+    // MARK: - Subviews
 
-    /// Приветственное сообщение для пустого чата.
+    /// Welcome message for empty chat.
     ///
-    /// Дизайн: нейтральный пузырь слева — как первое сообщение от Чаппи.
-    /// Использует ту же стилизацию что и пузырь Чаппи в MessageBubbleView.
+    /// Design: neutral left-aligned bubble — like Chappie's first message.
+    /// Uses the same styling as Chappie's bubble in MessageBubbleView.
     private var welcomeMessage: some View {
         HStack(alignment: .bottom, spacing: 8) {
             VStack(alignment: .leading, spacing: 4) {
@@ -175,10 +165,10 @@ struct ChatScrollView: View {
         }
     }
 
-    /// Спиннер — показывается пока Чаппи думает или вызывает инструменты.
+    /// Spinner — shown while Chappie is thinking or calling tools.
     ///
-    /// Минималистичный: только ProgressView в пузыре слева.
-    /// Текущий инструмент отображается в StatusBarView ниже.
+    /// Minimal: just a ProgressView in a left-aligned bubble.
+    /// Current tool call is shown in InputMorphView below.
     private var thinkingIndicator: some View {
         HStack {
             ProgressView()
@@ -208,45 +198,39 @@ struct ChatScrollView: View {
         }
     }
 
-    /// "Живой" пузырь с нарастающим текстом стримингового ответа.
+    /// Live bubble with growing streaming response text.
     ///
-    /// ПОЧЕМУ MarkdownTextView, А НЕ Text:
-    /// Чаппи может начать писать блок кода уже в середине стриминга.
-    /// MarkdownTextView обрабатывает незавершённые блоки корректно —
-    /// незакрытый ``` просто рендерится как текст до закрытия.
+    /// WHY MarkdownTextView NOT Text:
+    /// Chappie may start writing a code block mid-stream.
+    /// MarkdownTextView handles unclosed blocks gracefully —
+    /// an unclosed ``` renders as plain text until closed.
     ///
-    /// ПОЧЕМУ .contentTransition(.interpolate):
-    /// При каждом токене SwiftUI перерисовывает View с новой строкой.
-    /// .interpolate плавно анимирует изменение между кадрами — эффект "печатания".
+    /// WHY .contentTransition(.interpolate):
+    /// Each token causes SwiftUI to redraw the View with a new string.
+    /// .interpolate smoothly animates the change between frames — "typing" effect.
     ///
-    /// СТОИМОСТЬ В ПРАВОМ НИЖНЕМ УГЛУ ПУЗЫРЯ:
-    /// Используем overlay с alignment: .bottomTrailing — стоимость прижата к правому
-    /// нижнему углу поверх контента. padding внутри overlay отступает от краёв пузыря.
-    /// Показываем ВСЕГДА — 0.00 ₽ сразу при появлении пузыря, затем нарастает.
-    /// .contentTransition(.numericText) анимирует "перекатывание" цифр.
+    /// COST IN BOTTOM-RIGHT CORNER:
+    /// ZStack alignment: .bottomTrailing pins the cost label over content.
+    /// Shown from the start (0.00 ₽) and grows with each API call.
+    /// .contentTransition(.numericText) animates digit rolling.
     private var streamingBubble: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            // ZStack позволяет наложить стоимость поверх текста в правом нижнем углу.
-            // Это избегает лишнего вертикального пространства под текстом.
             ZStack(alignment: .bottomTrailing) {
 
-                // Основной контент пузыря: текст + мигающий курсор
+                // Main bubble content: text + blinking cursor
                 HStack(alignment: .bottom, spacing: 0) {
                     MarkdownTextView(text: streamingText, fontSize: 14)
                         .contentTransition(.interpolate)
                         .animation(.linear(duration: 0.08), value: streamingText)
 
-                    // Мигающий курсор — визуальный индикатор что текст ещё пишется
+                    // Blinking cursor — visual indicator that text is still being written
                     BlinkingCursor()
                         .padding(.bottom, 1)
                 }
-                // Нижний отступ под текстом, чтобы стоимость не перекрывала последнюю строку.
-                // 18pt — высота строки стоимости (10pt шрифт + padding).
+                // Bottom padding so the cost label doesn't overlap the last line
                 .padding(.bottom, 18)
 
-                // НАКОПИТЕЛЬНАЯ СТОИМОСТЬ — правый нижний угол пузыря.
-                // Прижата через ZStack alignment: .bottomTrailing.
-                // Показывается с самого начала (0.00 ₽) и нарастает по мере работы.
+                // RUNNING COST — bottom-right corner of the bubble
                 Text(String(format: "🪙 %.2f ₽", runningCost))
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(.tertiary)
@@ -281,10 +265,10 @@ struct ChatScrollView: View {
 
 // MARK: - BlinkingCursor
 
-/// Мигающий курсор для стримингового пузыря.
+/// Blinking cursor for the streaming bubble.
 ///
-/// Вынесен в отдельную View, чтобы анимация была изолирована и не влияла
-/// на перерисовку родительского пузыря при каждом новом токене.
+/// Extracted into its own View so the animation is isolated and doesn't
+/// trigger a full bubble redraw on every new token.
 private struct BlinkingCursor: View {
     @State private var isVisible = true
 
@@ -305,43 +289,46 @@ private struct BlinkingCursor: View {
 
 // MARK: - Preview
 
-#Preview("С историей и стримингом") {
+#Preview("With history and streaming") {
     ChatScrollView(
         messages: [
-            .message(isUser: true, text: "Покажи пример кода"),
+            .message(isUser: true, text: "Show me a code example"),
             .message(
                 isUser: false,
-                text: "Конечно! Вот пример:\n\n```swift\n// Пример ViewModel\n@Observable\nfinal class ViewModel {\n    var count = 0\n}\n```\n\nИспользуй **@Observable** для автоматического отслеживания.",
+                text: "Sure! Here's an example:\n\n```swift\n// Example ViewModel\n@Observable\nfinal class ViewModel {\n    var count = 0\n}\n```\n\nUse **@Observable** for automatic tracking.",
                 cost: 0.42
             ),
         ],
         isThinking: true,
-        streamingText: "Также можно добавить `@MainActor` для **потокобезопасности**...",
-        runningCost: 1.23
+        streamingText: "Also you can add `@MainActor` for **thread safety**...",
+        runningCost: 1.23,
+        bottomPadding: 80
     )
     .frame(width: 650, height: 500)
     .background(Color(NSColor.windowBackgroundColor))
 }
 
-#Preview("Спиннер (инструменты)") {
+#Preview("Spinner (tools)") {
     ChatScrollView(
         messages: [
-            .message(isUser: true, text: "Проанализируй проект"),
+            .message(isUser: true, text: "Analyse the project"),
         ],
         isThinking: true,
         streamingText: "",
-        runningCost: 0.0
+        runningCost: 0.0,
+        bottomPadding: 60
     )
     .frame(width: 650, height: 300)
     .background(Color(NSColor.windowBackgroundColor))
 }
 
-#Preview("Пустой чат") {
+#Preview("Empty chat") {
     ChatScrollView(
         messages: [],
         isThinking: false,
         streamingText: "",
-        runningCost: 0.0
+        runningCost: 0.0,
+        bottomPadding: 60
     )
     .frame(width: 650, height: 300)
     .background(Color(NSColor.windowBackgroundColor))

@@ -17,6 +17,11 @@
 //   capped at maxLines, with spring animation.
 // - On send: editorHeight resets to minEditorHeight immediately; morph animates to collapsedHeight.
 // - On finish/cancel: height restores from editorHeight; editor auto-focuses via coordinator.
+//
+// SCROLL INTEGRATION:
+// - onHeightChange callback fires whenever the panel's rendered height changes.
+// - ContentView uses this to set bottomPadding on ChatScrollView, so the last message
+//   is never hidden under the panel — on launch, on grow, or on collapse.
 
 import SwiftUI
 import AppKit
@@ -28,6 +33,11 @@ private enum Layout {
     static let lineHeight: CGFloat = 20
     static let editorVerticalPadding: CGFloat = 6
     static let maxLines: Int = 10
+
+    // Outer padding around the panel (horizontal + bottom)
+    static let outerHorizontalPadding: CGFloat = 16 // .padding(.horizontal)
+    static let outerBottomPadding: CGFloat = 16      // .padding(.bottom, 16)
+    static let innerPadding: CGFloat = 12            // .padding(12) inside the panel
 
     static var maxEditorHeight: CGFloat {
         CGFloat(maxLines) * lineHeight + editorVerticalPadding * 2
@@ -204,6 +214,10 @@ struct InputMorphView: View {
     let onSend: () -> Void
     let onCancel: () -> Void
 
+    /// Called whenever the panel's total rendered height changes.
+    /// ContentView uses this to update ChatScrollView's bottom padding.
+    var onHeightChange: ((CGFloat) -> Void)? = nil
+
     // MARK: - Private State
 
     @State private var isEditorFocused: Bool = false
@@ -244,6 +258,19 @@ struct InputMorphView: View {
         .padding(.bottom, 16)
         .animation(.spring(response: 0.38, dampingFraction: 0.82), value: isThinking)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: editorHeight)
+        // Report total rendered height via GeometryReader so ChatScrollView can pad correctly.
+        // background(GeometryReader) is a standard SwiftUI pattern — doesn't affect layout.
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear {
+                        onHeightChange?(geo.size.height)
+                    }
+                    .onChange(of: geo.size.height) { _, newHeight in
+                        onHeightChange?(newHeight)
+                    }
+            }
+        )
         .onChange(of: isThinking) { _, nowThinking in
             if !nowThinking {
                 // Small delay lets the morph animation finish before focusing
