@@ -9,10 +9,6 @@
 //   Outer HStack has Spacer() so the pill hugs its content on the left.
 //   Consistent with ModelPickerRow and the bottom InputMorphView panel.
 //
-// SCROLL BEHAVIOUR:
-//   The pill uses fixedSize() to hug its content.
-//   When the pill would exceed maxWidth (500pt) it switches to ScrollView inside.
-//
 // IT-09: Tap on chip opens ProjectSettingsSheet.
 // onOpenSettings(UUID) callback passes project ID to ViewModel.
 //
@@ -58,17 +54,13 @@ struct ProjectChipsView: View {
     /// Hover state per chip — key is project UUID.
     @State private var hoveredProjectId: UUID? = nil
 
-    // MARK: - Layout constant
-
-    /// Max width before the pill starts scrolling internally.
-    private let maxPillWidth: CGFloat = 500
-
     // MARK: - Body
 
     var body: some View {
-        // Outer HStack: pill on the left, Spacer pushes it to hug content width
+        // Outer HStack: pill on the left, Spacer pushes it to hug content width.
+        // Same pattern as ModelPickerRow — no ScrollView, just a plain HStack.
         HStack(spacing: 0) {
-            // Inner pill: hugs content via fixedSize, capped at maxPillWidth
+            // Inner pill: hugs content naturally via fixedSize
             HStack(spacing: 6) {
 
                 // "Проекты" label
@@ -82,21 +74,13 @@ struct ProjectChipsView: View {
                             .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
                     )
 
-                // Chips + add button in a scrollable row.
-                // fixedSize on the HStack makes it hug its content naturally.
-                // The outer frame cap prevents the pill from exceeding maxPillWidth.
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(projects) { project in
-                            projectChip(for: project)
-                        }
-                        addButton
+                // Chips + add button — plain HStack, same as ModelPickerRow inner layout
+                HStack(spacing: 6) {
+                    ForEach(projects) { project in
+                        projectChip(for: project)
                     }
-                    .fixedSize(horizontal: true, vertical: true)
-                    .padding(.horizontal, 2)
+                    addButton
                 }
-                .fixedSize(horizontal: true, vertical: true)
-                .frame(maxWidth: maxPillWidth)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
