@@ -9,6 +9,10 @@
 //   Outer HStack has Spacer() so the pill hugs its content on the left.
 //   Consistent with ModelPickerRow and the bottom InputMorphView panel.
 //
+// SCROLL BEHAVIOUR:
+//   ScrollView has a maxWidth cap so the pill never stretches full-width.
+//   When there are many projects it scrolls horizontally within the pill.
+//
 // IT-09: Tap on chip opens ProjectSettingsSheet.
 // onOpenSettings(UUID) callback passes project ID to ViewModel.
 //
@@ -73,17 +77,20 @@ struct ProjectChipsView: View {
                             .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
                     )
 
+                // ScrollView is capped so it never stretches the pill full-width.
+                // When there are many projects the chips scroll inside the pill.
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
-
                         ForEach(projects) { project in
                             projectChip(for: project)
                         }
-
                         addButton
                     }
                     .padding(.horizontal, 2)
                 }
+                .frame(maxWidth: 400)
+                // fixedSize in vertical axis so the pill height hugs chip height
+                .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
