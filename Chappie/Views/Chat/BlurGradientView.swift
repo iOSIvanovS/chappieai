@@ -8,7 +8,7 @@
 // where content underneath the panel softly shows through the edges.
 //
 // USED BY:
-// ContentView — top panel (topToBottom) and bottom panel (bottomToTop).
+// ContentView — top panel (bottomToTop) and bottom panel (topToBottom).
 
 import SwiftUI
 import AppKit
@@ -17,8 +17,8 @@ import AppKit
 
 /// NSVisualEffectView wrapped in a gradient mask.
 ///
-/// direction = .topToBottom → opaque at top, fades to transparent at bottom (top panel).
-/// direction = .bottomToTop → opaque at bottom, fades to transparent at top (bottom panel).
+/// direction = .bottomToTop → opaque at bottom, fades to transparent at top (top panel).
+/// direction = .topToBottom → opaque at top, fades to transparent at bottom (bottom panel).
 struct BlurGradientView: View {
 
     enum Direction {
@@ -50,19 +50,19 @@ struct BlurGradientView: View {
 
     private var gradientStops: [Gradient.Stop] {
         switch direction {
-        case .topToBottom:
-            // Top panel: fully opaque at top, fades to clear at bottom edge
-            return [
-                .init(color: .black, location: 0.0),
-                .init(color: .black, location: 0.65),
-                .init(color: .clear, location: 1.0)
-            ]
         case .bottomToTop:
-            // Bottom panel: fully opaque at bottom, fades to clear at top edge
+            // Top panel: fully opaque at bottom, fades to transparent at top edge
             return [
                 .init(color: .clear, location: 0.0),
                 .init(color: .black, location: 0.35),
                 .init(color: .black, location: 1.0)
+            ]
+        case .topToBottom:
+            // Bottom panel: fully opaque at top, fades to transparent at bottom edge
+            return [
+                .init(color: .black, location: 0.0),
+                .init(color: .black, location: 0.65),
+                .init(color: .clear, location: 1.0)
             ]
         }
     }
