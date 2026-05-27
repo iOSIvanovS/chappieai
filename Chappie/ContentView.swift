@@ -4,23 +4,16 @@
 // ContentView is a pure "conductor". It assembles all components together
 // and passes data from ViewModel to the right places.
 //
+// FLOATING PANELS LAYOUT:
+// The detail area uses a ZStack:
+//   - Back layer: ChatScrollView fills the entire area (ignores safe area).
+//   - Front layer: FloatingPanelsView — top panel (model picker + project chips)
+//     and bottom panel (input / tool status) float over the scroll view with blur gradients.
+// Both panels report their heights; ChatScrollView reserves matching transparent
+// header/footer spacers so the first and last messages are always fully readable.
+//
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
-//   - OnboardingView shown when no providers configured
-//   - ModelPickerRow shows active provider+model, supports orphaned state
-//   - NewThreadProviderSheet picks provider AND model
-//   - SettingsView is now general settings (name + providers shortcut)
-//   - Sidebar receives orphanedThreadIds for ⚠️ indicators
-//
-// INPUT MORPH:
-//   StatusBarView + InputBarView replaced with InputMorphView.
-//   The input bar transforms in-place into a tool call status strip while Chappie thinks.
-//   Cancel button triggers viewModel.cancelCurrentRequest() — real Task cancellation.
-//
-// SCROLL FIX:
-//   InputMorphView reports its rendered height via inputBarHeight binding.
-//   ChatScrollView uses this as bottomPadding so the last message is never hidden
-//   under the input panel — including on launch and when the editor grows.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -38,17 +31,14 @@ struct ContentView: View {
 
     @State private var selectedProjectForSettings: ProjectMetadata? = nil
 
-    // Height reported by InputMorphView — used as bottom padding in ChatScrollView
-    // so the last message is never hidden under the input panel.
-    @State private var inputBarHeight: CGFloat = 0
+    // Heights reported by FloatingPanelsView — used as transparent spacers in ChatScrollView.
+    @State private var topPanelHeight: CGFloat = 0
+    @State private var bottomPanelHeight: CGFloat = 0
 
     @Environment(\.modelContext) private var modelContext
 
-    // MARK: - Computed: Orphaned Thread IDs
-    //
     // NOTE: Full orphaned detection requires loading all thread settings asynchronously.
-    // That's a future backlog task. For now we return an empty set — the active thread's
-    // orphaned state is shown via ModelPickerRow warning instead.
+    // For now we return an empty set — active thread orphaned state is shown via ModelPickerRow.
     private var orphanedThreadIds: Set<UUID> { [] }
 
     var body: some View {
@@ -101,69 +91,26 @@ struct ContentView: View {
             )
 
         } detail: {
-            VStack(spacing: 0) {
+            // ZStack: ChatScrollView fills the full area, FloatingPanelsView overlays on top.
+            ZStack(alignment: .top) {
 
-                // IT-10: Model picker row (with orphaned support)
-                if viewModel.activeThread != nil && !viewModel.providers.isEmpty {
-                    ModelPickerRow(
-                        activeProvider: viewModel.activeProvider,
-                        activeModelName: viewModel.activeModelName,
-                        providers: viewModel.providers,
-                        isOrphaned: viewModel.isThreadOrphaned,
-                        onSelectProvider: { providerId, modelName in
-                            if let provider = viewModel.providers.first(where: { $0.id == providerId }),
-                               let store = viewModel.providerStore {
-                                Task {
-                                    await viewModel.switchProvider(provider, modelName: modelName, from: store)
-                                }
-                            }
-                        }
-                    )
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-
-                // IT-06, IT-09: Project chips row
-                if viewModel.activeThread != nil {
-                    ProjectChipsView(
-                        projects: viewModel.activeProjects,
-                        onAddProject: { url in
-                            viewModel.addProject(url: url)
-                        },
-                        onRemoveProject: { projectId in
-                            viewModel.removeProject(id: projectId)
-                        },
-                        onOpenSettings: { projectId in
-                            if let project = viewModel.activeProjects.first(where: { $0.id == projectId }) {
-                                selectedProjectForSettings = project
-                            }
-                        }
-                    )
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-
-                // Chat scroll area — bottomPadding keeps the last message visible
-                // above the InputMorphView regardless of its current height.
+                // BACK LAYER: full-screen scroll view
                 ChatScrollView(
                     messages: viewModel.visibleMessages,
                     isThinking: viewModel.isThinking,
                     streamingText: viewModel.streamingText,
                     runningCost: viewModel.runningCost,
-                    bottomPadding: inputBarHeight
+                    headerHeight: topPanelHeight,
+                    footerHeight: bottomPanelHeight
                 )
+                .ignoresSafeArea(edges: .top)
 
-                // INPUT MORPH: single component that transforms between input and status modes.
-                // Reports its rendered height so ChatScrollView can pad accordingly.
-                InputMorphView(
-                    prompt: $prompt,
-                    isWorkspaceSelected: viewModel.workspaceURL != nil,
-                    isThinking: viewModel.isThinking,
-                    currentToolCall: viewModel.currentToolCall,
-                    onSend: sendMessage,
-                    onCancel: { viewModel.cancelCurrentRequest() },
-                    onHeightChange: { height in
-                        inputBarHeight = height
-                    }
-                )
+                // FRONT LAYER: floating panels with blur gradients
+                VStack(spacing: 0) {
+                    topPanel
+                    Spacer()
+                    bottomPanel
+                }
             }
             .animation(.easeInOut(duration: 0.2), value: viewModel.activeThread?.id)
             .toolbar {
@@ -209,6 +156,81 @@ struct ContentView: View {
                 }
             )
         }
+    }
+
+    // MARK: - Top Floating Panel
+
+    /// Top panel: model picker + project chips.
+    /// Blur gradient fades from opaque at top to transparent at bottom.
+    private var topPanel: some View {
+        VStack(spacing: 0) {
+            if viewModel.activeThread != nil && !viewModel.providers.isEmpty {
+                ModelPickerRow(
+                    activeProvider: viewModel.activeProvider,
+                    activeModelName: viewModel.activeModelName,
+                    providers: viewModel.providers,
+                    isOrphaned: viewModel.isThreadOrphaned,
+                    onSelectProvider: { providerId, modelName in
+                        if let provider = viewModel.providers.first(where: { $0.id == providerId }),
+                           let store = viewModel.providerStore {
+                            Task {
+                                await viewModel.switchProvider(provider, modelName: modelName, from: store)
+                            }
+                        }
+                    }
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            if viewModel.activeThread != nil {
+                ProjectChipsView(
+                    projects: viewModel.activeProjects,
+                    onAddProject: { url in viewModel.addProject(url: url) },
+                    onRemoveProject: { projectId in viewModel.removeProject(id: projectId) },
+                    onOpenSettings: { projectId in
+                        if let project = viewModel.activeProjects.first(where: { $0.id == projectId }) {
+                            selectedProjectForSettings = project
+                        }
+                    }
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        // Blur fades from opaque (top) to transparent (bottom)
+        .background(BlurGradientView(direction: .topToBottom))
+        // Report height for ChatScrollView headerHeight
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { topPanelHeight = geo.size.height }
+                    .onChange(of: geo.size.height) { _, h in topPanelHeight = h }
+            }
+        )
+    }
+
+    // MARK: - Bottom Floating Panel
+
+    /// Bottom panel: InputMorphView.
+    /// Blur gradient fades from transparent at top to opaque at bottom.
+    private var bottomPanel: some View {
+        InputMorphView(
+            prompt: $prompt,
+            isWorkspaceSelected: viewModel.workspaceURL != nil,
+            isThinking: viewModel.isThinking,
+            currentToolCall: viewModel.currentToolCall,
+            onSend: sendMessage,
+            onCancel: { viewModel.cancelCurrentRequest() }
+        )
+        // Blur fades from transparent (top) to opaque (bottom)
+        .background(BlurGradientView(direction: .bottomToTop))
+        // Report height for ChatScrollView footerHeight
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { bottomPanelHeight = geo.size.height }
+                    .onChange(of: geo.size.height) { _, h in bottomPanelHeight = h }
+            }
+        )
     }
 
     // MARK: - Private

@@ -5,11 +5,13 @@
 // Scroll logic (auto-scroll on new messages, thinking indicator) was embedded
 // directly in ContentView's body. This component owns all message list rendering.
 //
-// BOTTOM PADDING:
-// Accepts `bottomPadding` from ContentView — the real rendered height of InputMorphView.
-// This prevents the last message from being hidden under the input panel on launch,
-// when the editor grows, or when the panel morphs between states.
-// Auto-scroll fires on bottomPadding change so the view stays pinned to the bottom.
+// FLOATING PANELS LAYOUT:
+// ChatScrollView fills the entire ZStack behind FloatingPanelsView.
+// It does NOT know about InputMorphView height directly.
+// Instead it receives headerHeight and footerHeight — transparent spacers at the
+// top and bottom of the VStack inside ScrollView.
+// This guarantees the first and last messages are always fully readable
+// regardless of the panel heights (including dynamic growth of the input editor).
 
 import SwiftUI
 
@@ -38,22 +40,27 @@ struct ChatScrollView: View {
     /// Displayed in the bottom-right corner of the streaming bubble.
     let runningCost: Double
 
-    /// Height of InputMorphView reported by ContentView.
-    ///
-    /// Used as bottom padding so the last message stays visible above the input panel.
-    /// Auto-scroll fires whenever this changes (panel grows/shrinks).
-    let bottomPadding: CGFloat
+    /// Height of the top floating panel — used as a transparent header spacer
+    /// so the first message is never hidden behind the panel.
+    let headerHeight: CGFloat
 
-    /// Extra gap between the last message and the input panel.
-    ///
-    /// WHY 16: visually separates the last bubble from the input bar edge —
-    /// without it the last message feels "glued" to the panel on launch.
-    private let bottomGap: CGFloat = 16
+    /// Height of the bottom floating panel — used as a transparent footer spacer
+    /// so the last message is never hidden behind the input panel.
+    let footerHeight: CGFloat
+
+    /// Extra breathing room below the last message.
+    private let bottomGap: CGFloat = 12
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 16) {
+
+                    // Transparent header spacer — matches top floating panel height.
+                    // Invisible but reserves space so messages start below the panel.
+                    Color.clear
+                        .frame(height: headerHeight)
+                        .id("TopSpacer")
 
                     // Welcome screen — shown only when chat is empty
                     if messages.isEmpty && !isThinking {
@@ -85,24 +92,22 @@ struct ChatScrollView: View {
                         }
                     }
 
-                    // Invisible anchor at the very bottom of the list
-                    Spacer(minLength: 0)
+                    // Transparent footer spacer — matches bottom floating panel height.
+                    // Invisible but reserves space so the last message stays above the panel.
+                    Color.clear
+                        .frame(height: footerHeight + bottomGap)
                         .id("BottomSpacer")
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 12)
-                // bottomPadding = input panel height + bottomGap so the last message
-                // is never hidden under the panel and has a comfortable breathing room.
-                .padding(.bottom, max(bottomPadding + bottomGap, 12))
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: messages)
                 .animation(.easeInOut(duration: 0.25), value: isThinking)
                 .animation(.easeInOut(duration: 0.3), value: streamingText.isEmpty)
             }
             .onAppear {
-                // Scroll to bottom on appear — InputMorphView may not be laid out yet,
-                // so we fire a second scroll after a short delay to catch the final position.
+                // Scroll to bottom on appear — fire twice to catch the final layout position
+                // after FloatingPanelsView has reported its height.
                 proxy.scrollTo("BottomSpacer", anchor: .bottom)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                     withAnimation(.easeOut(duration: 0.2)) {
                         proxy.scrollTo("BottomSpacer", anchor: .bottom)
                     }
@@ -123,9 +128,11 @@ struct ChatScrollView: View {
             .onChange(of: streamingText) { _, _ in
                 proxy.scrollTo("BottomSpacer", anchor: .bottom)
             }
-            // When the input panel grows or shrinks — re-pin to bottom immediately
-            .onChange(of: bottomPadding) { _, _ in
-                proxy.scrollTo("BottomSpacer", anchor: .bottom)
+            // When footer height changes (input panel grows/shrinks) — re-pin to bottom
+            .onChange(of: footerHeight) { _, _ in
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo("BottomSpacer", anchor: .bottom)
+                }
             }
         }
     }
@@ -135,7 +142,6 @@ struct ChatScrollView: View {
     /// Welcome message for empty chat.
     ///
     /// Design: neutral left-aligned bubble — like Chappie's first message.
-    /// Uses the same styling as Chappie's bubble in MessageBubbleView.
     private var welcomeMessage: some View {
         HStack(alignment: .bottom, spacing: 8) {
             VStack(alignment: .leading, spacing: 4) {
@@ -173,9 +179,6 @@ struct ChatScrollView: View {
     }
 
     /// Spinner — shown while Chappie is thinking or calling tools.
-    ///
-    /// Minimal: just a ProgressView in a left-aligned bubble.
-    /// Current tool call is shown in InputMorphView below.
     private var thinkingIndicator: some View {
         HStack {
             ProgressView()
@@ -209,35 +212,24 @@ struct ChatScrollView: View {
     ///
     /// WHY MarkdownTextView NOT Text:
     /// Chappie may start writing a code block mid-stream.
-    /// MarkdownTextView handles unclosed blocks gracefully —
-    /// an unclosed ``` renders as plain text until closed.
-    ///
-    /// WHY .contentTransition(.interpolate):
-    /// Each token causes SwiftUI to redraw the View with a new string.
-    /// .interpolate smoothly animates the change between frames — "typing" effect.
+    /// MarkdownTextView handles unclosed blocks gracefully.
     ///
     /// COST IN BOTTOM-RIGHT CORNER:
     /// ZStack alignment: .bottomTrailing pins the cost label over content.
-    /// Shown from the start (0.00 ₽) and grows with each API call.
-    /// .contentTransition(.numericText) animates digit rolling.
     private var streamingBubble: some View {
         HStack(alignment: .bottom, spacing: 8) {
             ZStack(alignment: .bottomTrailing) {
 
-                // Main bubble content: text + blinking cursor
                 HStack(alignment: .bottom, spacing: 0) {
                     MarkdownTextView(text: streamingText, fontSize: 14)
                         .contentTransition(.interpolate)
                         .animation(.linear(duration: 0.08), value: streamingText)
 
-                    // Blinking cursor — visual indicator that text is still being written
                     BlinkingCursor()
                         .padding(.bottom, 1)
                 }
-                // Bottom padding so the cost label doesn't overlap the last line
                 .padding(.bottom, 18)
 
-                // RUNNING COST — bottom-right corner of the bubble
                 Text(String(format: "🪙 %.2f ₽", runningCost))
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(.tertiary)
@@ -309,23 +301,10 @@ private struct BlinkingCursor: View {
         isThinking: true,
         streamingText: "Also you can add `@MainActor` for **thread safety**...",
         runningCost: 1.23,
-        bottomPadding: 80
+        headerHeight: 80,
+        footerHeight: 80
     )
     .frame(width: 650, height: 500)
-    .background(Color(NSColor.windowBackgroundColor))
-}
-
-#Preview("Spinner (tools)") {
-    ChatScrollView(
-        messages: [
-            .message(isUser: true, text: "Analyse the project"),
-        ],
-        isThinking: true,
-        streamingText: "",
-        runningCost: 0.0,
-        bottomPadding: 60
-    )
-    .frame(width: 650, height: 300)
     .background(Color(NSColor.windowBackgroundColor))
 }
 
@@ -335,7 +314,8 @@ private struct BlinkingCursor: View {
         isThinking: false,
         streamingText: "",
         runningCost: 0.0,
-        bottomPadding: 60
+        headerHeight: 60,
+        footerHeight: 80
     )
     .frame(width: 650, height: 300)
     .background(Color(NSColor.windowBackgroundColor))
