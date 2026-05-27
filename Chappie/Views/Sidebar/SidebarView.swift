@@ -78,8 +78,8 @@ struct SidebarView: View {
             }
             .scrollContentBackground(.hidden)
             .listStyle(.sidebar)
-
-            Divider()
+            // Hide scrollbar — consistent with chat scroll view
+            .scrollIndicators(.never)
 
             Button(action: onCreateThread) {
                 HStack(spacing: 6) {
@@ -95,8 +95,9 @@ struct SidebarView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(Color.accentColor)
-            .background(Color.primary.opacity(0.03))
         }
+        // ultraThinMaterial matches toolbar and input panel — unified glass aesthetic
+        .background(.ultraThinMaterial)
         .navigationTitle("Чаппи")
     }
 
