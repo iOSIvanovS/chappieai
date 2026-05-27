@@ -96,6 +96,9 @@ struct SidebarView: View {
             .buttonStyle(.plain)
             .foregroundStyle(Color.accentColor)
         }
+        // Push content below the toolbar — toolbar is transparent/ultraThinMaterial
+        // so without this offset the list slides under it
+        .safeAreaPadding(.top, 52)
         // ultraThinMaterial matches toolbar and input panel — unified glass aesthetic
         .background(.ultraThinMaterial)
         .navigationTitle("Чаппи")
