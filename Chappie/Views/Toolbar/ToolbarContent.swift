@@ -1,52 +1,55 @@
 // ToolbarContent.swift
 // Chappie
 //
-// ПОЧЕМУ ЭТОТ ФАЙЛ СУЩЕСТВУЕТ:
-// Контент тулбара (баланс + кнопка настроек) был вшит прямо в ContentView.
-// Вынесен в отдельный ViewModifier, чтобы:
-// 1. ContentView оставался чистым и читаемым
-// 2. Тулбар можно было легко расширять (добавить кнопку очистки истории и т.д.)
-// 3. Логика цвета иконки шестерёнки была в одном месте
+// Toolbar content for the main window.
+// Contains: sidebar toggle button, balance indicator, settings button.
 //
-// АРХИТЕКТУРНОЕ РЕШЕНИЕ (UI-FIX-02):
-// Кнопка воркспейса УБРАНА из тулбара.
-// ПОЧЕМУ:
-// Воркспейс — техническая настройка (рабочая папка для инструментов read_file/write_file).
-// Она не связана с тредами и проектами. Её место — в SettingsView, а не в основном тулбаре.
-// ProjectChipsView над чатом — правильное место для управления проектами треда.
-// Тулбар должен быть минималистичным: только баланс и настройки.
+// SIDEBAR BUTTON:
+// Custom button with "list.bullet" icon — replaces the system NavigationSplitView
+// toggle. Placed on the leading edge to match standard macOS sidebar button position.
+//
+// BALANCE PILL:
+// Shown only when balance is loaded — avoids showing "0 ₽" on startup.
+//
+// SETTINGS BUTTON:
+// Always visible. Turns orange when no AI provider is configured.
 
 import SwiftUI
 
-/// Контент тулбара главного окна Чаппи.
-///
-/// Содержит:
-/// - Индикатор текущего баланса (если загружен)
-/// - Кнопку настроек ⚙️ (оранжевая если API-ключ не задан)
+/// Toolbar content for the main Chappie window.
 struct ChappieToolbarContent: ToolbarContent {
 
-    /// Текущий баланс в рублях (nil если ещё не загружен)
+    /// Current balance in rubles (nil if not yet loaded)
     let balance: Double?
-
-    /// Флаг: задан ли валидный API-ключ.
-    /// Если нет — шестерёнка становится оранжевой, привлекая внимание.
+    /// True if at least one provider is configured
     let isApiKeyValid: Bool
-
-    /// Коллбэк: пользователь нажал кнопку настроек
+    /// Sidebar visibility binding — toggled by the leading button
+    @Binding var isSidebarVisible: Bool
+    /// Callback: user tapped the settings button
     let onOpenSettings: () -> Void
 
     var body: some ToolbarContent {
 
-        // Баланс — показываем только если он загружен.
-        // Не показываем "0 ₽" при старте — это вводит в заблуждение.
+        // Sidebar toggle — leading edge, matches standard macOS sidebar button position
+        ToolbarItem(placement: .navigation) {
+            Button {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    isSidebarVisible.toggle()
+                }
+            } label: {
+                Image(systemName: "list.bullet")
+            }
+            .help("Показать / скрыть треды")
+        }
+
+        // Balance pill — shown only when loaded
         if let balance = balance {
             ToolbarItem(placement: .primaryAction) {
                 balanceView(balance: balance)
             }
         }
 
-        // Кнопка настроек — всегда видна.
-        // Меняет цвет в зависимости от состояния API-ключа.
+        // Settings button — always visible, orange if no provider configured
         ToolbarItem(placement: .primaryAction) {
             Button {
                 onOpenSettings()
@@ -54,8 +57,7 @@ struct ChappieToolbarContent: ToolbarContent {
                 Image(systemName: "gear")
             }
             .help("Настройки Чаппи")
-            // ВИЗУАЛЬНЫЙ СИГНАЛ: если ключ не задан — шестерёнка оранжевая.
-            // Это мягкое, но заметное напоминание без агрессивных алертов.
+            // VISUAL SIGNAL: orange gear = no provider configured
             .foregroundStyle(
                 isApiKeyValid
                 ? AnyShapeStyle(.primary)
@@ -64,10 +66,9 @@ struct ChappieToolbarContent: ToolbarContent {
         }
     }
 
-    // MARK: - Вспомогательные вью
+    // MARK: - Private
 
-    /// Таблетка с балансом в тулбаре.
-    /// Оформлена как "пилюля" с иконкой кредитной карты и суммой.
+    /// Balance pill with card icon and amount.
     private func balanceView(balance: Double) -> some View {
         HStack(spacing: 4) {
             Image(systemName: "creditcard.fill")

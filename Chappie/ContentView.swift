@@ -4,30 +4,26 @@
 // ContentView is a pure "conductor". It assembles all components together
 // and passes data from ViewModel to the right places.
 //
-// FLOATING PANELS LAYOUT:
-// The detail area uses a ZStack:
-//   - Back layer: ChatScrollView fills the entire area (ignores safe area).
-//   - Front layer: FloatingPanelsView — top panel (model picker + project chips)
-//     and bottom panel (input / tool status) float over the scroll view.
+// LAYOUT ARCHITECTURE:
+// The entire app is a single ZStack:
+//   - Back layer: background image fills the whole window.
+//   - Middle layer: main content (top panel + chat + bottom panel).
+//   - Front layer (conditional): dim overlay + floating sidebar.
 //
-// TOP PANEL STYLE:
-//   .ultraThinMaterial background — frosted glass matching the toolbar above.
-//   Single shared shadow on the panel VStack — chips have no individual shadows.
+// SIDEBAR BEHAVIOR:
+// The sidebar slides in from the left OVER the chat content — it does not push it.
+// Triggered by the "list.bullet" toolbar button.
+// Dismissed by clicking the dimmed area to the right of the sidebar.
+// Animation: spring, consistent with macOS feel.
 //
-// BOTTOM PANEL STYLE:
-//   .ultraThinMaterial background — matches top panel and toolbar.
+// FLOATING PANELS:
+//   Top panel: ModelPickerRow + ProjectChipsView — ultraThinMaterial.
+//   Bottom panel: InputMorphView — ultraThinMaterial.
+//   Both panels report their heights so ChatScrollView can add matching spacers.
 //
-// BACKGROUND IMAGE:
-// Image("Chappie") is applied as .background() directly on NavigationSplitView.
-// This means the image sits behind BOTH the sidebar and the detail column.
-// The sidebar's NSVisualEffectView naturally composites on top of the image,
-// producing the frosted-glass effect automatically — no AppKit hacks needed.
-// The window is NOT made transparent (that would break layout and make the
-// entire window see-through).
-//
-// TOOLBAR BACKGROUND:
-// .toolbarBackground(.ultraThinMaterial, for: .windowToolbar) gives the title bar
-// a frosted-glass look that matches the sidebar's NSVisualEffectView material.
+// TOOLBAR:
+//   ultraThinMaterial background — frosted glass matching the panels.
+//   Contains: sidebar toggle (list.bullet), balance pill, settings gear.
 //
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
@@ -45,6 +41,7 @@ struct ContentView: View {
     @State private var prompt: String = ""
     @State private var showSettings: Bool = false
     @State private var isReady: Bool = false
+    @State private var isSidebarVisible: Bool = false
 
     @State private var selectedProjectForSettings: ProjectMetadata? = nil
 
@@ -55,6 +52,9 @@ struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
 
     private var orphanedThreadIds: Set<UUID> { [] }
+
+    // Sidebar width — fixed, matches standard macOS sidebar proportions
+    private let sidebarWidth: CGFloat = 260
 
     var body: some View {
         Group {
@@ -118,77 +118,109 @@ struct ContentView: View {
     // MARK: - Navigation
 
     private var navigationContent: some View {
-        NavigationSplitView {
-            SidebarView(
-                isApiKeyValid: !viewModel.providers.isEmpty,
-                threads: viewModel.threads,
-                selectedThreadId: viewModel.activeThread?.id,
-                orphanedThreadIds: orphanedThreadIds,
-                onOpenSettings: { showSettings = true },
-                onSelectThread: { thread in
-                    Task { await viewModel.selectThread(thread) }
-                },
-                onCreateThread: {
-                    viewModel.createNewThread()
-                },
-                onDeleteThread: { thread in
-                    viewModel.deleteThread(thread)
-                },
-                onRenameThread: { thread, newTitle in
-                    viewModel.renameThread(thread, newTitle: newTitle)
-                }
-            )
-        } detail: {
-            // ZStack: ChatScrollView fills the full area, floating panels overlay on top.
-            ZStack(alignment: .top) {
+        ZStack(alignment: .topLeading) {
 
-                // BACK LAYER: full-screen scroll view
-                ChatScrollView(
-                    messages: viewModel.visibleMessages,
-                    isThinking: viewModel.isThinking,
-                    streamingText: viewModel.streamingText,
-                    runningCost: viewModel.runningCost,
-                    headerHeight: topPanelHeight,
-                    footerHeight: bottomPanelHeight
-                )
-                .ignoresSafeArea(edges: .top)
-
-                // FRONT LAYER: frosted glass floating panels
-                VStack(spacing: 0) {
-                    topPanel
-                    Spacer()
-                    bottomPanel
-                }
-            }
-            .animation(.easeInOut(duration: 0.2), value: viewModel.activeThread?.id)
-            .toolbar {
-                ChappieToolbarContent(
-                    balance: viewModel.currentBalance,
-                    isApiKeyValid: !viewModel.providers.isEmpty,
-                    onOpenSettings: { showSettings = true }
-                )
-            }
-        }
-        // Background image sits behind BOTH sidebar and detail columns.
-        // The sidebar's NSVisualEffectView composites on top automatically —
-        // this gives the frosted-glass sidebar effect without any AppKit tricks.
-        .background(
+            // BACK LAYER: background image fills the entire window
             Image("Chappie")
                 .resizable()
                 .scaledToFill()
                 .ignoresSafeArea()
                 .opacity(0.5)
-        )
-        // ultraThinMaterial gives the title bar a frosted-glass look —
-        // consistent with the top panel and sidebar NSVisualEffectView material.
+
+            // MIDDLE LAYER: main app content — chat + floating panels
+            mainChatArea
+                .toolbar {
+                    ChappieToolbarContent(
+                        balance: viewModel.currentBalance,
+                        isApiKeyValid: !viewModel.providers.isEmpty,
+                        isSidebarVisible: $isSidebarVisible,
+                        onOpenSettings: { showSettings = true }
+                    )
+                }
+
+            // FRONT LAYER: dim overlay + sidebar (only when visible)
+            if isSidebarVisible {
+                // Dim overlay — tapping it closes the sidebar
+                Color.black.opacity(0.25)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                            isSidebarVisible = false
+                        }
+                    }
+                    .transition(.opacity)
+
+                // Floating sidebar panel
+                SidebarView(
+                    isApiKeyValid: !viewModel.providers.isEmpty,
+                    threads: viewModel.threads,
+                    selectedThreadId: viewModel.activeThread?.id,
+                    orphanedThreadIds: orphanedThreadIds,
+                    onOpenSettings: {
+                        showSettings = true
+                        isSidebarVisible = false
+                    },
+                    onSelectThread: { thread in
+                        Task { await viewModel.selectThread(thread) }
+                    },
+                    onCreateThread: {
+                        viewModel.createNewThread()
+                    },
+                    onDeleteThread: { thread in
+                        viewModel.deleteThread(thread)
+                    },
+                    onRenameThread: { thread, newTitle in
+                        viewModel.renameThread(thread, newTitle: newTitle)
+                    },
+                    onDismiss: {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                            isSidebarVisible = false
+                        }
+                    }
+                )
+                .frame(width: sidebarWidth)
+                // Vertical insets: top — below toolbar, bottom — above window edge
+                .padding(.top, 52)
+                .padding(.bottom, 16)
+                .padding(.leading, 12)
+                .transition(.move(edge: .leading).combined(with: .opacity))
+            }
+        }
+        // ultraThinMaterial gives the title bar a frosted-glass look
         .toolbarBackground(.ultraThinMaterial, for: .windowToolbar)
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: isSidebarVisible)
+    }
+
+    // MARK: - Main Chat Area
+
+    /// Chat content: scroll view + floating top and bottom panels.
+    private var mainChatArea: some View {
+        ZStack(alignment: .top) {
+
+            // BACK: full-screen scroll view
+            ChatScrollView(
+                messages: viewModel.visibleMessages,
+                isThinking: viewModel.isThinking,
+                streamingText: viewModel.streamingText,
+                runningCost: viewModel.runningCost,
+                headerHeight: topPanelHeight,
+                footerHeight: bottomPanelHeight
+            )
+            .ignoresSafeArea(edges: .top)
+
+            // FRONT: frosted glass floating panels
+            VStack(spacing: 0) {
+                topPanel
+                Spacer()
+                bottomPanel
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: viewModel.activeThread?.id)
     }
 
     // MARK: - Top Floating Panel
 
-    /// Top panel: model picker + project chips.
-    /// ultraThinMaterial background — frosted glass matching toolbar and bottom panel.
-    /// Single shared shadow cast downward — chips have no individual shadows.
+    /// Top panel: model picker + project chips — ultraThinMaterial frosted glass.
     private var topPanel: some View {
         VStack(spacing: 0) {
             if viewModel.activeThread != nil && !viewModel.providers.isEmpty {
@@ -223,9 +255,8 @@ struct ContentView: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        // ultraThinMaterial — frosted glass, consistent with toolbar and bottom panel
+        // ultraThinMaterial — frosted glass consistent with toolbar and bottom panel
         .background(.ultraThinMaterial)
-        // Single shared shadow cast downward — separates panel from message list
         .shadow(color: .black.opacity(0.25), radius: 12, x: 0, y: 6)
         // Report height for ChatScrollView headerHeight
         .background(
@@ -239,8 +270,7 @@ struct ContentView: View {
 
     // MARK: - Bottom Floating Panel
 
-    /// Bottom panel: InputMorphView.
-    /// ultraThinMaterial background — matches top panel and toolbar.
+    /// Bottom panel: InputMorphView — ultraThinMaterial frosted glass.
     private var bottomPanel: some View {
         InputMorphView(
             prompt: $prompt,

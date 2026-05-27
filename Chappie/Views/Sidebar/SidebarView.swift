@@ -1,9 +1,9 @@
 // SidebarView.swift
 // Chappie
 //
-// Sidebar — thread navigation (IT-05).
-//
-// IT-10 (providers refactor): receives orphanedThreadIds to show ⚠️ on affected threads.
+// Custom overlay sidebar — floats over chat content instead of pushing it.
+// Implemented as a standalone VStack with ultraThinMaterial + cornerRadius.
+// No NavigationSplitView dependency — full control over appearance and behavior.
 //
 // PRINCIPLE "DUMB COMPONENT":
 // SidebarView doesn't know about ThreadStore or SwiftData.
@@ -15,12 +15,10 @@ import ChappieCore
 
 // MARK: - SidebarView
 
-/// Sidebar of the Chappie app.
+/// Floating overlay sidebar for thread navigation.
 ///
-/// Shows:
-/// - list of threads (IT-05) — main content
-/// - warning if no providers configured
-/// - "New Thread" button at the bottom
+/// Slides in from the left over the chat area.
+/// Dismissed by tapping the dimmed overlay behind it.
 struct SidebarView: View {
 
     // MARK: - Input
@@ -38,12 +36,15 @@ struct SidebarView: View {
     let onCreateThread: () -> Void
     let onDeleteThread: (ThreadMetadata) -> Void
     let onRenameThread: (ThreadMetadata, String) -> Void
+    /// Called when user taps outside the sidebar to dismiss it
+    let onDismiss: () -> Void
 
     // MARK: - Body
 
     var body: some View {
         VStack(spacing: 0) {
 
+            // Thread list — scrollable
             List {
                 Section {
                     if threads.isEmpty {
@@ -57,7 +58,10 @@ struct SidebarView: View {
                             threads: threads,
                             selectedThreadId: selectedThreadId,
                             orphanedThreadIds: orphanedThreadIds,
-                            onSelect: onSelectThread,
+                            onSelect: { thread in
+                                onSelectThread(thread)
+                                onDismiss()
+                            },
                             onDelete: onDeleteThread,
                             onRename: onRenameThread
                         )
@@ -78,10 +82,13 @@ struct SidebarView: View {
             }
             .scrollContentBackground(.hidden)
             .listStyle(.sidebar)
-            // Hide scrollbar — consistent with chat scroll view
             .scrollIndicators(.never)
 
-            Button(action: onCreateThread) {
+            // "New Thread" button pinned to the bottom
+            Button(action: {
+                onCreateThread()
+                onDismiss()
+            }) {
                 HStack(spacing: 6) {
                     Image(systemName: "plus.circle.fill")
                         .font(.system(size: 14))
@@ -96,12 +103,10 @@ struct SidebarView: View {
             .buttonStyle(.plain)
             .foregroundStyle(Color.accentColor)
         }
-        // Push content below the toolbar — toolbar is transparent/ultraThinMaterial
-        // so without this offset the list slides under it
-        .safeAreaPadding(.top, 52)
-        // ultraThinMaterial matches toolbar and input panel — unified glass aesthetic
-        .background(.ultraThinMaterial)
-        .navigationTitle("Чаппи")
+        // ultraThinMaterial — frosted glass, consistent with toolbar and input panel
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        // Clip to the rounded shape
+        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
     // MARK: - API Key Warning
@@ -125,40 +130,5 @@ struct SidebarView: View {
             }
             .padding(.vertical, 4)
         }
-    }
-}
-
-// MARK: - Preview
-
-#Preview {
-    NavigationSplitView {
-        SidebarView(
-            isApiKeyValid: true,
-            threads: [
-                ThreadMetadata(
-                    id: UUID(),
-                    title: "Рефакторинг тредов",
-                    createdAt: Date().addingTimeInterval(-3600),
-                    updatedAt: Date().addingTimeInterval(-600),
-                    projectIds: []
-                ),
-                ThreadMetadata(
-                    id: UUID(),
-                    title: "Исправление багов SwiftData",
-                    createdAt: Date().addingTimeInterval(-7200),
-                    updatedAt: Date().addingTimeInterval(-3600),
-                    projectIds: []
-                )
-            ],
-            selectedThreadId: nil,
-            orphanedThreadIds: [],
-            onOpenSettings: {},
-            onSelectThread: { _ in },
-            onCreateThread: {},
-            onDeleteThread: { _ in },
-            onRenameThread: { _, _ in }
-        )
-    } detail: {
-        Text("Detail")
     }
 }
