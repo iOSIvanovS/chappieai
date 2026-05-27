@@ -5,9 +5,9 @@
 // Tapping opens a popover with two-level provider → model selection.
 //
 // CHIP STYLE:
-//   The entire row is a floating rounded pill with ultraThinMaterial background.
+//   Only the inner HStack (label + button) gets ultraThinMaterial pill background.
+//   Outer HStack has Spacer() so the pill hugs its content on the left.
 //   Consistent with ProjectChipsView and the bottom InputMorphView panel.
-//   No divider — shadow provides visual separation from the chat content.
 //
 // ORPHANED STATE:
 // If the active provider or model is no longer in the providers list,
@@ -37,70 +37,74 @@ struct ModelPickerRow: View {
     // MARK: - Body
 
     var body: some View {
-        HStack(spacing: 6) {
-            // "Модель" label
-            Text("Модель")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    Capsule()
-                        .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
-                )
+        // Outer HStack: pill on the left, Spacer pushes it to hug content width
+        HStack(spacing: 0) {
+            // Inner pill: only this gets the material background
+            HStack(spacing: 6) {
+                // "Модель" label
+                Text("Модель")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
+                    )
 
-            Button {
-                showPopover.toggle()
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: isOrphaned ? "exclamationmark.triangle.fill" : "cpu")
-                        .font(.system(size: 10))
-                        .foregroundStyle(isOrphaned ? Color.orange : Color.accentColor.opacity(0.8))
+                Button {
+                    showPopover.toggle()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: isOrphaned ? "exclamationmark.triangle.fill" : "cpu")
+                            .font(.system(size: 10))
+                            .foregroundStyle(isOrphaned ? Color.orange : Color.accentColor.opacity(0.8))
 
-                    chipLabel
+                        chipLabel
 
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    Capsule()
-                        .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
-                )
-                .overlay(
-                    Capsule()
-                        .stroke(
-                            isOrphaned
-                                ? Color.orange.opacity(0.3)
-                                : Color.accentColor.opacity(0.2),
-                            lineWidth: 0.5
-                        )
-                )
-            }
-            .buttonStyle(.plain)
-            .fixedSize()
-            .popover(isPresented: $showPopover, arrowEdge: .top) {
-                ModelPickerPopover(
-                    providers: providers,
-                    activeProviderId: activeProvider?.id,
-                    activeModelName: activeModelName,
-                    onSelect: { providerId, modelName in
-                        onSelectProvider(providerId, modelName)
-                        showPopover = false
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary)
                     }
-                )
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
+                    )
+                    .overlay(
+                        Capsule()
+                            .stroke(
+                                isOrphaned
+                                    ? Color.orange.opacity(0.3)
+                                    : Color.accentColor.opacity(0.2),
+                                lineWidth: 0.5
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+                .popover(isPresented: $showPopover, arrowEdge: .top) {
+                    ModelPickerPopover(
+                        providers: providers,
+                        activeProviderId: activeProvider?.id,
+                        activeModelName: activeModelName,
+                        onSelect: { providerId, modelName in
+                            onSelectProvider(providerId, modelName)
+                            showPopover = false
+                        }
+                    )
+                }
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            // Material only on the pill, not on the full-width row
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 4)
 
             Spacer()
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        // Floating pill: frosted glass consistent with bottom panel and sidebar
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 4)
     }
 
     // MARK: - Chip Label

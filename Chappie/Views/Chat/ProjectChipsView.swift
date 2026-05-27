@@ -5,10 +5,9 @@
 // Displayed as a floating rounded pill above the message list.
 //
 // CHIP STYLE:
-//   The entire row is a floating rounded pill with ultraThinMaterial background.
+//   Only the inner HStack (label + chips + add button) gets ultraThinMaterial pill background.
+//   Outer HStack has Spacer() so the pill hugs its content on the left.
 //   Consistent with ModelPickerRow and the bottom InputMorphView panel.
-//   Individual chips use semi-transparent NSColor.textBackgroundColor for legibility.
-//   No divider — shadow provides visual separation from the chat content.
 //
 // IT-09: Tap on chip opens ProjectSettingsSheet.
 // onOpenSettings(UUID) callback passes project ID to ViewModel.
@@ -58,37 +57,43 @@ struct ProjectChipsView: View {
     // MARK: - Body
 
     var body: some View {
-        HStack(spacing: 6) {
+        // Outer HStack: pill on the left, Spacer pushes it to hug content width
+        HStack(spacing: 0) {
+            // Inner pill: only this gets the material background
+            HStack(spacing: 6) {
 
-            // "Проекты" label
-            Text("Проекты")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    Capsule()
-                        .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
-                )
+                // "Проекты" label
+                Text("Проекты")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
+                    )
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
 
-                    ForEach(projects) { project in
-                        projectChip(for: project)
+                        ForEach(projects) { project in
+                            projectChip(for: project)
+                        }
+
+                        addButton
                     }
-
-                    addButton
+                    .padding(.horizontal, 2)
                 }
-                .padding(.horizontal, 2)
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            // Material only on the pill, not on the full-width row
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 4)
+
+            Spacer()
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        // Floating pill: frosted glass consistent with ModelPickerRow and bottom panel
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 4)
     }
 
     // MARK: - Project chip
