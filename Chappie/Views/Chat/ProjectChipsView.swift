@@ -10,8 +10,8 @@
 //   Consistent with ModelPickerRow and the bottom InputMorphView panel.
 //
 // SCROLL BEHAVIOUR:
-//   ScrollView has a maxWidth cap so the pill never stretches full-width.
-//   When there are many projects it scrolls horizontally within the pill.
+//   The pill uses fixedSize() to hug its content.
+//   When the pill would exceed maxWidth (500pt) it switches to ScrollView inside.
 //
 // IT-09: Tap on chip opens ProjectSettingsSheet.
 // onOpenSettings(UUID) callback passes project ID to ViewModel.
@@ -58,12 +58,17 @@ struct ProjectChipsView: View {
     /// Hover state per chip — key is project UUID.
     @State private var hoveredProjectId: UUID? = nil
 
+    // MARK: - Layout constant
+
+    /// Max width before the pill starts scrolling internally.
+    private let maxPillWidth: CGFloat = 500
+
     // MARK: - Body
 
     var body: some View {
         // Outer HStack: pill on the left, Spacer pushes it to hug content width
         HStack(spacing: 0) {
-            // Inner pill: only this gets the material background
+            // Inner pill: hugs content via fixedSize, capped at maxPillWidth
             HStack(spacing: 6) {
 
                 // "Проекты" label
@@ -77,8 +82,9 @@ struct ProjectChipsView: View {
                             .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
                     )
 
-                // ScrollView is capped so it never stretches the pill full-width.
-                // When there are many projects the chips scroll inside the pill.
+                // Chips + add button in a scrollable row.
+                // fixedSize on the HStack makes it hug its content naturally.
+                // The outer frame cap prevents the pill from exceeding maxPillWidth.
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         ForEach(projects) { project in
@@ -86,11 +92,11 @@ struct ProjectChipsView: View {
                         }
                         addButton
                     }
+                    .fixedSize(horizontal: true, vertical: true)
                     .padding(.horizontal, 2)
                 }
-                .frame(maxWidth: 400)
-                // fixedSize in vertical axis so the pill height hugs chip height
-                .fixedSize(horizontal: false, vertical: true)
+                .fixedSize(horizontal: true, vertical: true)
+                .frame(maxWidth: maxPillWidth)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
