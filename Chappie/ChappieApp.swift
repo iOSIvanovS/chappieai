@@ -33,12 +33,13 @@
 // .defaultPosition(.center) ensures the window appears centered on screen.
 // These are hints — the system may override them if the user has resized/moved.
 //
-// TRANSPARENT WINDOW:
-// We make the NSWindow transparent in applicationDidFinishLaunching so that
-// the background Image("Chappie") shows through BOTH the sidebar and the detail
-// column — the system NSVisualEffectView backgrounds become see-through.
-// window.backgroundColor = .clear + isOpaque = false is the only reliable way
-// to achieve this on macOS without walking the NSView hierarchy.
+// BACKGROUND IMAGE:
+// Image("Chappie") is applied as .background() directly on NavigationSplitView.
+// The sidebar column uses .scrollContentBackground(.hidden) so the List doesn't
+// paint its own opaque background, letting the image show through.
+// The system NSVisualEffectView in the sidebar naturally composites on top of
+// the image — giving the frosted glass effect for free, with no AppKit hacks.
+// Window transparency (backgroundColor = .clear) is NOT used — it breaks layout.
 
 import SwiftUI
 import AppKit
@@ -125,31 +126,6 @@ struct ChappieApp: App {
 
 /// Application delegate for handling macOS system events.
 final class ChappieAppDelegate: NSObject, NSApplicationDelegate {
-
-    /// Make all app windows transparent so the background image shows through
-    /// both the sidebar and the detail column.
-    ///
-    /// WHY THIS APPROACH:
-    /// NavigationSplitView renders each column with a system NSVisualEffectView.
-    /// Setting window.backgroundColor = .clear + isOpaque = false causes the
-    /// system to composite those effect views against the transparent window
-    /// background, making the SwiftUI .background() image visible beneath them.
-    /// This is cleaner than walking the NSView hierarchy from SwiftUI.
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        makeWindowsTransparent()
-    }
-
-    /// Also handle windows that open after launch (e.g. restored windows).
-    func applicationDidBecomeActive(_ notification: Notification) {
-        makeWindowsTransparent()
-    }
-
-    private func makeWindowsTransparent() {
-        for window in NSApplication.shared.windows {
-            window.backgroundColor = .clear
-            window.isOpaque = false
-        }
-    }
 
     /// Called by the system immediately before the application terminates.
     /// We kill the ChappieMCP child process here.

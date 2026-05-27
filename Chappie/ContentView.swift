@@ -14,12 +14,12 @@
 // first and last messages are always fully readable.
 //
 // BACKGROUND IMAGE:
-// Image("Chappie") is set as .background() on the entire mainContent view.
-// The window itself is made transparent in ChappieAppDelegate.applicationDidFinishLaunching
-// (window.backgroundColor = .clear, window.isOpaque = false).
-// This causes the system NSVisualEffectView in NavigationSplitView columns to
-// composite against the transparent window, making the image visible through
-// both the sidebar and the detail column — without any NSView hierarchy walking.
+// Image("Chappie") is applied as .background() directly on NavigationSplitView.
+// This means the image sits behind BOTH the sidebar and the detail column.
+// The sidebar's NSVisualEffectView naturally composites on top of the image,
+// producing the frosted-glass effect automatically — no AppKit hacks needed.
+// The window is NOT made transparent (that would break layout and make the
+// entire window see-through).
 //
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
@@ -77,16 +77,6 @@ struct ContentView: View {
 
     private var mainContent: some View {
         navigationContent
-            // Background image sits behind everything including the sidebar.
-            // The transparent window (set in AppDelegate) lets it show through
-            // the system NSVisualEffectView of NavigationSplitView columns.
-            .background(
-                Image("Chappie")
-                    .resizable()
-                    .scaledToFill()
-                    .ignoresSafeArea()
-                    .opacity(0.5)
-            )
             .sheet(isPresented: $showSettings) {
                 SettingsView(viewModel: viewModel)
             }
@@ -171,6 +161,16 @@ struct ContentView: View {
                 )
             }
         }
+        // Background image sits behind BOTH sidebar and detail columns.
+        // The sidebar's NSVisualEffectView composites on top automatically —
+        // this gives the frosted-glass sidebar effect without any AppKit tricks.
+        .background(
+            Image("Chappie")
+                .resizable()
+                .scaledToFill()
+                .ignoresSafeArea()
+                .opacity(0.5)
+        )
     }
 
     // MARK: - Top Floating Panel
