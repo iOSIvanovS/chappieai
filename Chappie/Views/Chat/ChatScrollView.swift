@@ -14,11 +14,13 @@
 // regardless of the panel heights (including dynamic growth of the input editor).
 //
 // AUTO-SCROLL POLICY:
-// Scroll to bottom happens in exactly three cases:
-//   1. footerHeight first becomes non-zero — this is the true "layout ready" moment.
-//      After that, initial scroll is marked done and footerHeight changes are ignored.
-//   2. onChange(messages) — new message added to the chat.
-//   3. onChange(streamingText) — Chappie is streaming a response (live bubble grows).
+// Scroll to bottom happens in exactly four cases:
+//   1. threadId changes — user switched to another thread. Reset initialScrollDone,
+//      then scroll after a short delay so the new messages have time to render.
+//   2. footerHeight first becomes non-zero — "layout ready" moment on first launch.
+//      After that, footerHeight changes are ignored (user typing grows the input field).
+//   3. onChange(messages) — new message added to the chat.
+//   4. onChange(streamingText) — Chappie is streaming a response (live bubble grows).
 // Intentionally NOT scrolling when footerHeight changes after initial scroll
 // so the user can freely read mid-chat while typing a long message.
 //
@@ -32,6 +34,9 @@ import SwiftUI
 /// IMPORTANT: Accepts `visibleMessages` — already filtered list (only .message, max 30).
 /// Filtering happens in ViewModel, not here.
 struct ChatScrollView: View {
+
+    /// Active thread ID — used to detect thread switches and reset scroll state.
+    let threadId: UUID?
 
     /// Filtered message list (only .message, max 30)
     let messages: [ChatMessage]
@@ -63,8 +68,8 @@ struct ChatScrollView: View {
     /// Extra breathing room below the last message.
     private let bottomGap: CGFloat = 12
 
-    /// True after the very first non-zero footerHeight triggers the initial scroll.
-    /// Prevents subsequent footerHeight changes (input field growing) from scrolling.
+    /// True after the first scroll-to-bottom on app launch or thread switch.
+    /// Prevents footerHeight changes (user typing) from scrolling mid-chat.
     @State private var initialScrollDone = false
 
     var body: some View {
@@ -121,7 +126,18 @@ struct ChatScrollView: View {
             }
             // Hide scrollbar — not needed in this chat UI aesthetic
             .scrollIndicators(.never)
-            // INITIAL SCROLL: fires once when footerHeight first becomes non-zero.
+            // THREAD SWITCH: reset scroll state and jump to bottom after new messages render.
+            // Small delay gives SwiftUI time to lay out the new message list before scrolling.
+            .onChange(of: threadId) { _, _ in
+                initialScrollDone = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        proxy.scrollTo("BottomSpacer", anchor: .bottom)
+                    }
+                    initialScrollDone = true
+                }
+            }
+            // INITIAL SCROLL: fires once when footerHeight first becomes non-zero on launch.
             // This is the true "layout ready" moment — the bottom panel has reported
             // its real height and the footer spacer has settled to its final size.
             // After this, footerHeight changes (user typing) do NOT trigger scrolling.
@@ -132,7 +148,7 @@ struct ChatScrollView: View {
                     proxy.scrollTo("BottomSpacer", anchor: .bottom)
                 }
             }
-            // Case 2: new message sent or received → scroll to bottom.
+            // Case 3: new message sent or received → scroll to bottom.
             .onChange(of: messages) { _, _ in
                 withAnimation(.easeOut(duration: 0.3)) {
                     proxy.scrollTo("BottomSpacer", anchor: .bottom)
@@ -146,7 +162,7 @@ struct ChatScrollView: View {
                     }
                 }
             }
-            // Case 3: streaming response is growing → keep bottom pinned.
+            // Case 4: streaming response is growing → keep bottom pinned.
             .onChange(of: streamingText) { _, _ in
                 proxy.scrollTo("BottomSpacer", anchor: .bottom)
             }
@@ -306,6 +322,7 @@ private struct BlinkingCursor: View {
 
 #Preview("With history and streaming") {
     ChatScrollView(
+        threadId: UUID(),
         messages: [
             .message(isUser: true, text: "Show me a code example"),
             .message(
@@ -326,6 +343,7 @@ private struct BlinkingCursor: View {
 
 #Preview("Empty chat") {
     ChatScrollView(
+        threadId: nil,
         messages: [],
         isThinking: false,
         streamingText: "",

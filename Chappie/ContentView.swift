@@ -197,7 +197,10 @@ struct ContentView: View {
         ZStack(alignment: .top) {
 
             // BACK: full-screen scroll view
+            // threadId is passed so ChatScrollView can detect thread switches
+            // and reset its scroll state to jump to the bottom of the new thread.
             ChatScrollView(
+                threadId: viewModel.activeThread?.id,
                 messages: viewModel.visibleMessages,
                 isThinking: viewModel.isThinking,
                 streamingText: viewModel.streamingText,
