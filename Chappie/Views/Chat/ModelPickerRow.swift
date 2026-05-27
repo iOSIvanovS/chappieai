@@ -1,25 +1,30 @@
 // ModelPickerRow.swift
 // Chappie
 //
-// Row displayed above ProjectChipsView showing the active AI provider + model.
-// Tapping opens a popover with two-level provider → model selection.
+// Row displayed above ProjectChipsView showing the active AI provider + model,
+// and — on the right — the current account balance from the active provider.
+//
+// LAYOUT:
+//   Left pill  — "Модель:" label + provider·model chip (ultraThinMaterial).
+//   Spacer     — pushes the two pills to opposite edges.
+//   Right pill — creditcard icon + balance amount (ultraThinMaterial).
+//                Visible only when balance is non-nil.
+//                Updates live during streaming via onBalanceUpdate in AIOrchestrator.
 //
 // CHIP STYLE:
-//   Only the inner HStack (label + button) gets ultraThinMaterial pill background.
-//   Outer HStack has Spacer() so the pill hugs its content on the left.
+//   Only the inner HStack gets ultraThinMaterial pill background.
 //   Consistent with ProjectChipsView and the bottom InputMorphView panel.
 //
 // ORPHANED STATE:
-// If the active provider or model is no longer in the providers list,
-// the row shows a warning style. User can pick a new provider+model inline.
+//   If the active provider or model is no longer in the providers list,
+//   the row shows a warning style. User can pick a new provider+model inline.
 
 import SwiftUI
 import ChappieCore
 
 // MARK: - ModelPickerRow
 
-/// Horizontal row showing the active AI provider + model.
-/// Tapping opens a two-level provider+model selection popover.
+/// Horizontal row with two floating pills: model selector (left) and balance (right).
 struct ModelPickerRow: View {
 
     // MARK: - Input
@@ -28,6 +33,8 @@ struct ModelPickerRow: View {
     let activeModelName: String?
     let providers: [AIProvider]
     let isOrphaned: Bool
+    /// Current account balance in RUB — nil until first response received.
+    let balance: Double?
     let onSelectProvider: (UUID, String) -> Void
 
     // MARK: - State
@@ -37,74 +44,108 @@ struct ModelPickerRow: View {
     // MARK: - Body
 
     var body: some View {
-        // Outer HStack: pill on the left, Spacer pushes it to hug content width
-        HStack(spacing: 0) {
-            // Inner pill: only this gets the material background
-            HStack(spacing: 6) {
-                // "Модель" label
-                Text("Модель")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule()
-                            .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
-                    )
+        HStack(spacing: 8) {
 
-                Button {
-                    showPopover.toggle()
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: isOrphaned ? "exclamationmark.triangle.fill" : "cpu")
-                            .font(.system(size: 10))
-                            .foregroundStyle(isOrphaned ? Color.orange : Color.accentColor.opacity(0.8))
-
-                        chipLabel
-
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule()
-                            .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
-                    )
-                    .overlay(
-                        Capsule()
-                            .stroke(
-                                isOrphaned
-                                    ? Color.orange.opacity(0.3)
-                                    : Color.accentColor.opacity(0.2),
-                                lineWidth: 0.5
-                            )
-                    )
-                }
-                .buttonStyle(.plain)
-                .fixedSize()
-                .popover(isPresented: $showPopover, arrowEdge: .top) {
-                    ModelPickerPopover(
-                        providers: providers,
-                        activeProviderId: activeProvider?.id,
-                        activeModelName: activeModelName,
-                        onSelect: { providerId, modelName in
-                            onSelectProvider(providerId, modelName)
-                            showPopover = false
-                        }
-                    )
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            // Material only on the pill, not on the full-width row
-            .background(.ultraThinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 4)
+            // LEFT PILL: model selector
+            modelPill
 
             Spacer()
+
+            // RIGHT PILL: balance — shown only when a value is available
+            if let balance = balance {
+                balancePill(balance: balance)
+            }
         }
+    }
+
+    // MARK: - Left Pill
+
+    private var modelPill: some View {
+        HStack(spacing: 6) {
+            // "Модель" static label
+            Text("Модель")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
+                )
+
+            // Provider + model selector button
+            Button {
+                showPopover.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: isOrphaned ? "exclamationmark.triangle.fill" : "cpu")
+                        .font(.system(size: 10))
+                        .foregroundStyle(isOrphaned ? Color.orange : Color.accentColor.opacity(0.8))
+
+                    chipLabel
+
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(
+                            isOrphaned
+                                ? Color.orange.opacity(0.3)
+                                : Color.accentColor.opacity(0.2),
+                            lineWidth: 0.5
+                        )
+                )
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .popover(isPresented: $showPopover, arrowEdge: .top) {
+                ModelPickerPopover(
+                    providers: providers,
+                    activeProviderId: activeProvider?.id,
+                    activeModelName: activeModelName,
+                    onSelect: { providerId, modelName in
+                        onSelectProvider(providerId, modelName)
+                        showPopover = false
+                    }
+                )
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    // MARK: - Right Pill (Balance)
+
+    /// Balance pill tied to the active provider.
+    /// Green creditcard icon + formatted RUB amount.
+    /// Updates in real time as onBalanceUpdate fires during streaming.
+    private func balancePill(balance: Double) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "creditcard.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(.green)
+
+            Text(String(format: "%.2f ₽", balance))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.primary)
+                // Animate digit changes so the number visibly ticks down during streaming
+                .contentTransition(.numericText())
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .animation(.easeInOut(duration: 0.3), value: balance)
     }
 
     // MARK: - Chip Label

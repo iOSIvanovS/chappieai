@@ -24,6 +24,11 @@
 // currentRequestTask holds the active Task from send().
 // cancelCurrentRequest() cancels it — triggers CancellationError inside process().
 // AIOrchestrator propagates Swift structured concurrency cancellation automatically.
+//
+// LIVE BALANCE (UX-BALANCE-LIVE):
+// onBalanceUpdate callback passed to orchestrator.process() — fires after each streaming
+// step that returns a balance. Updates currentBalance in real time so the balance pill
+// in ModelPickerRow ticks down visibly during the response.
 
 import SwiftUI
 import ChappieCore
@@ -187,7 +192,6 @@ final class ChappieViewModel {
     // MARK: - IT-10: User Name
 
     /// Saves the user's name directly to global SwiftData memory.
-    /// Called from OnboardingView and SettingsView — no UserDefaults staging needed.
     func saveUserName(_ name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -219,15 +223,12 @@ final class ChappieViewModel {
     }
 
     /// Reads the user's name from global SwiftData memory.
-    /// Parses JSON string {"name": "..."} to extract the value.
-    /// Returns nil if not set yet.
     func loadUserName() async -> String? {
         guard let store = memoryStore else { return nil }
         do {
             guard let json = try await store.readEntry(key: "user_name", scope: "global") else {
                 return nil
             }
-            // Parse {"name": "Sergey"} — simple extraction without full JSON decoder
             guard let data = json.data(using: .utf8),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: String],
                   let name = obj["name"] else {
@@ -242,7 +243,6 @@ final class ChappieViewModel {
 
     // MARK: - IT-10: Provider Management
 
-    /// Loads all providers and sets the active one from the default.
     private func loadProvidersAndSetActive(from store: AIProviderStore) async {
         do {
             let loaded = try await store.loadProviders()
@@ -257,7 +257,6 @@ final class ChappieViewModel {
         }
     }
 
-    /// Switches the active AI provider and model — recreates AIClient and AIOrchestrator.
     func switchProvider(_ provider: AIProvider, modelName: String?, from store: AIProviderStore? = nil) async {
         let provStore = store ?? self.providerStore
         guard let provStore else { return }
@@ -291,7 +290,6 @@ final class ChappieViewModel {
         print("[ChappieViewModel] Switched to provider: \(provider.displayName) / model: \(model)")
     }
 
-    /// Switches provider by ID — used from ModelPickerRow.
     func switchProvider(id: UUID) {
         guard let provider = providers.first(where: { $0.id == id }),
               let provStore = providerStore else { return }
@@ -301,7 +299,6 @@ final class ChappieViewModel {
         }
     }
 
-    /// Switches to a specific model within the current provider.
     func switchModel(to modelName: String) {
         guard let provider = activeProvider,
               let provStore = providerStore else { return }
@@ -310,7 +307,6 @@ final class ChappieViewModel {
         }
     }
 
-    /// Reloads providers list from store (called after add/edit/delete in settings).
     func reloadProviders() {
         guard let store = providerStore else { return }
         Task {
@@ -922,6 +918,12 @@ final class ChappieViewModel {
                         Task { @MainActor in
                             self.runningCost = cumulativeCost
                         }
+                    },
+                    // Live balance update — ticks the balance pill in ModelPickerRow during streaming
+                    onBalanceUpdate: { newBalance in
+                        Task { @MainActor in
+                            self.currentBalance = newBalance
+                        }
                     }
                 )
 
@@ -940,6 +942,7 @@ final class ChappieViewModel {
                     ))
                 }
 
+                // Final balance from orchestrator result (may differ from last streaming update)
                 if let newBalance = result.newBalance {
                     self.currentBalance = newBalance
                 }
@@ -983,12 +986,10 @@ final class ChappieViewModel {
     }
 
     /// Cancels the currently running AI request.
-    /// Swift structured concurrency propagates cancellation into the orchestrator automatically.
     func cancelCurrentRequest() {
         guard let task = currentRequestTask else { return }
         print("[ChappieViewModel] Cancelling current request...")
         task.cancel()
-        // isThinking and currentToolCall are reset inside the task's catch block
     }
 
     // MARK: - History Management

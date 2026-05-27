@@ -49,46 +49,50 @@
 //    Passes cumulative cost (not per-step cost).
 //    Allows UI to show price in real time in the streaming bubble.
 //
-// 9. DYNAMIC CONFIG (IT-02, REFACTOR-THREADS):
-//    process() takes config: AppConfig as parameter (with default AppConfig.shared).
-//    Different threads can have different context parameters.
+// 9. LIVE BALANCE UPDATE (UX-BALANCE-LIVE):
+//    onBalanceUpdate callback — called after each step that returns a balance.
+//    Allows the balance pill in ModelPickerRow to update in real time during streaming.
 //
-// 10. THREE-LEVEL MEMORY IN SYSTEM PROMPT (IT-03, IT-08, REFACTOR-THREADS):
+// 10. DYNAMIC CONFIG (IT-02, REFACTOR-THREADS):
+//     process() takes config: AppConfig as parameter (with default AppConfig.shared).
+//     Different threads can have different context parameters.
+//
+// 11. THREE-LEVEL MEMORY IN SYSTEM PROMPT (IT-03, IT-08, REFACTOR-THREADS):
 //     process() takes memoryContext: MemoryContext — thread and project descriptions.
 //     Before each request MemoryManager.buildSystemPrompt() assembles the full prompt
 //     with global + project + thread memory injected.
 //
-// 11. LOOP PROTECTION (SMART, NOT SESSION-WIDE):
+// 12. LOOP PROTECTION (SMART, NOT SESSION-WIDE):
 //     Blocks only two CONSECUTIVE identical calls (same tool + same args with nothing in between).
 //     Session-wide blocking prevented legitimate repeats (read_file after write_file, etc.).
 //
-// 12. ENGLISH SYSTEM PROMPT (TOKEN EFFICIENCY):
+// 13. ENGLISH SYSTEM PROMPT (TOKEN EFFICIENCY):
 //     baseSystemPrompt is in English. English tokenizes 1.5–2x more efficiently than Cyrillic.
 //     Savings: ~3000 tokens per request (~35% of total prompt).
 //     Language mirroring rule ensures responses in the user's language.
 //
-// 13. UUID-BASED MEMORY (IT-08):
+// 14. UUID-BASED MEMORY (IT-08):
 //     Tools memorize/recall/search_memory/delete_memory work with UUID-based scope.
 //
-// 14. PROJECT NAMES IN SYSTEM PROMPT (IT-08 final):
+// 15. PROJECT NAMES IN SYSTEM PROMPT (IT-08 final):
 //     MemoryContext contains projectInfos: [(id: UUID, name: String)] instead of [UUID].
 //
-// 15. MEMORY IN ENGLISH ONLY (MEMORY-ENGLISH):
+// 16. MEMORY IN ENGLISH ONLY (MEMORY-ENGLISH):
 //     baseSystemPrompt has a hard rule: all memorize calls MUST be in English.
 //
-// 16. NO EMOJI IN SYSTEM PROMPT (TOKEN-EFFICIENCY):
+// 17. NO EMOJI IN SYSTEM PROMPT (TOKEN-EFFICIENCY):
 //     All emoji removed from memory section headers in buildSystemPrompt().
 //
-// 17. MANIFEST REDESIGN (MANIFEST-REDESIGN):
+// 18. MANIFEST REDESIGN (MANIFEST-REDESIGN):
 //     Chappie is now a universal agent, not hardcoded to iOS/macOS development.
 //
-// 18. RULES REDESIGN (RULES-REDESIGN):
+// 19. RULES REDESIGN (RULES-REDESIGN):
 //     Rules 1–7 rewritten: removed hardcode, added flexibility.
 //
-// 19. PROJECT SETTINGS IN SYSTEM PROMPT (IT-09):
+// 20. PROJECT SETTINGS IN SYSTEM PROMPT (IT-09):
 //     MemoryContext.ProjectInfo extended with settings: ProjectSettings.
 //
-// 20. UNIVERSAL AI CLIENT (IT-10):
+// 21. UNIVERSAL AI CLIENT (IT-10):
 //     AITunnelClient replaced with AIClient — accepts any OpenAI-compatible endpoint.
 //     ChappieViewModel creates AIClient from the active AIProvider config.
 
@@ -296,6 +300,12 @@ public actor AIOrchestrator {
 
     // MARK: - Public API
 
+    /// Runs the full agentic loop for the given prompt.
+    ///
+    /// - Parameters:
+    ///   - onCostUpdate: Called after each step with cumulative cost in RUB.
+    ///   - onBalanceUpdate: Called after each step that returns a balance from the provider.
+    ///     Use this to update the balance pill in real time during streaming.
     public func process(
         prompt: String,
         history: [AIMessage],
@@ -303,7 +313,8 @@ public actor AIOrchestrator {
         memoryContext: MemoryContext = .empty,
         onToolCall: @escaping @Sendable (String, String) -> Void,
         onToken: (@Sendable (String) -> Void)? = nil,
-        onCostUpdate: (@Sendable (Double) -> Void)? = nil
+        onCostUpdate: (@Sendable (Double) -> Void)? = nil,
+        onBalanceUpdate: (@Sendable (Double) -> Void)? = nil
     ) async throws -> AIOrchestratorResult {
 
         let systemPrompt = await memoryManager.buildSystemPrompt(
@@ -336,7 +347,12 @@ public actor AIOrchestrator {
                 totalCost += cost
                 onCostUpdate?(totalCost)
             }
-            if let balance = streamResult.balance { latestBalance = balance }
+
+            // Propagate live balance so the UI pill updates during streaming
+            if let balance = streamResult.balance {
+                latestBalance = balance
+                onBalanceUpdate?(balance)
+            }
 
             let assistantMessage = AIMessage(
                 role: "assistant",

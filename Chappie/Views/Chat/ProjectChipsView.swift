@@ -87,7 +87,6 @@ struct ProjectChipsView: View {
             // Material only on the pill, not on the full-width row
             .background(.ultraThinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 4)
 
             Spacer()
         }

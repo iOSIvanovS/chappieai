@@ -30,13 +30,18 @@
 //
 // TOOLBAR:
 //   ultraThinMaterial background — frosted glass matching the panels.
-//   Contains: sidebar toggle (list.bullet), balance pill, settings gear.
+//   Contains: sidebar toggle (list.bullet), settings gear.
+//   Balance is NOT in the toolbar — it lives in ModelPickerRow as a right-side pill.
 //
 // HEADER HEIGHT:
 //   headerHeight = topPanelHeight + safeAreaTop.
 //   safeAreaTop is read from GeometryReader inside mainChatArea — it equals
 //   the toolbar height as reported by SwiftUI layout system.
 //   This ensures the first message is fully readable below both toolbar AND top panel.
+//
+// BALANCE PILL:
+//   Lives inside ModelPickerRow (right side). Receives viewModel.currentBalance.
+//   Updates live during streaming via onBalanceUpdate callback in AIOrchestrator.
 //
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
@@ -141,7 +146,6 @@ struct ContentView: View {
             mainChatArea
                 .toolbar {
                     ChappieToolbarContent(
-                        balance: viewModel.currentBalance,
                         isApiKeyValid: !viewModel.providers.isEmpty,
                         isSidebarVisible: $isSidebarVisible,
                         onOpenSettings: { showSettings = true }
@@ -242,8 +246,8 @@ struct ContentView: View {
     // MARK: - Top Floating Panel
 
     /// Top panel: transparent container holding floating pill rows.
-    /// Each row (ModelPickerRow, ProjectChipsView) has its own ultraThinMaterial pill.
-    /// The outer VStack is transparent — pills appear to float independently over the chat.
+    /// ModelPickerRow contains both the model selector (left) and balance pill (right).
+    /// ProjectChipsView shows attached projects.
     private var topPanel: some View {
         VStack(spacing: 6) {
             if viewModel.activeThread != nil && !viewModel.providers.isEmpty {
@@ -252,6 +256,8 @@ struct ContentView: View {
                     activeModelName: viewModel.activeModelName,
                     providers: viewModel.providers,
                     isOrphaned: viewModel.isThreadOrphaned,
+                    // Balance from active provider — updates live during streaming
+                    balance: viewModel.currentBalance,
                     onSelectProvider: { providerId, modelName in
                         if let provider = viewModel.providers.first(where: { $0.id == providerId }),
                            let store = viewModel.providerStore {
