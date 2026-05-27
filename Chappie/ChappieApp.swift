@@ -1,31 +1,32 @@
 // ChappieApp.swift
 // Chappie
 //
-// Точка входа приложения Chappie.
+// Application entry point.
 //
-// LIFECYCLE ХЕЛПЕРА:
-// - Хелпер ChappieMCP НЕ запускается здесь при старте.
-//   Причина: при старте мы ещё не знаем путь к воркспейсу.
-//   Если запустить без пути — хелпер получит "/" как рабочий каталог,
-//   и git/build команды будут падать с "not a git repository".
+// HELPER LIFECYCLE:
+// - ChappieMCP helper is NOT launched here on startup.
+//   Reason: at startup we don't yet know the workspace path.
+//   If launched without a path — the helper gets "/" as working directory,
+//   and git/build commands fail with "not a git repository".
 //
-// - Хелпер запускается в ChappieViewModel:
-//   а) loadWorkspaceWithSecurityScope() — при восстановлении сохранённого воркспейса
-//   б) setWorkspace() — при ручном выборе папки пользователем
+// - Helper is launched in ChappieViewModel:
+//   a) loadWorkspaceWithSecurityScope() — when restoring saved workspace
+//   b) setWorkspace() — when user manually selects a folder
 //
-// - applicationWillTerminate → terminateHelper() → хелпер завершается корректно.
-//   Без явного завершения хелпер останется висеть как orphan-процесс,
-//   и следующий bind() на тот же сокет упадёт с "address already in use".
+// - applicationWillTerminate → terminateHelper() → helper terminates cleanly.
+//   Without explicit termination the helper remains as an orphan process,
+//   and the next bind() on the same socket fails with "address already in use".
 //
 // SWIFTDATA (REFACTOR-THREADS IT-01):
-// ModelContainer создаётся ОДИН РАЗ здесь и передаётся через .modelContainer()
-// в SwiftUI-окружение. Это стандартная практика SwiftData — единственный контейнер
-// на всё приложение. ThreadStore и ProjectStore получают его через DI в ChappieViewModel.
+// ModelContainer is created ONCE here and passed via .modelContainer()
+// into the SwiftUI environment. This is standard SwiftData practice —
+// a single container for the entire application.
 //
-// СХЕМА SWIFTDATA:
-// - ThreadEntity: треды с историей сообщений и настройками
-// - ProjectEntity: проекты с security-scoped bookmarks
-// - MemoryEntity: трёхуровневая память (global/project/thread)
+// SWIFTDATA SCHEMA (IT-10 UPDATE):
+// - ThreadEntity: threads with message history and settings
+// - ProjectEntity: projects with security-scoped bookmarks
+// - MemoryEntity: three-level memory (global/project/thread)
+// - AIProviderEntity: AI provider configurations (IT-10, NEW)
 
 import SwiftUI
 import AppKit
@@ -37,46 +38,41 @@ struct ChappieApp: App {
 
     // MARK: - App Delegate
 
-    /// AppDelegate нужен для перехвата applicationWillTerminate —
-    /// SwiftUI не предоставляет нативного способа выполнить код при завершении приложения.
     @NSApplicationDelegateAdaptor(ChappieAppDelegate.self) var appDelegate
 
     // MARK: - SwiftData Container
 
-    /// Контейнер SwiftData для всего приложения.
+    /// SwiftData container for the entire application.
     ///
-    /// ПОЧЕМУ ЗДЕСЬ, А НЕ В VIEWMODEL:
-    /// ModelContainer — это "база данных" приложения. Она должна жить на уровне App,
-    /// а не ViewModel, чтобы гарантировать единственный экземпляр на всё время жизни приложения.
-    /// Создание нескольких ModelContainer для одной схемы приводит к конфликтам и потере данных.
+    /// WHY HERE, NOT IN VIEWMODEL:
+    /// ModelContainer is the application's "database". It must live at the App level,
+    /// not in ViewModel, to guarantee a single instance throughout the app's lifetime.
+    /// Creating multiple ModelContainers for the same schema causes conflicts and data loss.
     ///
-    /// ОБРАБОТКА ОШИБОК:
-    /// Если контейнер не удаётся создать — это критическая ошибка (повреждена БД).
-    /// В этом случае пробуем пересоздать с нуля (deleteExistingFile: true).
-    /// Это потеря данных, но лучше чем полный крэш приложения.
+    /// ERROR HANDLING:
+    /// If the container cannot be created — this is a critical error (corrupted DB).
+    /// In this case we try to recreate from scratch (deleteExistingFile: true).
+    /// This means data loss, but it's better than a full app crash.
     let modelContainer: ModelContainer = {
-        // Схема включает все три SwiftData-модели из REFACTOR-THREADS IT-01
+        // IT-10: Added AIProviderEntity to the schema
         let schema = Schema([
             ThreadEntity.self,
             ProjectEntity.self,
-            MemoryEntity.self
+            MemoryEntity.self,
+            AIProviderEntity.self
         ])
 
         let modelConfiguration = ModelConfiguration(
             schema: schema,
-            // isStoredInMemoryOnly: false — данные сохраняются на диск (стандартное поведение)
             isStoredInMemoryOnly: false
         )
 
         do {
             return try ModelContainer(for: schema, configurations: [modelConfiguration])
         } catch {
-            // Первая попытка не удалась — пробуем пересоздать (удалить повреждённую БД)
-            print("[ChappieApp] ⚠️ Не удалось создать ModelContainer: \(error)")
-            print("[ChappieApp] 🔄 Пробуем пересоздать базу данных...")
+            print("[ChappieApp] Failed to create ModelContainer: \(error)")
+            print("[ChappieApp] Attempting to recreate database...")
 
-            // ВНИМАНИЕ: deleteExistingFile = true уничтожит все данные!
-            // Это последний резорт при повреждении базы данных.
             let recoveryConfig = ModelConfiguration(
                 schema: schema,
                 isStoredInMemoryOnly: false,
@@ -86,8 +82,7 @@ struct ChappieApp: App {
             do {
                 return try ModelContainer(for: schema, configurations: [recoveryConfig])
             } catch {
-                // Если и это не помогло — крэш неизбежен
-                fatalError("[ChappieApp] ❌ Критическая ошибка: невозможно создать ModelContainer: \(error)")
+                fatalError("[ChappieApp] Critical: cannot create ModelContainer: \(error)")
             }
         }
     }()
@@ -98,46 +93,39 @@ struct ChappieApp: App {
         WindowGroup {
             ContentView()
         }
-        // Передаём ModelContainer в SwiftUI-окружение.
-        // Все @Query и @Environment(\.modelContext) в дочерних View получат его автоматически.
-        // ChappieViewModel получает его через DI (передаётся в ContentView).
         .modelContainer(modelContainer)
         .commands {
-            // Стандартные команды macOS (Quit, Minimize и т.д.)
-            // Кастомные команды добавляются здесь при необходимости
+            // Standard macOS commands (Quit, Minimize, etc.)
         }
 
-        // Настройки приложения — открываются через Cmd+,
+        // IT-10: Settings scene now shows ProvidersSettingsView
+        // (accessed via Cmd+, or the gear button in the toolbar)
         Settings {
-            SettingsView()
+            // Settings scene is intentionally minimal — main settings are in the sheet
+            // opened from the toolbar gear button (ProvidersSettingsView)
+            EmptyView()
         }
     }
 }
 
 // MARK: - App Delegate
 
-/// Делегат приложения для обработки системных событий macOS.
-///
-/// Зачем NSApplicationDelegateAdaptor:
-/// SwiftUI App protocol не предоставляет хука на завершение приложения.
-/// NSApplicationDelegate.applicationWillTerminate — единственный надёжный способ
-/// выполнить cleanup (завершить дочерние процессы) перед выходом.
+/// Application delegate for handling macOS system events.
 final class ChappieAppDelegate: NSObject, NSApplicationDelegate {
 
-    /// Вызывается системой непосредственно перед завершением приложения.
-    /// Здесь мы убиваем дочерний процесс ChappieMCP.
+    /// Called by the system immediately before the application terminates.
+    /// We kill the ChappieMCP child process here.
     ///
-    /// ПОЧЕМУ ВАЖНО:
-    /// Если не завершить хелпер явно — он останется в памяти как orphan-процесс.
-    /// При следующем запуске приложения bind() на тот же сокет упадёт с ошибкой
-    /// "address already in use". Хелпер не сможет запуститься.
+    /// WHY IMPORTANT:
+    /// If we don't explicitly terminate the helper — it remains in memory as an orphan process.
+    /// On the next app launch, bind() on the same socket fails with "address already in use".
     func applicationWillTerminate(_ notification: Notification) {
         Task { @MainActor in
             MCPHelperLauncher.shared.terminateHelper()
         }
     }
 
-    /// Стандартное поведение macOS: закрытие последнего окна завершает приложение.
+    /// Standard macOS behavior: closing the last window terminates the app.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return true
     }

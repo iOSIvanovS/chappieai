@@ -1,12 +1,19 @@
 // ChappieViewModel.swift
 // Chappie
 //
-// Главная ViewModel приложения Chappie.
-// Управляет состоянием интерфейса, хранит историю сообщений, инициализирует сервисы
-// и координирует работу ИИ-оркестратора.
+// Main ViewModel of the Chappie application.
+// Manages UI state, message history, initializes services,
+// and coordinates the AI orchestrator.
 //
-// IT-09: syncActiveMemoryContext() теперь также вызывает ts.setProjectSettings()
-// чтобы ToolExecutionService знал настройки каждого проекта для проверки прав.
+// IT-09: syncActiveMemoryContext() also calls ts.setProjectSettings()
+// so ToolExecutionService knows project settings for permission checks.
+//
+// IT-10: Universal AI Provider.
+// - AITunnelClient replaced with AIClient (provider-agnostic)
+// - AIProviderStore manages provider list + Keychain keys
+// - activeProvider: AIProvider? — currently selected provider for the active thread
+// - createNewThread() now triggers provider selection sheet before entering chat
+// - init() no longer reads SettingsManager.shared.apiKey (legacy)
 
 import SwiftUI
 import ChappieCore
@@ -16,7 +23,7 @@ import SwiftData
 @MainActor
 final class ChappieViewModel {
 
-    // MARK: - Свойства состояния
+    // MARK: - State
 
     var workspaceURL: URL?
 
@@ -41,16 +48,16 @@ final class ChappieViewModel {
         didSet { UserDefaults.standard.set(currentBalance, forKey: "savedBalance") }
     }
 
-    // MARK: - Система тредов (IT-05)
+    // MARK: - Threads (IT-05)
 
     var threads: [ThreadMetadata] = []
     var activeThread: ThreadMetadata? = nil
 
-    // MARK: - Проекты в треде (IT-06)
+    // MARK: - Projects in thread (IT-06)
 
     var activeProjects: [ProjectMetadata] = []
 
-    // MARK: - Настройки активного треда (IT-02)
+    // MARK: - Active thread settings (IT-02)
 
     var activeThreadSettings: ThreadSettings = ThreadSettings()
 
@@ -58,17 +65,34 @@ final class ChappieViewModel {
         AppConfig(settings: activeThreadSettings)
     }
 
-    // MARK: - Контекст памяти для system prompt (IT-03, IT-05, IT-08, IT-09)
+    // MARK: - Memory context for system prompt (IT-03, IT-05, IT-08, IT-09)
 
     var activeMemoryContext: MemoryContext = .empty
 
-    // MARK: - Зависимости (Сервисы)
+    // MARK: - IT-10: AI Providers
+
+    /// All configured AI providers.
+    var providers: [AIProvider] = []
+
+    /// The provider currently active for this thread.
+    /// nil = no provider configured yet (onboarding required).
+    var activeProvider: AIProvider? = nil
+
+    /// Controls the new-thread provider picker sheet (IT-10).
+    var showNewThreadProviderPicker: Bool = false
+
+    /// Pending thread waiting for provider selection (IT-10).
+    /// After user picks provider → selectThread(pendingNewThread).
+    var pendingNewThread: ThreadMetadata? = nil
+
+    // MARK: - Dependencies
 
     private var fileSystem: FileSystemManager?
     private var memoryManager: MemoryManager?
     private var toolService: ToolExecutionService?
 
-    private var aiClient: AITunnelClient
+    // IT-10: AIClient instead of AITunnelClient
+    private var aiClient: AIClient?
     private var orchestrator: AIOrchestrator?
     private var chatHistoryManager: ChatHistoryManager
 
@@ -78,14 +102,13 @@ final class ChappieViewModel {
     private var memoryStore: MemoryStore?
     private var threadStore: ThreadStore?
     private var projectStore: ProjectStore?
+    // IT-10: Provider store (public for access from settings views)
+    var providerStore: AIProviderStore?
 
-    // MARK: - Инициализация
+    // MARK: - Init
 
     public init() {
-        let savedKey = SettingsManager.shared.apiKey
-        self.aiClient = AITunnelClient(apiKey: savedKey)
         self.chatHistoryManager = ChatHistoryManager.shared
-
         loadMessages()
 
         if let savedBalance = UserDefaults.standard.object(forKey: "savedBalance") as? Double {
@@ -95,7 +118,7 @@ final class ChappieViewModel {
         loadWorkspaceWithSecurityScope()
     }
 
-    // MARK: - Подключение SwiftData
+    // MARK: - Connect SwiftData
 
     func setModelContainer(_ container: ModelContainer) {
         guard self.modelContainer == nil else { return }
@@ -111,13 +134,15 @@ final class ChappieViewModel {
         let pStore = ProjectStore(modelContainer: container)
         self.projectStore = pStore
 
+        // IT-10: AIProviderStore
+        let provStore = AIProviderStore(modelContainer: container)
+        self.providerStore = provStore
+
         if let mm = memoryManager {
-            Task {
-                await mm.setMemoryStore(store)
-            }
+            Task { await mm.setMemoryStore(store) }
         }
 
-        print("[ChappieViewModel] ✅ ModelContainer подключён: MemoryStore, ThreadStore, ProjectStore созданы")
+        print("[ChappieViewModel] ModelContainer connected")
 
         if let ts = toolService {
             registerProjectToolHandlers(toolService: ts, projectStore: pStore, threadStore: tStore)
@@ -125,11 +150,85 @@ final class ChappieViewModel {
 
         Task {
             await runMigrationIfNeeded(threadStore: tStore, memoryStore: store)
+            await loadProvidersAndSetActive(from: provStore)
             await loadThreadsAndSelectActive(from: tStore)
         }
     }
 
-    // MARK: - Регистрация обработчиков инструментов проектов (IT-07)
+    // MARK: - IT-10: Provider Management
+
+    /// Loads all providers and sets the active one from the default.
+    private func loadProvidersAndSetActive(from store: AIProviderStore) async {
+        do {
+            let loaded = try await store.loadProviders()
+            self.providers = loaded
+            if let defaultProvider = try await store.loadDefaultProvider() {
+                await switchProvider(defaultProvider, from: store)
+            }
+            print("[ChappieViewModel] Loaded \(loaded.count) providers")
+        } catch {
+            print("[ChappieViewModel] Failed to load providers: \(error)")
+        }
+    }
+
+    /// Switches the active AI provider — recreates AIClient and AIOrchestrator.
+    func switchProvider(_ provider: AIProvider, from store: AIProviderStore? = nil) async {
+        let provStore = store ?? self.providerStore
+        guard let provStore else { return }
+
+        // loadApiKey is synchronous in the actor — call with await
+        let apiKey = await provStore.loadApiKey(for: provider.id) ?? ""
+        let client = AIClient(endpoint: provider.endpoint, apiKey: apiKey, modelName: provider.modelName)
+        self.aiClient = client
+        self.activeProvider = provider
+
+        // Rebuild orchestrator with the new client
+        if let ts = toolService, let fs = fileSystem, let mm = memoryManager {
+            self.orchestrator = AIOrchestrator(
+                aiClient: client,
+                toolService: ts,
+                fileSystem: fs,
+                memoryManager: mm
+            )
+        }
+
+        // Save active provider to thread settings
+        if activeThread != nil {
+            var settings = activeThreadSettings
+            settings.activeProviderId = provider.id
+            activeThreadSettings = settings
+            if let threadId = activeThread?.id, let tStore = threadStore {
+                try? await tStore.updateSettings(settings, forThreadId: threadId)
+            }
+        }
+
+        print("[ChappieViewModel] Switched to provider: \(provider.displayLabel)")
+    }
+
+    /// Switches provider by ID — used from ModelPickerRow.
+    func switchProvider(id: UUID) {
+        guard let provider = providers.first(where: { $0.id == id }),
+              let provStore = providerStore else { return }
+        Task {
+            await switchProvider(provider, from: provStore)
+        }
+    }
+
+    /// Reloads providers list from store (called after add/edit/delete in settings).
+    func reloadProviders() {
+        guard let store = providerStore else { return }
+        Task {
+            do {
+                let loaded = try await store.loadProviders()
+                self.providers = loaded
+                print("[ChappieViewModel] Providers reloaded: \(loaded.count)")
+            } catch {
+                print("[ChappieViewModel] Failed to reload providers: \(error)")
+            }
+        }
+    }
+
+    // MARK: - Register Project Tool Handlers (IT-07)
 
     private func registerProjectToolHandlers(
         toolService ts: ToolExecutionService,
@@ -143,7 +242,7 @@ final class ChappieViewModel {
                     return await withCheckedContinuation { continuation in
                         Task { @MainActor [weak self] in
                             guard let self else {
-                                continuation.resume(returning: "Ошибка: ViewModel освобождена.")
+                                continuation.resume(returning: "Error: ViewModel released.")
                                 return
                             }
                             let activeThread = self.activeThread
@@ -171,7 +270,7 @@ final class ChappieViewModel {
                     return await withCheckedContinuation { continuation in
                         Task { @MainActor [weak self] in
                             guard let self else {
-                                continuation.resume(returning: "Ошибка: ViewModel освобождена.")
+                                continuation.resume(returning: "Error: ViewModel released.")
                                 return
                             }
                             let activeThread = self.activeThread
@@ -201,23 +300,23 @@ final class ChappieViewModel {
                     return await withCheckedContinuation { continuation in
                         Task { @MainActor [weak self] in
                             guard let self else {
-                                continuation.resume(returning: "Ошибка: ViewModel освобождена.")
+                                continuation.resume(returning: "Error: ViewModel released.")
                                 return
                             }
                             let names = self.activeProjects.map { $0.displayName }
                             if names.isEmpty {
-                                continuation.resume(returning: "В текущем треде нет привязанных проектов.")
+                                continuation.resume(returning: "No projects in current thread.")
                             } else {
                                 let list = names.enumerated()
                                     .map { "\($0.offset + 1). \($0.element)" }
                                     .joined(separator: "\n")
-                                continuation.resume(returning: "Проекты в текущем треде:\n\(list)")
+                                continuation.resume(returning: "Projects in current thread:\n\(list)")
                             }
                         }
                     }
                 }
             )
-            print("[ChappieViewModel] ✅ Обработчики инструментов проектов зарегистрированы в ToolExecutionService")
+            print("[ChappieViewModel] Project tool handlers registered")
         }
     }
 
@@ -229,7 +328,7 @@ final class ChappieViewModel {
         onUpdate: @escaping @Sendable (ThreadMetadata) -> Void
     ) async -> String {
         guard let thread = activeThread else {
-            return "Ошибка: Нет активного треда. Выберите тред перед добавлением проекта."
+            return "Error: No active thread."
         }
 
         do {
@@ -237,7 +336,7 @@ final class ChappieViewModel {
             let threadProjects = try await projectStore.loadProjects(ids: thread.projectIds)
 
             if threadProjects.contains(where: { $0.displayName == displayName }) {
-                return "Проект '\(displayName)' уже добавлен в текущий тред."
+                return "Project '\(displayName)' is already added to the current thread."
             }
 
             let projectId: UUID
@@ -259,9 +358,9 @@ final class ChappieViewModel {
                 onUpdate(updatedThread)
             }
 
-            return "✅ Проект '\(displayName)' добавлен в текущий тред."
+            return "Project '\(displayName)' added to the current thread."
         } catch {
-            return "Ошибка при добавлении проекта '\(displayName)': \(error.localizedDescription)"
+            return "Error adding project '\(displayName)': \(error.localizedDescription)"
         }
     }
 
@@ -274,11 +373,11 @@ final class ChappieViewModel {
         onUpdate: @escaping @Sendable (ThreadMetadata) -> Void
     ) async -> String {
         guard let thread = activeThread else {
-            return "Ошибка: Нет активного треда."
+            return "Error: No active thread."
         }
 
         guard let project = activeProjects.first(where: { $0.displayName == displayName }) else {
-            return "Проект '\(displayName)' не найден в текущем треде. Используй list_thread_projects чтобы увидеть список."
+            return "Project '\(displayName)' not found in current thread."
         }
 
         do {
@@ -291,9 +390,9 @@ final class ChappieViewModel {
                 onUpdate(updatedThread)
             }
 
-            return "✅ Проект '\(displayName)' убран из текущего треда."
+            return "Project '\(displayName)' removed from current thread."
         } catch {
-            return "Ошибка при удалении проекта '\(displayName)': \(error.localizedDescription)"
+            return "Error removing project '\(displayName)': \(error.localizedDescription)"
         }
     }
 
@@ -313,14 +412,12 @@ final class ChappieViewModel {
                 await syncActiveMemoryContext()
             }
         } catch {
-            print("[ChappieViewModel] ⚠️ Ошибка обновления после изменения проектов: \(error)")
+            print("[ChappieViewModel] Error reloading after project change: \(error)")
         }
     }
 
-    // MARK: - Сборка и синхронизация контекста памяти (IT-08, IT-09)
+    // MARK: - Memory Context (IT-08, IT-09)
 
-    /// Собирает MemoryContext с именами и настройками проектов.
-    /// IT-09: включает settings из ProjectMetadata для блока прав в system prompt.
     private func buildAndSyncMemoryContext() {
         let projectInfos = activeProjects.map { project in
             MemoryContext.ProjectInfo(
@@ -336,11 +433,6 @@ final class ChappieViewModel {
         )
     }
 
-    /// Синхронизирует ActiveMemoryContext и ProjectSettings в ToolExecutionService.
-    ///
-    /// IT-09: Дополнительно вызывает setProjectSettings() чтобы ToolExecutionService
-    /// знал настройки каждого проекта для проверки прав при выполнении инструментов.
-    /// Вызывается при любом изменении проектов или треда.
     private func syncActiveMemoryContext() async {
         guard let ts = toolService else { return }
 
@@ -355,14 +447,13 @@ final class ChappieViewModel {
 
         await ts.setActiveMemoryContext(context)
 
-        // IT-09: передаём настройки проектов для проверки прав инструментов
         let settingsMap = Dictionary(
             uniqueKeysWithValues: activeProjects.map { ($0.id, $0.settings) }
         )
         await ts.setProjectSettings(settingsMap)
     }
 
-    // MARK: - Управление тредами (IT-05)
+    // MARK: - Thread Management (IT-05)
 
     private func loadThreadsAndSelectActive(from store: ThreadStore) async {
         do {
@@ -384,7 +475,7 @@ final class ChappieViewModel {
                 await selectThread(loaded[0])
             }
         } catch {
-            print("[ChappieViewModel] ⚠️ Ошибка загрузки тредов: \(error)")
+            print("[ChappieViewModel] Error loading threads: \(error)")
         }
     }
 
@@ -397,6 +488,16 @@ final class ChappieViewModel {
             let settings = try await store.loadSettings(forThreadId: thread.id)
             self.activeThreadSettings = settings
 
+            // IT-10: restore provider for this thread
+            if let providerId = settings.activeProviderId,
+               let provider = providers.first(where: { $0.id == providerId }) {
+                await switchProvider(provider)
+            } else if activeProvider == nil, let provStore = providerStore {
+                if let defaultProvider = try? await provStore.loadDefaultProvider() {
+                    await switchProvider(defaultProvider, from: provStore)
+                }
+            }
+
             let loaded = try await store.loadMessages(
                 fromThreadId: thread.id,
                 as: ChatMessage.self
@@ -406,9 +507,9 @@ final class ChappieViewModel {
             self.messages = loaded
             self.isLoadingThread = false
 
-            print("[ChappieViewModel] ✅ Тред '\(thread.title)' выбран (\(loaded.count) сообщений)")
+            print("[ChappieViewModel] Thread '\(thread.title)' selected (\(loaded.count) messages)")
         } catch {
-            print("[ChappieViewModel] ⚠️ Ошибка загрузки треда '\(thread.title)': \(error)")
+            print("[ChappieViewModel] Error loading thread '\(thread.title)': \(error)")
         }
 
         await loadProjectsForThread(thread)
@@ -418,6 +519,8 @@ final class ChappieViewModel {
 
     private var isLoadingThread: Bool = false
 
+    /// Creates a new thread.
+    /// IT-10: If providers exist — shows provider picker sheet before entering chat.
     func createNewThread() {
         guard let store = threadStore else { return }
 
@@ -428,19 +531,58 @@ final class ChappieViewModel {
                 self.threads = refreshed
 
                 if let newThread = refreshed.first(where: { $0.id == newId }) {
-                    await selectThread(newThread)
-                    self.isLoadingThread = true
-                    self.messages = []
-                    self.isLoadingThread = false
-                    self.activeProjects = []
-                    buildAndSyncMemoryContext()
-                    await syncActiveMemoryContext()
+                    if !providers.isEmpty {
+                        // IT-10: show provider picker before entering the thread
+                        self.pendingNewThread = newThread
+                        self.showNewThreadProviderPicker = true
+                    } else {
+                        await selectThread(newThread)
+                        self.isLoadingThread = true
+                        self.messages = []
+                        self.isLoadingThread = false
+                        self.activeProjects = []
+                        buildAndSyncMemoryContext()
+                        await syncActiveMemoryContext()
+                    }
                 }
 
-                print("[ChappieViewModel] ✅ Создан новый тред")
+                print("[ChappieViewModel] New thread created")
             } catch {
-                print("[ChappieViewModel] ⚠️ Ошибка создания треда: \(error)")
+                print("[ChappieViewModel] Error creating thread: \(error)")
             }
+        }
+    }
+
+    /// Called after user picks a provider in the new-thread sheet.
+    func confirmNewThread(with providerId: UUID) async {
+        guard let thread = pendingNewThread else { return }
+        self.pendingNewThread = nil
+        self.showNewThreadProviderPicker = false
+
+        if let provider = providers.first(where: { $0.id == providerId }) {
+            await switchProvider(provider)
+        }
+
+        await selectThread(thread)
+        self.isLoadingThread = true
+        self.messages = []
+        self.isLoadingThread = false
+        self.activeProjects = []
+        buildAndSyncMemoryContext()
+        await syncActiveMemoryContext()
+    }
+
+    /// Called when user cancels the new-thread provider picker.
+    func cancelNewThread() {
+        guard let thread = pendingNewThread else { return }
+        self.pendingNewThread = nil
+        self.showNewThreadProviderPicker = false
+
+        guard let store = threadStore else { return }
+        Task {
+            try? await store.deleteThread(id: thread.id)
+            let refreshed = try? await store.loadThreads()
+            if let refreshed { self.threads = refreshed }
         }
     }
 
@@ -466,9 +608,9 @@ final class ChappieViewModel {
                     }
                 }
 
-                print("[ChappieViewModel] 🗑 Тред '\(thread.title)' удалён")
+                print("[ChappieViewModel] Thread '\(thread.title)' deleted")
             } catch {
-                print("[ChappieViewModel] ⚠️ Ошибка удаления треда: \(error)")
+                print("[ChappieViewModel] Error deleting thread: \(error)")
             }
         }
     }
@@ -487,12 +629,12 @@ final class ChappieViewModel {
                     self.activeThread = updated
                 }
             } catch {
-                print("[ChappieViewModel] ⚠️ Ошибка переименования треда: \(error)")
+                print("[ChappieViewModel] Error renaming thread: \(error)")
             }
         }
     }
 
-    // MARK: - Управление проектами в треде (IT-06)
+    // MARK: - Project Management (IT-06)
 
     private func loadProjectsForThread(_ thread: ThreadMetadata) async {
         guard let pStore = projectStore else {
@@ -508,9 +650,9 @@ final class ChappieViewModel {
         do {
             let projects = try await pStore.loadProjects(ids: thread.projectIds)
             self.activeProjects = projects
-            print("[ChappieViewModel] 📁 Загружено \(projects.count) проектов для треда '\(thread.title)'")
+            print("[ChappieViewModel] Loaded \(projects.count) projects for thread '\(thread.title)'")
         } catch {
-            print("[ChappieViewModel] ⚠️ Ошибка загрузки проектов треда: \(error)")
+            print("[ChappieViewModel] Error loading thread projects: \(error)")
             self.activeProjects = []
         }
     }
@@ -541,7 +683,7 @@ final class ChappieViewModel {
 
                 let alreadyAdded = activeProjects.contains { $0.displayName == displayName }
                 guard !alreadyAdded else {
-                    print("[ChappieViewModel] ℹ️ Проект '\(displayName)' уже добавлен в тред")
+                    print("[ChappieViewModel] Project '\(displayName)' already added")
                     return
                 }
 
@@ -564,9 +706,9 @@ final class ChappieViewModel {
                     await syncActiveMemoryContext()
                 }
 
-                print("[ChappieViewModel] ✅ Проект '\(displayName)' добавлен в тред '\(thread.title)'")
+                print("[ChappieViewModel] Project '\(displayName)' added to thread '\(thread.title)'")
             } catch {
-                print("[ChappieViewModel] ⚠️ Ошибка добавления проекта: \(error)")
+                print("[ChappieViewModel] Error adding project: \(error)")
             }
         }
     }
@@ -591,17 +733,15 @@ final class ChappieViewModel {
                     await syncActiveMemoryContext()
                 }
 
-                print("[ChappieViewModel] 🗑 Проект убран из треда '\(thread.title)'")
+                print("[ChappieViewModel] Project removed from thread '\(thread.title)'")
             } catch {
-                print("[ChappieViewModel] ⚠️ Ошибка удаления проекта из треда: \(error)")
+                print("[ChappieViewModel] Error removing project from thread: \(error)")
             }
         }
     }
 
-    // MARK: - IT-09: Обновление настроек проекта
+    // MARK: - IT-09: Update Project Settings
 
-    /// Сохраняет обновлённые настройки проекта и синхронизирует контекст памяти.
-    /// Вызывается из ProjectSettingsSheet при нажатии "Сохранить".
     func updateProjectSettings(_ settings: ProjectSettings, forProjectId projectId: UUID) {
         guard let pStore = projectStore,
               let thread = activeThread else { return }
@@ -612,31 +752,14 @@ final class ChappieViewModel {
                 await loadProjectsForThread(thread)
                 buildAndSyncMemoryContext()
                 await syncActiveMemoryContext()
-                print("[ChappieViewModel] ✅ Настройки проекта обновлены (id: \(projectId))")
+                print("[ChappieViewModel] Project settings updated (id: \(projectId))")
             } catch {
-                print("[ChappieViewModel] ⚠️ Ошибка обновления настроек проекта: \(error)")
+                print("[ChappieViewModel] Error updating project settings: \(error)")
             }
         }
     }
 
-    // MARK: - Управление API-ключом
-
-    func updateApiKey(_ newKey: String) {
-        self.aiClient = AITunnelClient(apiKey: newKey)
-
-        if let ts = toolService, let fs = fileSystem, let mm = memoryManager {
-            self.orchestrator = AIOrchestrator(
-                aiClient: aiClient,
-                toolService: ts,
-                fileSystem: fs,
-                memoryManager: mm
-            )
-        }
-
-        messages.append(.message(isUser: false, text: "✅ API-ключ обновлён. Готов к работе!"))
-    }
-
-    // MARK: - Управление воркспейсом
+    // MARK: - Workspace Management
 
     func setWorkspace(_ url: URL) {
         workspaceURL = url
@@ -651,7 +774,7 @@ final class ChappieViewModel {
         }
     }
 
-    // MARK: - Отправка сообщений и оркестрация
+    // MARK: - Send Messages
 
     func send(prompt: String) {
         guard !prompt.isEmpty else { return }
@@ -660,8 +783,8 @@ final class ChappieViewModel {
             return
         }
 
-        guard SettingsManager.shared.isApiKeyValid else {
-            messages.append(.message(isUser: false, text: "⚠️ API-ключ не задан или некорректен. Откройте настройки (⚙️) и введите ключ AITunnel."))
+        guard activeProvider != nil else {
+            messages.append(.message(isUser: false, text: "⚠️ Нет настроенного AI-провайдера. Откройте настройки и добавьте провайдера."))
             return
         }
 
@@ -736,14 +859,14 @@ final class ChappieViewModel {
                 }
 
             } catch is CancellationError {
-                print("[ChappieViewModel] ℹ️ Запрос отменён (CancellationError) — тихое завершение")
+                print("[ChappieViewModel] Request cancelled (CancellationError)")
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
                     self.streamingText = ""
                     self.currentToolCall = nil
                 }
 
             } catch ChappieError.cancelled {
-                print("[ChappieViewModel] ℹ️ Запрос отменён (URLError.cancelled) — тихое завершение")
+                print("[ChappieViewModel] Request cancelled (URLError.cancelled)")
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
                     self.streamingText = ""
                     self.currentToolCall = nil
@@ -761,7 +884,7 @@ final class ChappieViewModel {
         }
     }
 
-    // MARK: - Управление историей
+    // MARK: - History Management
 
     func clearMessages() {
         messages = []
@@ -778,7 +901,7 @@ final class ChappieViewModel {
         }
     }
 
-    // MARK: - Конвертация истории в сетевой формат (БЕЗ сжатия)
+    // MARK: - Build Network History (no compression)
 
     private func buildRawNetworkHistory() -> [AIMessage] {
         return messages.compactMap { msg -> AIMessage? in
@@ -789,7 +912,7 @@ final class ChappieViewModel {
             let isSystemMessage = text.contains("Проект подключен")
                 || text.contains("Память очищена")
                 || text.contains("API-ключ обновлён")
-                || text.hasPrefix("⚠️ API-ключ")
+                || text.hasPrefix("⚠️")
                 || text.hasPrefix("Ошибка:")
                 || text.hasPrefix("Упс, ошибка:")
 
@@ -806,7 +929,7 @@ final class ChappieViewModel {
         }
     }
 
-    // MARK: - Парсинг Self-Summary
+    // MARK: - Self-Summary Parsing
 
     private func extractAndCleanSummary(from text: String) -> (displayText: String, summary: String?) {
         guard let regex = try? NSRegularExpression(
@@ -836,7 +959,7 @@ final class ChappieViewModel {
         return (finalDisplayText, summary.isEmpty ? nil : summary)
     }
 
-    // MARK: - Приватные методы инициализации сервисов
+    // MARK: - Service Initialization
 
     private func initializeServices(for url: URL) {
         let fs = FileSystemManager(workspaceURL: url)
@@ -847,7 +970,6 @@ final class ChappieViewModel {
 
         Task {
             await mm.initializeWorkspaceMemory()
-
             if let store = self.memoryStore {
                 await mm.setMemoryStore(store)
             }
@@ -858,12 +980,15 @@ final class ChappieViewModel {
         let ts = ToolExecutionService(fileSystem: fs, memoryManager: mm, socketPath: socketPath)
         self.toolService = ts
 
-        self.orchestrator = AIOrchestrator(
-            aiClient: aiClient,
-            toolService: ts,
-            fileSystem: fs,
-            memoryManager: mm
-        )
+        // IT-10: Create orchestrator only if we have an active provider
+        if let client = aiClient {
+            self.orchestrator = AIOrchestrator(
+                aiClient: client,
+                toolService: ts,
+                fileSystem: fs,
+                memoryManager: mm
+            )
+        }
 
         if let pStore = projectStore, let tStore = threadStore {
             registerProjectToolHandlers(toolService: ts, projectStore: pStore, threadStore: tStore)
@@ -874,7 +999,7 @@ final class ChappieViewModel {
         }
     }
 
-    // MARK: - Миграция legacy-данных (IT-04)
+    // MARK: - Migration (IT-04)
 
     private func runMigrationIfNeeded(threadStore: ThreadStore, memoryStore: MemoryStore) async {
         let migrationService = MigrationService(
@@ -901,11 +1026,11 @@ final class ChappieViewModel {
         )
 
         if didMigrate {
-            print("[ChappieViewModel] ✅ Миграция IT-04 выполнена успешно")
+            print("[ChappieViewModel] Migration IT-04 completed")
         }
     }
 
-    // MARK: - Очистка текста ответа
+    // MARK: - Response Cleanup
 
     private func cleanAIResponse(_ text: String) -> String {
         var cleanedText = text
@@ -923,7 +1048,7 @@ final class ChappieViewModel {
         return cleanedText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    // MARK: - Локальное сохранение истории
+    // MARK: - Local Message Storage
 
     private func saveMessages() {
         guard !isLoadingThread else { return }

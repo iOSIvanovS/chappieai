@@ -1,155 +1,113 @@
 // AIOrchestrator.swift
 // ChappieCore
 //
-// Главный управляющий компонент — оркестратор агентного цикла Чаппи.
+// Main orchestrator of the Chappie agent cycle.
 //
-// КЛЮЧЕВЫЕ АРХИТЕКТУРНЫЕ РЕШЕНИЯ:
+// IT-10: AITunnelClient replaced with AIClient (universal, provider-agnostic).
+// All other logic preserved intact.
 //
-// 1. МОНОФИЗИТНАЯ АРХИТЕКТУРА:
-//    Чаппи работает один, без саб-агентов и делегирования. Вся ответственность
-//    лежит на одном агенте — он же исполнитель, он же советник, он же партнёр.
-//    Причина: саб-агенты порождают хаос, несогласованность и дублирование контекста.
+// KEY ARCHITECTURAL DECISIONS:
 //
-// 2. ЕДИНЫЙ СТРИМИНГОВЫЙ ЦИКЛ (ИСПРАВЛЕНИЕ ДВОЙНОГО ЗАПРОСА):
-//    Старая стратегия "probe + stream" делала ДВА запроса для каждого финального ответа.
-//    НОВАЯ СТРАТЕГИЯ: streamRequestWithTools() на каждый шаг цикла.
-//    AITunnelClient накапливает tool_calls из SSE-дельт и возвращает AIStreamResult.
-//    Если есть tool_calls → выполняем инструменты, продолжаем цикл.
-//    Если tool_calls нет → это финальный ответ. ОДИН запрос на шаг.
+// 1. MONOLITHIC ARCHITECTURE:
+//    Chappie works alone, without sub-agents or delegation. One agent — full responsibility.
+//    Reason: sub-agents create chaos, inconsistency and context duplication.
+//
+// 2. SINGLE STREAMING CYCLE (FIX FOR DOUBLE REQUEST):
+//    Old "probe + stream" strategy made TWO requests per final response.
+//    NEW STRATEGY: streamRequestWithTools() on every cycle step.
+//    AIClient accumulates tool_calls from SSE deltas and returns AIStreamResult.
+//    If tool_calls → execute tools, continue cycle.
+//    If no tool_calls → this is the final response. ONE request per step.
 //
 // 3. PROMPT CACHING:
-//    AITunnelClient автоматически добавляет cache_control к системному промпту
-//    и последнему сообщению пользователя. Экономия: ~80-90% стоимости системного промпта.
+//    AIClient automatically adds cache_control to system prompt and last user message.
+//    Savings: ~80-90% of system prompt cost.
 //
 // 4. SELF-SUMMARY:
-//    Системный промпт содержит жёсткое правило: в конце каждого финального ответа
-//    Чаппи ОБЯЗАН добавлять тег <summary>...</summary>.
-//    При сборке контекстного окна длинные ответы заменяются на их summary.
+//    System prompt contains a hard rule: at the end of each final response
+//    Chappie MUST add a <summary>...</summary> tag.
+//    When building the context window, long responses are replaced with their summary.
 //
-// 5. УМНОЕ КОНТЕКСТНОЕ ОКНО (оптимизация стоимости):
-//    Два уровня ограничений работают одновременно:
-//    а) maxMessagesInContext — жёсткий лимит по количеству сообщений (из конфига треда).
-//    б) tokenBudget — мягкий лимит по объёму токенов (вычисляется как maxMessages × 500).
-//    Последние recentFullMessages (3) всегда отправляются полностью.
-//    Более старые — заменяются на summary если доступен.
+// 5. SMART CONTEXT WINDOW (cost optimization):
+//    Two levels of limits work simultaneously:
+//    a) maxMessagesInContext — hard limit by message count (from thread config).
+//    b) tokenBudget — soft limit by token volume (computed as maxMessages × 500).
+//    Last recentFullMessages (3) are always sent in full.
+//    Older ones — replaced with summary if available.
 //
-// 6. ИСПРАВЛЕНИЕ ЗАДВОЕНИЯ ПОСЛЕДНЕГО СООБЩЕНИЯ (баг):
-//    buildContextWindow() принимает ИСТОРИЮ (без текущего запроса) и ОТДЕЛЬНО currentPrompt.
-//    История содержит завершённые пары user/assistant. currentPrompt — новое сообщение.
-//    ВАЖНО: история, переданная в buildContextWindow(), НЕ должна содержать текущий запрос.
-//    Это обеспечивается в process(): мы передаём history (прошлые сообщения) и prompt (новый).
-//    Задвоение возникало, когда последнее сообщение в history == prompt. Теперь исключаем
-//    дубликаты: если последнее сообщение в истории совпадает с currentPrompt по тексту,
-//    оно НЕ включается в контекстное окно.
+// 6. FIX FOR LAST MESSAGE DUPLICATION (bug):
+//    buildContextWindow() takes HISTORY (without current prompt) and SEPARATELY currentPrompt.
+//    History contains completed user/assistant pairs. currentPrompt — the new message.
+//    IMPORTANT: history passed to buildContextWindow() must NOT contain the current prompt.
 //
-// 7. ОЦЕНКА ТОКЕНОВ:
-//    Формула estimateTokens() использует UTF-8 байты / 4 × 1.5.
-//    Это даёт реалистичную оценку для смешанного русско-английского текста с кодом.
+// 7. TOKEN ESTIMATION:
+//    estimateTokens() uses UTF-8 bytes / 4 × 1.5.
+//    This gives a realistic estimate for mixed Russian-English text with code.
 //
-// 8. НАКОПИТЕЛЬНАЯ СТОИМОСТЬ (UX-RUNNING-COST):
-//    Добавлен callback onCostUpdate — вызывается после каждого внутреннего API-запроса.
-//    Передаёт накопленную стоимость нарастающим итогом (не стоимость одного шага!).
-//    Это позволяет UI показывать цену в реальном времени прямо в стриминговом пузыре.
+// 8. CUMULATIVE COST (UX-RUNNING-COST):
+//    onCostUpdate callback — called after each internal API request.
+//    Passes cumulative cost (not per-step cost).
+//    Allows UI to show price in real time in the streaming bubble.
 //
-// 9. ДИНАМИЧЕСКИЙ КОНФИГ (IT-02, REFACTOR-THREADS):
-//    process() теперь принимает config: AppConfig как параметр (с дефолтом AppConfig.shared).
-//    Это позволяет разным тредам иметь разные параметры контекста.
-//    ChappieViewModel создаёт AppConfig из настроек активного треда и передаёт его сюда.
+// 9. DYNAMIC CONFIG (IT-02, REFACTOR-THREADS):
+//    process() takes config: AppConfig as parameter (with default AppConfig.shared).
+//    Different threads can have different context parameters.
 //
-// 10. ТРЁХУРОВНЕВАЯ ПАМЯТЬ В SYSTEM PROMPT (IT-03, IT-08, REFACTOR-THREADS):
-//     process() принимает memoryContext: MemoryContext — описание треда и проектов.
-//     Перед каждым запросом MemoryManager.buildSystemPrompt() собирает полный промпт
-//     с подмешанной глобальной + проектной + тредовой памятью.
-//     Захардкоженный systemPrompt остаётся как BASE_PROMPT — основа для buildSystemPrompt().
+// 10. THREE-LEVEL MEMORY IN SYSTEM PROMPT (IT-03, IT-08, REFACTOR-THREADS):
+//     process() takes memoryContext: MemoryContext — thread and project descriptions.
+//     Before each request MemoryManager.buildSystemPrompt() assembles the full prompt
+//     with global + project + thread memory injected.
 //
-// 11. ЗАЩИТА ОТ ПЕТЕЛЬ (УМНАЯ, НЕ СЕССИОННАЯ):
-//     Вместо блокировки любого повторного вызова за всю сессию — блокируем только
-//     два ПОДРЯД идущих одинаковых вызова (один и тот же инструмент с теми же аргументами
-//     без каких-либо других вызовов между ними).
-//     ПОЧЕМУ: сессионная блокировка мешала легитимным повторам (read_file после write_file,
-//     list_files после создания нового файла и т.д.). Подряд-блокировка ловит реальные петли.
+// 11. LOOP PROTECTION (SMART, NOT SESSION-WIDE):
+//     Blocks only two CONSECUTIVE identical calls (same tool + same args with nothing in between).
+//     Session-wide blocking prevented legitimate repeats (read_file after write_file, etc.).
 //
-// 12. АНГЛИЙСКИЙ СИСТЕМНЫЙ ПРОМПТ (ОПТИМИЗАЦИЯ ТОКЕНОВ):
-//     baseSystemPrompt переведён на английский язык.
-//     ПРИЧИНА: английский токенизируется в 1.5–2 раза эффективнее кириллицы.
-//     Экономия ~3000 токенов на каждом запросе (~35% от общего промпта).
-//     Правило language mirroring в конце промпта гарантирует ответы на языке пользователя.
+// 12. ENGLISH SYSTEM PROMPT (TOKEN EFFICIENCY):
+//     baseSystemPrompt is in English. English tokenizes 1.5–2x more efficiently than Cyrillic.
+//     Savings: ~3000 tokens per request (~35% of total prompt).
+//     Language mirroring rule ensures responses in the user's language.
 //
-// 13. UUID-BASED ПАМЯТЬ (IT-08):
-//     Инструменты memorize/recall/search_memory/delete_memory работают с UUID-based scope.
-//     ToolExecutionService получает ActiveMemoryContext (threadId UUID + [ProjectInfo{id,name}])
-//     через setActiveMemoryContext() от ChappieViewModel.syncActiveMemoryContext().
-//     resolveScope() маппирует scope="thread" → UUID треда, targetName="Name" → UUID проекта.
-//     Конфликт инструкций между уровнями памяти — останавливаемся, объясняем пользователю.
+// 13. UUID-BASED MEMORY (IT-08):
+//     Tools memorize/recall/search_memory/delete_memory work with UUID-based scope.
 //
-// 14. ИМЕНА ПРОЕКТОВ В SYSTEM PROMPT (IT-08 финал):
-//     MemoryContext теперь содержит projectInfos: [(id: UUID, name: String)] вместо [UUID].
-//     buildSystemPrompt() показывает имя проекта в заголовке блока памяти.
-//     ChappieViewModel заполняет projectInfos из activeProjects (ProjectMetadata).
+// 14. PROJECT NAMES IN SYSTEM PROMPT (IT-08 final):
+//     MemoryContext contains projectInfos: [(id: UUID, name: String)] instead of [UUID].
 //
-// 15. ПАМЯТЬ ТОЛЬКО НА АНГЛИЙСКОМ (MEMORY-ENGLISH):
-//     В baseSystemPrompt добавлено жёсткое правило: все записи в память (memorize)
-//     ОБЯЗАНЫ быть на английском языке. Причина: память — это "мышление" Чаппи,
-//     а не общение с пользователем. Как американский инженер думает по-английски,
-//     но может говорить на любом языке — так и Чаппи: думает по-английски,
-//     отвечает на языке пользователя.
+// 15. MEMORY IN ENGLISH ONLY (MEMORY-ENGLISH):
+//     baseSystemPrompt has a hard rule: all memorize calls MUST be in English.
 //
-// 16. БЕЗ ЭМОДЗИ В SYSTEM PROMPT (TOKEN-EFFICIENCY):
-//     Все эмодзи убраны из заголовков секций памяти в buildSystemPrompt().
-//     ПРИЧИНА: каждый эмодзи = 2-4 токена. При ~30 эмодзи в промпте = ~90 токенов впустую.
-//     При 1000 запросов в месяц = ~90k токенов = реальные деньги.
-//     Чистый текст без эмодзи — эффективнее и для кэширования промпта.
+// 16. NO EMOJI IN SYSTEM PROMPT (TOKEN-EFFICIENCY):
+//     All emoji removed from memory section headers in buildSystemPrompt().
 //
-// 17. РЕДИЗАЙН МАНИФЕСТА (MANIFEST-REDESIGN):
-//     Вводная часть baseSystemPrompt переписана: убраны хардкод личности (macOS/iOS developer),
-//     технологического стека (Swift/SwiftUI/macOS), ссылка на конкретную модель (Claude Sonnet).
-//     Чаппи теперь — универсальный агент, адаптирующийся к любой задаче.
-//     Философия изменена: НЕ "одинокий супергерой", а "партнёр пользователя".
-//     Монофизитное правило ("no sub-agents") СОХРАНЕНО — оно архитектурно обосновано.
-//     ПРИЧИНА ИЗМЕНЕНИЙ: пользователь может использовать Чаппи для любых задач,
-//     а не только iOS/macOS разработки. Стек проекта должен узнаваться из памяти проекта.
+// 17. MANIFEST REDESIGN (MANIFEST-REDESIGN):
+//     Chappie is now a universal agent, not hardcoded to iOS/macOS development.
 //
-// 18. РЕДИЗАЙН ПРАВИЛ (RULES-REDESIGN):
-//     Правила 1–7 переписаны: убраны хардкод и абсолютные пути, добавлена гибкость.
-//     Роль агента (исполнитель/советник) теперь определяется настройками проекта.
-//     Комментарии в коде — только при включении в настройках и только в программировании.
-//     Пайплайны — по договорённости с пользователем, записываются в память проекта.
-//     Три железных запрета (git_diff, тесты до билда, коммит при красном) сохранены.
-//     Документирование архитектуры — только в программировании, пути по договорённости.
-//     Правила 5 (summary), 8 (language mirroring), 9 (memory english) — без изменений.
+// 18. RULES REDESIGN (RULES-REDESIGN):
+//     Rules 1–7 rewritten: removed hardcode, added flexibility.
 //
-// 19. PROJECT SETTINGS В SYSTEM PROMPT (IT-09):
-//     MemoryContext.ProjectInfo расширен полем settings: ProjectSettings.
-//     buildSystemPrompt() вставляет блок "## Project Settings: <name>" перед блоком памяти.
-//     Агент знает свои права до начала работы — может заранее выбрать подход.
-//     Два источника информации о проекте: Settings (права) + Memory (знания).
+// 19. PROJECT SETTINGS IN SYSTEM PROMPT (IT-09):
+//     MemoryContext.ProjectInfo extended with settings: ProjectSettings.
+//
+// 20. UNIVERSAL AI CLIENT (IT-10):
+//     AITunnelClient replaced with AIClient — accepts any OpenAI-compatible endpoint.
+//     ChappieViewModel creates AIClient from the active AIProvider config.
 
 import Foundation
 
-// MARK: - MemoryContext (контекст треда для подмешивания памяти)
+// MARK: - MemoryContext
 
-/// Описание контекста треда — передаётся в process() для сборки system prompt с памятью.
+/// Thread context description — passed to process() for building the system prompt with memory.
 ///
-/// ЗАЧЕМ ОТДЕЛЬНАЯ СТРУКТУРА:
-/// process() уже принимает prompt, history, config. Добавлять ещё несколько параметров
-/// (threadId, projectIds, projectNames) делает сигнатуру громоздкой.
-/// MemoryContext — чистый value type, инкапсулирующий всё что нужно для сборки промпта.
-///
-/// IT-09: ProjectInfo расширен полем settings: ProjectSettings.
-/// buildSystemPrompt() использует settings для формирования блока прав агента.
+/// IT-09: ProjectInfo extended with settings: ProjectSettings.
+/// buildSystemPrompt() uses settings to form the agent permissions block.
 public struct MemoryContext: Sendable {
 
-    /// Информация об одном проекте в контексте памяти: UUID + имя + настройки.
-    ///
-    /// ПОЧЕМУ UUID + ИМЯ + SETTINGS:
-    /// UUID нужен для поиска MemoryEntity в SwiftData.
-    /// Имя нужно для заголовка блока памяти в system prompt.
-    /// Settings (IT-09) нужны для блока прав агента в system prompt.
+    /// Information about one project in the memory context: UUID + name + settings.
     public struct ProjectInfo: Sendable {
         public let id: UUID
         public let name: String
-        /// Настройки проекта — права агента, флаги доступов (IT-09).
-        /// nil = настройки ещё не загружены, блок прав не вставляется.
+        /// Project settings — agent permissions (IT-09).
+        /// nil = settings not yet loaded, permissions block is not inserted.
         public let settings: ProjectSettings?
 
         public init(id: UUID, name: String, settings: ProjectSettings? = nil) {
@@ -159,14 +117,14 @@ public struct MemoryContext: Sendable {
         }
     }
 
-    /// UUID активного треда (для тредовой памяти).
-    /// nil = нет активного треда, тредовая память не подмешивается.
+    /// UUID of the active thread (for thread memory).
+    /// nil = no active thread, thread memory is not injected.
     public let threadId: UUID?
 
-    /// Информация о проектах в треде: UUID + имя + настройки каждого.
+    /// Project information: UUID + name + settings for each project.
     public let projectInfos: [ProjectInfo]
 
-    /// UUID всех проектов — для обратной совместимости с кодом использующим [UUID].
+    /// All project UUIDs — for backward compatibility with code using [UUID].
     public var projectIds: [UUID] { projectInfos.map { $0.id } }
 
     public init(threadId: UUID? = nil, projectInfos: [ProjectInfo] = []) {
@@ -174,13 +132,13 @@ public struct MemoryContext: Sendable {
         self.projectInfos = projectInfos
     }
 
-    /// Дефолтный контекст — без треда и проектов.
+    /// Default context — no thread, no projects.
     public static let empty = MemoryContext(threadId: nil, projectInfos: [])
 }
 
 // MARK: - AIOrchestratorResult
 
-/// Результат работы оркестратора за одну сессию.
+/// Result of one orchestrator session.
 public struct AIOrchestratorResult: Sendable {
     public let finalResponse: String
     public let totalCost: Double?
@@ -195,24 +153,20 @@ public struct AIOrchestratorResult: Sendable {
 
 // MARK: - AIOrchestrator
 
-/// Оркестратор ИИ-агента — главный управляющий компонент ChappieCore.
+/// AI agent orchestrator — the main control component of ChappieCore.
 ///
-/// Реализует агентный цикл (agentic loop): итеративный процесс
-/// "запрос → вызов инструмента → ответ → следующий запрос",
-/// который продолжается до тех пор, пока модель не вернёт финальный
-/// текстовый ответ без вызовов инструментов.
+/// Implements the agentic loop: iterative "request → tool call → response → next request"
+/// that continues until the model returns a final text response without tool calls.
 public actor AIOrchestrator {
-    private let aiClient: AITunnelClient
+
+    // IT-10: AITunnelClient → AIClient (universal, provider-agnostic)
+    private let aiClient: AIClient
     private let toolService: ToolExecutionService
     private let fileSystem: FileSystemManager
-
-    /// MemoryManager для сборки system prompt с трёхуровневой памятью.
     private let memoryManager: MemoryManager
-
-    /// Дефолтный конфиг — используется если process() вызван без явного конфига.
     private let defaultConfig: AppConfig
 
-    // MARK: - Базовый системный промпт (English — token efficiency)
+    // MARK: - Base System Prompt (English — token efficiency)
 
     private let baseSystemPrompt = """
     You are Chappie — a universal AI agent of the highest level.
@@ -317,8 +271,11 @@ public actor AIOrchestrator {
        2x better than Cyrillic in LLM tokenizers (cost savings).
     """
 
+    // MARK: - Init
+
+    /// IT-10: Takes AIClient (universal) instead of AITunnelClient.
     public init(
-        aiClient: AITunnelClient,
+        aiClient: AIClient,
         toolService: ToolExecutionService,
         fileSystem: FileSystemManager,
         memoryManager: MemoryManager,
@@ -331,7 +288,7 @@ public actor AIOrchestrator {
         self.defaultConfig = config
     }
 
-    // MARK: - Публичный API
+    // MARK: - Public API
 
     public func process(
         prompt: String,
@@ -393,7 +350,7 @@ public actor AIOrchestrator {
 
             } else {
                 let finalResponse = streamResult.text.isEmpty
-                    ? "Нет ответа от модели."
+                    ? "No response from model."
                     : streamResult.text
 
                 return AIOrchestratorResult(
@@ -405,12 +362,12 @@ public actor AIOrchestrator {
         }
 
         throw ChappieError.unknown(
-            "Превышен лимит шагов оркестратора (maxOrchestratorSteps = \(maxSteps)). " +
-            "Цикл искусственно прерван. Увеличь AppConfig.maxOrchestratorSteps если нужно."
+            "Orchestrator step limit exceeded (maxOrchestratorSteps = \(maxSteps)). " +
+            "Loop artificially stopped. Increase AppConfig.maxOrchestratorSteps if needed."
         )
     }
 
-    // MARK: - Умное контекстное окно
+    // MARK: - Smart Context Window
 
     private func buildContextWindow(
         from history: [AIMessage],
@@ -423,7 +380,7 @@ public actor AIOrchestrator {
         let maxMessages = config.maxMessagesInContext
 
         let totalTokensBefore = history.reduce(0) { $0 + estimateTokens($1) }
-        print("[AIOrchestrator] Historia: \(history.count) msgs, ~\(totalTokensBefore) tokens | Budget: \(budget) (\(maxMessages) msgs x 500)")
+        print("[AIOrchestrator] History: \(history.count) msgs, ~\(totalTokensBefore) tokens | Budget: \(budget) (\(maxMessages) msgs x 500)")
 
         let deduplicatedHistory: [AIMessage]
         if let lastMessage = history.last,
@@ -483,7 +440,7 @@ public actor AIOrchestrator {
 
         return AIMessage(
             role: message.role,
-            content: "[СЖАТО] \(summary)",
+            content: "[COMPRESSED] \(summary)",
             tool_call_id: message.tool_call_id,
             name: message.name
         )
@@ -512,7 +469,7 @@ public actor AIOrchestrator {
         return max(1, estimated)
     }
 
-    // MARK: - Приватные методы агентного цикла
+    // MARK: - Private: Agentic Cycle
 
     private func executeToolCalls(
         _ toolCalls: [AIToolCall],

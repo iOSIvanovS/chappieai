@@ -1,56 +1,74 @@
 // ContentView.swift
 // Chappie
 //
-// АРХИТЕКТУРНАЯ РОЛЬ ЭТОГО ФАЙЛА:
-// ContentView — это чистый "дирижёр". Он НЕ содержит бизнес-логику и НЕ рисует
-// отдельные элементы. Его единственная задача — собрать все компоненты вместе
-// и "прокинуть" данные из ViewModel в нужные места.
+// ContentView is a pure "conductor". It assembles all components together
+// and passes data from ViewModel to the right places.
 //
-// ВОРКСПЕЙС (рабочая папка для инструментов):
-// Воркспейс — техническая настройка, не связанная с тредами/проектами.
-// НЕ отображается в тулбаре (убрано в UI-FIX-02) — тулбар минималистичный.
-//
-// АРХИТЕКТУРА ПРОЕКТОВ (IT-06, UI-FIX-02):
-// ProjectChipsView показывается ТОЛЬКО когда activeThread != nil.
-// Это логично: без треда — некуда добавлять проекты.
-// Приложение всегда автоматически выбирает тред при старте.
-//
-// IT-09: Добавлен sheet настроек проекта.
-// Тап на чип → onOpenSettings(UUID) → selectedProjectForSettings = project →
-// .sheet показывает ProjectSettingsSheet → onSave → viewModel.updateProjectSettings().
+// IT-09: Added project settings sheet.
+// IT-10: Universal AI Provider.
+//   - OnboardingView shown when no providers configured
+//   - ModelPickerRow added above ProjectChipsView
+//   - NewThreadProviderSheet shown when creating a new thread
 
 import SwiftUI
 import UniformTypeIdentifiers
 import SwiftData
 import ChappieCore
 
-// MARK: - Content View
+// MARK: - ContentView
 
 struct ContentView: View {
 
     @State private var viewModel = ChappieViewModel()
     @State private var prompt: String = ""
     @State private var showSettings: Bool = false
+    @State private var isReady: Bool = false
 
-    /// IT-09: Проект, настройки которого сейчас открыты.
-    /// nil = sheet закрыт.
+    /// IT-09: Project whose settings are currently open.
     @State private var selectedProjectForSettings: ProjectMetadata? = nil
 
-    /// ModelContext из SwiftUI-окружения — предоставляется .modelContainer() в ChappieApp.
     @Environment(\.modelContext) private var modelContext
 
     var body: some View {
+        Group {
+            if !isReady {
+                // Loading state while SwiftData initializes
+                ProgressView("Загрузка...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if viewModel.providers.isEmpty {
+                // IT-10: Onboarding — no providers configured yet
+                OnboardingView(viewModel: viewModel)
+            } else {
+                mainContent
+            }
+        }
+        .onAppear {
+            viewModel.setModelContainer(modelContext.container)
+            // Give SwiftData a moment to load providers before deciding which screen to show
+            Task {
+                try? await Task.sleep(nanoseconds: 300_000_000) // 0.3s
+                isReady = true
+            }
+        }
+        // React to providers being added (onboarding → main app transition)
+        .onChange(of: viewModel.providers.count) { _, newCount in
+            if newCount > 0 && !isReady {
+                isReady = true
+            }
+        }
+    }
+
+    // MARK: - Main App Content
+
+    private var mainContent: some View {
         NavigationSplitView {
-            // MARK: Боковая панель с тредами (IT-05)
             SidebarView(
-                isApiKeyValid: SettingsManager.shared.isApiKeyValid,
+                isApiKeyValid: !viewModel.providers.isEmpty,
                 threads: viewModel.threads,
                 selectedThreadId: viewModel.activeThread?.id,
                 onOpenSettings: { showSettings = true },
                 onSelectThread: { thread in
-                    Task {
-                        await viewModel.selectThread(thread)
-                    }
+                    Task { await viewModel.selectThread(thread) }
                 },
                 onCreateThread: {
                     viewModel.createNewThread()
@@ -66,10 +84,19 @@ struct ContentView: View {
         } detail: {
             VStack(spacing: 0) {
 
-                // MARK: Плашки проектов (IT-06, IT-09)
-                //
-                // Показываем строку проектов ТОЛЬКО когда тред активен.
-                // IT-09: onOpenSettings передаёт UUID проекта для открытия настроек.
+                // IT-10: Model picker row
+                if viewModel.activeThread != nil && !viewModel.providers.isEmpty {
+                    ModelPickerRow(
+                        activeProvider: viewModel.activeProvider,
+                        providers: viewModel.providers,
+                        onSelectProvider: { id in
+                            viewModel.switchProvider(id: id)
+                        }
+                    )
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+
+                // IT-06, IT-09: Project chips row
                 if viewModel.activeThread != nil {
                     ProjectChipsView(
                         projects: viewModel.activeProjects,
@@ -80,7 +107,6 @@ struct ContentView: View {
                             viewModel.removeProject(id: projectId)
                         },
                         onOpenSettings: { projectId in
-                            // Находим ProjectMetadata по ID и открываем sheet
                             if let project = viewModel.activeProjects.first(where: { $0.id == projectId }) {
                                 selectedProjectForSettings = project
                             }
@@ -110,7 +136,7 @@ struct ContentView: View {
             .toolbar {
                 ChappieToolbarContent(
                     balance: viewModel.currentBalance,
-                    isApiKeyValid: SettingsManager.shared.isApiKeyValid,
+                    isApiKeyValid: !viewModel.providers.isEmpty,
                     onOpenSettings: { showSettings = true }
                 )
             }
@@ -122,13 +148,11 @@ struct ContentView: View {
                 .ignoresSafeArea()
                 .opacity(0.5)
         }
-        // Sheet настроек приложения
+        // IT-10: Settings sheet shows ProvidersSettingsView
         .sheet(isPresented: $showSettings) {
-            SettingsView { newKey in
-                viewModel.updateApiKey(newKey)
-            }
+            ProvidersSettingsView(viewModel: viewModel)
         }
-        // IT-09: Sheet настроек проекта — открывается по тапу на чип
+        // IT-09: Project settings sheet
         .sheet(item: $selectedProjectForSettings) { project in
             ProjectSettingsSheet(
                 project: project,
@@ -141,12 +165,22 @@ struct ContentView: View {
                 }
             )
         }
-        .onAppear {
-            viewModel.setModelContainer(modelContext.container)
+        // IT-10: New thread provider picker sheet
+        .sheet(isPresented: $viewModel.showNewThreadProviderPicker) {
+            NewThreadProviderSheet(
+                providers: viewModel.providers,
+                currentProvider: viewModel.activeProvider,
+                onConfirm: { providerId in
+                    Task { await viewModel.confirmNewThread(with: providerId) }
+                },
+                onCancel: {
+                    viewModel.cancelNewThread()
+                }
+            )
         }
     }
 
-    // MARK: - Приватные методы
+    // MARK: - Private
 
     private func sendMessage() {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }

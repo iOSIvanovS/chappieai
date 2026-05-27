@@ -1,77 +1,81 @@
 // ChappieCore.swift
 // ChappieCore
 //
-// Точка входа Swift Package — публичный фасад всего пакета.
+// Swift Package entry point — public facade of the entire package.
 //
-// ЗАЧЕМ ЭТОТ ФАЙЛ:
-// Swift Package Manager не требует явного реэкспорта, но наличие
-// центрального файла с документацией и @_exported import даёт три преимущества:
+// WHY THIS FILE:
+// Swift Package Manager doesn't require explicit re-exports, but having a central
+// file with documentation gives three advantages:
 //
-// 1. ЧИТАЕМОСТЬ: Любой разработчик, открывший пакет, сразу видит
-//    полный список публичного API в одном месте.
+// 1. READABILITY: Any developer opening the package immediately sees
+//    the complete public API list in one place.
 //
-// 2. ВЕРСИОНИРОВАНИЕ: При изменении публичного API достаточно
-//    обновить этот файл — изменение сразу видно в git diff.
+// 2. VERSIONING: When the public API changes, updating this file
+//    makes the change immediately visible in git diff.
 //
-// 3. ДОКУМЕНТАЦИЯ: Этот файл служит "оглавлением" пакета —
-//    описывает что и зачем экспортируется.
+// 3. DOCUMENTATION: This file serves as the package "table of contents" —
+//    describes what is exported and why.
 //
-// АРХИТЕКТУРА ПАКЕТА:
-// ChappieCore — это мозг Чаппи. Он намеренно отделён от SwiftUI-слоя
-// (таргет Chappie) чтобы логика была тестируемой и переиспользуемой
-// независимо от конкретного UI-фреймворка.
+// PACKAGE ARCHITECTURE:
+// ChappieCore is Chappie's brain. It is intentionally separated from the SwiftUI layer
+// (the Chappie target) so that the logic is testable and reusable
+// independently of any specific UI framework.
 
 import Foundation
 
-// MARK: - Публичный API ChappieCore
+// MARK: - ChappieCore Public API
 
-// Ниже перечислены все публичные типы, которые пакет предоставляет потребителям.
-// Все они уже объявлены как `public` в своих файлах — здесь мы просто
-// документируем их наличие для ясности архитектуры.
+// All public types the package provides to consumers are listed below.
+// They are all declared as `public` in their own files — here we just
+// document their presence for architectural clarity.
 
-// MARK: Модели данных (Models/)
+// MARK: Data Models (Models/)
 //
-// • AppConfig          — централизованная конфигурация: таймауты, лимиты шагов, размер истории
-// • ChappieError       — единое перечисление всех ошибок системы
-// • AIMessage          — модель одного сообщения в чате (role/content/tool_calls)
-// • AITool             — описание инструмента для function calling API
-// • AIFunctionDefinition — схема функции (имя, описание, параметры)
-// • AIToolParameters   — JSON Schema параметров инструмента
-// • AIToolProperty     — отдельное свойство в схеме параметров
-// • AITunnelRequest    — модель запроса к AI Tunnel API
-// • AITunnelResponse   — модель ответа от AI Tunnel API
-// • AIChoice           — один вариант ответа модели
-// • AIUsage            — статистика использования токенов и стоимость
-// • AIToolCall         — вызов инструмента, возвращённый моделью
-// • AIToolCallFunction — имя и аргументы конкретного вызова инструмента
+// • AppConfig              — centralized configuration: timeouts, step limits, history size
+// • ChappieError           — unified error enum for the entire system
+// • AIMessage              — one chat message model (role/content/tool_calls)
+// • AITool                 — tool description for function calling API
+// • AIFunctionDefinition   — function schema (name, description, parameters)
+// • AIToolParameters       — JSON Schema of tool parameters
+// • AIToolProperty         — individual property in the parameter schema
+// • AITunnelRequest        — request model for OpenAI-compatible API
+// • AITunnelResponse       — response model from OpenAI-compatible API
+// • AIChoice               — one model response choice
+// • AIUsage                — token usage statistics and cost
+// • AIToolCall             — tool call returned by the model
+// • AIToolCallFunction     — name and arguments of a specific tool call
 //
-// REFACTOR-THREADS IT-01 (новые модели):
-// • ThreadEntity       — SwiftData модель треда (id, title, messagesJSON, settingsJSON, projectBindingsJSON)
-// • ThreadSettings     — Codable настройки треда (maxMessagesInContext, tokenBudget)
-// • ThreadMetadata     — Sendable DTO для передачи метаданных треда из actor в UI
-// • ProjectEntity      — SwiftData модель проекта (id, displayName, bookmarkData, settingsJSON)
-// • ProjectSettings    — Codable настройки проекта (preferredLanguage)
-// • ProjectMetadata    — Sendable DTO для передачи метаданных проекта из actor в UI
-// • MemoryEntity       — SwiftData модель контейнера памяти (scope, entriesJSON)
-// • MemoryEntry        — Codable одна запись памяти (key, type, jsonString, metadata)
-
-// MARK: Сервисы (Services/)
+// REFACTOR-THREADS IT-01:
+// • ThreadEntity           — SwiftData thread model
+// • ThreadSettings         — Codable thread settings (IT-10: + activeProviderId)
+// • ThreadMetadata         — Sendable DTO for thread metadata
+// • ProjectEntity          — SwiftData project model
+// • ProjectSettings        — Codable project settings (IT-09: full agent permissions)
+// • ProjectMetadata        — Sendable DTO for project metadata
+// • MemoryEntity           — SwiftData memory container model
+// • MemoryEntry            — Codable single memory entry
 //
-// • AITunnelClient     — HTTP-клиент для общения с AI Tunnel API
-// • AIOrchestrator     — главный актор: агентный цикл "запрос → инструмент → ответ"
-// • ToolExecutionService — реестр и исполнитель всех инструментов Чаппи
-// • FileSystemManager  — безопасный доступ к файловой системе с защитой от path traversal
-// • MemoryManager      — долгосрочная память: запись, чтение, поиск записей
-// • ChatHistoryManager — персистентное хранение истории чата между сессиями [УСТАРЕВАЕТ]
+// IT-10: Universal AI Provider:
+// • AIProvider             — Codable struct: endpoint + modelName + availableModels
+// • AIProviderEntity       — SwiftData entity storing AIProvider as JSON string
+// • AIProviderStoreError   — errors from AIProviderStore
+
+// MARK: Services (Services/)
 //
-// REFACTOR-THREADS IT-01 (новые сервисы):
-// • ThreadStore        — actor, CRUD операции над тредами через SwiftData
-// • ProjectStore       — actor, CRUD операции над проектами через SwiftData
+// • AIClient               — universal HTTP client for any OpenAI-compatible endpoint (IT-10)
+// • AITunnelClient         — legacy HTTP client (deprecated, kept for migration)
+// • AIOrchestrator         — main actor: agentic cycle "request → tool → response"
+// • AIProviderStore        — actor, CRUD for AI providers + Keychain key storage (IT-10)
+// • ToolExecutionService   — registry and executor of all Chappie tools
+// • FileSystemManager      — safe file system access with path traversal protection
+// • MemoryManager          — long-term memory: write, read, search entries
+// • ChatHistoryManager     — persistent chat history storage between sessions [DEPRECATED]
+//
+// REFACTOR-THREADS IT-01:
+// • ThreadStore            — actor, CRUD operations on threads via SwiftData
+// • ProjectStore           — actor, CRUD operations on projects via SwiftData
 
-// MARK: - Версия пакета
+// MARK: - Package Version
 
-/// Текущая версия ChappieCore.
-///
-/// Зачем: Позволяет диагностировать проблемы совместимости при обновлениях.
-/// Обновляй при каждом значимом изменении публичного API.
-public let coreVersion = "2.0.0" // IT-01: SwiftData модели + ThreadStore + ProjectStore
+/// Current ChappieCore version.
+public let coreVersion = "3.0.0" // IT-10: Universal AI Provider — AIClient + AIProviderStore

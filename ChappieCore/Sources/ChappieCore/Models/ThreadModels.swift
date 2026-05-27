@@ -1,97 +1,77 @@
 // ThreadModels.swift
 // ChappieCore
 //
-// НАЗНАЧЕНИЕ:
-// Модели данных для системы мультитредовости (REFACTOR-THREADS IT-01).
+// Data models for the multi-thread system (REFACTOR-THREADS IT-01).
+// IT-10: ThreadSettings now includes activeProviderId: UUID? for per-thread model selection.
 //
-// ПРИНЦИП JSON-СЕРИАЛИЗАЦИИ:
-// SwiftData хранит только примитивы и Data. Сложные объекты (массивы сообщений,
-// настройки треда) сериализуются через JSONEncoder и хранятся как Data.
-// При чтении — JSONDecoder. Это полностью избавляет от проблем миграции схемы SwiftData:
-// при эволюции модели меняем только Codable-структуры, SwiftData-схема остаётся прежней.
+// JSON SERIALIZATION PRINCIPLE:
+// SwiftData stores only primitives and Data. Complex objects (message arrays,
+// thread settings) are serialized via JSONEncoder and stored as Data.
+// On read — JSONDecoder. This fully eliminates SwiftData migration pain:
+// when the model evolves, only the Codable structs change; the SwiftData schema stays the same.
 //
-// АРХИТЕКТУРНОЕ РЕШЕНИЕ — ОТСУТСТВИЕ ЗАВИСИМОСТИ ОТ ChatMessage:
-// ChatMessage определён в Chappie (UI-таргет). ChappieCore не должен зависеть от UI-слоя —
-// это нарушение принципа инверсии зависимостей. Поэтому:
-// - ThreadEntity хранит messagesJSON: Data (сырые байты)
-// - ThreadStore работает с Data напрямую через Generic-методы (как ChatHistoryManager)
-// - Сериализацию/десериализацию ChatMessage делает ChappieViewModel (UI-слой)
-// Это та же архитектура, что уже используется в ChatHistoryManager<T: Codable>.
-//
-// ЗАВИСИМОСТИ:
-// - SwiftData — только в ThreadEntity (финальный класс с @Model)
-// - Foundation — UUID, Date, JSONEncoder/JSONDecoder
+// NO DEPENDENCY ON ChatMessage:
+// ChatMessage is defined in Chappie (UI target). ChappieCore must not depend on the UI layer.
+// Therefore:
+// - ThreadEntity stores messagesJSON: Data (raw bytes)
+// - ThreadStore works with Data directly via Generic methods (like ChatHistoryManager)
+// - ChatMessage serialization/deserialization is done by ChappieViewModel (UI layer)
 
 import Foundation
 import SwiftData
 
-// MARK: - ThreadEntity (SwiftData хранилище)
+// MARK: - ThreadEntity (SwiftData Storage)
 
-/// Одна запись треда в базе данных SwiftData.
+/// A single thread record in the SwiftData database.
 ///
-/// ПОЧЕМУ ТОЛЬКО ПРИМИТИВЫ И DATA:
-/// SwiftData имеет ограниченную поддержку кастомных Codable типов в @Model.
-/// Хранение сложных Swift-структур напрямую вызывает проблемы при миграции схемы.
-/// Поэтому все сложные объекты сериализуем в Data через JSONEncoder — это даёт
-/// полную свободу эволюции без болезненных SwiftData-миграций.
+/// WHY ONLY PRIMITIVES AND DATA:
+/// SwiftData has limited support for custom Codable types in @Model.
+/// Storing complex Swift structs directly causes migration issues.
+/// We serialize everything to Data via JSONEncoder — full freedom to evolve without migrations.
 ///
-/// ПОЧЕМУ @Model FINAL CLASS, А НЕ STRUCT:
-/// SwiftData требует reference type для @Model — только классы поддерживают
-/// отслеживание изменений через @Observable, которое SwiftData использует под капотом.
+/// WHY @Model FINAL CLASS, NOT STRUCT:
+/// SwiftData requires reference types for @Model — only classes support
+/// change tracking via @Observable that SwiftData uses under the hood.
 @Model
 public final class ThreadEntity {
 
-    // MARK: - Идентификация
+    // MARK: - Identity
 
-    /// Уникальный идентификатор треда.
-    /// Генерируется при создании и никогда не меняется — это стабильная ссылка.
+    /// Unique thread identifier. Generated on creation, never changes.
     public var id: UUID
 
-    /// Отображаемое название треда.
-    /// Автогенерируется из первых слов первого сообщения, может быть изменено пользователем.
+    /// Display title of the thread.
+    /// Auto-generated from the first message words, can be renamed by user.
     public var title: String
 
-    // MARK: - Временные метки
+    // MARK: - Timestamps
 
-    /// Время создания треда.
-    /// Используется для отображения в боковой панели.
+    /// Thread creation time.
     public var createdAt: Date
 
-    /// Время последнего обновления треда.
-    /// По этому полю сортируется список тредов (последний активный — сверху).
+    /// Last update time. Used for sorting (most recently active at top).
     public var updatedAt: Date
 
-    // MARK: - JSON-сериализованные данные
+    // MARK: - JSON-serialized data
 
-    /// История сообщений треда, сериализованная через JSONEncoder.
-    ///
-    /// ТОНКОСТЬ: Тип сообщений — ChatMessage из UI-таргета Chappie.
-    /// ChappieCore не знает о ChatMessage (нарушение зависимостей).
-    /// Поэтому здесь хранится сырой JSON — UI-слой сам сериализует/десериализует.
-    /// Аналогично тому, как работает ChatHistoryManager<T: Codable>.
+    /// Thread message history serialized via JSONEncoder.
+    /// Type: [ChatMessage] from the UI target — ChappieCore doesn't know about it.
+    /// Same architecture as ChatHistoryManager<T: Codable>.
     public var messagesJSON: Data
 
-    /// Настройки треда, сериализованные через JSONEncoder.
-    /// Тип оригинала: ThreadSettings.
+    /// Thread settings serialized via JSONEncoder. Type: ThreadSettings.
     public var settingsJSON: Data
 
-    /// Список UUID проектов, привязанных к этому треду, сериализованный через JSONEncoder.
-    /// Тип оригинала: [UUID].
+    /// List of project UUIDs bound to this thread, serialized via JSONEncoder. Type: [UUID].
     ///
-    /// ПОЧЕМУ СПИСОК UUID, А НЕ ОТНОШЕНИЕ SwiftData:
-    /// Отношения SwiftData требуют строгой типизации и вызывают сложности при
-    /// каскадном удалении. Список UUID проще и достаточен для нашего случая.
+    /// WHY UUID LIST, NOT SwiftData RELATIONSHIP:
+    /// SwiftData relationships require strict typing and cause cascading delete complexity.
+    /// A UUID list is simpler and sufficient for our use case.
     public var projectBindingsJSON: Data
 
-    // MARK: - Инициализация
+    // MARK: - Init
 
-    /// Создаёт новый тред с пустой историей и дефолтными настройками.
-    ///
-    /// - Parameters:
-    ///   - id: UUID треда (по умолчанию генерируется новый)
-    ///   - title: Название треда
-    ///   - settings: Настройки треда (по умолчанию — дефолтные)
-    ///   - projectIds: Список UUID привязанных проектов (по умолчанию пустой)
+    /// Creates a new thread with empty history and default settings.
     public init(
         id: UUID = UUID(),
         title: String,
@@ -102,59 +82,63 @@ public final class ThreadEntity {
         self.title = title
         self.createdAt = Date()
         self.updatedAt = Date()
-
-        // Сериализуем пустую историю (пустой JSON-массив), настройки и привязки проектов.
-        // Используем безопасную сериализацию с фолбэком на пустой Data.
-        // Пустой JSON-массив: "[]" в UTF-8
         self.messagesJSON = "[]".data(using: .utf8) ?? Data()
         self.settingsJSON = (try? JSONEncoder().encode(settings)) ?? Data()
         self.projectBindingsJSON = (try? JSONEncoder().encode(projectIds)) ?? Data()
     }
 }
 
-// MARK: - ThreadSettings (Codable настройки треда)
+// MARK: - ThreadSettings (Codable thread configuration)
 
-/// Настройки одного треда — сериализуются в JSON и хранятся в ThreadEntity.settingsJSON.
+/// Settings for a single thread — serialized to JSON and stored in ThreadEntity.settingsJSON.
 ///
-/// ПОЧЕМУ STRUCT, А НЕ @Model:
-/// ThreadSettings — это конфигурация, не самостоятельная сущность.
-/// Она всегда принадлежит конкретному треду и не нужна независимо от него.
-/// Struct + Codable — самый простой и надёжный способ хранить вложенные настройки.
+/// IT-10: Added activeProviderId: UUID? — the AI provider selected for this thread.
+/// nil = use the default provider from AIProviderStore.
 ///
-/// ПОЧЕМУ НЕ ВСЕ НАСТРОЙКИ ЗДЕСЬ:
-/// recentFullMessages, summaryThreshold, maxOrchestratorSteps — технические параметры,
-/// которые пользователь не должен видеть. Они остаются захардкоженными в AppConfig.
-/// Пользователь управляет только глубиной контекста (maxMessagesInContext).
+/// WHY STRUCT, NOT @Model:
+/// ThreadSettings is configuration, not a standalone entity.
+/// It always belongs to a specific thread and is never needed independently.
+/// Struct + Codable — the simplest and most reliable way to store nested settings.
 public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
 
-    /// Максимальное количество сообщений в контекстном окне.
+    // MARK: - Context Window
+
+    /// Maximum number of messages in the context window.
     ///
-    /// ДИАПАЗОН: 10...100
-    /// ДЕФОЛТ: 20 (10,000 токенов — разумный баланс)
+    /// RANGE: 10...100
+    /// DEFAULT: 20 (10,000 tokens — a reasonable balance)
     ///
-    /// ФОРМУЛА tokenBudget:
+    /// TOKEN BUDGET FORMULA:
     /// tokenBudget = maxMessagesInContext × 500
-    /// Примеры: 10 → 5,000 | 20 → 10,000 | 50 → 25,000 | 100 → 50,000
-    ///
-    /// ПОЧЕМУ 500 ТОКЕНОВ НА СООБЩЕНИЕ:
-    /// Среднее сообщение в диалоге разработчика — ~200-400 токенов (текст + код).
-    /// Коэффициент 500 даёт небольшой запас. При превышении бюджета включается
-    /// механизм двойного отсечения (унаследован из buildContextWindow).
+    /// Examples: 10 → 5,000 | 20 → 10,000 | 50 → 25,000 | 100 → 50,000
     public var maxMessagesInContext: Int
 
-    /// Вычисляемый токенный бюджет на основе количества сообщений.
-    ///
-    /// НЕ ХРАНИТСЯ В JSON — вычисляется каждый раз.
-    /// Это намеренно: изменение формулы не требует миграции данных.
+    /// Computed token budget based on message count.
+    /// NOT stored in JSON — computed each time.
+    /// Intentional: changing the formula requires no data migration.
     public var tokenBudget: Int {
         maxMessagesInContext * 500
     }
 
-    /// Создаёт настройки с дефолтными значениями.
+    // MARK: - IT-10: Active AI Provider
+
+    /// UUID of the AI provider selected for this thread.
     ///
-    /// - Parameter maxMessagesInContext: Глубина контекста (10...100, по умолчанию 20)
-    public init(maxMessagesInContext: Int = 20) {
-        // Зажимаем значение в допустимый диапазон на случай некорректных данных из JSON
+    /// nil = use the default provider from AIProviderStore.
+    /// Set explicitly when user switches providers via the model picker row.
+    ///
+    /// WHY UUID, NOT INLINE PROVIDER:
+    /// Provider config lives in AIProviderStore. Storing UUID here avoids duplication
+    /// and ensures the thread always reflects the latest provider config.
+    public var activeProviderId: UUID?
+
+    // MARK: - Init
+
+    public init(
+        maxMessagesInContext: Int = 20,
+        activeProviderId: UUID? = nil
+    ) {
         self.maxMessagesInContext = max(10, min(100, maxMessagesInContext))
+        self.activeProviderId = activeProviderId
     }
 }
