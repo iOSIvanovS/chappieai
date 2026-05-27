@@ -44,6 +44,12 @@ struct ChatScrollView: View {
     /// Auto-scroll fires whenever this changes (panel grows/shrinks).
     let bottomPadding: CGFloat
 
+    /// Extra gap between the last message and the input panel.
+    ///
+    /// WHY 16: visually separates the last bubble from the input bar edge —
+    /// without it the last message feels "glued" to the panel on launch.
+    private let bottomGap: CGFloat = 16
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -85,8 +91,9 @@ struct ChatScrollView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
-                // Bottom padding = input panel height so the last message is never hidden under it
-                .padding(.bottom, max(bottomPadding, 12))
+                // bottomPadding = input panel height + bottomGap so the last message
+                // is never hidden under the panel and has a comfortable breathing room.
+                .padding(.bottom, max(bottomPadding + bottomGap, 12))
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: messages)
                 .animation(.easeInOut(duration: 0.25), value: isThinking)
                 .animation(.easeInOut(duration: 0.3), value: streamingText.isEmpty)
