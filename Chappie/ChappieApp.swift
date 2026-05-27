@@ -34,12 +34,11 @@
 // These are hints — the system may override them if the user has resized/moved.
 //
 // BACKGROUND IMAGE:
-// Image("Chappie") is applied as .background() directly on NavigationSplitView.
-// The sidebar column uses .scrollContentBackground(.hidden) so the List doesn't
-// paint its own opaque background, letting the image show through.
-// The system NSVisualEffectView in the sidebar naturally composites on top of
-// the image — giving the frosted glass effect for free, with no AppKit hacks.
-// Window transparency (backgroundColor = .clear) is NOT used — it breaks layout.
+// Image("Chappie") is placed at the WindowGroup level as a ZStack back layer.
+// This puts it BELOW everything — below safe area, below toolbar, below all panels.
+// GeometryReader fills the entire window including toolbar and bottom insets.
+// This is the highest possible level in the SwiftUI hierarchy, so no white strips
+// can appear — the image truly covers the full NSWindow frame.
 
 import SwiftUI
 import AppKit
@@ -103,7 +102,22 @@ struct ChappieApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            // Background image lives at the TOP of the hierarchy — below everything.
+            // GeometryReader + ignoresSafeArea ensures it covers the full NSWindow frame,
+            // including the toolbar area and bottom insets, with no white strips.
+            ZStack {
+                GeometryReader { geometry in
+                    Image("Chappie")
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped()
+                        .opacity(0.5)
+                }
+                .ignoresSafeArea()
+
+                ContentView()
+            }
         }
         .modelContainer(modelContainer)
         // Initial window size — reasonable default for the split-view layout
