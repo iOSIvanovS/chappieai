@@ -118,77 +118,81 @@ struct ContentView: View {
     // MARK: - Navigation
 
     private var navigationContent: some View {
-        ZStack(alignment: .topLeading) {
+        // GeometryReader anchors the ZStack to the actual window size.
+        // Without it, scaledToFill on the background image would expand
+        // the layout to the image's intrinsic size on macOS.
+        GeometryReader { geometry in
+            ZStack(alignment: .topLeading) {
 
-            // BACK LAYER: background image fills the entire window
-            Image("Chappie")
-                .resizable()
-                .scaledToFill()
-                .ignoresSafeArea()
-                .opacity(0.5)
-
-            // MIDDLE LAYER: main app content — chat + floating panels
-            mainChatArea
-                .toolbar {
-                    ChappieToolbarContent(
-                        balance: viewModel.currentBalance,
-                        isApiKeyValid: !viewModel.providers.isEmpty,
-                        isSidebarVisible: $isSidebarVisible,
-                        onOpenSettings: { showSettings = true }
-                    )
-                }
-
-            // FRONT LAYER: dim overlay + sidebar (only when visible)
-            if isSidebarVisible {
-                // Dim overlay — tapping it closes the sidebar
-                Color.black.opacity(0.25)
+                // BACK LAYER: background image — clipped to window bounds
+                Image("Chappie")
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .clipped()
                     .ignoresSafeArea()
-                    .onTapGesture {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                            isSidebarVisible = false
-                        }
-                    }
-                    .transition(.opacity)
+                    .opacity(0.5)
 
-                // Floating sidebar panel
-                SidebarView(
-                    isApiKeyValid: !viewModel.providers.isEmpty,
-                    threads: viewModel.threads,
-                    selectedThreadId: viewModel.activeThread?.id,
-                    orphanedThreadIds: orphanedThreadIds,
-                    onOpenSettings: {
-                        showSettings = true
-                        isSidebarVisible = false
-                    },
-                    onSelectThread: { thread in
-                        Task { await viewModel.selectThread(thread) }
-                    },
-                    onCreateThread: {
-                        viewModel.createNewThread()
-                    },
-                    onDeleteThread: { thread in
-                        viewModel.deleteThread(thread)
-                    },
-                    onRenameThread: { thread, newTitle in
-                        viewModel.renameThread(thread, newTitle: newTitle)
-                    },
-                    onDismiss: {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                            isSidebarVisible = false
-                        }
+                // MIDDLE LAYER: main app content — chat + floating panels
+                mainChatArea
+                    .toolbar {
+                        ChappieToolbarContent(
+                            balance: viewModel.currentBalance,
+                            isApiKeyValid: !viewModel.providers.isEmpty,
+                            isSidebarVisible: $isSidebarVisible,
+                            onOpenSettings: { showSettings = true }
+                        )
                     }
-                )
-                .frame(width: sidebarWidth)
-                // Vertical insets: top — below toolbar, bottom — above window edge
-                .padding(.top, 52)
-                .padding(.bottom, 16)
-                .padding(.leading, 12)
-                .transition(.move(edge: .leading).combined(with: .opacity))
+
+                // FRONT LAYER: dim overlay + sidebar (only when visible)
+                if isSidebarVisible {
+                    // Dim overlay — tapping it closes the sidebar
+                    Color.black.opacity(0.25)
+                        .ignoresSafeArea()
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                isSidebarVisible = false
+                            }
+                        }
+                        .transition(.opacity)
+
+                    // Floating sidebar panel
+                    SidebarView(
+                        isApiKeyValid: !viewModel.providers.isEmpty,
+                        threads: viewModel.threads,
+                        selectedThreadId: viewModel.activeThread?.id,
+                        orphanedThreadIds: orphanedThreadIds,
+                        onOpenSettings: {
+                            showSettings = true
+                            isSidebarVisible = false
+                        },
+                        onSelectThread: { thread in
+                            Task { await viewModel.selectThread(thread) }
+                        },
+                        onCreateThread: {
+                            viewModel.createNewThread()
+                        },
+                        onDeleteThread: { thread in
+                            viewModel.deleteThread(thread)
+                        },
+                        onRenameThread: { thread, newTitle in
+                            viewModel.renameThread(thread, newTitle: newTitle)
+                        },
+                        onDismiss: {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                isSidebarVisible = false
+                            }
+                        }
+                    )
+                    .frame(width: sidebarWidth)
+                    // Vertical insets: top — below toolbar, bottom — above window edge
+                    .padding(.top, 52)
+                    .padding(.bottom, 16)
+                    .padding(.leading, 12)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+                }
             }
         }
-        // Constrain ZStack to window bounds — prevents scaledToFill image from
-        // expanding the layout beyond the window size on macOS
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         // ultraThinMaterial gives the title bar a frosted-glass look
         .toolbarBackground(.ultraThinMaterial, for: .windowToolbar)
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: isSidebarVisible)
@@ -218,7 +222,6 @@ struct ContentView: View {
                 bottomPanel
             }
         }
-        // Constrain inner ZStack to parent bounds as well
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.easeInOut(duration: 0.2), value: viewModel.activeThread?.id)
     }
