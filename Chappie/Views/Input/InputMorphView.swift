@@ -251,9 +251,8 @@ struct InputMorphView: View {
         }
         .frame(height: contentHeight)
         .padding(12)
-        .background(Color(NSColor.windowBackgroundColor))
-        .cornerRadius(12)
-        .shadow(color: .black.opacity(0.15), radius: 3, x: 0, y: 2)
+        // ultraThinMaterial gives the frosted-glass look matching the toolbar above
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
         .padding(.horizontal)
         .padding(.bottom, 16)
         .animation(.spring(response: 0.38, dampingFraction: 0.82), value: isThinking)
