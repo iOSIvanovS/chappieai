@@ -8,9 +8,10 @@
 // The detail area uses a ZStack:
 //   - Back layer: ChatScrollView fills the entire area (ignores safe area).
 //   - Front layer: FloatingPanelsView — top panel (model picker + project chips)
-//     and bottom panel (input / tool status) float over the scroll view with blur gradients.
-// Both panels report their heights; ChatScrollView reserves matching transparent
-// header/footer spacers so the first and last messages are always fully readable.
+//     and bottom panel (input / tool status) float over the scroll view.
+// Both panels are transparent with a strong drop shadow.
+// ChatScrollView reserves matching transparent header/footer spacers so the
+// first and last messages are always fully readable.
 //
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
@@ -31,14 +32,12 @@ struct ContentView: View {
 
     @State private var selectedProjectForSettings: ProjectMetadata? = nil
 
-    // Heights reported by FloatingPanelsView — used as transparent spacers in ChatScrollView.
+    // Heights reported by floating panels — used as transparent spacers in ChatScrollView.
     @State private var topPanelHeight: CGFloat = 0
     @State private var bottomPanelHeight: CGFloat = 0
 
     @Environment(\.modelContext) private var modelContext
 
-    // NOTE: Full orphaned detection requires loading all thread settings asynchronously.
-    // For now we return an empty set — active thread orphaned state is shown via ModelPickerRow.
     private var orphanedThreadIds: Set<UUID> { [] }
 
     var body: some View {
@@ -91,7 +90,7 @@ struct ContentView: View {
             )
 
         } detail: {
-            // ZStack: ChatScrollView fills the full area, FloatingPanelsView overlays on top.
+            // ZStack: ChatScrollView fills the full area, floating panels overlay on top.
             ZStack(alignment: .top) {
 
                 // BACK LAYER: full-screen scroll view
@@ -105,7 +104,7 @@ struct ContentView: View {
                 )
                 .ignoresSafeArea(edges: .top)
 
-                // FRONT LAYER: floating panels with blur gradients
+                // FRONT LAYER: transparent floating panels with drop shadows
                 VStack(spacing: 0) {
                     topPanel
                     Spacer()
@@ -161,7 +160,7 @@ struct ContentView: View {
     // MARK: - Top Floating Panel
 
     /// Top panel: model picker + project chips.
-    /// Blur gradient fades from opaque at top to transparent at bottom.
+    /// Transparent background, strong shadow cast downward.
     private var topPanel: some View {
         VStack(spacing: 0) {
             if viewModel.activeThread != nil && !viewModel.providers.isEmpty {
@@ -196,8 +195,8 @@ struct ContentView: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        // Blur fades from opaque (top) to transparent (bottom)
-        .background(BlurGradientView(direction: .topToBottom))
+        // Strong shadow cast downward from the bottom edge of the panel
+        .shadow(color: .black.opacity(0.35), radius: 20, x: 0, y: 8)
         // Report height for ChatScrollView headerHeight
         .background(
             GeometryReader { geo in
@@ -211,7 +210,7 @@ struct ContentView: View {
     // MARK: - Bottom Floating Panel
 
     /// Bottom panel: InputMorphView.
-    /// Blur gradient fades from transparent at top to opaque at bottom.
+    /// Transparent background, strong shadow cast upward.
     private var bottomPanel: some View {
         InputMorphView(
             prompt: $prompt,
@@ -221,8 +220,8 @@ struct ContentView: View {
             onSend: sendMessage,
             onCancel: { viewModel.cancelCurrentRequest() }
         )
-        // Blur fades from transparent (top) to opaque (bottom)
-        .background(BlurGradientView(direction: .bottomToTop))
+        // Strong shadow cast upward from the top edge of the panel
+        .shadow(color: .black.opacity(0.35), radius: 20, x: 0, y: -8)
         // Report height for ChatScrollView footerHeight
         .background(
             GeometryReader { geo in
