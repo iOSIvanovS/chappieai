@@ -66,6 +66,8 @@ struct ModelPickerRow: View {
             Text("Модель")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize()
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(
@@ -105,6 +107,7 @@ struct ModelPickerRow: View {
                 )
             }
             .buttonStyle(.plain)
+            // Keep the button from wrapping — it clips gracefully instead of growing taller
             .fixedSize()
             .popover(isPresented: $showPopover, arrowEdge: .top) {
                 ModelPickerPopover(
@@ -120,6 +123,8 @@ struct ModelPickerRow: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
+        // Prevent the pill from ever growing taller due to text wrap
+        .fixedSize(horizontal: false, vertical: true)
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
@@ -138,6 +143,8 @@ struct ModelPickerRow: View {
             Text(String(format: "%.2f ₽", balance))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.primary)
+                .lineLimit(1)
+                .fixedSize()
                 // Animate digit changes so the number visibly ticks down during streaming
                 .contentTransition(.numericText())
         }
@@ -156,18 +163,22 @@ struct ModelPickerRow: View {
             Text("Модель недоступна — выберите другую")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.orange)
+                .lineLimit(1)
         } else if let provider = activeProvider, let model = activeModelName {
             Text("\(provider.displayName) · \(model)")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.primary)
+                .lineLimit(1)
         } else if let provider = activeProvider {
             Text(provider.displayName)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.primary)
+                .lineLimit(1)
         } else {
             Text("Не выбрана")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
     }
 }
