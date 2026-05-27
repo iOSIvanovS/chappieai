@@ -176,23 +176,20 @@ struct ProjectChipsView: View {
         Button {
             openFolderPicker()
         } label: {
-            HStack(spacing: 3) {
-                Image(systemName: "plus")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("Добавить")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .foregroundStyle(Color.accentColor)
-            .background(
-                Capsule()
-                    .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
-                    .overlay(
-                        Capsule()
-                            .stroke(Color.accentColor.opacity(0.35), lineWidth: 1)
-                    )
-            )
+            // "+" only — compact, consistent with the pill aesthetic
+            Image(systemName: "plus")
+                .font(.system(size: 11, weight: .semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .foregroundStyle(Color.accentColor)
+                .background(
+                    Capsule()
+                        .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
+                        .overlay(
+                            Capsule()
+                                .stroke(Color.accentColor.opacity(0.35), lineWidth: 1)
+                        )
+                )
         }
         .buttonStyle(.plain)
         .help("Добавить папку проекта к этому треду")
