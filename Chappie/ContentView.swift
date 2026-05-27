@@ -21,11 +21,10 @@
 // The window is NOT made transparent (that would break layout and make the
 // entire window see-through).
 //
-// TOOLBAR TRANSPARENCY:
-// .toolbarBackground(.clear, for: .windowToolbar) removes the system-drawn
-// background behind the toolbar (title bar area). The background image then
-// shows through the toolbar, giving the same frosted-glass look as the sidebar.
-// This is a pure SwiftUI approach — no AppKit window hacks needed.
+// TOOLBAR BACKGROUND:
+// .toolbarBackground(.ultraThinMaterial, for: .windowToolbar) gives the title bar
+// a frosted-glass look that matches the sidebar's NSVisualEffectView — consistent
+// visual language across the whole window top area.
 //
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
@@ -177,9 +176,9 @@ struct ContentView: View {
                 .ignoresSafeArea()
                 .opacity(0.5)
         )
-        // Remove the system-drawn opaque background behind the toolbar/title bar.
-        // The background image then shows through — same frosted-glass look as sidebar.
-        .toolbarBackground(.clear, for: .windowToolbar)
+        // ultraThinMaterial gives the title bar a frosted-glass look —
+        // consistent with the sidebar's NSVisualEffectView material.
+        .toolbarBackground(.ultraThinMaterial, for: .windowToolbar)
     }
 
     // MARK: - Top Floating Panel
