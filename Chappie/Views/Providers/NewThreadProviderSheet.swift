@@ -1,7 +1,7 @@
 // NewThreadProviderSheet.swift
 // Chappie
 //
-// Two-level picker shown when creating a new thread.
+// Sheet shown when creating a new thread.
 //
 // LEVEL 1 — Provider selection:
 //   List of all configured providers. User picks one.
@@ -10,7 +10,11 @@
 //   List of models saved for the selected provider.
 //   User picks one (or types manually if list is empty).
 //
-// On confirm → passes (providerId, modelName) to ViewModel.
+// LEVEL 3 — Thread setup (IT-12):
+//   Thread name, context depth slider, unlimited context toggle.
+//   Mirrors ThreadSettingsSheet controls so the user configures everything upfront.
+//
+// On confirm → passes (providerId, modelName, threadTitle, ThreadSettings) to ViewModel.
 // On cancel → the pending thread is deleted.
 
 import SwiftUI
@@ -25,7 +29,7 @@ struct NewThreadProviderSheet: View {
     let providers: [AIProvider]
     let currentProvider: AIProvider?
     let currentModelName: String?
-    let onConfirm: (UUID, String) -> Void
+    let onConfirm: (UUID, String, String, ThreadSettings) -> Void
     let onCancel: () -> Void
 
     // MARK: - State
@@ -33,6 +37,10 @@ struct NewThreadProviderSheet: View {
     @State private var selectedProviderId: UUID?
     @State private var selectedModelName: String = ""
     @State private var manualModelInput: String = ""
+
+    // Thread name + context settings (IT-12)
+    @State private var threadTitle: String = ""
+    @State private var draftSettings: ThreadSettings = ThreadSettings()
 
     // MARK: - Computed
 
@@ -57,7 +65,7 @@ struct NewThreadProviderSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Новый тред")
                         .font(.title2.bold())
-                    Text("Выберите провайдера и модель")
+                    Text("Выберите провайдера, модель и настройте тред")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -69,6 +77,7 @@ struct NewThreadProviderSheet: View {
 
             Divider()
 
+            // Provider + Model picker (two-column layout)
             HStack(alignment: .top, spacing: 0) {
 
                 // Left column: providers
@@ -159,7 +168,21 @@ struct NewThreadProviderSheet: View {
                 }
                 .frame(maxWidth: .infinity)
             }
-            .frame(height: 280)
+            .frame(height: 220)
+
+            Divider()
+
+            // IT-12: Thread name + context settings
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    threadNameSection
+                    Divider()
+                    contextSection
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
+            }
+            .frame(height: 220)
 
             Divider()
 
@@ -179,9 +202,10 @@ struct NewThreadProviderSheet: View {
                 }
 
                 Button {
-                    if let id = selectedProviderId, !selectedModelName.isEmpty {
-                        onConfirm(id, selectedModelName)
-                    }
+                    guard let id = selectedProviderId, !selectedModelName.isEmpty else { return }
+                    let title = threadTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let finalTitle = title.isEmpty ? "Новый тред" : title
+                    onConfirm(id, selectedModelName, finalTitle, draftSettings)
                 } label: {
                     Text("Начать")
                 }
@@ -192,7 +216,7 @@ struct NewThreadProviderSheet: View {
             .padding(.horizontal, 24)
             .padding(.vertical, 16)
         }
-        .frame(width: 480)
+        .frame(width: 520)
         .onAppear {
             let preselectedProvider = currentProvider ?? providers.first
             selectedProviderId = preselectedProvider?.id
@@ -200,6 +224,102 @@ struct NewThreadProviderSheet: View {
                 ?? preselectedProvider?.models.first
                 ?? ""
         }
+    }
+
+    // MARK: - Thread Name Section
+
+    private var threadNameSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Название треда", systemImage: "pencil")
+                .font(.system(size: 13, weight: .semibold))
+
+            TextField("Новый тред", text: $threadTitle)
+                .textFieldStyle(.roundedBorder)
+                .font(.callout)
+        }
+    }
+
+    // MARK: - Context Section
+
+    private var contextSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Глубина контекста", systemImage: "clock.arrow.circlepath")
+                .font(.system(size: 13, weight: .semibold))
+
+            // Unlimited context toggle
+            Toggle(isOn: $draftSettings.isUnlimitedContext) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Без ограничений")
+                        .font(.callout)
+                    Text("Все сообщения треда передаются в запросе. Может сильно увеличить стоимость.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.switch)
+
+            if !draftSettings.isUnlimitedContext {
+                limitedContextControls
+            }
+
+            contextInfoBox
+        }
+    }
+
+    // MARK: - Limited Context Controls
+
+    private var limitedContextControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Сообщений в контексте:")
+                    .font(.callout)
+                Spacer()
+                Text("\(draftSettings.maxMessagesInContext)")
+                    .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(minWidth: 44, alignment: .trailing)
+            }
+
+            Slider(
+                value: Binding(
+                    get: { Double(draftSettings.maxMessagesInContext) },
+                    set: { draftSettings.maxMessagesInContext = Int($0) }
+                ),
+                in: 10...1000,
+                step: sliderStep(for: draftSettings.maxMessagesInContext)
+            )
+            .accentColor(Color.accentColor)
+
+            HStack {
+                Text("10")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("1 000")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - Context Info Box
+
+    private var contextInfoBox: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if draftSettings.isUnlimitedContext {
+                infoRow(icon: "infinity", color: .orange, text: "Контекст не ограничен — все сообщения передаются в запросе")
+                infoRow(icon: "bubble.left.and.bubble.right", color: .secondary, text: "В чате отображаются все сообщения")
+            } else {
+                let tokenBudget = draftSettings.maxMessagesInContext * 500
+                let chatDepth = draftSettings.maxMessagesInContext * 10
+                infoRow(icon: "arrow.up.doc", color: .accentColor, text: "Токен-бюджет запроса: ~\(formatNumber(tokenBudget)) токенов")
+                infoRow(icon: "bubble.left.and.bubble.right", color: .secondary, text: "В чате отображается: \(formatNumber(chatDepth)) сообщений")
+            }
+        }
+        .padding(10)
+        .background(Color.primary.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     // MARK: - Models Empty State
@@ -221,13 +341,43 @@ struct NewThreadProviderSheet: View {
         .frame(maxWidth: .infinity)
     }
 
-    // MARK: - Manual Model
+    // MARK: - Helpers
 
     private func applyManualModel() {
         let trimmed = manualModelInput.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
         selectedModelName = trimmed
         manualModelInput = ""
+    }
+
+    private func infoRow(icon: String, color: Color, text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 11))
+                .foregroundStyle(color)
+                .frame(width: 14)
+                .padding(.top, 1)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func formatNumber(_ n: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.groupingSeparator = " "
+        formatter.locale = Locale(identifier: "ru_RU")
+        return formatter.string(from: NSNumber(value: n)) ?? "\(n)"
+    }
+
+    private func sliderStep(for value: Int) -> Double {
+        switch value {
+        case ..<100: return 5
+        case ..<500: return 10
+        default: return 50
+        }
     }
 }
 
@@ -296,7 +446,6 @@ private struct ModelPickRow: View {
                     .font(.system(size: 14))
                     .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.3))
 
-                // weight before design — correct argument order for .system()
                 Text(model)
                     .font(.system(size: 13, weight: isSelected ? .semibold : .regular, design: .monospaced))
                     .foregroundStyle(.primary)
@@ -342,7 +491,9 @@ private struct ModelPickRow: View {
         ],
         currentProvider: nil,
         currentModelName: nil,
-        onConfirm: { _, _ in },
+        onConfirm: { _, _, title, settings in
+            print("Confirm: \(title), context: \(settings.maxMessagesInContext)")
+        },
         onCancel: {}
     )
 }

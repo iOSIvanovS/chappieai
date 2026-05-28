@@ -28,11 +28,16 @@
 //   Bottom panel: InputMorphView — ultraThinMaterial.
 //   Both panels report their heights so ChatScrollView can add matching spacers.
 //
-// TOOLBAR (IT-11):
+// TOOLBAR (IT-12):
 //   ultraThinMaterial background — frosted glass matching the panels.
-//   Contains: sidebar toggle (list.bullet), thread title (center), settings gear.
-//   Thread title = "Chappie — <thread name>". Hidden when no thread is active.
+//   Contains: sidebar toggle (list.bullet), settings gear.
+//   Thread title is NOT in the toolbar — it lives in ProjectChipsView gear chip.
 //   Balance is NOT in the toolbar — it lives in ModelPickerRow as a right-side pill.
+//
+// THREAD NAME IN CHIPS (IT-12):
+//   ProjectChipsView receives threadName = viewModel.activeThread?.title.
+//   The right-side chip shows "⚙ <thread name>" — user always sees which thread is active.
+//   Tapping the chip opens ThreadSettingsSheet.
 //
 // HEADER HEIGHT:
 //   headerHeight = topPanelHeight + safeAreaTop.
@@ -51,10 +56,10 @@
 //   On send: draft is cleared via viewModel.clearDraft().
 //   This ensures each thread remembers its own unsent text across switches.
 //
-// THREAD SETTINGS SHEET (IT-11):
+// THREAD SETTINGS SHEET (IT-11 / IT-12):
 //   selectedThreadForSettings: ThreadMetadata? — opened from two places:
-//   1. Gear icon in ThreadRowView (sidebar) via onOpenThreadSettings callback.
-//   2. Gear chip in ProjectChipsView via onOpenThreadSettings callback.
+//   1. Context menu in ThreadRowView (sidebar) — gear removed from row hover buttons.
+//   2. Thread name + gear chip in ProjectChipsView.
 //   Both set selectedThreadForSettings → .sheet(item:) shows ThreadSettingsSheet.
 //   onSave → viewModel.updateThreadSettings() → title + settings persisted.
 //
@@ -63,9 +68,15 @@
 //   On startup, loadThreadsAndSelectActive() restores it.
 //   No ContentView changes needed — all logic in ViewModel.
 //
+// NEW THREAD SHEET (IT-12):
+//   NewThreadProviderSheet now returns (providerId, modelName, title, ThreadSettings).
+//   confirmNewThread() accepts all four and saves title + settings immediately.
+//
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
-// IT-11: Thread settings sheet, toolbar thread title, last-thread restore.
+// IT-11: Thread settings sheet, last-thread restore.
+// IT-12: Thread name in ProjectChipsView chip, gear removed from ThreadRowView hover,
+//        NewThreadProviderSheet extended with name + context settings.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -84,7 +95,7 @@ struct ContentView: View {
 
     @State private var selectedProjectForSettings: ProjectMetadata? = nil
     /// Thread whose settings sheet is currently open.
-    /// Opened from sidebar gear or ProjectChipsView gear chip.
+    /// Opened from sidebar context menu or ProjectChipsView gear chip.
     @State private var selectedThreadForSettings: ThreadMetadata? = nil
 
     // Heights reported by floating panels — used as transparent spacers in ChatScrollView.
@@ -147,7 +158,7 @@ struct ContentView: View {
                 )
             }
             .sheet(item: $selectedThreadForSettings) { thread in
-                // IT-11: Thread settings sheet — opened from sidebar gear or ProjectChipsView gear
+                // IT-11/IT-12: Thread settings sheet — opened from sidebar or ProjectChipsView chip
                 ThreadSettingsSheet(
                     thread: thread,
                     onSave: { newTitle, newSettings in
@@ -164,12 +175,20 @@ struct ContentView: View {
                 )
             }
             .sheet(isPresented: $viewModel.showNewThreadProviderPicker) {
+                // IT-12: extended sheet — now also returns thread title and ThreadSettings
                 NewThreadProviderSheet(
                     providers: viewModel.providers,
                     currentProvider: viewModel.activeProvider,
                     currentModelName: viewModel.activeModelName,
-                    onConfirm: { providerId, modelName in
-                        Task { await viewModel.confirmNewThread(with: providerId, modelName: modelName) }
+                    onConfirm: { providerId, modelName, title, settings in
+                        Task {
+                            await viewModel.confirmNewThread(
+                                with: providerId,
+                                modelName: modelName,
+                                title: title,
+                                settings: settings
+                            )
+                        }
                     },
                     onCancel: {
                         viewModel.cancelNewThread()
@@ -189,8 +208,6 @@ struct ContentView: View {
                     ChappieToolbarContent(
                         isApiKeyValid: !viewModel.providers.isEmpty,
                         isSidebarVisible: $isSidebarVisible,
-                        // IT-11: pass active thread title so toolbar shows "Chappie — <name>"
-                        activeThreadTitle: viewModel.activeThread?.title,
                         onOpenSettings: { showSettings = true }
                     )
                 }
@@ -238,7 +255,7 @@ struct ContentView: View {
                         viewModel.renameThread(thread, newTitle: newTitle)
                     },
                     onOpenThreadSettings: { thread in
-                        // IT-11: open thread settings sheet — sidebar stays visible
+                        // IT-12: open thread settings sheet — sidebar stays visible
                         selectedThreadForSettings = thread
                     },
                     onDismiss: {
@@ -316,7 +333,7 @@ struct ContentView: View {
 
     /// Top panel: transparent container holding floating pill rows.
     /// ModelPickerRow contains both the model selector (left) and balance pill (right).
-    /// ProjectChipsView shows attached projects + thread settings gear (right).
+    /// ProjectChipsView shows attached projects + thread name + gear chip (right).
     private var topPanel: some View {
         VStack(spacing: 6) {
             if viewModel.activeThread != nil && !viewModel.providers.isEmpty {
@@ -342,6 +359,8 @@ struct ContentView: View {
             if viewModel.activeThread != nil {
                 ProjectChipsView(
                     projects: viewModel.activeProjects,
+                    // IT-12: thread name shown in the gear chip on the right
+                    threadName: viewModel.activeThread?.title,
                     onAddProject: { url in viewModel.addProject(url: url) },
                     onRemoveProject: { projectId in viewModel.removeProject(id: projectId) },
                     onOpenSettings: { projectId in
@@ -349,7 +368,7 @@ struct ContentView: View {
                             selectedProjectForSettings = project
                         }
                     },
-                    // IT-11: gear chip on the right opens thread settings sheet
+                    // IT-12: gear chip on the right opens thread settings sheet
                     onOpenThreadSettings: {
                         if let thread = viewModel.activeThread {
                             // Reload thread from list to get the freshest settings

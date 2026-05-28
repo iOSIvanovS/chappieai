@@ -45,7 +45,7 @@
 // selectThread() ALWAYS calls switchProvider() — even when activeProvider is already set.
 // If the thread has no saved provider, the default provider is used.
 // This ensures activeProvider/activeModelName always reflect the SELECTED THREAD,
-// not the previously active thread.
+// not the previously active one.
 //
 // INPUT PANEL BUG FIX (THINKING-STUCK):
 // isThinking = false is set INSIDE withAnimation{} in the success path,
@@ -68,6 +68,11 @@
 // updateThreadSettings(_:title:forThreadId:) — saves both title and ThreadSettings.
 // Called from ContentView when user saves ThreadSettingsSheet.
 // ThreadMetadata now includes settings field — no extra store call needed in UI.
+//
+// NEW THREAD FLOW (IT-12):
+// confirmNewThread(with:modelName:title:settings:) — extended signature.
+// Saves title via renameThread and context settings via updateSettings immediately
+// after thread creation, before selectThread() is called.
 
 import SwiftUI
 import ChappieCore
@@ -794,15 +799,47 @@ final class ChappieViewModel {
         }
     }
 
-    func confirmNewThread(with providerId: UUID, modelName: String) async {
-        guard let thread = pendingNewThread else { return }
+    /// Confirms new thread creation with provider, model, custom title and context settings.
+    ///
+    /// IT-12: Extended from 2 to 4 parameters — title and ThreadSettings are now set
+    /// immediately upon thread creation, before selectThread() is called.
+    /// This ensures the thread appears in the sidebar with the correct name right away.
+    ///
+    /// - Parameters:
+    ///   - providerId: UUID of the selected AI provider
+    ///   - modelName: Selected model name within the provider
+    ///   - title: User-defined thread name (defaults to "Новый тред" if empty)
+    ///   - settings: ThreadSettings with context depth and unlimited flag
+    func confirmNewThread(with providerId: UUID, modelName: String, title: String, settings: ThreadSettings) async {
+        guard let thread = pendingNewThread,
+              let store = threadStore else { return }
         self.pendingNewThread = nil
         self.showNewThreadProviderPicker = false
 
+        // Apply provider selection first so switchProvider() saves it into thread settings.
         if let provider = providers.first(where: { $0.id == providerId }) {
             await switchProvider(provider, modelName: modelName)
         }
 
+        // Save custom title — rename from default "Новый тред" to user-provided name.
+        let finalTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !finalTitle.isEmpty && finalTitle != "Новый тред" {
+            try? await store.renameThread(id: thread.id, title: finalTitle)
+        }
+
+        // Persist context settings (depth + unlimited flag) immediately.
+        // Provider/model are already saved by switchProvider() above.
+        var updatedSettings = settings
+        updatedSettings.activeProviderId = providerId
+        updatedSettings.activeModelName = modelName.isEmpty ? nil : modelName
+        try? await store.updateSettings(updatedSettings, forThreadId: thread.id)
+
+        // Reload threads so sidebar shows the new title immediately.
+        if let refreshed = try? await store.loadThreads() {
+            self.threads = refreshed
+        }
+
+        // Select the thread — this loads messages (empty) and finalizes state.
         await selectThread(thread)
         self.isLoadingThread = true
         self.messages = []

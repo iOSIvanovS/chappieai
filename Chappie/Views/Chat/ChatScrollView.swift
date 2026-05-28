@@ -275,7 +275,7 @@ struct ChatScrollView: View {
 
                 Text(String(format: "🪙 %.2f ₽", runningCost))
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .contentTransition(.numericText(value: runningCost))
                     .animation(.easeInOut(duration: 0.3), value: runningCost)
             }

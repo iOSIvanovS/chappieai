@@ -8,10 +8,12 @@
 // If the thread's provider or model was deleted, isOrphaned=true.
 // A small ⚠️ icon is shown next to the title.
 //
-// HOVER ACTIONS:
-// On hover — gear (settings) and trash (delete) buttons appear on the right.
-// Gear → onOpenSettings callback → ThreadSettingsSheet opens in ContentView.
-// Trash → onDelete callback.
+// HOVER ACTIONS (IT-12):
+// On hover — only the trash (delete) button appears.
+// Gear settings button was removed from hover — it was too small to hit reliably.
+// Thread settings are accessible via:
+//   1. Context menu (right-click) → "Настройки треда"
+//   2. Thread name + gear chip in ProjectChipsView (always visible in chat)
 //
 // RENAME:
 // Double-click or context menu "Rename" → inline TextField appears.
@@ -99,30 +101,18 @@ struct ThreadRowView: View {
 
             Spacer()
 
-            // Action buttons — appear on hover or when selected, hidden during rename
+            // On hover — only delete button.
+            // Gear was removed (IT-12): too small to hit in the row.
+            // Settings are in context menu and in the ProjectChipsView chip.
             if (isHovered || isSelected) && !isEditing {
-                HStack(spacing: 4) {
-
-                    // Settings gear button
-                    Button(action: onOpenSettings) {
-                        Image(systemName: "gear")
-                            .font(.system(size: 11))
-                            .foregroundStyle(isSelected ? Color.white.opacity(0.8) : Color.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Настройки треда")
-                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
-
-                    // Delete button
-                    Button(action: onDelete) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 11))
-                            .foregroundStyle(isSelected ? Color.white.opacity(0.8) : Color.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Удалить тред")
-                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                Button(action: onDelete) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11))
+                        .foregroundStyle(isSelected ? Color.white.opacity(0.8) : Color.secondary)
                 }
+                .buttonStyle(.plain)
+                .help("Удалить тред")
+                .transition(.opacity.combined(with: .scale(scale: 0.8)))
             }
         }
         .padding(.horizontal, 10)

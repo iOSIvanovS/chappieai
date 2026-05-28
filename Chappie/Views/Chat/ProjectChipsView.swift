@@ -9,10 +9,12 @@
 //   Outer HStack has Spacer() so the pill hugs its content on the left.
 //   Consistent with ModelPickerRow and the bottom InputMorphView panel.
 //
-// THREAD SETTINGS GEAR:
-//   A standalone gear pill is placed on the right side of the row (via Spacer).
-//   Mirrors the balance pill pattern in ModelPickerRow.
+// THREAD SETTINGS CHIP (IT-12):
+//   Right-side pill shows thread name + gear icon.
+//   Pattern: "⚙ <thread name>" — user sees which thread is active AND can open settings.
+//   Replaces the anonymous gear icon from IT-11.
 //   Tap → onOpenThreadSettings() → ContentView shows ThreadSettingsSheet.
+//   Thread title is truncated to fit; full name shown in tooltip.
 //
 // IT-09: Tap on chip opens ProjectSettingsSheet.
 // onOpenSettings(UUID) callback passes project ID to ViewModel.
@@ -37,12 +39,15 @@ import ChappieCore
 /// "+" button adds a new project via NSOpenPanel.
 /// "×" button on each chip removes the project from the thread.
 /// Tap on chip opens project settings (IT-09).
-/// Gear pill on the right opens thread settings.
+/// Thread name + gear pill on the right opens thread settings (IT-12).
 struct ProjectChipsView: View {
 
     // MARK: - Input
 
     let projects: [ProjectMetadata]
+
+    /// Active thread name — shown in the right-side settings chip.
+    let threadName: String?
 
     // MARK: - Callbacks
 
@@ -55,7 +60,7 @@ struct ProjectChipsView: View {
     /// Called when the user taps a chip to open project settings (IT-09).
     let onOpenSettings: (UUID) -> Void
 
-    /// Called when the user taps the gear pill to open thread settings.
+    /// Called when the user taps the thread settings chip to open thread settings.
     let onOpenThreadSettings: () -> Void
 
     // MARK: - Local state
@@ -66,7 +71,7 @@ struct ProjectChipsView: View {
     // MARK: - Body
 
     var body: some View {
-        // Full-width HStack: projects pill on the left, thread settings gear on the right.
+        // Full-width HStack: projects pill on the left, thread settings chip on the right.
         // Same pattern as ModelPickerRow (model selector left, balance pill right).
         HStack(spacing: 8) {
 
@@ -99,18 +104,30 @@ struct ProjectChipsView: View {
 
             Spacer()
 
-            // Right: thread settings gear pill — mirrors balance pill in ModelPickerRow
+            // Right: thread name + gear chip — mirrors balance pill in ModelPickerRow.
+            // Shows the active thread name so user always knows which thread is open.
             Button(action: onOpenThreadSettings) {
-                Image(systemName: "gear")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
+                HStack(spacing: 5) {
+                    Image(systemName: "gear")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+
+                    if let name = threadName, !name.isEmpty {
+                        Text(name)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .frame(maxWidth: 160)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
             }
             .buttonStyle(.plain)
             .background(.ultraThinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .help("Настройки треда")
+            .help(threadName.map { "Настройки треда «\($0)»" } ?? "Настройки треда")
         }
     }
 
@@ -247,6 +264,7 @@ struct ProjectChipsView: View {
                 settings: ProjectSettings(agentRole: .advisor)
             )
         ],
+        threadName: "Разработка Chappie",
         onAddProject: { url in
             print("Добавить: \(url.lastPathComponent)")
         },
@@ -267,6 +285,7 @@ struct ProjectChipsView: View {
 #Preview("Пустой список") {
     ProjectChipsView(
         projects: [],
+        threadName: "Новый тред",
         onAddProject: { _ in },
         onRemoveProject: { _ in },
         onOpenSettings: { _ in },
