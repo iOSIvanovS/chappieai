@@ -2,7 +2,7 @@
 // Chappie
 //
 // One thread row in the sidebar.
-// Shows title, relative date, and action buttons.
+// Shows title and action buttons.
 //
 // ORPHANED STATE:
 // If the thread's provider or model was deleted, isOrphaned=true.
@@ -51,19 +51,6 @@ struct ThreadRowView: View {
 
     @State private var isHovered: Bool = false
 
-    // MARK: - Date Formatter
-
-    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .abbreviated
-        f.locale = Locale(identifier: "ru_RU")
-        return f
-    }()
-
-    private var relativeDate: String {
-        Self.relativeDateFormatter.localizedString(for: thread.updatedAt, relativeTo: Date())
-    }
-
     // MARK: - Body
 
     var body: some View {
@@ -100,10 +87,6 @@ struct ThreadRowView: View {
                         }
                     }
                 }
-
-                Text(relativeDate)
-                    .font(.system(size: 10))
-                    .foregroundStyle(isSelected ? Color.white.opacity(0.7) : Color.secondary)
             }
 
             Spacer()
