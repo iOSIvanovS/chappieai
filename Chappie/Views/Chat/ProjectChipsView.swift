@@ -114,21 +114,32 @@ struct ProjectChipsView: View {
             // Right: gear chip — opens thread settings.
             // Disabled while AI is thinking (IT-13).
             Button(action: onOpenThreadSettings) {
-                Image(systemName: "gear")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(isThinking ? Color.secondary.opacity(0.4) : Color.secondary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
+                HStack(spacing: 5) {
+                    Image(systemName: "gear")
+                        .font(.system(size: 10, weight: .medium))
+                    
+                    if let threadName {
+                        Text(threadName)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(.white))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(.ultraThinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
             .buttonStyle(.plain)
             .disabled(isThinking)
             .opacity(isThinking ? 0.5 : 1.0)
             .animation(.easeInOut(duration: 0.2), value: isThinking)
-            .background(.ultraThinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .help(isThinking
-                  ? "Нельзя открыть настройки треда пока Чаппи думает"
-                  : (threadName.map { "Настройки треда «\($0)»" } ?? "Настройки треда"))
+            
         }
     }
 
