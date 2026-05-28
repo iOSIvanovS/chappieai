@@ -2,40 +2,159 @@
 //  InputBarView.swift
 //  Chappie
 //
-//  ПОЧЕМУ ЭТОТ ФАЙЛ СУЩЕСТВУЕТ:
-//  Панель ввода — самостоятельный UI-компонент с собственной логикой:
-//  - мультистрочный TextField с ограничением до 10 строк
-//  - блокировка при отсутствии воркспейса или пока Чаппи думает
-//  - отправка по Enter, перенос строки по ⌥+Enter
-//  Вынесен из ContentView, чтобы его можно было изменять независимо.
+//  WHY THIS FILE EXISTS:
+//  Input panel — standalone UI component with its own logic:
+//  - multiline TextField limited to 10 lines
+//  - disabled when no workspace selected or Chappie is thinking
+//  - send on Enter, newline on ⌥+Enter
+//  - emoji picker button that opens a popover with emoji categories
+//  Extracted from ContentView so it can be modified independently.
 //
 
 import SwiftUI
 
-/// Панель ввода сообщения внизу чата.
+// MARK: - Emoji Data
+
+/// Emoji categories shown in the picker popover.
+private struct EmojiCategory {
+    let icon: String
+    let name: String
+    let emojis: [String]
+}
+
+private let emojiCategories: [EmojiCategory] = [
+    EmojiCategory(icon: "⭐️", name: "Частые", emojis: [
+        "😀","😂","🥹","😍","🤔","😎","🥳","😅","🙏","👍",
+        "❤️","🔥","✅","🚀","💡","🎉","👀","💪","🤝","✨"
+    ]),
+    EmojiCategory(icon: "😀", name: "Смайлики", emojis: [
+        "😀","😃","😄","😁","😆","😅","🤣","😂","🙂","🙃",
+        "😉","😊","😇","🥰","😍","🤩","😘","😗","😚","😙",
+        "🥲","😋","😛","😜","🤪","😝","🤑","🤗","🤭","🤫",
+        "🤔","🤐","🤨","😐","😑","😶","😏","😒","🙄","😬",
+        "🤥","😌","😔","😪","🤤","😴","😷","🤒","🤕","🥴",
+        "😵","🤯","🤠","🥸","😎","🤓","🧐","😕","😟","🙁",
+        "😮","😯","😲","😳","🥺","🥹","😦","😧","😨","😰",
+        "😥","😢","😭","😱","😖","😣","😞","😓","😩","😫",
+        "🥱","😤","😡","😠","🤬","😈","👿","💀","☠️","🤡"
+    ]),
+    EmojiCategory(icon: "👍", name: "Жесты", emojis: [
+        "👍","👎","👌","🤌","🤏","✌️","🤞","🤟","🤘","🤙",
+        "👈","👉","👆","🖕","👇","☝️","👍","✋","🤚","🖐",
+        "🖖","👋","🤙","💪","🦾","🖕","✍️","🤝","🙌","👏",
+        "🫶","🤲","🙏","✊","👊","🤛","🤜","👐","🫴","🫳"
+    ]),
+    EmojiCategory(icon: "❤️", name: "Сердечки", emojis: [
+        "❤️","🧡","💛","💚","💙","💜","🖤","🤍","🤎","💔",
+        "❤️‍🔥","❤️‍🩹","❣️","💕","💞","💓","💗","💖","💘","💝",
+        "💟","☮️","✝️","☯️","🫀","💌","💋","🫦","😻","💑"
+    ]),
+    EmojiCategory(icon: "🐶", name: "Животные", emojis: [
+        "🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐨","🐯",
+        "🦁","🐮","🐷","🐸","🐵","🙈","🙉","🙊","🐔","🐧",
+        "🐦","🦆","🦅","🦉","🦇","🐺","🐗","🐴","🦄","🐝",
+        "🐛","🦋","🐌","🐞","🐜","🦟","🦗","🐢","🐍","🦎"
+    ]),
+    EmojiCategory(icon: "🍕", name: "Еда", emojis: [
+        "🍕","🍔","🌮","🌯","🥙","🧆","🥚","🍳","🥘","🍲",
+        "🍜","🍝","🍛","🍣","🍱","🥟","🦪","🍤","🍙","🍚",
+        "🍘","🍥","🥮","🍡","🧁","🍰","🎂","🍮","🍭","🍬",
+        "🍫","🍿","🍩","🍪","🌰","🥜","🍯","🧃","🥤","🧋"
+    ]),
+    EmojiCategory(icon: "🚀", name: "Символы", emojis: [
+        "✅","❌","⭕️","🔴","🟠","🟡","🟢","🔵","🟣","⚫️",
+        "⚪️","🟤","🔶","🔷","🔸","🔹","🔺","🔻","💠","🔘",
+        "🔲","🔳","▪️","▫️","◾","◽","◼️","◻️","🟥","🟧",
+        "🚀","💡","🔥","⚡️","💥","🌟","✨","🎉","🎊","🏆",
+        "🥇","🎯","🎪","🎭","🎨","🖼","🎬","🎤","🎧","🎵"
+    ])
+]
+
+// MARK: - Emoji Picker Popover
+
+/// Grid-based emoji picker shown in a popover.
+private struct EmojiPickerView: View {
+    
+    let onSelect: (String) -> Void
+    
+    // Track selected category tab
+    @State private var selectedCategory = 0
+    
+    // Emoji grid columns — 10 per row
+    private let columns = Array(repeating: GridItem(.fixed(30), spacing: 2), count: 10)
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            
+            // Category tabs
+            HStack(spacing: 0) {
+                ForEach(emojiCategories.indices, id: \.self) { index in
+                    Button(action: { selectedCategory = index }) {
+                        Text(emojiCategories[index].icon)
+                            .font(.system(size: 16))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                            .background(
+                                selectedCategory == index
+                                    ? Color.accentColor.opacity(0.15)
+                                    : Color.clear
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 4)
+            
+            Divider()
+            
+            // Emoji grid for selected category
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 2) {
+                    ForEach(emojiCategories[selectedCategory].emojis, id: \.self) { emoji in
+                        Button(action: { onSelect(emoji) }) {
+                            Text(emoji)
+                                .font(.system(size: 20))
+                                .frame(width: 30, height: 30)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(8)
+            }
+            .frame(height: 180)
+        }
+        .frame(width: 340)
+    }
+}
+
+// MARK: - InputBarView
+
+/// Bottom input panel for the chat.
 ///
-/// Содержит мультистрочный TextField и кнопку отправки.
-/// Отключается если:
-/// - воркспейс не выбран (некуда писать файлы)
-/// - Чаппи сейчас думает (нельзя слать новый запрос пока не закончен предыдущий)
+/// Contains a multiline TextField, an emoji picker button, and a send button.
+/// Disabled when:
+/// - no workspace selected (nowhere to write files)
+/// - Chappie is thinking (can't send a new request while previous is in progress)
 struct InputBarView: View {
     
-    /// Текст, который вводит пользователь.
-    /// Используем Binding, чтобы ContentView мог сбрасывать поле после отправки.
+    /// Text the user is typing.
+    /// Binding so ContentView can reset the field after sending.
     @Binding var prompt: String
     
-    /// Флаг: выбран ли воркспейс. Без воркспейса ввод заблокирован.
+    /// Flag: is a workspace selected. Without a workspace, input is blocked.
     let isWorkspaceSelected: Bool
     
-    /// Флаг: Чаппи сейчас думает. Пока думает — ввод заблокирован.
+    /// Flag: Chappie is thinking. While thinking — input is blocked.
     let isThinking: Bool
     
-    /// Коллбэк, который вызывается при нажатии "Отправить".
-    /// Логика отправки живёт во ViewModel, не здесь — компонент просто сигнализирует.
+    /// Callback triggered when the user presses "Send".
+    /// Send logic lives in ViewModel, not here — component just signals.
     let onSend: () -> Void
     
-    /// Вычисляемый флаг: можно ли сейчас отправить сообщение.
-    /// Все три условия должны выполняться одновременно.
+    /// Controls emoji picker popover visibility.
+    @State private var showEmojiPicker = false
+    
+    /// Computed flag: can the user send right now.
     private var canSend: Bool {
         !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         && isWorkspaceSelected
@@ -44,31 +163,49 @@ struct InputBarView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .bottom, spacing: 12) {
+            HStack(alignment: .bottom, spacing: 8) {
                 
                 TextField(
                     "Напиши сообщение... (Enter — отправить, ⌥+Enter — перенос)",
                     text: $prompt,
-                    axis: .vertical  // Разрешаем вертикальный рост поля
+                    axis: .vertical  // Allow vertical growth
                 )
                 .textFieldStyle(.roundedBorder)
-                // Ограничиваем рост: минимум 1 строка, максимум 10.
-                // Это предотвращает "захват" всего экрана длинными промптами.
+                // Limit growth: min 1 line, max 10.
+                // Prevents long prompts from taking over the screen.
                 .lineLimit(1...10)
                 .onSubmit {
-                    // onSubmit срабатывает при нажатии Enter.
-                    // ⌥+Enter вставляет перенос строки — это стандартное поведение TextField.
+                    // onSubmit fires on Enter.
+                    // ⌥+Enter inserts a newline — standard TextField behavior.
                     onSend()
                 }
                 .disabled(!isWorkspaceSelected || isThinking)
+                
+                // Emoji picker button — opens popover above the input bar
+                Button(action: { showEmojiPicker.toggle() }) {
+                    Text("😊")
+                        .font(.system(size: 16))
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .help("Вставить эмодзи")
+                .popover(isPresented: $showEmojiPicker, arrowEdge: .top) {
+                    EmojiPickerView { emoji in
+                        // Append emoji at end of current text
+                        prompt += emoji
+                        showEmojiPicker = false
+                    }
+                }
+                // Align with bottom of TextField on multiline input
+                .padding(.bottom, 4)
                 
                 Button(action: onSend) {
                     Image(systemName: "paperplane.fill")
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!canSend)
-                // Небольшой отступ снизу чтобы кнопка была на одной линии
-                // с нижним краем TextField при многострочном вводе
+                // Small bottom offset so button aligns with TextField bottom edge
+                // when multiline input is active
                 .padding(.bottom, 2)
             }
         }
@@ -88,7 +225,7 @@ struct InputBarView: View {
             prompt: .constant(""),
             isWorkspaceSelected: true,
             isThinking: false,
-            onSend: { print("Отправить!") }
+            onSend: { print("Send!") }
         )
     }
     .frame(width: 600, height: 200)
