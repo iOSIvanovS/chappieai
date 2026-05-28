@@ -28,9 +28,10 @@
 //   Bottom panel: InputMorphView — ultraThinMaterial.
 //   Both panels report their heights so ChatScrollView can add matching spacers.
 //
-// TOOLBAR (IT-12):
+// TOOLBAR (IT-12 / IT-13):
 //   ultraThinMaterial background — frosted glass matching the panels.
 //   Contains: sidebar toggle (list.bullet), settings gear.
+//   Both buttons disabled while isThinking (IT-13).
 //   Thread title is NOT in the toolbar — it lives in ProjectChipsView gear chip.
 //   Balance is NOT in the toolbar — it lives in ModelPickerRow as a right-side pill.
 //
@@ -73,9 +74,9 @@
 //   confirmNewThread() accepts all four and saves title + settings immediately.
 //
 // SOFT LOCK (isThinking):
-//   isThinking is forwarded to SidebarView, ModelPickerRow, and ProjectChipsView.
-//   While true: thread switching/deletion/rename/settings, model picker,
-//   project attach/detach, and thread settings gear are all disabled.
+//   isThinking is forwarded to ChappieToolbarContent, SidebarView, ModelPickerRow,
+//   and ProjectChipsView. While true: toolbar buttons, thread switching/deletion/rename/
+//   settings, model picker, project attach/detach, and thread settings gear are all disabled.
 //   This prevents race conditions when AI is writing a response.
 //
 // IT-09: Added project settings sheet.
@@ -83,7 +84,7 @@
 // IT-11: Thread settings sheet, last-thread restore.
 // IT-12: Thread name in ProjectChipsView chip, gear removed from ThreadRowView hover,
 //        NewThreadProviderSheet extended with name + context settings.
-// IT-13: Soft lock — sidebar, model picker, project chips disabled while isThinking.
+// IT-13: Soft lock — toolbar, sidebar, model picker, project chips disabled while isThinking.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -212,9 +213,11 @@ struct ContentView: View {
             // MIDDLE LAYER: main app content — chat + floating panels
             mainChatArea
                 .toolbar {
+                    // IT-13: isThinking forwarded — disables toolbar buttons while AI responds
                     ChappieToolbarContent(
                         isApiKeyValid: !viewModel.providers.isEmpty,
                         isSidebarVisible: $isSidebarVisible,
+                        isThinking: viewModel.isThinking,
                         onOpenSettings: { showSettings = true }
                     )
                 }

@@ -20,6 +20,10 @@
 //
 // SETTINGS BUTTON:
 // Always visible. Turns orange when no AI provider is configured.
+//
+// SOFT LOCK (IT-13):
+// When isThinking == true — both toolbar buttons are disabled + dimmed (opacity 0.5).
+// This prevents opening settings or toggling the sidebar while AI is responding.
 
 import SwiftUI
 
@@ -30,12 +34,15 @@ struct ChappieToolbarContent: ToolbarContent {
     let isApiKeyValid: Bool
     /// Sidebar visibility binding — toggled by the leading button
     @Binding var isSidebarVisible: Bool
+    /// When true — both toolbar buttons are disabled (AI is responding)
+    let isThinking: Bool
     /// Callback: user tapped the settings button
     let onOpenSettings: () -> Void
 
     var body: some ToolbarContent {
 
         // Sidebar toggle — leading edge, matches standard macOS sidebar button position
+        // Disabled while AI is responding (IT-13)
         ToolbarItem(placement: .navigation) {
             Button {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
@@ -43,23 +50,30 @@ struct ChappieToolbarContent: ToolbarContent {
                 }
             } label: {
                 Image(systemName: "list.bullet")
+                    .opacity(isThinking ? 0.4 : 1.0)
             }
-            .help("Показать / скрыть треды")
+            .disabled(isThinking)
+            .help(isThinking ? "Нельзя открыть сайдбар пока Чаппи думает" : "Показать / скрыть треды")
         }
 
         // Settings button — always visible, orange if no provider configured
+        // Disabled while AI is responding (IT-13)
         ToolbarItem(placement: .primaryAction) {
             Button {
                 onOpenSettings()
             } label: {
                 Image(systemName: "gear")
+                    .opacity(isThinking ? 0.4 : 1.0)
             }
-            .help("Настройки Чаппи")
-            // VISUAL SIGNAL: orange gear = no provider configured
+            .disabled(isThinking)
+            .help(isThinking ? "Нельзя открыть настройки пока Чаппи думает" : "Настройки Чаппи")
+            // VISUAL SIGNAL: orange gear = no provider configured (only when not locked)
             .foregroundStyle(
-                isApiKeyValid
-                ? AnyShapeStyle(.primary)
-                : AnyShapeStyle(.orange)
+                isThinking
+                ? AnyShapeStyle(.secondary)
+                : isApiKeyValid
+                    ? AnyShapeStyle(.primary)
+                    : AnyShapeStyle(.orange)
             )
         }
     }
