@@ -5,7 +5,7 @@
 // Replaces the old InputBarView + StatusBarView pair with a single morphing component.
 // The idea: the input bar IS the status bar — it transforms in place.
 //
-// IDLE state:    [ ChappieTextEditorView (1–10 lines, scrollable) ] [▶ Send]
+// IDLE state:    [ ChappieTextEditorView (1–10 lines, scrollable) ] [😊] [▶ Send]
 // THINKING state: [ ⚙ write_file → ContentView…                  ] [✕ Cancel]
 //
 // DESIGN DECISIONS:
@@ -44,6 +44,119 @@ private enum Layout {
     }
     static var minEditorHeight: CGFloat {
         lineHeight + editorVerticalPadding * 2
+    }
+}
+
+// MARK: - Emoji Data
+
+/// All emoji categories shown in the picker popover.
+private struct EmojiCategory {
+    let icon: String
+    let name: String
+    let emojis: [String]
+}
+
+private let emojiCategories: [EmojiCategory] = [
+    EmojiCategory(icon: "⭐️", name: "Частые", emojis: [
+        "😀","😂","🥹","😍","🤔","😎","🥳","😅","🙏","👍",
+        "❤️","🔥","✅","🚀","💡","🎉","👀","💪","🤝","✨"
+    ]),
+    EmojiCategory(icon: "😀", name: "Смайлики", emojis: [
+        "😀","😃","😄","😁","😆","😅","🤣","😂","🙂","🙃",
+        "😉","😊","😇","🥰","😍","🤩","😘","😗","😚","😙",
+        "🥲","😋","😛","😜","🤪","😝","🤑","🤗","🤭","🤫",
+        "🤔","🤐","🤨","😐","😑","😶","😏","😒","🙄","😬",
+        "🤥","😌","😔","😪","🤤","😴","😷","🤒","🤕","🥴",
+        "😵","🤯","🤠","🥸","😎","🤓","🧐","😕","😟","🙁",
+        "😮","😯","😲","😳","🥺","🥹","😦","😧","😨","😰",
+        "😥","😢","😭","😱","😖","😣","😞","😓","😩","😫",
+        "🥱","😤","😡","😠","🤬","😈","👿","💀","☠️","🤡"
+    ]),
+    EmojiCategory(icon: "👍", name: "Жесты", emojis: [
+        "👍","👎","👌","🤌","🤏","✌️","🤞","🤟","🤘","🤙",
+        "👈","👉","👆","🖕","👇","☝️","✋","🤚","🖐","🖖",
+        "👋","💪","🦾","✍️","🤝","🙌","👏","🫶","🤲","🙏",
+        "✊","👊","🤛","🤜","👐","🫴","🫳","🫵","🤙","🫱"
+    ]),
+    EmojiCategory(icon: "❤️", name: "Сердечки", emojis: [
+        "❤️","🧡","💛","💚","💙","💜","🖤","🤍","🤎","💔",
+        "❤️‍🔥","❤️‍🩹","❣️","💕","💞","💓","💗","💖","💘","💝",
+        "💟","☮️","✝️","☯️","🫀","💌","💋","🫦","😻","💑"
+    ]),
+    EmojiCategory(icon: "🐶", name: "Животные", emojis: [
+        "🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐨","🐯",
+        "🦁","🐮","🐷","🐸","🐵","🙈","🙉","🙊","🐔","🐧",
+        "🐦","🦆","🦅","🦉","🦇","🐺","🐗","🐴","🦄","🐝",
+        "🐛","🦋","🐌","🐞","🐜","🦟","🦗","🐢","🐍","🦎"
+    ]),
+    EmojiCategory(icon: "🍕", name: "Еда", emojis: [
+        "🍕","🍔","🌮","🌯","🥙","🧆","🥚","🍳","🥘","🍲",
+        "🍜","🍝","🍛","🍣","🍱","🥟","🦪","🍤","🍙","🍚",
+        "🍘","🍥","🥮","🍡","🧁","🍰","🎂","🍮","🍭","🍬",
+        "🍫","🍿","🍩","🍪","🌰","🥜","🍯","🧃","🥤","🧋"
+    ]),
+    EmojiCategory(icon: "🚀", name: "Символы", emojis: [
+        "✅","❌","⭕️","🔴","🟠","🟡","🟢","🔵","🟣","⚫️",
+        "⚪️","🟤","🔶","🔷","🔸","🔹","🔺","🔻","💠","🔘",
+        "🔲","🔳","▪️","▫️","◾","◽","◼️","◻️","🟥","🟧",
+        "🚀","💡","🔥","⚡️","💥","🌟","✨","🎉","🎊","🏆",
+        "🥇","🎯","🎪","🎭","🎨","🖼","🎬","🎤","🎧","🎵"
+    ])
+]
+
+// MARK: - Emoji Picker Popover
+
+/// Grid-based emoji picker shown in a popover above the input bar.
+private struct EmojiPickerView: View {
+
+    let onSelect: (String) -> Void
+
+    @State private var selectedCategory = 0
+
+    // 10 emoji per row, fixed 30pt cells
+    private let columns = Array(repeating: GridItem(.fixed(30), spacing: 2), count: 10)
+
+    var body: some View {
+        VStack(spacing: 0) {
+
+            // Category tab bar
+            HStack(spacing: 0) {
+                ForEach(emojiCategories.indices, id: \.self) { index in
+                    Button(action: { selectedCategory = index }) {
+                        Text(emojiCategories[index].icon)
+                            .font(.system(size: 16))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                            .background(
+                                selectedCategory == index
+                                    ? Color.accentColor.opacity(0.15)
+                                    : Color.clear
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 4)
+
+            Divider()
+
+            // Emoji grid for the selected category
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 2) {
+                    ForEach(emojiCategories[selectedCategory].emojis, id: \.self) { emoji in
+                        Button(action: { onSelect(emoji) }) {
+                            Text(emoji)
+                                .font(.system(size: 20))
+                                .frame(width: 30, height: 30)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(8)
+            }
+            .frame(height: 180)
+        }
+        .frame(width: 340)
     }
 }
 
@@ -223,6 +336,8 @@ struct InputMorphView: View {
     @State private var isEditorFocused: Bool = false
     @State private var editorHeight: CGFloat = Layout.minEditorHeight
     @State private var editorCoordinator: ChappieTextEditorView.Coordinator?
+    /// Controls the emoji picker popover visibility.
+    @State private var showEmojiPicker: Bool = false
 
     // MARK: - Computed
 
@@ -337,6 +452,23 @@ struct InputMorphView: View {
                 }
             }
 
+            // Emoji picker button — sits between the text field and the send button.
+            // Opens a popover with 7 categories. Tapping an emoji appends it to the prompt.
+            Button(action: { showEmojiPicker.toggle() }) {
+                Text("😊")
+                    .font(.system(size: 18))
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .help("Вставить эмодзи")
+            .popover(isPresented: $showEmojiPicker, arrowEdge: .top) {
+                EmojiPickerView { emoji in
+                    prompt += emoji
+                    showEmojiPicker = false
+                }
+            }
+            .padding(.bottom, 2)
+
             Button(action: onSend) {
                 Image(systemName: "paperplane.fill")
             }
@@ -352,12 +484,10 @@ struct InputMorphView: View {
         HStack(spacing: 12) {
             Image(systemName: "gearshape.arrow.triangle.2.circlepath")
                 .font(.system(size: 13))
-                //.foregroundStyle(.secondary)
                 .symbolEffect(.rotate, options: .repeating)
 
             Text(currentToolCall ?? "Думаю…")
                 .font(.system(size: 12, weight: .regular, design: .monospaced))
-                //.foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .contentTransition(.numericText())
@@ -370,7 +500,6 @@ struct InputMorphView: View {
                     .font(.system(size: 12, weight: .medium))
             }
             .buttonStyle(.plain)
-            //.foregroundStyle(.secondary)
             .help("Прервать текущий запрос")
         }
         .frame(height: Layout.collapsedHeight)
