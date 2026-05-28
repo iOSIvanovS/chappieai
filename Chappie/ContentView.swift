@@ -73,16 +73,17 @@
 //   confirmNewThread() accepts all four and saves title + settings immediately.
 //
 // SOFT LOCK (isThinking):
-//   SidebarView receives isThinking from ViewModel.
-//   While true: thread switching, deletion, rename, settings, and "Новый" are disabled.
-//   This prevents race conditions when AI is writing a response to the current thread.
+//   isThinking is forwarded to SidebarView, ModelPickerRow, and ProjectChipsView.
+//   While true: thread switching/deletion/rename/settings, model picker,
+//   project attach/detach, and thread settings gear are all disabled.
+//   This prevents race conditions when AI is writing a response.
 //
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
 // IT-11: Thread settings sheet, last-thread restore.
 // IT-12: Thread name in ProjectChipsView chip, gear removed from ThreadRowView hover,
 //        NewThreadProviderSheet extended with name + context settings.
-// IT-13: Soft lock — sidebar interactions disabled while isThinking == true.
+// IT-13: Soft lock — sidebar, model picker, project chips disabled while isThinking.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -352,6 +353,8 @@ struct ContentView: View {
                     isOrphaned: viewModel.isThreadOrphaned,
                     // Balance from active provider — updates live during streaming
                     balance: viewModel.currentBalance,
+                    // IT-13: disable picker while AI is responding
+                    isThinking: viewModel.isThinking,
                     onSelectProvider: { providerId, modelName in
                         if let provider = viewModel.providers.first(where: { $0.id == providerId }),
                            let store = viewModel.providerStore {
@@ -369,6 +372,8 @@ struct ContentView: View {
                     projects: viewModel.activeProjects,
                     // IT-12: thread name shown in the gear chip on the right
                     threadName: viewModel.activeThread?.title,
+                    // IT-13: disable project attach/detach and thread settings while AI responds
+                    isThinking: viewModel.isThinking,
                     onAddProject: { url in viewModel.addProject(url: url) },
                     onRemoveProject: { projectId in viewModel.removeProject(id: projectId) },
                     onOpenSettings: { projectId in

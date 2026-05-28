@@ -10,11 +10,8 @@
 //   Consistent with ModelPickerRow and the bottom InputMorphView panel.
 //
 // THREAD SETTINGS CHIP (IT-12):
-//   Right-side pill shows thread name + gear icon.
-//   Pattern: "⚙ <thread name>" — user sees which thread is active AND can open settings.
-//   Replaces the anonymous gear icon from IT-11.
+//   Right-side pill shows gear icon only (no thread name — saves space).
 //   Tap → onOpenThreadSettings() → ContentView shows ThreadSettingsSheet.
-//   Thread title is truncated to fit; full name shown in tooltip.
 //
 // IT-09: Tap on chip opens ProjectSettingsSheet.
 // onOpenSettings(UUID) callback passes project ID to ViewModel.
@@ -27,6 +24,13 @@
 // DUMB COMPONENT PRINCIPLE:
 // ProjectChipsView has no direct knowledge of SwiftData, ProjectStore or ThreadStore.
 // All data via parameters, all actions via callbacks. Logic lives in ChappieViewModel.
+//
+// SOFT LOCK (IT-13):
+//   When isThinking == true:
+//   - "+" (add project) button is disabled + dimmed.
+//   - "×" (remove project) button is hidden entirely.
+//   - Thread settings gear is disabled + dimmed.
+//   This prevents project attach/detach and thread settings changes while AI responds.
 
 import SwiftUI
 import ChappieCore
@@ -39,15 +43,18 @@ import ChappieCore
 /// "+" button adds a new project via NSOpenPanel.
 /// "×" button on each chip removes the project from the thread.
 /// Tap on chip opens project settings (IT-09).
-/// Thread name + gear pill on the right opens thread settings (IT-12).
+/// Gear pill on the right opens thread settings (IT-12).
 struct ProjectChipsView: View {
 
     // MARK: - Input
 
     let projects: [ProjectMetadata]
 
-    /// Active thread name — shown in the right-side settings chip.
+    /// Active thread name — used in tooltip for the gear chip.
     let threadName: String?
+
+    /// When true — add/remove project and thread settings gear are disabled (IT-13).
+    let isThinking: Bool
 
     // MARK: - Callbacks
 
@@ -60,7 +67,7 @@ struct ProjectChipsView: View {
     /// Called when the user taps a chip to open project settings (IT-09).
     let onOpenSettings: (UUID) -> Void
 
-    /// Called when the user taps the thread settings chip to open thread settings.
+    /// Called when the user taps the thread settings gear to open thread settings.
     let onOpenThreadSettings: () -> Void
 
     // MARK: - Local state
@@ -104,30 +111,24 @@ struct ProjectChipsView: View {
 
             Spacer()
 
-            // Right: thread name + gear chip — mirrors balance pill in ModelPickerRow.
-            // Shows the active thread name so user always knows which thread is open.
+            // Right: gear chip — opens thread settings.
+            // Disabled while AI is thinking (IT-13).
             Button(action: onOpenThreadSettings) {
-                HStack(spacing: 5) {
-                    Image(systemName: "gear")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-
-                    if let name = threadName, !name.isEmpty {
-                        Text(name)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .frame(maxWidth: 160)
-                    }
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
+                Image(systemName: "gear")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(isThinking ? Color.secondary.opacity(0.4) : Color.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
             }
             .buttonStyle(.plain)
+            .disabled(isThinking)
+            .opacity(isThinking ? 0.5 : 1.0)
+            .animation(.easeInOut(duration: 0.2), value: isThinking)
             .background(.ultraThinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .help(threadName.map { "Настройки треда «\($0)»" } ?? "Настройки треда")
+            .help(isThinking
+                  ? "Нельзя открыть настройки треда пока Чаппи думает"
+                  : (threadName.map { "Настройки треда «\($0)»" } ?? "Настройки треда"))
         }
     }
 
@@ -136,7 +137,7 @@ struct ProjectChipsView: View {
     /// Individual chip for one project.
     ///
     /// HOVER BEHAVIOUR:
-    /// On hover — the "×" button appears to the right of the name.
+    /// On hover — the "×" button appears to the right of the name (only when NOT thinking).
     ///
     /// TAP BEHAVIOUR (IT-09):
     /// Tap → onOpenSettings(project.id) → parent shows ProjectSettingsSheet.
@@ -155,7 +156,8 @@ struct ProjectChipsView: View {
             // Role indicator (IT-09) — small icon shows current agent role
             roleIndicator(for: project.settings.agentRole)
 
-            if hoveredProjectId == project.id {
+            // "×" remove button — hidden while AI is thinking (IT-13)
+            if hoveredProjectId == project.id && !isThinking {
                 Button {
                     onRemoveProject(project.id)
                 } label: {
@@ -186,7 +188,7 @@ struct ProjectChipsView: View {
             // Tap on chip → open project settings (IT-09)
             onOpenSettings(project.id)
         }
-        .help("Проект: \(project.displayName) (\(project.settings.agentRole.displayName))\nТап — настройки, × — убрать из треда")
+        .help("Проект: \(project.displayName) (\(project.settings.agentRole.displayName))\nТап — настройки\(isThinking ? "" : ", × — убрать из треда")")
     }
 
     /// Small agent role indicator next to the project name.
@@ -210,6 +212,8 @@ struct ProjectChipsView: View {
 
     // MARK: - Add button
 
+    /// "+" button to attach a new project folder to the thread.
+    /// Disabled while AI is thinking (IT-13).
     private var addButton: some View {
         Button {
             openFolderPicker()
@@ -218,18 +222,26 @@ struct ProjectChipsView: View {
                 .font(.system(size: 11, weight: .semibold))
                 .padding(.horizontal, 5)
                 .padding(.vertical, 5)
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(isThinking ? Color.secondary : Color.accentColor)
                 .background(
                     Capsule()
                         .fill(.white)
                         .overlay(
                             Capsule()
-                                .stroke(Color.accentColor.opacity(0.35), lineWidth: 1)
+                                .stroke(
+                                    isThinking
+                                        ? Color.secondary.opacity(0.2)
+                                        : Color.accentColor.opacity(0.35),
+                                    lineWidth: 1
+                                )
                         )
                 )
         }
         .buttonStyle(.plain)
-        .help("Добавить папку проекта к этому треду")
+        .disabled(isThinking)
+        .opacity(isThinking ? 0.5 : 1.0)
+        .animation(.easeInOut(duration: 0.2), value: isThinking)
+        .help(isThinking ? "Нельзя добавить проект пока Чаппи думает" : "Добавить папку проекта к этому треду")
     }
 
     // MARK: - Private helpers
@@ -265,6 +277,7 @@ struct ProjectChipsView: View {
             )
         ],
         threadName: "Разработка Chappie",
+        isThinking: false,
         onAddProject: { url in
             print("Добавить: \(url.lastPathComponent)")
         },
@@ -282,10 +295,31 @@ struct ProjectChipsView: View {
     .background(Color(NSColor.windowBackgroundColor))
 }
 
+#Preview("Заблокировано (isThinking)") {
+    ProjectChipsView(
+        projects: [
+            ProjectMetadata(
+                id: UUID(),
+                displayName: "Chappie",
+                settings: ProjectSettings(agentRole: .executor, isProgrammingProject: true)
+            )
+        ],
+        threadName: "Разработка Chappie",
+        isThinking: true,
+        onAddProject: { _ in },
+        onRemoveProject: { _ in },
+        onOpenSettings: { _ in },
+        onOpenThreadSettings: {}
+    )
+    .padding()
+    .background(Color(NSColor.windowBackgroundColor))
+}
+
 #Preview("Пустой список") {
     ProjectChipsView(
         projects: [],
         threadName: "Новый тред",
+        isThinking: false,
         onAddProject: { _ in },
         onRemoveProject: { _ in },
         onOpenSettings: { _ in },

@@ -18,6 +18,10 @@
 // ORPHANED STATE:
 //   If the active provider or model is no longer in the providers list,
 //   the row shows a warning style. User can pick a new provider+model inline.
+//
+// SOFT LOCK (IT-13):
+//   When isThinking == true the model picker button is disabled + dimmed (opacity 0.5).
+//   Prevents provider/model switching while AI is responding.
 
 import SwiftUI
 import ChappieCore
@@ -35,6 +39,8 @@ struct ModelPickerRow: View {
     let isOrphaned: Bool
     /// Current account balance in RUB — nil until first response received.
     let balance: Double?
+    /// When true — picker button is disabled (AI is responding).
+    let isThinking: Bool
     let onSelectProvider: (UUID, String) -> Void
 
     // MARK: - State
@@ -75,7 +81,7 @@ struct ModelPickerRow: View {
                         .fill(.white)
                 )
 
-            // Provider + model selector button
+            // Provider + model selector button — disabled while AI is thinking
             Button {
                 showPopover.toggle()
             } label: {
@@ -109,6 +115,11 @@ struct ModelPickerRow: View {
             .buttonStyle(.plain)
             // Keep the button from wrapping — it clips gracefully instead of growing taller
             .fixedSize()
+            // Soft lock: disable picker while AI is responding
+            .disabled(isThinking)
+            .opacity(isThinking ? 0.5 : 1.0)
+            .animation(.easeInOut(duration: 0.2), value: isThinking)
+            .help(isThinking ? "Нельзя менять модель пока Чаппи думает" : "")
             .popover(isPresented: $showPopover, arrowEdge: .top) {
                 ModelPickerPopover(
                     providers: providers,
