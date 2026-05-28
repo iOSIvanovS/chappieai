@@ -28,13 +28,22 @@
 // AUTO-SCROLL POLICY:
 // Scroll to bottom happens in exactly four cases:
 //   1. threadId changes — user switched to another thread. Reset initialScrollDone,
-//      then scroll after a short delay so the new messages have time to render.
+//      then perform a two-phase scroll: instant snap first (forces LazyVStack to
+//      materialize the bottom region), then animated correction after 0.3s
+//      (catches any remaining layout settling).
 //   2. footerHeight first becomes non-zero — "layout ready" moment on first launch.
 //      After that, footerHeight changes are ignored (user typing grows the input field).
 //   3. onChange(messages.count) — new message added to the chat.
 //   4. onChange(streamingText) — Chappie is streaming a response (live bubble grows).
 // Intentionally NOT scrolling when footerHeight changes after initial scroll
 // so the user can freely read mid-chat while typing a long message.
+//
+// TWO-PHASE SCROLL ON THREAD SWITCH (BUG FIX):
+// LazyVStack only renders visible cells. When switching threads, new messages are
+// not yet in the render tree — the "bottom" sentinel exists but LazyVStack doesn't
+// know its real position. A single delayed scrollTo(0.15s) was sometimes not enough.
+// Fix: immediate no-animation scrollTo forces LazyVStack to materialize the bottom
+// region. Then a second animated scrollTo after 0.3s handles any remaining settling.
 //
 // SCROLLBAR:
 // Hidden via scrollIndicators(.never) — not needed in this chat UI aesthetic.
@@ -140,10 +149,23 @@ struct ChatScrollView: View {
                 .animation(.easeInOut(duration: 0.3), value: streamingText.isEmpty)
             }
             .scrollIndicators(.never)
-            // THREAD SWITCH: reset scroll state and jump to bottom after new messages render.
+            // THREAD SWITCH: two-phase scroll to guarantee bottom landing with LazyVStack.
+            //
+            // Phase 1 (immediate, no animation): forces LazyVStack to materialize
+            // the bottom region even before full layout pass completes.
+            //
+            // Phase 2 (0.3s delay, animated): catches any remaining layout settling
+            // after the new thread's messages have fully rendered.
+            //
+            // WHY TWO PHASES: LazyVStack only renders visible cells. A single delayed
+            // scrollTo was sometimes not enough when switching to a thread with a long
+            // history — the sentinel existed but its position wasn't yet computed.
             .onChange(of: threadId) { _, _ in
                 initialScrollDone = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                // Phase 1: instant snap — forces bottom region into the render tree
+                proxy.scrollTo("bottom", anchor: .bottom)
+                // Phase 2: animated correction after layout settles
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     withAnimation(.easeOut(duration: 0.3)) {
                         proxy.scrollTo("bottom", anchor: .bottom)
                     }
