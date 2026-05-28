@@ -31,7 +31,7 @@ It provides the Chappie AI agent with tools for working with git and xcodebuild.
 
 ```
 ChappieMCP/                            — Xcode target (Command Line Tool) inside Chappie.xcodeproj
-├── architecture.md                    — this file (replaces AI_Docs/)
+├── architecture.md                    — this file
 ├── main.swift                         — entry point, reads argv, starts MCPUnixServer
 ├── MCPHTTPServer.swift                — Unix Domain Socket server + ToolDispatcher
 ├── GitTools.swift                     — git tools
@@ -48,7 +48,50 @@ Chappie.app/
 
 ---
 
-## 3. Transport Protocol
+## 3. Architecture Diagram
+
+```mermaid
+graph TD
+    subgraph App["Chappie.app"]
+        TES["ToolExecutionService\n(ChappieCore actor)"]
+        MCP_Bridge["MCPToolBridge\n(ChappieCore actor)"]
+        Launcher["MCPHelperLauncher\n(Chappie UI)"]
+    end
+
+    subgraph ChappieMCP["ChappieMCP (child process)"]
+        Main["main.swift\nentry point, argv parsing"]
+        Server["MCPHTTPServer\nUnix Domain Socket server\nToolDispatcher"]
+        Git["GitTools\ngit_status, git_add\ngit_commit, git_log, git_reset"]
+        Build["BuildTools\nbuild_project, run_tests\nread_build_log"]
+    end
+
+    subgraph Transport["Transport"]
+        Socket["/tmp/com.chappie.mcp.sock\nUnix Domain Socket\nlength-prefixed JSON frames"]
+    end
+
+    subgraph Tools["Git / Build"]
+        GitBin["git binary"]
+        XCBuild["xcodebuild / swift test"]
+        BuildLog[".build_log.txt"]
+    end
+
+    TES --> MCP_Bridge
+    MCP_Bridge -->|4-byte len + JSON| Socket
+    Launcher -->|Process.run argv[1]=path argv[2]=socket| Main
+
+    Socket -->|4-byte len + JSON| Server
+    Main --> Server
+    Server --> Git
+    Server --> Build
+
+    Git --> GitBin
+    Build --> XCBuild
+    Build --> BuildLog
+```
+
+---
+
+## 4. Transport Protocol
 
 **Unix Domain Socket** — `/tmp/com.chappie.mcp.sock`
 
@@ -85,7 +128,7 @@ Process.run(
 
 ---
 
-## 4. Tools
+## 5. Tools
 
 ### Git (GitTools.swift)
 
@@ -120,7 +163,7 @@ TERM=dumb               — signals that there is no TTY
 
 ---
 
-## 5. Integration with ChappieCore
+## 6. Integration with ChappieCore
 
 ```
 Chappie.app
@@ -141,7 +184,7 @@ Chappie.app
 
 ---
 
-## 6. Mandatory Change Pipeline
+## 7. Mandatory Change Pipeline
 
 Before every code change Chappie MUST follow this order:
 
@@ -159,7 +202,7 @@ Before every code change Chappie MUST follow this order:
 
 ---
 
-## 7. Tech Debt
+## 8. Tech Debt
 
 | # | Description | Priority |
 |---|-------------|----------|
@@ -173,6 +216,7 @@ Before every code change Chappie MUST follow this order:
 
 | Date | Change | Author |
 |------|--------|--------|
+| 2026-07-XX | Added Mermaid architecture diagram (section 3) per new architecture file rules | Chappie AI |
 | 2026-07-XX | Architecture files translated to English | Chappie AI |
 | 2026-06-XX | Refactoring: AI_Docs/ → single architecture.md | Chappie AI |
 | 2026-06-XX | Fixed git hang — GIT_PAGER=cat | Chappie AI |

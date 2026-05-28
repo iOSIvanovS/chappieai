@@ -30,12 +30,15 @@ Runs via the `ChappieCoreTests.xctestplan` test plan in the project root.
 ```
 ChappieCoreTests/
 ├── architecture.md                     # This file
-├── ChappieCoreTests.xctestplan         # In project root (not here!)
 ├── AppConfigTests.swift                # Configuration tests
 ├── AITunnelModelsTests.swift           # Codable model tests
 ├── ChatHistoryManagerTests.swift       # Chat history manager tests
 ├── FileSystemManagerTests.swift        # File system + security tests
+├── MigrationServiceTests.swift         # Migration service tests
 └── MemoryManagerTests.swift            # Semantic memory tests
+
+Project root:
+└── ChappieCoreTests.xctestplan         # Test plan (NOT inside ChappieCoreTests/)
 ```
 
 ### IMPORTANT: Single Source of Tests
@@ -47,7 +50,55 @@ intentionally has no `testTarget` to avoid duplication and desync.
 
 ---
 
-## 3. xcscheme Rules (CRITICAL — do not violate!)
+## 3. Architecture Diagram
+
+```mermaid
+graph TD
+    subgraph TestTarget["ChappieCoreTests (Unit Test Bundle)"]
+        ACT["AppConfigTests\nAppConfig defaults + logic"]
+        ATMT["AITunnelModelsTests\nCodable roundtrip"]
+        CHMT["ChatHistoryManagerTests\nSave/load/clear history"]
+        FSMT["FileSystemManagerTests\nFS ops + path traversal"]
+        MST["MigrationServiceTests\nJSON → SwiftData migration"]
+        MMT["MemoryManagerTests\nSemantic memory CRUD"]
+    end
+
+    subgraph Core["ChappieCore (under test)"]
+        AC["AppConfig"]
+        ATM["AITunnelModels"]
+        CHM["ChatHistoryManager"]
+        FSM["FileSystemManager"]
+        Mig["MigrationService"]
+        MemM["MemoryManager + MemoryStore"]
+    end
+
+    subgraph Isolation["Test Isolation"]
+        TmpDir["FileManager.temporaryDirectory\n+ UUID subfolder per test"]
+        SD["In-memory SwiftData\n(ModelContainer for tests)"]
+    end
+
+    ACT --> AC
+    ATMT --> ATM
+    CHMT --> CHM
+    FSMT --> FSM
+    MST --> Mig
+    MMT --> MemM
+
+    CHMT --> TmpDir
+    FSMT --> TmpDir
+    MST --> SD
+    MMT --> TmpDir
+
+    subgraph Runner["Test Runner"]
+        Plan["ChappieCoreTests.xctestplan\n(project root)"]
+        Scheme["ChappieCoreTests.xcscheme\n(switch in Xcode toolbar)"]
+        Plan --> Scheme
+    end
+```
+
+---
+
+## 4. xcscheme Rules (CRITICAL — do not violate!)
 
 ### Problems that existed and how they were solved:
 
@@ -73,7 +124,7 @@ runs in its own process, leaving the running Chappie.app untouched.
 
 ---
 
-## 4. Test Files
+## 5. Test Files
 
 ### `AppConfigTests.swift`
 Tests the `AppConfig` struct — single source of truth for system parameters.
@@ -152,7 +203,7 @@ This ensures correct target detection without writing to Chappie's real memory.
 
 ---
 
-## 5. Test Writing Rules
+## 6. Test Writing Rules
 
 ### Mandatory Rules
 
@@ -169,7 +220,7 @@ This ensures correct target detection without writing to Chappie's real memory.
 
 ---
 
-## 6. Running Tests
+## 7. Running Tests
 
 ### Via Xcode (primary method)
 1. Switch scheme to **"ChappieCoreTests"** in the toolbar
@@ -186,7 +237,7 @@ Tests work correctly via Xcode (⌘+U with ChappieCoreTests scheme active).
 
 ---
 
-## 7. Build Settings (fixed 2026-05-25)
+## 8. Build Settings (fixed 2026-05-25)
 
 The `ChappieCoreTests` target in `project.pbxproj` must have:
 
@@ -206,6 +257,7 @@ Xcode treated the target as watchOS and couldn't run it on Mac without a simulat
 
 | Date | Change | Author |
 |------|--------|--------|
+| 2026-07-XX | Added Mermaid architecture diagram (section 3) per new architecture file rules | Chappie AI |
 | 2026-07-XX | Architecture files translated to English | Chappie AI |
 | 2026-05-25 | Fixed xcscheme: removed TestAction from Chappie.xcscheme, removed BuildableProductRunnable from LaunchAction in ChappieCoreTests.xcscheme | Chappie AI |
 | 2026-05-25 | Documented run_tests(target:) limitation | Chappie AI |

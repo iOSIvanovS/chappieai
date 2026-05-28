@@ -21,19 +21,19 @@
 ├── Chappie.xcodeproj/                  # Main Xcode project
 │
 ├── Chappie/                            # UI target (SwiftUI App, macOS 26+)
-│   ├── architecture.md                 # UI layer architecture
+│   ├── architecture.md                 # UI layer architecture → see Chappie/architecture.md
 │   └── ...
 │
 ├── ChappieCore/                        # Library (Swift Package, business logic)
-│   ├── architecture.md                 # Core architecture
+│   ├── architecture.md                 # Core architecture → see ChappieCore/architecture.md
 │   └── ...
 │
 ├── ChappieCoreTests/                   # Test target
-│   ├── architecture.md                 # Test architecture
+│   ├── architecture.md                 # Test architecture → see ChappieCoreTests/architecture.md
 │   └── ...
 │
 └── ChappieMCP/                         # Helper process (git + xcodebuild)
-    ├── architecture.md                 # MCP helper architecture
+    ├── architecture.md                 # MCP helper architecture → see ChappieMCP/architecture.md
     └── ...
 ```
 
@@ -50,7 +50,42 @@
 
 ---
 
-## 3. Target Dependencies
+## 3. Architecture Diagram
+
+```mermaid
+graph TD
+    subgraph App["Chappie.app (macOS 26+)"]
+        UI["Chappie — SwiftUI UI\nsee Chappie/architecture.md"]
+        Core["ChappieCore — Business Logic\nsee ChappieCore/architecture.md"]
+        UI -->|depends on| Core
+    end
+
+    subgraph Tests["Test Target"]
+        T["ChappieCoreTests\nsee ChappieCoreTests/architecture.md"]
+        T -->|tests| Core
+    end
+
+    subgraph Helper["Child Process"]
+        MCP["ChappieMCP — git + xcodebuild\nsee ChappieMCP/architecture.md"]
+    end
+
+    Core -->|Unix Domain Socket IPC| MCP
+    App -->|embeds in Contents/Helpers/| MCP
+
+    subgraph Storage["Persistence"]
+        SD["SwiftData\n(ThreadEntity, ProjectEntity\nMemoryEntity, AIProviderEntity)"]
+        KC["Keychain\n(API keys)"]
+        UD["UserDefaults\n(balance_<id>, lastActiveThreadId)"]
+    end
+
+    Core --> SD
+    Core --> KC
+    UI --> UD
+```
+
+---
+
+## 4. Target Dependencies
 
 ```
 Chappie.app
@@ -66,7 +101,7 @@ ChappieMCP
 
 ---
 
-## 4. Key Technologies
+## 5. Key Technologies
 
 | Technology | Version/Type | Usage |
 |---|---|---|
@@ -82,7 +117,7 @@ ChappieMCP
 
 ---
 
-## 5. Per-Provider Balance Storage
+## 6. Per-Provider Balance Storage
 
 **Pattern:** balance stored per-provider in UserDefaults.
 - Key: `balance_<provider.id.uuidString>`
@@ -92,7 +127,7 @@ ChappieMCP
 
 ---
 
-## 6. Chat History (ChatHistoryManager) — DEPRECATING
+## 7. Chat History (ChatHistoryManager) — DEPRECATING
 
 **WARNING:** `ChatHistoryManager` (JSON file) will be replaced by SwiftData in the next iteration.
 `chat_history.json` in the root — legacy file, not used in production.
@@ -101,7 +136,7 @@ ChappieMCP
 
 ---
 
-## 7. Memory Structure — FINAL (IT-08 ✅, IT-09 ✅)
+## 8. Memory Structure — FINAL (IT-08 ✅, IT-09 ✅)
 
 Three memory levels, all in SwiftData:
 
@@ -139,7 +174,7 @@ Default role: `.advisor` (read-only).
 
 ---
 
-## 8. 📚 Docs Group in Xcode Navigator
+## 9. 📚 Docs Group in Xcode Navigator
 
 **Solution:** `📚 Docs` group added to `project.pbxproj` as a navigation-only PBXGroup.
 - **NOT included in build**, **NOT copied to bundle**
@@ -149,7 +184,7 @@ Default role: `.advisor` (read-only).
 
 ---
 
-## 9. build_project and run_tests Hang — RESOLVED (2025-07-11)
+## 10. build_project and run_tests Hang — RESOLVED (2025-07-11)
 
 **Cause:** Pipe deadlock — xcodebuild waits for stdout to be read, we wait for process exit.
 **Fix:** Read stdout/stderr on separate DispatchQueues in parallel with waitUntilExit().
@@ -157,7 +192,7 @@ Default role: `.advisor` (read-only).
 
 ---
 
-## 10. Work Pipeline
+## 11. Work Pipeline
 
 Agreed with user and locked:
 
@@ -172,7 +207,37 @@ Agreed with user and locked:
 
 ---
 
-## 11. REFACTOR-THREADS + PROJECT SETTINGS
+## 12. ⚠️ Inviolable Agent Rules
+
+Rules agreed with the user. Violation is unacceptable.
+
+### RULE-01: One task per pass
+**Decompose any multi-step work into a backlog before starting.**
+Execute one item, commit, then proceed.
+Never bundle unrelated changes in a single pass — even if they seem trivial.
+
+> **Why:** Bundling changes causes signature drift, compile errors, and inconsistent state
+> that is hard to roll back. Every "while I'm at it" is a risk.
+
+### RULE-02: Always read architecture files before implementing
+Before starting any feature or refactor — read the relevant `architecture.md` files.
+Discuss the approach with the user at the design stage, not after the fact.
+
+> **Why:** Architecture files are the ground truth. Skipping them leads to decisions
+> that contradict existing patterns and require costly rewrites.
+
+### RULE-03: git_diff is always forbidden
+Never call `git_diff` — it loads the entire project into AI context and costs real money.
+
+### RULE-04: Never run tests before build
+`run_tests` before `build_project` causes double compilation and wastes time.
+
+### RULE-05: No final commit if build or tests are red
+A broken commit is worse than no commit.
+
+---
+
+## 13. REFACTOR-THREADS + PROJECT SETTINGS
 
 ### Status: ✅ FULLY COMPLETE (IT-01 → IT-09 ✅)
 
@@ -188,10 +253,12 @@ Agreed with user and locked:
 | IT-08 | Memory tools refactor (SwiftData + smart UUID scope) | ✅ DONE |
 | IT-09 | ProjectSettings — agent role and permissions | ✅ DONE |
 | IT-10 | Per-thread AI provider + model selection | ✅ DONE |
+| IT-11 | Thread settings UI: gear chip, context depth, thread name in toolbar | ✅ DONE |
+| IT-12 | Thread name + settings passed on creation via NewThreadProviderSheet | ✅ DONE |
 
 ---
 
-## 12. Tech Debt
+## 14. Tech Debt
 
 | ID | Issue | Priority |
 |----|-------|----------|
@@ -199,12 +266,11 @@ Agreed with user and locked:
 
 ---
 
-## 13. Backlog
+## 15. Backlog
 
 | ID | Task | Priority |
 |----|------|----------|
 | BL-01 | Migrate ChatHistoryManager → SwiftData (per-thread chat history) | High |
-| BL-02 | Thread settings: context depth slider (10–1000 + unlimited) + rename thread | High |
 | BL-03 | Universal balance and message cost support for top-10 AI providers in Russia | Medium |
 
 ---
@@ -213,6 +279,10 @@ Agreed with user and locked:
 
 | Date | Change |
 |------|--------|
+| 2026-07-XX | Added Mermaid architecture diagram (section 3) per new architecture file rules |
+| 2026-07-XX | Added section 11: Inviolable Agent Rules (RULE-01..05) |
+| 2026-07-XX | IT-12 ✅: thread name + settings on creation, confirmNewThread 4-param signature |
+| 2026-07-XX | IT-11 ✅: ThreadSettingsSheet, gear chip in ProjectChipsView, thread name in toolbar, last thread restore |
 | 2026-07-XX | Architecture files translated to English |
 | 2026-07-XX | IT-10 ✅: per-thread provider/model, ModelPickerRow, balance pill per-provider in UserDefaults |
 | 2026-07-XX | LazyVStack in ChatScrollView (anti-jump streaming strategy), new thread button moved to sidebar header |

@@ -52,7 +52,72 @@ ChappieCore/
 
 ---
 
-## 3. Key Models
+## 3. Architecture Diagram
+
+```mermaid
+graph TD
+    subgraph Models["Models"]
+        TM["ThreadModels\n(ThreadEntity, ThreadSettings\nThreadMetadata)"]
+        PM["ProjectModels\n(ProjectEntity, ProjectMetadata\nProjectSettings)"]
+        MM["MemoryModels\n(MemoryEntity, MemoryContext\nActiveMemoryContext)"]
+        APM["AIProviderModels\n(AIProvider, AIProviderEntity)"]
+        AC["AppConfig\n(dynamic, per-thread)"]
+        ATM["AITunnelModels\n(AIMessage, AIStreamChunk\nAIUsage)"]
+        CE["ChappieError"]
+    end
+
+    subgraph Services["Services (actors)"]
+        Orch["AIOrchestrator\nReasoning loop"]
+        AIC["AIClient\nHTTP streaming"]
+        TES["ToolExecutionService\nTool dispatcher"]
+        TS["ThreadStore\nSwiftData CRUD"]
+        PS["ProjectStore\nSwiftData CRUD"]
+        MS["MemoryStore\nSwiftData CRUD"]
+        APS["AIProviderStore\nSwiftData + Keychain"]
+        MemM["MemoryManager\nSemantic memory"]
+        FSM["FileSystemManager\nSecure FS access"]
+        MCP["MCPToolBridge\nUnix Socket client"]
+        Mig["MigrationService\nOne-time JSON→SwiftData"]
+        CHM["ChatHistoryManager\nLegacy JSON (deprecated)"]
+    end
+
+    subgraph Storage["Persistence"]
+        SD["SwiftData\n(ThreadEntity, ProjectEntity\nMemoryEntity, AIProviderEntity)"]
+        KC["Keychain\n(API keys)"]
+        FS["File System\n(JSON legacy)"]
+    end
+
+    subgraph MCP_Process["ChappieMCP (child process)"]
+        MCPS["MCPHTTPServer\n(Unix Domain Socket)"]
+    end
+
+    Orch --> AIC
+    Orch --> TES
+    TES --> FSM
+    TES --> MemM
+    TES --> MCP
+    TES --> TS
+    TES --> PS
+
+    MemM --> MS
+    MS --> SD
+    TS --> SD
+    PS --> SD
+    APS --> SD
+    APS --> KC
+    CHM --> FS
+    Mig --> CHM
+    Mig --> MS
+
+    MCP -->|Unix Socket| MCPS
+
+    Orch --> AC
+    AC --> TM
+```
+
+---
+
+## 4. Key Models
 
 ### ThreadEntity (SwiftData)
 
@@ -120,7 +185,7 @@ struct AppConfig: Codable, Equatable, Sendable {
 
 ---
 
-## 4. SwiftData Schema
+## 5. SwiftData Schema
 
 ```swift
 Schema([
@@ -137,7 +202,7 @@ When a model evolves — only the Codable structs change; the SwiftData schema s
 
 ---
 
-## 5. ThreadStore (actor)
+## 6. ThreadStore (actor)
 
 ```swift
 public actor ThreadStore {
@@ -161,7 +226,7 @@ Actor guarantees sequential access — ideal for a thread-safe SwiftData wrapper
 
 ---
 
-## 6. AIOrchestrator — Reasoning Loop
+## 7. AIOrchestrator — Reasoning Loop
 
 ```
 process(prompt, history, config, memoryContext)
@@ -181,7 +246,7 @@ process(prompt, history, config, memoryContext)
 
 ---
 
-## 7. AIProviderStore
+## 8. AIProviderStore
 
 Manages AI provider configurations in SwiftData.
 
@@ -201,7 +266,7 @@ public actor AIProviderStore {
 
 ---
 
-## 8. MemoryStore (three-level memory)
+## 9. MemoryStore (three-level memory)
 
 Three scopes: `global`, `project`, `thread`.
 Stored in `MemoryEntity` (SwiftData): `key + type + jsonString + scope + targetId`.
@@ -218,7 +283,7 @@ public actor MemoryStore {
 
 ---
 
-## 9. ToolExecutionService
+## 10. ToolExecutionService
 
 Dispatches tool calls from AIOrchestrator to concrete implementations.
 
@@ -237,7 +302,7 @@ all memory must be in English (global rule: memory_language_barrier).
 
 ---
 
-## 10. MigrationService (IT-04)
+## 11. MigrationService (IT-04)
 
 One-time migration from JSON files to SwiftData.
 Flag stored in UserDefaults: `"migrationIT04Completed"`.
@@ -253,6 +318,7 @@ Flag stored in UserDefaults: `"migrationIT04Completed"`.
 
 | Date | Change |
 |------|--------|
+| 2026-07-XX | Added Mermaid architecture diagram (section 3) per new architecture file rules |
 | 2026-05-28 | IT-11 ✅: ThreadMetadata.settings field added; ThreadMetadata moved to ThreadModels.swift; ThreadStore.loadThreads() deserializes settingsJSON into metadata |
 | 2026-05-XX | IT-10 ✅: AIProviderStore, AIProviderEntity, AIProvider, per-thread provider/model selection |
 | 2026-05-XX | IT-09 ✅: ProjectSettings in MemoryContext; ToolExecutionService.setProjectSettings() |

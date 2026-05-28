@@ -63,7 +63,72 @@ Chappie/
 
 ---
 
-## 3. ChappieViewModel
+## 3. Architecture Diagram
+
+```mermaid
+graph TD
+    subgraph Entry["App Entry"]
+        App["ChappieApp\n@main, ModelContainer"]
+    end
+
+    subgraph UI["UI Layer (@MainActor)"]
+        CV["ContentView\nConductor, sheet management"]
+        VM["ChappieViewModel\n@Observable @MainActor"]
+        CV -->|reads/calls| VM
+    end
+
+    subgraph Views["Views"]
+        Sidebar["SidebarView\nThreadListView\nThreadRowView"]
+        Chat["ChatScrollView\nMessageBubbleView\nMarkdownTextView"]
+        Input["InputBarView\nInputMorphView"]
+        Chips["ProjectChipsView\nModelPickerRow\nStatusBarView"]
+        Sheets["ThreadSettingsSheet\nProjectSettingsSheet\nNewThreadProviderSheet"]
+        Toolbar["ToolbarContent"]
+    end
+
+    subgraph Settings["Settings"]
+        SV["SettingsView"]
+        SM["SettingsManager"]
+        KM["KeychainManager"]
+        SM --> KM
+    end
+
+    subgraph Core["ChappieCore (Swift Package)"]
+        direction TB
+        Orch["AIOrchestrator"]
+        TS["ThreadStore"]
+        PS["ProjectStore"]
+        MS["MemoryStore"]
+        APS["AIProviderStore"]
+        TES["ToolExecutionService"]
+    end
+
+    subgraph MCP["ChappieMCP (child process)"]
+        MCPL["MCPHelperLauncher"]
+    end
+
+    App --> CV
+    CV --> Sidebar
+    CV --> Chat
+    CV --> Input
+    CV --> Chips
+    CV --> Sheets
+    CV --> Toolbar
+    CV --> SV
+
+    VM --> Orch
+    VM --> TS
+    VM --> PS
+    VM --> MS
+    VM --> APS
+    VM --> TES
+
+    TES -->|Unix Socket| MCPL
+```
+
+---
+
+## 4. ChappieViewModel
 
 `@Observable @MainActor final class ChappieViewModel`
 
@@ -123,7 +188,7 @@ or the default — guaranteeing correct model and balance loading for each threa
 
 ---
 
-## 4. Provider Balance
+## 5. Provider Balance
 
 **Storage:** UserDefaults, key `balance_<provider.id.uuidString>`
 **Load:** `switchProvider()` → `loadBalance(for: provider)`
@@ -132,7 +197,7 @@ or the default — guaranteeing correct model and balance loading for each threa
 
 ---
 
-## 5. ChatScrollView — LazyVStack + Anti-Jump Streaming
+## 6. ChatScrollView — LazyVStack + Anti-Jump Streaming
 
 **Problem:** during streaming, `withAnimation` on every token triggered layout recalculation → jumps.
 
@@ -148,7 +213,7 @@ or the default — guaranteeing correct model and balance loading for each threa
 
 ---
 
-## 6. ModelPickerRow
+## 7. ModelPickerRow
 
 Floating panel for selecting provider and model. Located above the chat (not in toolbar).
 
@@ -164,7 +229,7 @@ Floating panel for selecting provider and model. Located above the chat (not in 
 
 ---
 
-## 7. IT-09: ProjectSettingsSheet
+## 8. IT-09: ProjectSettingsSheet
 
 **Opened by:** tap on project chip in ProjectChipsView → `onOpenSettings(UUID)` → `ContentView.selectedProjectForSettings`
 
@@ -188,7 +253,7 @@ Floating panel for selecting provider and model. Located above the chat (not in 
 
 ---
 
-## 8. IT-11: ThreadSettingsSheet
+## 9. IT-11: ThreadSettingsSheet
 
 **Opened from two places:**
 1. Gear icon in `ThreadRowView` (hover/context menu) → `onOpenThreadSettings(thread)` → `ContentView.selectedThreadForSettings`
@@ -209,7 +274,7 @@ Floating panel for selecting provider and model. Located above the chat (not in 
 
 ---
 
-## 9. IT-11: Toolbar Thread Title
+## 10. IT-11: Toolbar Thread Title
 
 `ToolbarContent.swift` accepts `activeThreadTitle: String?` and renders:
 ```
@@ -221,7 +286,7 @@ Title truncates with `.middle` mode at max 300pt width.
 
 ---
 
-## 10. IT-11: Last Active Thread Restore (UX-RESTORE)
+## 11. IT-11: Last Active Thread Restore (UX-RESTORE)
 
 `selectThread()` saves `thread.id.uuidString` to UserDefaults key `"lastActiveThreadId"`.
 `loadThreadsAndSelectActive()` on startup:
@@ -230,7 +295,7 @@ Title truncates with `.middle` mode at max 300pt width.
 
 ---
 
-## 11. ContentView — Sheet Management
+## 12. ContentView — Sheet Management
 
 ```swift
 // App settings sheet
@@ -254,7 +319,7 @@ Title truncates with `.middle` mode at max 300pt width.
 
 ---
 
-## 12. MCPHelperLauncher
+## 13. MCPHelperLauncher
 
 Manages the lifecycle of the ChappieMCP child process.
 
@@ -265,7 +330,7 @@ Manages the lifecycle of the ChappieMCP child process.
 
 ---
 
-## 13. Security-Scoped Bookmarks
+## 14. Security-Scoped Bookmarks
 
 A security-scoped bookmark is created for each project folder.
 Stored in `ProjectEntity.bookmarkData` (SwiftData).
@@ -278,6 +343,7 @@ User adds via UI with a real bookmark.
 
 | Date | Change |
 |------|--------|
+| 2026-07-XX | Added Mermaid architecture diagram (section 3) per new architecture file rules |
 | 2026-05-28 | IT-11 ✅: ThreadSettingsSheet, toolbar thread title, UX-RESTORE (last-thread restore), gear in ThreadRowView + ProjectChipsView, "Новый" label on sidebar button |
 | 2026-05-26 | IT-09 ✅: ProjectSettingsSheet, ProjectChipsView.onOpenSettings, ContentView.sheet(item:) |
 | 2026-05-XX | Bug fixed: input panel stuck in thinking state (isThinking=false inside withAnimation) |
