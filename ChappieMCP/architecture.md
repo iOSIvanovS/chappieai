@@ -1,75 +1,75 @@
 <!--
   ChappieMCP/architecture.md
 
-  ДОКУМЕНТ АРХИТЕКТУРЫ — CHAPPIEMCP
+  ARCHITECTURE DOCUMENT — CHAPPIEMCP
 
-  Этот файл заменяет папку AI_Docs (architecture.md + project_map.md + semantic.json).
-  Обновляй при каждом значимом изменении.
-  Создан: 2026-05-29
+  This file replaces the AI_Docs folder (architecture.md + project_map.md + semantic.json).
+  Update after every significant change.
+  Created: 2026-05-29
 -->
 
-# ChappieMCP — Архитектура
+# ChappieMCP — Architecture
 
-## 1. Назначение
+## 1. Purpose
 
-ChappieMCP — локальный хелпер-процесс, запускаемый `Chappie.app` как дочерний процесс.
-Предоставляет ИИ-агенту Чаппи инструменты для работы с git и xcodebuild.
+ChappieMCP is a local helper process launched by `Chappie.app` as a child process.
+It provides the Chappie AI agent with tools for working with git and xcodebuild.
 
-**Почему отдельный процесс:**
-- Chappie.app (без Sandbox) может запускать дочерние процессы
-- Независимость: хелпер перезапускается без перезапуска приложения
-- Разделение ответственности: UI-слой не знает о git/xcodebuild напрямую
+**Why a separate process:**
+- Chappie.app (without Sandbox) can launch child processes
+- Independence: the helper restarts without restarting the app
+- Separation of concerns: UI layer has no direct knowledge of git/xcodebuild
 
-**Почему встроен в Chappie.app (а не отдельный пакет):**
-- Пользователь просто скачивает `.app` — всё внутри
-- Никакого терминала, никаких отдельных папок
-- Xcode собирает хелпер как отдельный таргет и копирует в `Contents/Helpers/`
+**Why embedded in Chappie.app (not a separate package):**
+- User just downloads the `.app` — everything is inside
+- No terminal, no separate folders
+- Xcode builds the helper as a separate target and copies it to `Contents/Helpers/`
 
 ---
 
-## 2. Структура файлов
+## 2. File Structure
 
 ```
-ChappieMCP/                            — Xcode таргет (Command Line Tool) внутри Chappie.xcodeproj
-├── architecture.md                    — этот файл (заменяет папку AI_Docs/)
-├── main.swift                         — точка входа, читает argv, запускает MCPUnixServer
-├── MCPHTTPServer.swift                — Unix Domain Socket сервер + ToolDispatcher
-├── GitTools.swift                     — git инструменты
-└── BuildTools.swift                   — xcodebuild/swift test инструменты
+ChappieMCP/                            — Xcode target (Command Line Tool) inside Chappie.xcodeproj
+├── architecture.md                    — this file (replaces AI_Docs/)
+├── main.swift                         — entry point, reads argv, starts MCPUnixServer
+├── MCPHTTPServer.swift                — Unix Domain Socket server + ToolDispatcher
+├── GitTools.swift                     — git tools
+└── BuildTools.swift                   — xcodebuild/swift test tools
 
-Расположение в .app:
+Location inside .app:
 Chappie.app/
 └── Contents/
     ├── MacOS/
-    │   └── Chappie          ← основной бинарник
+    │   └── Chappie          ← main binary
     └── Helpers/
-        └── ChappieMCP       ← этот хелпер (Copy Files Build Phase)
+        └── ChappieMCP       ← this helper (Copy Files Build Phase)
 ```
 
 ---
 
-## 3. Транспортный протокол
+## 3. Transport Protocol
 
 **Unix Domain Socket** — `/tmp/com.chappie.mcp.sock`
 
-### Протокол: length-prefixed framing
+### Protocol: length-prefixed framing
 
 ```
-Запрос:
-  [4 байта: UInt32 big-endian длина JSON] [JSON данные]
+Request:
+  [4 bytes: UInt32 big-endian length of JSON] [JSON data]
   JSON: {"tool": "git_status", "args": {}}
 
-Ответ:
-  [4 байта: UInt32 big-endian длина JSON] [JSON данные]
+Response:
+  [4 bytes: UInt32 big-endian length of JSON] [JSON data]
   JSON: {"result": "...", "error": null}
 ```
 
-**Почему Unix Domain Socket а не TCP:**
-- App Sandbox (даже отключённый) имеет особенности с TCP серверами в дочерних процессах
-- UDS через `/tmp/` надёжно работает без дополнительных entitlements
-- Быстрее TCP для локального IPC
+**Why Unix Domain Socket instead of TCP:**
+- App Sandbox (even disabled) has quirks with TCP servers in child processes
+- UDS via `/tmp/` works reliably without additional entitlements
+- Faster than TCP for local IPC
 
-### Запуск хелпера
+### Helper Launch
 
 ```
 MCPHelperLauncher.shared.launch(workspacePath: url.path)
@@ -80,92 +80,92 @@ Process.run(
 )
 ```
 
-`argv[1]` = путь к воркспейсу (рабочий каталог для git/xcodebuild)
-`argv[2]` = путь к сокету (обычно `/tmp/com.chappie.mcp.sock`)
+`argv[1]` = workspace path (working directory for git/xcodebuild)
+`argv[2]` = socket path (usually `/tmp/com.chappie.mcp.sock`)
 
 ---
 
-## 4. Инструменты
+## 4. Tools
 
 ### Git (GitTools.swift)
 
-| Инструмент | Команда | Аргументы |
-|---|---|---|
+| Tool | Command | Arguments |
+|------|---------|-----------|
 | `git_status` | `git status --short --branch` | — |
 | `git_add` | `git add <paths>` | `paths: "."` |
 | `git_commit` | `git commit -m <message>` | `message: "..."` |
 | `git_log` | `git log --oneline --graph -N` | `count: "10"` |
 | `git_reset` | `git reset HEAD` | — |
 
-**ЗАПРЕЩЁННЫЕ инструменты:**
-- `git_diff` — ЗАПРЕЩЁН НАВСЕГДА. Загружает весь diff в контекст ИИ → стоит сотни рублей.
+**FORBIDDEN tools:**
+- `git_diff` — BANNED FOREVER. Loads the entire diff into AI context → costs hundreds of rubles.
 
-**Важно:** все git-команды запускаются с переменными окружения:
+**Important:** all git commands run with environment variables:
 ```
-GIT_PAGER=cat           — отключает pager (less), иначе headless процесс зависает
-GIT_TERMINAL_PROMPT=0   — запрещает запрашивать пароль через TTY
-GIT_CONFIG_NOSYSTEM=1   — игнорирует /etc/gitconfig с потенциально кастомным pager
-TERM=dumb               — сигнализирует что TTY нет
+GIT_PAGER=cat           — disables pager (less), otherwise headless process hangs
+GIT_TERMINAL_PROMPT=0   — prevents password prompts via TTY
+GIT_CONFIG_NOSYSTEM=1   — ignores /etc/gitconfig with potentially custom pager
+TERM=dumb               — signals that there is no TTY
 ```
 
 ### Build (BuildTools.swift)
 
-| Инструмент | Команда | Аргументы |
-|---|---|---|
+| Tool | Command | Arguments |
+|------|---------|-----------|
 | `build_project` | `xcodebuild -project Chappie.xcodeproj -scheme Chappie build` | — |
-| `run_tests` | `xcodebuild test` или `swift test` | `target: "ChappieCoreTests"` |
-| `read_build_log` | Читает `.build_log.txt` | — |
+| `run_tests` | `xcodebuild test` or `swift test` | `target: "ChappieCoreTests"` |
+| `read_build_log` | Reads `.build_log.txt` | — |
 
-**Лог сборки:** сохраняется в `<workspacePath>/.build_log.txt`
+**Build log:** saved to `<workspacePath>/.build_log.txt`
 
 ---
 
-## 5. Интеграция с ChappieCore
+## 5. Integration with ChappieCore
 
 ```
 Chappie.app
   └── ToolExecutionService (actor)
-        ├── [существующие: list_files, read_file, write_file, ...]
-        └── MCPToolBridge (actor)         ← сервис в ChappieCore
+        ├── [existing: list_files, read_file, write_file, ...]
+        └── MCPToolBridge (actor)         ← service in ChappieCore
               │ Unix Domain Socket
               ▼
-        ChappieMCP (дочерний процесс)
+        ChappieMCP (child process)
               ├── GitTools
               └── BuildTools
 ```
 
 **MCPToolBridge** (`ChappieCore/Services/MCPToolBridge.swift`):
-- Подключается к сокету при каждом вызове инструмента (не держит постоянное соединение)
-- Таймаут для build/test запросов: 600 секунд (10 минут)
-- Если хелпер не запущен — возвращает понятное сообщение вместо зависания
+- Connects to the socket on each tool call (no persistent connection)
+- Timeout for build/test requests: 600 seconds (10 minutes)
+- If helper is not running — returns a clear message instead of hanging
 
 ---
 
-## 6. Обязательный пайплайн изменений
+## 6. Mandatory Change Pipeline
 
-Перед каждым изменением кода Чаппи ОБЯЗАН следовать этому порядку:
+Before every code change Chappie MUST follow this order:
 
 ```
-1. git_status              → проверить нет ли незакоммиченных изменений
-2. git_add + git_commit    → CHECKPOINT коммит (точка отката)
-3. write_file              → внести изменения
-4. build_project           → компиляция (если упала — чинить, не идти дальше)
-5. run_tests               → тесты (только если сборка прошла)
-6. git_add + git_commit    → RESULT коммит (только если всё зелёное)
-7. Сообщить пользователю   → "можно жать треугольник в Xcode"
+1. git_status              → check for uncommitted changes
+2. git_add + git_commit    → CHECKPOINT commit (rollback point)
+3. write_file              → make changes
+4. build_project           → compile (if fails — fix before proceeding)
+5. run_tests               → tests (only if build is green)
+6. git_add + git_commit    → RESULT commit (only if everything is green)
+7. Report to user          → "you can press the triangle in Xcode"
 ```
 
-**При падении build или tests** — предложить откат к checkpoint коммиту.
+**On build or test failure** — offer rollback to the checkpoint commit.
 
 ---
 
-## 7. Технический долг
+## 7. Tech Debt
 
-| # | Описание | Приоритет |
-|---|---|---|
-| MCP-1 | Добавить `git_push` инструмент | 🟡 |
-| MCP-2 | Streaming вывода xcodebuild (сейчас ждём завершения) | 🟡 |
-| MCP-3 | Аутентификация запросов к серверу (сейчас без auth) | 🟢 |
+| # | Description | Priority |
+|---|-------------|----------|
+| MCP-1 | Add `git_push` tool | 🟡 |
+| MCP-2 | Streaming xcodebuild output (currently waits for completion) | 🟡 |
+| MCP-3 | Request authentication (currently no auth) | 🟢 |
 
 ---
 
@@ -173,7 +173,8 @@ Chappie.app
 
 | Date | Change | Author |
 |------|--------|--------|
+| 2026-07-XX | Architecture files translated to English | Chappie AI |
+| 2026-06-XX | Refactoring: AI_Docs/ → single architecture.md | Chappie AI |
+| 2026-06-XX | Fixed git hang — GIT_PAGER=cat | Chappie AI |
+| 2026-06-XX | Switched from TCP to Unix Domain Socket | Chappie AI |
 | 2026-05-29 | Initial creation | Chappie AI |
-| 2026-06-XX | Переход с TCP на Unix Domain Socket | Chappie AI |
-| 2026-06-XX | Исправление зависания git_diff — GIT_PAGER=cat | Chappie AI |
-| 2026-06-XX | Рефакторинг: AI_Docs/ → один файл architecture.md | Chappie AI |

@@ -1,56 +1,56 @@
 <!--
-  architecture.md (корень проекта)
+  architecture.md (project root)
 
-  ДОКУМЕНТ АРХИТЕКТУРЫ — ПРОЕКТ CHAPPIE (КОРНЕВОЙ УРОВЕНЬ)
+  ARCHITECTURE DOCUMENT — CHAPPIE PROJECT (ROOT LEVEL)
 
-  Этот файл — единственный источник архитектурной документации для корня проекта.
-  Папки AI_Docs/ в корне и таргетах УПРАЗДНЕНЫ (рефакторинг TD-03).
-  
-  Обновляй при изменении общей структуры проекта.
+  This file is the single source of architectural truth for the project root.
+  The other four files describe each target individually.
+
+  Update when the overall project structure changes.
 -->
 
-# Chappie — Общая архитектура проекта
+# Chappie — Overall Project Architecture
 
-## 1. Структура проекта
+## 1. Project Structure
 
 ```
-/Volumes/Хранилище/Работа/Chappie/
-├── architecture.md                     # Этот файл (корневая архитектура)
-├── chat_history.json                   # История чата (корень проекта, УСТАРЕВАЕТ — IT-04)
-├── ChappieCoreTests.xctestplan         # Тестплан для Xcode
-├── Chappie.xcodeproj/                  # Основной Xcode проект
+/Volumes/Storage/Work/Chappie/
+├── architecture.md                     # This file (root architecture)
+├── chat_history.json                   # Legacy history file (not used)
+├── ChappieCoreTests.xctestplan         # Xcode test plan
+├── Chappie.xcodeproj/                  # Main Xcode project
 │
-├── Chappie/                            # UI-таргет (SwiftUI App, macOS 26+)
-│   ├── architecture.md                 # Архитектура UI-слоя
+├── Chappie/                            # UI target (SwiftUI App, macOS 26+)
+│   ├── architecture.md                 # UI layer architecture
 │   └── ...
 │
-├── ChappieCore/                        # Библиотека (Swift Package, бизнес-логика)
-│   ├── architecture.md                 # Архитектура ядра
+├── ChappieCore/                        # Library (Swift Package, business logic)
+│   ├── architecture.md                 # Core architecture
 │   └── ...
 │
-├── ChappieCoreTests/                   # Тестовый таргет
-│   ├── architecture.md                 # Архитектура тестов
+├── ChappieCoreTests/                   # Test target
+│   ├── architecture.md                 # Test architecture
 │   └── ...
 │
-└── ChappieMCP/                         # Хелпер-процесс (git + xcodebuild)
-    ├── architecture.md                 # Архитектура MCP хелпера
+└── ChappieMCP/                         # Helper process (git + xcodebuild)
+    ├── architecture.md                 # MCP helper architecture
     └── ...
 ```
 
 ---
 
-## 2. Таргеты и их роли
+## 2. Targets and Their Roles
 
-| Таргет | Тип | Назначение |
+| Target | Type | Purpose |
 |---|---|---|
-| `Chappie` | SwiftUI App | UI-оболочка, @MainActor, @Observable ViewModel |
-| `ChappieCore` | Swift Package Library | Вся бизнес-логика: AI, инструменты, память |
-| `ChappieCoreTests` | Unit Test Bundle | Тесты для ChappieCore |
-| `ChappieMCP` | Command Line Tool | Дочерний процесс: git + xcodebuild |
+| `Chappie` | SwiftUI App | UI shell, @MainActor, @Observable ViewModel |
+| `ChappieCore` | Swift Package Library | All business logic: AI, tools, memory |
+| `ChappieCoreTests` | Unit Test Bundle | Tests for ChappieCore |
+| `ChappieMCP` | Command Line Tool | Child process: git + xcodebuild |
 
 ---
 
-## 3. Зависимости между таргетами
+## 3. Target Dependencies
 
 ```
 Chappie.app
@@ -61,58 +61,67 @@ ChappieCoreTests
     └── depends on → ChappieCore
 
 ChappieMCP
-    └── standalone (нет зависимостей от ChappieCore)
+    └── standalone (no ChappieCore dependency)
 ```
 
 ---
 
-## 4. Ключевые технологии
+## 4. Key Technologies
 
-| Технология | Версия/Тип | Применение |
+| Technology | Version/Type | Usage |
 |---|---|---|
-| Swift | 6 (Full Concurrency) | Весь проект |
-| SwiftUI | macOS 26+ | UI-слой |
-| SwiftData | macOS 26+ | Персистентность тредов, проектов, памяти |
+| Swift | 6 (Full Concurrency) | Entire project |
+| SwiftUI | macOS 26+ | UI layer |
+| SwiftData | macOS 26+ | Thread, project, and memory persistence |
 | @Observable | Observation framework | ViewModel |
-| Actors | Swift Concurrency | ChappieCore сервисы |
-| Claude Sonnet 4.6 | claude-sonnet-4.6 | AI модель |
-| AITunnel API | OpenAI-совместимый | Прокси к Anthropic |
-| Unix Domain Sockets | POSIX | IPC с ChappieMCP |
-| Keychain | Security framework | Хранение API-ключа |
+| Actors | Swift Concurrency | ChappieCore services |
+| AITunnel API | OpenAI-compatible | Proxy to Anthropic and other providers |
+| Unix Domain Sockets | POSIX | IPC with ChappieMCP |
+| Keychain | Security framework | API key storage |
+| UserDefaults | Foundation | Per-provider balance (key: balance_<provider.id.uuidString>) |
 
 ---
 
-## 5. История чата (TD-03) — УСТАРЕВАЕТ
+## 5. Per-Provider Balance Storage
 
-**ВНИМАНИЕ:** `chat_history.json` и `semantic.json` заменены SwiftData в IT-04.
-Файлы остаются как backup, но основным хранилищем теперь является SwiftData.
-
-**Миграция выполняется ОДИН РАЗ** при первом запуске новой версии через `MigrationService`.
-Флаг `UserDefaults["migration_v1_done"]` предотвращает повторную миграцию.
+**Pattern:** balance stored per-provider in UserDefaults.
+- Key: `balance_<provider.id.uuidString>`
+- Load: `switchProvider()` on provider change
+- Save: `onBalanceUpdate` callback and `result.newBalance` in `AIOrchestrator.process()`
+- Old global key `savedBalance` — removed
 
 ---
 
-## 6. Структура памяти — ФИНАЛЬНАЯ (IT-08 ✅, IT-09 ✅)
+## 6. Chat History (ChatHistoryManager) — DEPRECATING
 
-Три уровня памяти, все в SwiftData:
+**WARNING:** `ChatHistoryManager` (JSON file) will be replaced by SwiftData in the next iteration.
+`chat_history.json` in the root — legacy file, not used in production.
 
-| Уровень | Хранилище | Инструмент |
+**Backlog:** `backlog_chat_history_swiftdata` — migrate ChatHistoryManager → SwiftData.
+
+---
+
+## 7. Memory Structure — FINAL (IT-08 ✅, IT-09 ✅)
+
+Three memory levels, all in SwiftData:
+
+| Level | Storage | Tool |
 |---|---|---|
-| Глобальная | SwiftData MemoryEntity scope="global" | memorize(scope="global") |
-| Проектная | SwiftData MemoryEntity scope="<projectId UUID>" | memorize(targetName="Chappie") |
-| Тредовая | SwiftData MemoryEntity scope="<threadId UUID>" | memorize(scope="thread") |
-| Документация таргетов | `<target>/architecture.md` | write_file вручную |
+| Global | SwiftData MemoryEntity scope="global" | memorize(scope="global") |
+| Project | SwiftData MemoryEntity scope="<projectId UUID>" | memorize(targetName="Chappie") |
+| Thread | SwiftData MemoryEntity scope="<threadId UUID>" | memorize(scope="thread") |
+| Target docs | `<target>/architecture.md` | write_file manually |
 
-**АВТОМАТИЧЕСКОЕ ПОДМЕШИВАНИЕ В SYSTEM PROMPT (IT-09 ✅):**
+**AUTO-INJECTION INTO SYSTEM PROMPT (IT-09 ✅):**
 
-Структура итогового промпта:
+Final prompt structure:
 ```
-[базовый промпт — правила Чаппи]
+[base prompt — Chappie rules]
 
 ---
 ## Memory Context
 
-## Project Settings: Chappie          ← IT-09: права агента (первым!)
+## Project Settings: Chappie          ← IT-09: agent permissions (first!)
 - Role: EXECUTOR
 - Git: write [git_status, git_add, ...]
 ...
@@ -122,73 +131,81 @@ ChappieMCP
 ## Thread Context
 ```
 
-**ПРАВА АГЕНТА (IT-09 ✅):**
-`ProjectSettings` хранится в `ProjectEntity.settingsJSON`.
-Роль по умолчанию: `.advisor` (только чтение).
-`ToolExecutionService.checkToolAccess()` проверяет права перед каждым инструментом.
-`git_diff` НИКОГДА не разрешён — железный запрет в коде.
+**AGENT PERMISSIONS (IT-09 ✅):**
+`ProjectSettings` stored in `ProjectEntity.settingsJSON`.
+Default role: `.advisor` (read-only).
+`ToolExecutionService.checkToolAccess()` validates permissions before each tool call.
+`git_diff` is NEVER allowed — hard ban in code.
 
 ---
 
-## 7. Группа 📚 Docs в Xcode Navigator
+## 8. 📚 Docs Group in Xcode Navigator
 
-**Решение:** Группа `📚 Docs` добавлена в `project.pbxproj` как чисто навигационная PBXGroup.
-- UUID корневой группы: `87DOCS0000000000000000000`
-- Файлы: 5 PBXFileReference с UUID `87DOCS000000000000000000[1-5]`
-- **НЕ участвует в сборке**, **НЕ копируется в бандл**
+**Solution:** `📚 Docs` group added to `project.pbxproj` as a navigation-only PBXGroup.
+- **NOT included in build**, **NOT copied to bundle**
+- Contains: root `architecture.md` + 4 references to target architecture files
 
-**УПРАВЛЕНИЕ ГРУППОЙ — ТОЛЬКО ВРУЧНУЮ** через `write_file` в `project.pbxproj`.
-Автоматическая запись pbxproj была удалена (XcodeDocsGroupManager.swift) — повреждала файл проекта.
+**GROUP MANAGEMENT — MANUAL ONLY** via `write_file` in `project.pbxproj`.
 
 ---
 
-## 8. Зависания build_project и run_tests — РЕШЕНО (2025-07-11)
+## 9. build_project and run_tests Hang — RESOLVED (2025-07-11)
 
-**Причина:** дедлок Pipe — xcodebuild ждёт чтения stdout, мы ждём завершения процесса.
-**Решение:** читать stdout/stderr в отдельных DispatchQueue параллельно с waitUntilExit().
-**Дополнительно:** явный `-destination "platform=macOS,arch=arm64"` для xcodebuild.
-
----
-
-## 9. Техдолг
-
-| ID | Проблема | Приоритет |
-|----|----------|-----------|
-| TD-01 | `build_project` зависал — РЕШЕНО (2025-07-11) | ✅ |
-| TD-02 | Тесты `ChappieCoreTests` требуют ручного выбора таргета в Xcode перед ⌘+U. | Низкий |
+**Cause:** Pipe deadlock — xcodebuild waits for stdout to be read, we wait for process exit.
+**Fix:** Read stdout/stderr on separate DispatchQueues in parallel with waitUntilExit().
+**Also:** Explicit `-destination "platform=macOS,arch=arm64"` for xcodebuild.
 
 ---
 
-## 10. Пайплайн работы в проекте
+## 10. Work Pipeline
 
-Зафиксирован по договорённости с пользователем:
+Agreed with user and locked:
 
-1. `git commit` — сохранить checkpoint перед рефакторингом
-2. Реализовать изменения
-3. Добавить unit-тесты если нужно (для бизнес-логики, не тривиального UI)
+1. `git commit` — save checkpoint before refactoring
+2. Implement changes
+3. Add unit tests if needed (for business logic, not trivial UI)
 4. `build_project`
-5. `run_tests` (только после зелёного билда)
-6. Фиксировать ошибки до консистентного состояния
+5. `run_tests` (only after green build)
+6. Fix errors until consistent state
 7. `git commit`
-8. Отчитаться пользователю
+8. Report to user
 
 ---
 
 ## 11. REFACTOR-THREADS + PROJECT SETTINGS
 
-### Статус: ✅ ПОЛНОСТЬЮ ЗАВЕРШЁН (IT-01 → IT-09 ✅)
+### Status: ✅ FULLY COMPLETE (IT-01 → IT-09 ✅)
 
-| # | Итерация | Статус |
+| # | Iteration | Status |
 |---|---|---|
-| IT-01 | SwiftData модели + JSON-сериализация | ✅ ГОТОВО |
-| IT-02 | ThreadSettings + динамический AppConfig | ✅ ГОТОВО |
-| IT-03 | Трёхуровневая память в system prompt | ✅ ГОТОВО |
-| IT-04 | Миграция старых файлов → SwiftData | ✅ ГОТОВО |
-| IT-05 | UI: боковая панель тредов | ✅ ГОТОВО |
-| IT-06 | UI: плашки проектов в треде | ✅ ГОТОВО |
-| IT-07 | Инструменты add/remove project | ✅ ГОТОВО |
-| IT-08 | Переработка инструментов памяти (SwiftData + умный UUID scope) | ✅ ГОТОВО |
-| IT-09 | ProjectSettings — роль агента и права доступа | ✅ ГОТОВО |
+| IT-01 | SwiftData models + JSON serialization | ✅ DONE |
+| IT-02 | ThreadSettings + dynamic AppConfig | ✅ DONE |
+| IT-03 | Three-level memory in system prompt | ✅ DONE |
+| IT-04 | Migration of legacy files → SwiftData | ✅ DONE |
+| IT-05 | UI: thread sidebar | ✅ DONE |
+| IT-06 | UI: project chips in thread | ✅ DONE |
+| IT-07 | Tools: add/remove project | ✅ DONE |
+| IT-08 | Memory tools refactor (SwiftData + smart UUID scope) | ✅ DONE |
+| IT-09 | ProjectSettings — agent role and permissions | ✅ DONE |
+| IT-10 | Per-thread AI provider + model selection | ✅ DONE |
+
+---
+
+## 12. Tech Debt
+
+| ID | Issue | Priority |
+|----|-------|----------|
+| TD-02 | `ChappieCoreTests` requires manual scheme switch in Xcode before ⌘+U | Low |
+
+---
+
+## 13. Backlog
+
+| ID | Task | Priority |
+|----|------|----------|
+| BL-01 | Migrate ChatHistoryManager → SwiftData (per-thread chat history) | High |
+| BL-02 | Thread settings: context depth slider (10–1000 + unlimited) + rename thread | High |
+| BL-03 | Universal balance and message cost support for top-10 AI providers in Russia | Medium |
 
 ---
 
@@ -196,14 +213,11 @@ ChappieMCP
 
 | Date | Change |
 |------|--------|
-| 2026-05-26 | IT-09 ✅: ProjectSettings (AgentRole, GitAccessLevel, TestsAccessLevel, ProjectLanguage), ProjectSettingsSheet UI, ToolExecutionService.checkToolAccess(), блок прав в system prompt |
-| 2025-07-XX | IT-08 ✅: ActiveMemoryContext, UUID-based scope, resolveScope(), syncActiveMemoryContext() |
-| 2025-07-XX | IT-07 ГОТОВО: add/remove/list_thread_projects инструменты |
-| 2025-07-XX | IT-06 ГОТОВО: ProjectChipsView, ChappieViewModel addProject/removeProject |
-| 2025-07-XX | IT-05 ГОТОВО: ThreadListView, ThreadRowView, SidebarView с тредами |
-| 2025-07-XX | IT-04 ГОТОВО: MigrationService (chat_history.json + semantic.json → SwiftData) |
-| 2025-07-XX | IT-03 ГОТОВО: MemoryStore (SwiftData CRUD), buildSystemPrompt() с трёхуровневой памятью |
-| 2025-07-XX | IT-02 ГОТОВО: динамический AppConfig |
-| 2025-07-XX | IT-01 ГОТОВО: SwiftData модели |
-| 2025-07-11 | РЕШЕНО TD-01: исправлен дедлок Pipe в BuildTools.swift |
-| 2025-07-10 | КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: удалён XcodeDocsGroupManager |
+| 2026-07-XX | Architecture files translated to English |
+| 2026-07-XX | IT-10 ✅: per-thread provider/model, ModelPickerRow, balance pill per-provider in UserDefaults |
+| 2026-07-XX | LazyVStack in ChatScrollView (anti-jump streaming strategy), new thread button moved to sidebar header |
+| 2026-07-XX | Bug fixed: AI model was set globally instead of per-thread |
+| 2026-07-XX | Bug fixed: balance chip: not appearing on startup |
+| 2026-05-26 | IT-09 ✅: ProjectSettings, ProjectSettingsSheet UI, ToolExecutionService.checkToolAccess() |
+| 2025-07-XX | IT-08 ✅: ActiveMemoryContext, UUID-based scope |
+| 2025-07-11 | RESOLVED TD-01: fixed Pipe deadlock in BuildTools.swift |

@@ -1,86 +1,86 @@
 <!--
   ChappieCoreTests/architecture.md
 
-  ЕДИНЫЙ ДОКУМЕНТ АРХИТЕКТУРЫ — CHAPPICORETESTS
+  ARCHITECTURE DOCUMENT — CHAPPICORETESTS
 
-  Этот файл заменяет папку AI_Docs (architecture.md + project_map.md + semantic.json).
-  Обновляй при каждом значимом изменении тестовой архитектуры.
+  This file replaces the AI_Docs folder (architecture.md + project_map.md + semantic.json).
+  Update after every significant change to the test architecture.
 
-  Последнее обновление: исправлены xcscheme файлы — устранён (unknown) 0 Excluded Tests и закрытие окна
+  Last update: fixed xcscheme files — eliminated (unknown) 0 Excluded Tests and window closing
 -->
 
-# ChappieCoreTests — Архитектура тестового таргета
+# ChappieCoreTests — Test Target Architecture
 
-## 1. Назначение
+## 1. Purpose
 
-**ChappieCoreTests** — Unit Test Bundle для тестирования бизнес-логики `ChappieCore`.
-Запускается через Xcode тестплан `ChappieCoreTests.xctestplan` в корне проекта.
+**ChappieCoreTests** is a Unit Test Bundle for testing `ChappieCore` business logic.
+Runs via the `ChappieCoreTests.xctestplan` test plan in the project root.
 
-### Ключевые принципы
+### Key Principles
 
-- **Изоляция:** каждый тест создаёт собственную временную директорию через `FileManager.default.temporaryDirectory`
-- **Без глобального состояния:** `scope: .global` в тестах — запрещён, только `scope: .project` с изолированным воркспейсом
-- **UUID-суффиксы:** типы и ключи содержат UUID чтобы тесты не конфликтовали через общие файлы
-- **Swift Testing framework:** используем `import Testing`, `@Suite`, `@Test`, `#expect` (не XCTest)
+- **Isolation:** each test creates its own temporary directory via `FileManager.default.temporaryDirectory`
+- **No global state:** `scope: .global` in tests is forbidden — only `scope: .project` with an isolated workspace
+- **UUID suffixes:** types and keys contain UUIDs so tests don't conflict through shared files
+- **Swift Testing framework:** use `import Testing`, `@Suite`, `@Test`, `#expect` (not XCTest)
 
 ---
 
-## 2. Структура файлов
+## 2. File Structure
 
 ```
 ChappieCoreTests/
-├── architecture.md                     # Этот файл
-├── ChappieCoreTests.xctestplan         # В корне проекта (не здесь!)
-├── AppConfigTests.swift                # Тесты конфигурации
-├── AITunnelModelsTests.swift           # Тесты Codable-моделей
-├── ChatHistoryManagerTests.swift       # Тесты менеджера истории чата
-├── FileSystemManagerTests.swift        # Тесты файловой системы + безопасности
-└── MemoryManagerTests.swift            # Тесты семантической памяти
+├── architecture.md                     # This file
+├── ChappieCoreTests.xctestplan         # In project root (not here!)
+├── AppConfigTests.swift                # Configuration tests
+├── AITunnelModelsTests.swift           # Codable model tests
+├── ChatHistoryManagerTests.swift       # Chat history manager tests
+├── FileSystemManagerTests.swift        # File system + security tests
+└── MemoryManagerTests.swift            # Semantic memory tests
 ```
 
-### ВАЖНО: Единственный источник тестов
+### IMPORTANT: Single Source of Tests
 
-Тесты живут ТОЛЬКО в `ChappieCoreTests/` и запускаются через `ChappieCoreTests.xctestplan`.
+Tests live ONLY in `ChappieCoreTests/` and run via `ChappieCoreTests.xctestplan`.
 
-Папка `ChappieCore/Tests/ChappieCoreTests/` — **не используется**. В `ChappieCore/Package.swift`
-намеренно нет `testTarget`, чтобы избежать дублирования и рассинхронизации.
-
----
-
-## 3. Правила xcscheme (КРИТИЧЕСКИ ВАЖНО — не нарушать!)
-
-### Проблемы которые были и как они решены:
-
-#### Проблема 1: `(unknown) 0 Excluded Tests` в Test Navigator
-**Причина:** В `Chappie.xcscheme` был пустой `<TestAction>` блок. Xcode регистрирует
-ЛЮБОЙ TestAction в Test Navigator — даже пустой — как анонимный контейнер "(unknown)".
-
-**Решение:** Полностью удалён `<TestAction>` из `Chappie.xcscheme`. Теперь там только
-`BuildAction` и `LaunchAction` для запуска приложения.
-
-#### Проблема 2: При ⌘+U закрывалось окно Чаппи
-**Причина:** В `ChappieCoreTests.xcscheme` в `<LaunchAction>` был `<BuildableProductRunnable>`
-указывающий на `Chappie.app`. Xcode перед запуском тестов убивал процесс этого приложения.
-
-**Решение:** `<LaunchAction>` в `ChappieCoreTests.xcscheme` теперь **без** `<BuildableProductRunnable>`.
-Пустой LaunchAction = "не запускай и не убивай никакое приложение". Тест-раннер xctest
-запускается в своём процессе, не трогая работающий Chappie.app.
-
-### Правильный workflow запуска тестов:
-1. Переключить схему в тулбаре Xcode на **"ChappieCoreTests"**
-2. Нажать **⌘+U** — тесты запустятся, окно Чаппи останется открытым
-3. Переключить схему обратно на **"Chappie"** для обычной работы
+The folder `ChappieCore/Tests/ChappieCoreTests/` is **not used**. `ChappieCore/Package.swift`
+intentionally has no `testTarget` to avoid duplication and desync.
 
 ---
 
-## 4. Тестовые файлы
+## 3. xcscheme Rules (CRITICAL — do not violate!)
+
+### Problems that existed and how they were solved:
+
+#### Problem 1: `(unknown) 0 Excluded Tests` in Test Navigator
+**Cause:** `Chappie.xcscheme` had an empty `<TestAction>` block. Xcode registers
+ANY TestAction in Test Navigator — even an empty one — as an anonymous "(unknown)" container.
+
+**Fix:** `<TestAction>` fully removed from `Chappie.xcscheme`. Now it only has
+`BuildAction` and `LaunchAction` for running the app.
+
+#### Problem 2: ⌘+U closed the Chappie window
+**Cause:** In `ChappieCoreTests.xcscheme`, `<LaunchAction>` had a `<BuildableProductRunnable>`
+pointing to `Chappie.app`. Xcode killed that app's process before running tests.
+
+**Fix:** `<LaunchAction>` in `ChappieCoreTests.xcscheme` now has **no** `<BuildableProductRunnable>`.
+Empty LaunchAction = "don't launch or kill any app". The xctest runner
+runs in its own process, leaving the running Chappie.app untouched.
+
+### Correct test run workflow:
+1. Switch the scheme in Xcode toolbar to **"ChappieCoreTests"**
+2. Press **⌘+U** — tests run, Chappie window stays open
+3. Switch scheme back to **"Chappie"** for normal work
+
+---
+
+## 4. Test Files
 
 ### `AppConfigTests.swift`
-Тестирует структуру `AppConfig` — единственный источник истины для параметров системы.
+Tests the `AppConfig` struct — single source of truth for system parameters.
 
-| Тест | Что проверяет |
-|------|--------------|
-| `defaultValues` | Все дефолтные значения в разумных диапазонах |
+| Test | What it checks |
+|------|----------------|
+| `defaultValues` | All default values are in sensible ranges |
 | `tokenBudget` | `tokenBudget > 0` |
 | `recentFullMessages` | `recentFullMessages > 0` |
 | `summaryThreshold` | `summaryThreshold > 0` |
@@ -88,117 +88,117 @@ ChappieCoreTests/
 | `sharedIsSingleton` | `AppConfig.shared === AppConfig.shared` |
 
 ### `AITunnelModelsTests.swift`
-Тестирует Codable-модели для работы с API AITunnel.
+Tests Codable models for the AITunnel API.
 
-| Тест | Что проверяет |
-|------|--------------|
-| `aIMessageEncodingDecoding` | Roundtrip AIMessage через JSON |
-| `aIMessageContentText` | `.text` кейс AIMessageContent |
-| `aIMessageContentBlocks` | `.blocks` кейс с cache_control |
-| `aICacheControl` | Сериализация AICacheControl |
-| `aIStreamChunkDecoding` | Парсинг SSE-чанков |
-| `chatMessageWithSummary` | ChatMessage с полем summary |
-| `aITunnelRequestStream` | AITunnelRequest с stream: true |
+| Test | What it checks |
+|------|----------------|
+| `aIMessageEncodingDecoding` | AIMessage JSON roundtrip |
+| `aIMessageContentText` | `.text` case of AIMessageContent |
+| `aIMessageContentBlocks` | `.blocks` case with cache_control |
+| `aICacheControl` | AICacheControl serialization |
+| `aIStreamChunkDecoding` | SSE chunk parsing |
+| `chatMessageWithSummary` | ChatMessage with summary field |
+| `aITunnelRequestStream` | AITunnelRequest with stream: true |
 
 ### `ChatHistoryManagerTests.swift`
-Тестирует сохранение и загрузку истории чата.
+Tests chat history save and load.
 
-| Тест | Что проверяет |
-|------|--------------|
-| `loadEmptyHistoryOnFirstRun` | Пустой массив при отсутствии файла |
-| `saveAndLoadMessages` | Roundtrip сохранение/загрузка |
-| `appendMessages` | Добавление сообщений к существующим |
-| `clearHistory` | Очистка истории |
-| `persistenceAcrossSessions` | Данные сохраняются между экземплярами |
-| `workspaceIsolation` | Разные воркспейсы изолированы |
+| Test | What it checks |
+|------|----------------|
+| `loadEmptyHistoryOnFirstRun` | Empty array when file doesn't exist |
+| `saveAndLoadMessages` | Save/load roundtrip |
+| `appendMessages` | Appending messages to existing history |
+| `clearHistory` | Clearing history |
+| `persistenceAcrossSessions` | Data persists across instances |
+| `workspaceIsolation` | Different workspaces are isolated |
 
 ### `FileSystemManagerTests.swift`
-Тестирует работу с файловой системой и защиту от Path Traversal.
+Tests file system operations and Path Traversal protection.
 
-| Тест | Что проверяет |
-|------|--------------|
-| `readExistingFile` | Чтение существующего файла |
-| `writeAndReadFile` | Запись и чтение файла |
-| `deleteFile` | Удаление файла |
-| `pathTraversalProtection` | `../secret` → ошибка безопасности |
-| `listFilesReturnsAllFiles` | Список файлов в директории |
-| `readNonExistentFile` | Понятная ошибка при отсутствии файла |
-| `writeToSubdirectory` | Запись с автосозданием подпапки |
+| Test | What it checks |
+|------|----------------|
+| `readExistingFile` | Reading an existing file |
+| `writeAndReadFile` | Write and read a file |
+| `deleteFile` | Deleting a file |
+| `pathTraversalProtection` | `../secret` → security error |
+| `listFilesReturnsAllFiles` | File list in directory |
+| `readNonExistentFile` | Clear error for missing file |
+| `writeToSubdirectory` | Write with auto-created subdirectory |
 
-**Особенность macOS:** `/tmp` — симлинк на `/private/tmp`. Поэтому проверки путей
-используют `hasSuffix` вместо точного совпадения.
+**macOS note:** `/tmp` is a symlink to `/private/tmp`. Path checks
+use `hasSuffix` instead of exact match.
 
 ### `MemoryManagerTests.swift`
-Тестирует семантическую память ИИ-ассистента.
+Tests the AI assistant's semantic memory.
 
-| Тест | Что проверяет |
-|------|--------------|
-| `saveAndLoadRecord` | Сохранение и загрузка записи |
-| `deleteRecord` | Удаление записи |
-| `searchByType` | Поиск по типу записи |
-| `searchReturnsEmpty` | Поиск без результатов |
-| `emptyStorageRead` | Чтение из пустого хранилища |
-| `multipleRecords` | Несколько записей разных типов |
-| `scopeIsolation` | Изоляция между scope: .project таргетами |
-| `initializationIsIdempotent` | Повторная инициализация не затирает данные |
+| Test | What it checks |
+|------|----------------|
+| `saveAndLoadRecord` | Save and load a record |
+| `deleteRecord` | Delete a record |
+| `searchByType` | Search by record type |
+| `searchReturnsEmpty` | Search with no results |
+| `emptyStorageRead` | Read from empty storage |
+| `multipleRecords` | Multiple records of different types |
+| `scopeIsolation` | Isolation between scope: .project targets |
+| `initializationIsIdempotent` | Re-initialization does not overwrite data |
 
-**Изоляция тестов:** `makeTempWorkspace()` создаёт структуру:
+**Test isolation:** `makeTempWorkspace()` creates this structure:
 ```
 tempDir/
 └── TestApp/
-    └── TestApp.swift  ← суффикс App.swift → classifyTarget() → .appTarget
+    └── TestApp.swift  ← *App.swift suffix → classifyTarget() → .appTarget
 ```
-Это обеспечивает корректное обнаружение таргета без записи в реальную память Чаппи.
+This ensures correct target detection without writing to Chappie's real memory.
 
 ---
 
-## 5. Правила написания тестов
+## 5. Test Writing Rules
 
-### Обязательные правила
+### Mandatory Rules
 
-1. **Никогда не использовать `scope: .global`** — пишет в реальную `~/Documents/Chappie/semantic.json`
-2. **UUID-суффиксы для типов** — `"testType_\(UUID().uuidString)"` чтобы тесты не конфликтовали
-3. **Временная директория** — всегда через `FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)`
-4. **Структура воркспейса** — создавать через `makeTempWorkspace()` с файлом `*App.swift`
+1. **Never use `scope: .global`** — writes to real `~/Documents/Chappie/semantic.json`
+2. **UUID suffixes for types** — `"testType_\(UUID().uuidString)"` to avoid conflicts
+3. **Temporary directory** — always via `FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)`
+4. **Workspace structure** — always create via `makeTempWorkspace()` with a `*App.swift` file
 
-### Запрещено
+### Forbidden
 
-- `XCTest` — используем только Swift Testing (`import Testing`)
-- `scope: .global` в тестах MemoryManager
-- Хардкоженные пути к реальным файлам проекта
-
----
-
-## 6. Запуск тестов
-
-### Через Xcode (основной способ)
-1. Переключить схему на **"ChappieCoreTests"** в тулбаре
-2. Нажать **⌘+U**
-
-### ⚠️ ВАЖНО: run_tests(target:) НЕ РАБОТАЕТ для этого таргета
-
-Инструмент `run_tests(target: "ChappieCoreTests")` вызывает `swift test` в `ChappieCore/`
-(Swift Package), а не `xcodebuild test`. Поскольку в `Package.swift` намеренно нет
-`testTarget` — инструмент всегда возвращает "no tests found".
-
-**Это не баг тестов, это ограничение MCP-инструмента.**
-Тесты работают корректно через Xcode (⌘+U при активной схеме ChappieCoreTests).
+- `XCTest` — use Swift Testing only (`import Testing`)
+- `scope: .global` in MemoryManager tests
+- Hardcoded paths to real project files
 
 ---
 
-## 7. Build Settings (исправлено 2026-05-25)
+## 6. Running Tests
 
-Таргет `ChappieCoreTests` в `project.pbxproj` должен иметь:
+### Via Xcode (primary method)
+1. Switch scheme to **"ChappieCoreTests"** in the toolbar
+2. Press **⌘+U**
+
+### ⚠️ IMPORTANT: run_tests(target:) does NOT work for this target
+
+The `run_tests(target: "ChappieCoreTests")` tool calls `swift test` in `ChappieCore/`
+(Swift Package), not `xcodebuild test`. Since `Package.swift` intentionally has no
+`testTarget` — the tool always returns "no tests found".
+
+**This is not a test bug, it is an MCP tool limitation.**
+Tests work correctly via Xcode (⌘+U with ChappieCoreTests scheme active).
+
+---
+
+## 7. Build Settings (fixed 2026-05-25)
+
+The `ChappieCoreTests` target in `project.pbxproj` must have:
 
 ```
-SDKROOT = macosx;                    // ← было watchos (БАГИ!)
-MACOSX_DEPLOYMENT_TARGET = 26.5;     // ← было WATCHOS_DEPLOYMENT_TARGET
+SDKROOT = macosx;                    // ← was watchos (BUGS!)
+MACOSX_DEPLOYMENT_TARGET = 26.5;     // ← was WATCHOS_DEPLOYMENT_TARGET
 SUPPORTED_PLATFORMS = macosx;
-SWIFT_VERSION = 6.0;                 // ← было 5.0
+SWIFT_VERSION = 6.0;                 // ← was 5.0
 ```
 
-**Почему это важно:** при `SDKROOT = watchos` xcodebuild не мог найти тесты при первом
-запуске — Xcode видел таргет как watchOS и не мог его запустить на Mac без симулятора.
+**Why this matters:** with `SDKROOT = watchos`, xcodebuild couldn't find tests on first run —
+Xcode treated the target as watchOS and couldn't run it on Mac without a simulator.
 
 ---
 
@@ -206,9 +206,10 @@ SWIFT_VERSION = 6.0;                 // ← было 5.0
 
 | Date | Change | Author |
 |------|--------|--------|
-| 2026-05-24 | Initial creation (шаблон) | Chappie AI |
-| 2026-05-24 | Полное наполнение: описание всех тестов, правила изоляции | Chappie AI |
-| 2026-05-24 | Рефакторинг: AI_Docs/ → один файл architecture.md | Chappie AI |
-| 2026-05-25 | Исправлен SDKROOT watchos→macosx, SWIFT_VERSION 5.0→6.0 | Chappie AI |
-| 2026-05-25 | Задокументировано ограничение run_tests(target:) | Chappie AI |
-| 2026-05-25 | Исправлены xcscheme: удалён TestAction из Chappie.xcscheme, убран BuildableProductRunnable из LaunchAction в ChappieCoreTests.xcscheme | Chappie AI |
+| 2026-07-XX | Architecture files translated to English | Chappie AI |
+| 2026-05-25 | Fixed xcscheme: removed TestAction from Chappie.xcscheme, removed BuildableProductRunnable from LaunchAction in ChappieCoreTests.xcscheme | Chappie AI |
+| 2026-05-25 | Documented run_tests(target:) limitation | Chappie AI |
+| 2026-05-25 | Fixed SDKROOT watchos→macosx, SWIFT_VERSION 5.0→6.0 | Chappie AI |
+| 2026-05-24 | Refactoring: AI_Docs/ → single architecture.md | Chappie AI |
+| 2026-05-24 | Full content: all test descriptions, isolation rules | Chappie AI |
+| 2026-05-24 | Initial creation (template) | Chappie AI |
