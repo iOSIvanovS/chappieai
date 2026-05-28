@@ -109,6 +109,11 @@
 //   were still empty — producing one rendered frame with the welcome message visible.
 //   With isAppReady, the app becomes "visible" only after history is fully loaded.
 //
+// MULTIMODAL (MULTIMODAL-STEP2):
+//   InputMorphView.onSend now carries [AttachedFile].
+//   sendMessage(attachments:) forwards them to viewModel.send(prompt:attachments:).
+//   Attachments are cleared inside InputMorphView after triggerSend fires.
+//
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
 // IT-11: Thread settings sheet, last-thread restore.
@@ -458,12 +463,15 @@ struct ContentView: View {
 
     /// Bottom panel: InputMorphView — ultraThinMaterial frosted glass.
     private var bottomPanel: some View {
+        // MULTIMODAL-STEP2: onSend now carries [AttachedFile] from InputMorphView.
         InputMorphView(
             prompt: $prompt,
             isWorkspaceSelected: viewModel.workspaceURL != nil,
             isThinking: viewModel.isThinking,
             currentToolCall: viewModel.currentToolCall,
-            onSend: sendMessage,
+            onSend: { attachments in
+                sendMessage(attachments: attachments)
+            },
             onCancel: { viewModel.cancelCurrentRequest() }
         )
         // Report height for ChatScrollView footerHeight
@@ -478,13 +486,16 @@ struct ContentView: View {
 
     // MARK: - Private
 
-    private func sendMessage() {
-        guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+    /// Sends the current prompt + attachments to the ViewModel.
+    /// Clears the prompt and draft immediately on send.
+    private func sendMessage(attachments: [AttachedFile]) {
+        guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !attachments.isEmpty else { return }
         // Clear draft for this thread before sending
         if let threadId = viewModel.activeThread?.id {
             viewModel.clearDraft(for: threadId)
         }
-        viewModel.send(prompt: prompt)
+        viewModel.send(prompt: prompt, attachments: attachments)
         prompt = ""
     }
 }

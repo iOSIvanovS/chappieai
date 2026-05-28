@@ -132,6 +132,11 @@
 // ChatMessage.message case gained a 6th field `attachments: [AttachedFile]`.
 // buildRawNetworkHistory() pattern updated — `_` added for attachments.
 // Attachment → API encoding will be added in Step 3 (AIOrchestrator layer).
+//
+// MULTIMODAL (MULTIMODAL-STEP2):
+// send(prompt:attachments:) now accepts [AttachedFile].
+// User message is stored with attachments in ChatMessage.message.
+// Attachments are passed into buildRawNetworkHistory() for Step 3 encoding.
 
 import SwiftUI
 import ChappieCore
@@ -1272,16 +1277,20 @@ final class ChappieViewModel {
 
     // MARK: - Send & Cancel
 
-    /// Sends a prompt to the orchestrator.
-    /// Stores the Task in currentRequestTask so it can be cancelled at any time.
+    /// Sends a prompt (and optional file attachments) to the orchestrator.
+    ///
+    /// MULTIMODAL-STEP2:
+    /// attachments are stored in the user ChatMessage immediately.
+    /// They will be encoded into API content blocks in Step 3 (AIOrchestrator).
+    /// For now buildRawNetworkHistory() ignores them (placeholder `_`).
     ///
     /// STATE TRANSITION RULE (THINKING-STUCK FIX):
     /// isThinking = false is always set INSIDE the same withAnimation{} block that
     /// clears streamingText and appends the final message. This guarantees SwiftUI
     /// applies all three changes atomically in one render pass, so InputMorphView
     /// never sees isThinking=true after the response is already displayed.
-    func send(prompt: String) {
-        guard !prompt.isEmpty else { return }
+    func send(prompt: String, attachments: [AttachedFile] = []) {
+        guard !prompt.isEmpty || !attachments.isEmpty else { return }
         guard let orchestrator = orchestrator else {
             messages.append(.message(isUser: false, text: "Ошибка: Оркестратор не инициализирован. Подключите папку с проектом."))
             return
@@ -1292,9 +1301,9 @@ final class ChappieViewModel {
             return
         }
 
-        let userMessage = ChatMessage.message(isUser: true, text: prompt)
+        // Store user message with attachments — displayed immediately in chat
+        let userMessage = ChatMessage.message(isUser: true, text: prompt, attachments: attachments)
         messages.append(userMessage)
-        // Append user message to displayed slice without full reset
         appendToDisplayed(userMessage)
 
         isThinking = true
@@ -1455,7 +1464,7 @@ final class ChappieViewModel {
 
     private func buildRawNetworkHistory() -> [AIMessage] {
         return messages.compactMap { msg -> AIMessage? in
-            // MULTIMODAL-STEP1: pattern updated for 6-field .message case.
+            // MULTIMODAL-STEP1/STEP2: pattern updated for 6-field .message case.
             // attachments are ignored here — Step 3 will handle encoding them into API content blocks.
             guard case .message(_, let isUser, let text, _, let summary, _) = msg else {
                 return nil

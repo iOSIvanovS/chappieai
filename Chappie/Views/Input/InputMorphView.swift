@@ -5,7 +5,7 @@
 // Replaces the old InputBarView + StatusBarView pair with a single morphing component.
 // The idea: the input bar IS the status bar — it transforms in place.
 //
-// IDLE state:    [ ChappieTextEditorView (1–10 lines, scrollable) ] [😊] [▶ Send]
+// IDLE state:    [ ChappieTextEditorView (1–10 lines, scrollable) ] [📎] [😊] [▶ Send]
 // THINKING state: [ ⚙ write_file → ContentView…                  ] [✕ Cancel]
 //
 // DESIGN DECISIONS:
@@ -28,9 +28,18 @@
 //   The panel height is fully controlled by our editorHeight state — the scrollbar is
 //   redundant AND causes a layout jitter: macOS reserves width for it before hiding,
 //   which makes the text field width jump as the user types. Removing it fixes this.
+//
+// MULTIMODAL (MULTIMODAL-STEP2):
+// - Paperclip button opens NSOpenPanel (images, PDF, text, any file).
+// - Picked files are stored in @State attachments: [AttachedFile].
+// - AttachmentChipsView renders above the text editor when attachments are non-empty.
+// - Each chip shows a thumbnail (images) or icon (other types) + filename + ✕ button.
+// - onSend now receives ([AttachedFile]) → caller is responsible for consuming them.
+// - No pre-filtering by model capability: we send everything and handle API errors gracefully.
 
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 // MARK: - Layout Constants
 
@@ -163,6 +172,87 @@ private struct EmojiPickerView: View {
             .frame(height: 180)
         }
         .frame(width: 340)
+    }
+}
+
+// MARK: - Attachment Chip
+
+/// A single chip showing an attached file — thumbnail for images, icon for others.
+/// Has an ✕ button to remove it from the pending list.
+private struct AttachmentChipView: View {
+
+    let file: AttachedFile
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            // Thumbnail for images; SF Symbol icon for other types
+            if let image = file.nsImage {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 20, height: 20)
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+            } else {
+                Image(systemName: file.mimeType.systemIcon)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20, height: 20)
+            }
+
+            // Truncated filename — chips can be narrow
+            Text(file.filename)
+                .font(.system(size: 11))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: 120)
+
+            // Remove button
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Убрать вложение")
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color(NSColor.controlBackgroundColor))
+                .shadow(color: .black.opacity(0.08), radius: 1, y: 1)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color(NSColor.separatorColor), lineWidth: 0.5)
+        )
+    }
+}
+
+// MARK: - Attachment Chips Row
+
+/// Horizontal scrollable row of attachment chips shown above the text editor.
+/// Only rendered when attachments is non-empty.
+private struct AttachmentChipsRow: View {
+
+    let attachments: [AttachedFile]
+    let onRemove: (UUID) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(attachments) { file in
+                    AttachmentChipView(file: file) {
+                        onRemove(file.id)
+                    }
+                    .transition(.scale(scale: 0.8).combined(with: .opacity))
+                }
+            }
+            .padding(.horizontal, 2)
+            .padding(.vertical, 2)
+        }
+        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: attachments.map(\.id))
     }
 }
 
@@ -333,7 +423,7 @@ struct InputMorphView: View {
     let isWorkspaceSelected: Bool
     let isThinking: Bool
     let currentToolCall: String?
-    let onSend: () -> Void
+    let onSend: ([AttachedFile]) -> Void
     let onCancel: () -> Void
 
     /// Called whenever the panel's total rendered height changes.
@@ -347,13 +437,18 @@ struct InputMorphView: View {
     @State private var editorCoordinator: ChappieTextEditorView.Coordinator?
     /// Controls the emoji picker popover visibility.
     @State private var showEmojiPicker: Bool = false
+    /// Files pending attachment — cleared on send.
+    @State private var attachments: [AttachedFile] = []
 
     // MARK: - Computed
 
     private var canSend: Bool {
-        !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        && isWorkspaceSelected
-        && !isThinking
+        let hasText = !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasAttachments = !attachments.isEmpty
+        // Allow sending if there's text OR attachments (or both)
+        return (hasText || hasAttachments)
+            && isWorkspaceSelected
+            && !isThinking
     }
 
     private var contentHeight: CGFloat {
@@ -418,72 +513,106 @@ struct InputMorphView: View {
     // MARK: - Idle View
 
     private var idleView: some View {
-        HStack(alignment: .bottom, spacing: 12) {
-            ChappieTextEditorView(
-                text: $prompt,
-                isEnabled: isWorkspaceSelected && !isThinking,
-                onSend: { if canSend { onSend() } },
-                onHeightChange: { newHeight in
-                    // Only update while not thinking — avoids fighting the collapse animation
-                    if !isThinking, abs(newHeight - editorHeight) > 1 {
-                        editorHeight = newHeight
+        VStack(alignment: .leading, spacing: 6) {
+            // Attachment chips row — only visible when files are attached
+            if !attachments.isEmpty {
+                AttachmentChipsRow(attachments: attachments) { id in
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                        attachments.removeAll { $0.id == id }
                     }
-                },
-                onFocusChange: { focused in
-                    isEditorFocused = focused
-                },
-                onCoordinatorReady: { coordinator in
-                    editorCoordinator = coordinator
-                }
-            )
-            .frame(height: editorHeight)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color(NSColor.textBackgroundColor))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(
-                        isEditorFocused
-                            ? Color.accentColor.opacity(0.6)
-                            : Color(NSColor.separatorColor),
-                        lineWidth: 1
-                    )
-            )
-            .overlay(alignment: .topLeading) {
-                if prompt.isEmpty {
-                    Text("Напиши сообщение… (⇧+Enter — перенос строки)")
-                        .font(.system(size: 13))
-                        .foregroundStyle(Color(NSColor.placeholderTextColor))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, Layout.editorVerticalPadding)
-                        .allowsHitTesting(false)
                 }
             }
 
-            // Emoji picker button — sits between the text field and the send button.
-            // Opens a popover with 7 categories. Tapping an emoji appends it to the prompt.
-            Button(action: { showEmojiPicker.toggle() }) {
-                Text("😊")
-                    .font(.system(size: 18))
-                    .frame(width: 28, height: 28)
-            }
-            .buttonStyle(.plain)
-            .help("Вставить эмодзи")
-            .popover(isPresented: $showEmojiPicker, arrowEdge: .top) {
-                EmojiPickerView { emoji in
-                    prompt += emoji
-                    showEmojiPicker = false
+            HStack(alignment: .bottom, spacing: 12) {
+                ChappieTextEditorView(
+                    text: $prompt,
+                    isEnabled: isWorkspaceSelected && !isThinking,
+                    onSend: { if canSend { triggerSend() } },
+                    onHeightChange: { newHeight in
+                        // Only update while not thinking — avoids fighting the collapse animation
+                        if !isThinking, abs(newHeight - editorHeight) > 1 {
+                            editorHeight = newHeight
+                        }
+                    },
+                    onFocusChange: { focused in
+                        isEditorFocused = focused
+                    },
+                    onCoordinatorReady: { coordinator in
+                        editorCoordinator = coordinator
+                    }
+                )
+                .frame(height: editorHeight)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color(NSColor.textBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(
+                            isEditorFocused
+                                ? Color.accentColor.opacity(0.6)
+                                : Color(NSColor.separatorColor),
+                            lineWidth: 1
+                        )
+                )
+                .overlay(alignment: .topLeading) {
+                    if prompt.isEmpty {
+                        Text("Напиши сообщение… (⇧+Enter — перенос строки)")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color(NSColor.placeholderTextColor))
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, Layout.editorVerticalPadding)
+                            .allowsHitTesting(false)
+                    }
                 }
-            }
-            .padding(.bottom, 2)
 
-            Button(action: onSend) {
-                Image(systemName: "paperplane.fill")
+                // Paperclip button — opens NSOpenPanel for file picking.
+                // Badge shows count when files are attached.
+                Button(action: openFilePicker) {
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: "paperclip")
+                            .font(.system(size: 16))
+                            .frame(width: 28, height: 28)
+
+                        // Attachment count badge — visible when files are pending
+                        if !attachments.isEmpty {
+                            Text("\(attachments.count)")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(2)
+                                .background(Circle().fill(Color.accentColor))
+                                .offset(x: 4, y: -4)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("Прикрепить файл")
+                .padding(.bottom, 2)
+
+                // Emoji picker button — sits between the text field and the send button.
+                // Opens a popover with 7 categories. Tapping an emoji appends it to the prompt.
+                Button(action: { showEmojiPicker.toggle() }) {
+                    Text("😊")
+                        .font(.system(size: 18))
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .help("Вставить эмодзи")
+                .popover(isPresented: $showEmojiPicker, arrowEdge: .top) {
+                    EmojiPickerView { emoji in
+                        prompt += emoji
+                        showEmojiPicker = false
+                    }
+                }
+                .padding(.bottom, 2)
+
+                Button(action: triggerSend) {
+                    Image(systemName: "paperplane.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canSend)
+                .padding(.bottom, 2)
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(!canSend)
-            .padding(.bottom, 2)
         }
     }
 
@@ -513,6 +642,41 @@ struct InputMorphView: View {
         }
         .frame(height: Layout.collapsedHeight)
     }
+
+    // MARK: - Private Helpers
+
+    /// Fires the send callback with current attachments, then clears them.
+    private func triggerSend() {
+        let pending = attachments
+        onSend(pending)
+        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+            attachments = []
+        }
+    }
+
+    /// Opens NSOpenPanel allowing any file type.
+    /// Loaded files are appended to the pending attachments list.
+    private func openFilePicker() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        // No type filter — we accept anything and let the model decide.
+        // If the model can't handle a type, it returns an error which we surface gracefully.
+        panel.message = "Выбери файлы для прикрепления"
+        panel.prompt = "Прикрепить"
+
+        guard panel.runModal() == .OK else { return }
+
+        let newFiles = panel.urls.compactMap { AttachedFile.load(from: $0) }
+
+        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+            // Deduplicate by filename to avoid accidental double-attach of the same file
+            let existingNames = Set(attachments.map(\.filename))
+            let unique = newFiles.filter { !existingNames.contains($0.filename) }
+            attachments.append(contentsOf: unique)
+        }
+    }
 }
 
 // MARK: - Preview
@@ -525,7 +689,7 @@ struct InputMorphView: View {
             isWorkspaceSelected: true,
             isThinking: false,
             currentToolCall: nil,
-            onSend: {},
+            onSend: { _ in },
             onCancel: {}
         )
     }
@@ -540,7 +704,7 @@ struct InputMorphView: View {
             isWorkspaceSelected: true,
             isThinking: false,
             currentToolCall: nil,
-            onSend: {},
+            onSend: { _ in },
             onCancel: {}
         )
     }
@@ -555,7 +719,7 @@ struct InputMorphView: View {
             isWorkspaceSelected: true,
             isThinking: true,
             currentToolCall: "write_file → Chappie/Views/Input/InputMorphView.swift",
-            onSend: {},
+            onSend: { _ in },
             onCancel: {}
         )
     }
