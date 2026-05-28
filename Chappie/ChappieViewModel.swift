@@ -73,6 +73,16 @@
 // confirmNewThread(with:modelName:title:settings:) — extended signature.
 // Saves title via renameThread and context settings via updateSettings immediately
 // after thread creation, before selectThread() is called.
+//
+// PAGINATION (UX-PAGINATION):
+// displayedMessages — the slice of messages shown in ChatScrollView.
+// On thread load: initialized to the last PAGE_SIZE messages.
+// loadMoreMessages() — prepends the previous PAGE_SIZE_LOAD messages.
+// hasMoreMessages — true when there are older messages not yet displayed.
+// resetPagination() — called on every thread switch to reset the slice.
+// visibleMessages is UNCHANGED — it is used for network context, not UI rendering.
+// This replaces LazyVStack with a plain VStack in ChatScrollView, eliminating
+// the disappearing-messages bug caused by lazy cell recycling.
 
 import SwiftUI
 import ChappieCore
@@ -82,6 +92,14 @@ import SwiftData
 @MainActor
 final class ChappieViewModel {
 
+    // MARK: - Pagination constants
+
+    /// Number of messages shown on initial thread load.
+    private let pageSize = 50
+
+    /// Number of messages prepended when user loads more (scrolls to top).
+    private let pageSizeLoad = 30
+
     // MARK: - State
 
     var workspaceURL: URL?
@@ -89,6 +107,21 @@ final class ChappieViewModel {
     var messages: [ChatMessage] = [] {
         didSet { saveMessages() }
     }
+
+    /// Messages visible in the chat scroll view — paginated slice for UI rendering.
+    ///
+    /// PAGINATION (UX-PAGINATION):
+    /// Always shows the last N messages on thread load.
+    /// Grows upward as user calls loadMoreMessages().
+    /// Does NOT affect visibleMessages — that is used for network context only.
+    private(set) var displayedMessages: [ChatMessage] = []
+
+    /// True when there are older messages above the current displayedMessages slice.
+    private(set) var hasMoreMessages: Bool = false
+
+    /// Index into `messages` marking the start of the current displayed slice.
+    /// displayedMessages = messages[displayedStart...]
+    private var displayedStart: Int = 0
 
     /// Messages visible in the chat scroll view.
     ///
@@ -215,6 +248,49 @@ final class ChappieViewModel {
         loadMessages()
         // Balance is loaded per-provider in switchProvider — not here globally.
         loadWorkspaceWithSecurityScope()
+    }
+
+    // MARK: - Pagination (UX-PAGINATION)
+
+    /// Resets the displayed slice to the last `pageSize` messages.
+    ///
+    /// Called every time a new thread is loaded. Ensures the user always sees
+    /// the most recent messages first without rendering the entire history.
+    private func resetPagination() {
+        let count = messages.count
+        if count <= pageSize {
+            // All messages fit in one page — show everything
+            displayedStart = 0
+            displayedMessages = messages
+            hasMoreMessages = false
+        } else {
+            // Show only the last pageSize messages; older ones available via loadMoreMessages()
+            displayedStart = count - pageSize
+            displayedMessages = Array(messages[displayedStart...])
+            hasMoreMessages = true
+        }
+    }
+
+    /// Prepends the previous `pageSizeLoad` messages to the displayed slice.
+    ///
+    /// Called when the user scrolls to the top of ChatScrollView.
+    /// Does nothing if all messages are already displayed.
+    func loadMoreMessages() {
+        guard hasMoreMessages, displayedStart > 0 else { return }
+
+        let newStart = max(0, displayedStart - pageSizeLoad)
+        let additionalMessages = Array(messages[newStart..<displayedStart])
+        displayedStart = newStart
+        displayedMessages = additionalMessages + displayedMessages
+        hasMoreMessages = displayedStart > 0
+    }
+
+    /// Appends a newly received message to displayedMessages without full reset.
+    ///
+    /// Called after send() receives a final response or when user sends a message.
+    /// Avoids rebuilding the entire slice — just appends to the end.
+    private func appendToDisplayed(_ message: ChatMessage) {
+        displayedMessages.append(message)
     }
 
     // MARK: - Draft Management (UX-DRAFT)
@@ -750,6 +826,8 @@ final class ChappieViewModel {
 
             self.isLoadingThread = true
             self.messages = loaded
+            // Reset pagination to last pageSize messages for this thread
+            resetPagination()
             self.isLoadingThread = false
 
             print("[ChappieViewModel] Thread '\(thread.title)' selected (\(loaded.count) messages)")
@@ -785,6 +863,7 @@ final class ChappieViewModel {
                         await selectThread(newThread)
                         self.isLoadingThread = true
                         self.messages = []
+                        resetPagination()
                         self.isLoadingThread = false
                         self.activeProjects = []
                         buildAndSyncMemoryContext()
@@ -843,6 +922,7 @@ final class ChappieViewModel {
         await selectThread(thread)
         self.isLoadingThread = true
         self.messages = []
+        resetPagination()
         self.isLoadingThread = false
         self.activeProjects = []
         buildAndSyncMemoryContext()
@@ -1123,7 +1203,11 @@ final class ChappieViewModel {
             return
         }
 
-        messages.append(.message(isUser: true, text: prompt))
+        let userMessage = ChatMessage.message(isUser: true, text: prompt)
+        messages.append(userMessage)
+        // Append user message to displayed slice without full reset
+        appendToDisplayed(userMessage)
+
         isThinking = true
         streamingText = ""
         currentToolCall = nil
@@ -1179,6 +1263,13 @@ final class ChappieViewModel {
                 let (displayText, summary) = self.extractAndCleanSummary(from: rawResponse)
                 let finalCost = result.totalCost
 
+                let aiMessage = ChatMessage.message(
+                    isUser: false,
+                    text: displayText,
+                    cost: finalCost,
+                    summary: summary
+                )
+
                 // THINKING-STUCK FIX:
                 // isThinking = false is set INSIDE withAnimation together with streamingText
                 // and messages.append. This ensures SwiftUI sees all three changes in one
@@ -1187,12 +1278,9 @@ final class ChappieViewModel {
                     self.streamingText = ""
                     self.currentToolCall = nil
                     self.isThinking = false
-                    self.messages.append(.message(
-                        isUser: false,
-                        text: displayText,
-                        cost: finalCost,
-                        summary: summary
-                    ))
+                    self.messages.append(aiMessage)
+                    // Append AI response to displayed slice without full reset
+                    self.appendToDisplayed(aiMessage)
                 }
 
                 // Final balance from orchestrator result (may differ from last streaming update).
@@ -1235,7 +1323,9 @@ final class ChappieViewModel {
                     self.streamingText = ""
                     self.currentToolCall = nil
                     self.isThinking = false
-                    self.messages.append(.message(isUser: false, text: "Упс, ошибка: \(error.localizedDescription)"))
+                    let errMessage = ChatMessage.message(isUser: false, text: "Упс, ошибка: \(error.localizedDescription)")
+                    self.messages.append(errMessage)
+                    self.appendToDisplayed(errMessage)
                 }
             }
 
@@ -1254,11 +1344,14 @@ final class ChappieViewModel {
 
     func clearMessages() {
         messages = []
+        resetPagination()
     }
 
     func clearHistory() {
         messages.removeAll()
-        messages.append(.message(isUser: false, text: "Память очищена. Я забыл всё, что мы обсуждали до этого момента. Готов начать с чистого листа!"))
+        let systemMessage = ChatMessage.message(isUser: false, text: "Память очищена. Я забыл всё, что мы обсуждали до этого момента. Готов начать с чистого листа!")
+        messages.append(systemMessage)
+        resetPagination()
 
         if let threadId = activeThread?.id, let store = threadStore {
             Task {
@@ -1425,10 +1518,12 @@ final class ChappieViewModel {
 
         if !loadedMessages.isEmpty {
             self.messages = loadedMessages
+            resetPagination()
         } else {
             if let data = UserDefaults.standard.data(forKey: "savedChatMessages"),
                let decoded = try? JSONDecoder().decode([ChatMessage].self, from: data) {
                 self.messages = decoded
+                resetPagination()
                 chatHistoryManager.saveMessages(self.messages)
                 UserDefaults.standard.removeObject(forKey: "savedChatMessages")
             }

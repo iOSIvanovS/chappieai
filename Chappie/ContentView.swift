@@ -85,6 +85,11 @@
 //   This handles the edge case where the user opened Settings and then a response
 //   arrived (e.g. triggered from another thread or via a background event).
 //
+// PAGINATION (UX-PAGINATION):
+//   ChatScrollView receives displayedMessages (paginated slice) instead of visibleMessages.
+//   hasMoreMessages and onLoadMore are forwarded so the "Load earlier" button works.
+//   visibleMessages is still used for network context — not for UI rendering.
+//
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
 // IT-11: Thread settings sheet, last-thread restore.
@@ -334,9 +339,15 @@ struct ContentView: View {
             }
             .frame(height: 0) // Zero-height probe — does not affect layout
 
+            // PAGINATION (UX-PAGINATION):
+            // displayedMessages — paginated slice from ViewModel (last 50, grows upward).
+            // hasMoreMessages — true when older messages exist above the current slice.
+            // onLoadMore — prepends the previous 30 messages without scrolling.
             ChatScrollView(
                 threadId: viewModel.activeThread?.id,
-                messages: viewModel.visibleMessages,
+                messages: viewModel.displayedMessages,
+                hasMoreMessages: viewModel.hasMoreMessages,
+                onLoadMore: { viewModel.loadMoreMessages() },
                 isThinking: viewModel.isThinking,
                 streamingText: viewModel.streamingText,
                 runningCost: viewModel.runningCost,

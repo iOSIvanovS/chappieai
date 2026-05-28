@@ -9,14 +9,16 @@
 // ChatScrollView fills the entire ZStack behind the floating panels.
 // It does NOT know about InputMorphView height directly.
 // Instead it receives headerHeight and footerHeight — transparent spacers at the
-// top and bottom of the LazyVStack inside ScrollView.
+// top and bottom of the VStack inside ScrollView.
 // This guarantees the first and last messages are always fully readable
 // regardless of the panel heights (including dynamic growth of the input editor).
 //
-// LAZYVSTACK (PERFORMANCE):
-// Messages are rendered lazily — only visible ones are in the render tree.
-// This is critical for large histories (context depth × 10 = up to 10,000 messages).
-// Regular VStack would render everything at once and freeze the UI.
+// VSTACK (PAGINATION OVER LAZYVSTACK):
+// Messages are rendered in a plain VStack — all displayed messages are always in the
+// render tree. This eliminates the disappearing-messages bug caused by LazyVStack's
+// cell recycling when switching threads or scrolling.
+// Performance is managed by pagination in ViewModel: only the last 50 messages are
+// shown initially; older ones are loaded in batches of 30 via loadMoreMessages().
 //
 // SCROLL ANCHOR STRATEGY (prevents jumping during streaming):
 // Each message has a stable .id(msg.id). Bottom sentinel is Color.clear.id("bottom").
@@ -28,9 +30,8 @@
 // AUTO-SCROLL POLICY:
 // Scroll to bottom happens in exactly four cases:
 //   1. threadId changes — user switched to another thread. Reset initialScrollDone,
-//      then perform a two-phase scroll: instant snap first (forces LazyVStack to
-//      materialize the bottom region), then animated correction after 0.3s
-//      (catches any remaining layout settling).
+//      then perform an immediate animated scroll (VStack renders all cells instantly,
+//      no two-phase hack needed).
 //   2. footerHeight first becomes non-zero — "layout ready" moment on first launch.
 //      After that, footerHeight changes are ignored (user typing grows the input field).
 //   3. onChange(messages.count) — new message added to the chat.
@@ -38,29 +39,33 @@
 // Intentionally NOT scrolling when footerHeight changes after initial scroll
 // so the user can freely read mid-chat while typing a long message.
 //
-// TWO-PHASE SCROLL ON THREAD SWITCH (BUG FIX):
-// LazyVStack only renders visible cells. When switching threads, new messages are
-// not yet in the render tree — the "bottom" sentinel exists but LazyVStack doesn't
-// know its real position. A single delayed scrollTo(0.15s) was sometimes not enough.
-// Fix: immediate no-animation scrollTo forces LazyVStack to materialize the bottom
-// region. Then a second animated scrollTo after 0.3s handles any remaining settling.
+// LOAD MORE (PAGINATION):
+// A "Load earlier messages" button appears at the top when hasMoreMessages == true.
+// Tapping it calls onLoadMore() which prepends the previous batch.
+// After loading, scroll position is preserved — no jump to top or bottom.
 //
 // SCROLLBAR:
 // Hidden via scrollIndicators(.never) — not needed in this chat UI aesthetic.
 
 import SwiftUI
 
-/// Scrollable message list with auto-scroll, lazy rendering, and streaming anchor.
+/// Scrollable message list with auto-scroll, paginated VStack rendering, and streaming anchor.
 ///
-/// IMPORTANT: Accepts `visibleMessages` — already filtered and depth-limited list.
-/// Filtering and depth calculation happen in ViewModel, not here.
+/// IMPORTANT: Accepts `displayedMessages` — paginated slice from ViewModel.
+/// Pagination logic lives in ViewModel, not here.
 struct ChatScrollView: View {
 
     /// Active thread ID — used to detect thread switches and reset scroll state.
     let threadId: UUID?
 
-    /// Depth-limited message list (only .message, up to contextDepth × 10)
+    /// Paginated message slice (last N messages, grows upward via onLoadMore).
     let messages: [ChatMessage]
+
+    /// True when there are older messages not yet loaded into the displayed slice.
+    let hasMoreMessages: Bool
+
+    /// Called when user taps "Load earlier messages" — ViewModel prepends more.
+    let onLoadMore: () -> Void
 
     /// Flag: Chappie is thinking (show spinner or streaming bubble)
     let isThinking: Bool
@@ -96,14 +101,21 @@ struct ChatScrollView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                // LazyVStack — only renders visible messages.
-                // Critical for large histories (up to 10,000 messages with unlimited context).
-                LazyVStack(spacing: 16) {
+                // Plain VStack — all displayed messages are always in the render tree.
+                // Performance is managed by pagination: only the last 50 messages are
+                // shown initially. LazyVStack was causing disappearing-messages bugs.
+                VStack(spacing: 16) {
 
                     // Transparent header spacer — matches top floating panel height.
                     Color.clear
                         .frame(height: headerHeight)
                         .id("top")
+
+                    // "Load earlier messages" button — visible when older messages exist.
+                    if hasMoreMessages {
+                        loadMoreButton
+                            .transition(.opacity)
+                    }
 
                     // Welcome screen — shown only when chat is empty
                     if messages.isEmpty && !isThinking {
@@ -112,8 +124,7 @@ struct ChatScrollView: View {
                     } else {
                         ForEach(messages) { msg in
                             MessageBubbleView(msg: msg)
-                                // Stable ID per message — LazyVStack uses this for identity.
-                                // Without explicit id, LazyVStack may re-render on any list change.
+                                // Stable ID per message — VStack uses this for identity.
                                 .id(msg.id)
                         }
                     }
@@ -149,28 +160,14 @@ struct ChatScrollView: View {
                 .animation(.easeInOut(duration: 0.3), value: streamingText.isEmpty)
             }
             .scrollIndicators(.never)
-            // THREAD SWITCH: two-phase scroll to guarantee bottom landing with LazyVStack.
-            //
-            // Phase 1 (immediate, no animation): forces LazyVStack to materialize
-            // the bottom region even before full layout pass completes.
-            //
-            // Phase 2 (0.3s delay, animated): catches any remaining layout settling
-            // after the new thread's messages have fully rendered.
-            //
-            // WHY TWO PHASES: LazyVStack only renders visible cells. A single delayed
-            // scrollTo was sometimes not enough when switching to a thread with a long
-            // history — the sentinel existed but its position wasn't yet computed.
+            // THREAD SWITCH: VStack renders all cells immediately, so a single animated
+            // scroll is sufficient — no two-phase hack needed (that was a LazyVStack workaround).
             .onChange(of: threadId) { _, _ in
                 initialScrollDone = false
-                // Phase 1: instant snap — forces bottom region into the render tree
-                proxy.scrollTo("bottom", anchor: .bottom)
-                // Phase 2: animated correction after layout settles
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    withAnimation(.easeOut(duration: 0.3)) {
-                        proxy.scrollTo("bottom", anchor: .bottom)
-                    }
-                    initialScrollDone = true
+                withAnimation(.easeOut(duration: 0.3)) {
+                    proxy.scrollTo("bottom", anchor: .bottom)
                 }
+                initialScrollDone = true
             }
             // INITIAL SCROLL: fires once when footerHeight first becomes non-zero on launch.
             .onChange(of: footerHeight) { _, newHeight in
@@ -205,6 +202,29 @@ struct ChatScrollView: View {
     }
 
     // MARK: - Subviews
+
+    /// "Load earlier messages" button — shown at the top when hasMoreMessages == true.
+    private var loadMoreButton: some View {
+        Button(action: onLoadMore) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.up.circle")
+                    .font(.system(size: 13, weight: .medium))
+                Text("Загрузить предыдущие сообщения")
+                    .font(.system(size: 13, weight: .medium))
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Color(NSColor.textBackgroundColor))
+            .clipShape(Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+    }
 
     /// Welcome message for empty chat.
     private var welcomeMessage: some View {
@@ -364,6 +384,8 @@ private struct BlinkingCursor: View {
                 cost: 0.42
             ),
         ],
+        hasMoreMessages: true,
+        onLoadMore: {},
         isThinking: true,
         streamingText: "Also you can add `@MainActor` for **thread safety**...",
         runningCost: 1.23,
@@ -378,6 +400,8 @@ private struct BlinkingCursor: View {
     ChatScrollView(
         threadId: nil,
         messages: [],
+        hasMoreMessages: false,
+        onLoadMore: {},
         isThinking: false,
         streamingText: "",
         runningCost: 0.0,

@@ -199,6 +199,8 @@ struct ProjectChipsView: View {
             // Tap on chip → open project settings (IT-09)
             onOpenSettings(project.id)
         }
+        .disabled(isThinking)
+        .opacity(isThinking ? 0.5 : 1.0)
         .help("Проект: \(project.displayName) (\(project.settings.agentRole.displayName))\nТап — настройки\(isThinking ? "" : ", × — убрать из треда")")
     }
 
