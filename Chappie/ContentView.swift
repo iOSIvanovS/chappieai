@@ -96,6 +96,11 @@
 //   displayedMessages is fully populated. This prevents "bad range" crashes
 //   that occurred when scrollTo fired before VStack had the new thread's content.
 //
+// LOADING HISTORY INDICATOR (UX-LOADING):
+//   ChatScrollView receives isLoadingHistory = viewModel.isLoadingThread.
+//   While true: a centered ProgressView is shown instead of messages or welcome screen.
+//   This prevents the "flash of welcome message" on app launch.
+//
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
 // IT-11: Thread settings sheet, last-thread restore.
@@ -348,12 +353,15 @@ struct ContentView: View {
             // SCROLL TRIGGER FIX (UX-SCROLL-TRIGGER):
             // scrollToBottomTrigger replaces threadId — ensures scrollTo fires only after
             // displayedMessages is fully populated (incremented at end of resetPagination).
+            // UX-LOADING: isLoadingHistory forwarded so ChatScrollView shows a spinner
+            // instead of the welcome screen while SwiftData is fetching thread history.
             ChatScrollView(
                 scrollToBottomTrigger: viewModel.scrollToBottomTrigger,
                 messages: viewModel.displayedMessages,
                 hasMoreMessages: viewModel.hasMoreMessages,
                 onLoadMore: { viewModel.loadMoreMessages() },
                 isThinking: viewModel.isThinking,
+                isLoadingHistory: viewModel.isLoadingThread,
                 streamingText: viewModel.streamingText,
                 runningCost: viewModel.runningCost,
                 headerHeight: topPanelHeight + safeAreaTop,

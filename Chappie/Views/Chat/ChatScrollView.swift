@@ -56,6 +56,11 @@
 //
 // SCROLLBAR:
 // Hidden via scrollIndicators(.never) — not needed in this chat UI aesthetic.
+//
+// LOADING HISTORY INDICATOR (UX-LOADING):
+// isLoadingHistory is forwarded from ViewModel.isLoadingThread.
+// While true: a centered ProgressView is shown instead of messages or welcome screen.
+// This prevents the "flash of welcome message" on app launch while SwiftData loads.
 
 import SwiftUI
 
@@ -83,6 +88,12 @@ struct ChatScrollView: View {
 
     /// Flag: Chappie is thinking (show spinner or streaming bubble)
     let isThinking: Bool
+
+    /// True while history is being loaded from SwiftData.
+    ///
+    /// UX-LOADING: when true, a centered ProgressView replaces the message list.
+    /// Prevents the welcome screen from flashing before history is ready.
+    let isLoadingHistory: Bool
 
     /// Accumulated streaming response text.
     ///
@@ -125,40 +136,47 @@ struct ChatScrollView: View {
                         .frame(height: headerHeight)
                         .id("top")
 
-                    // "Load earlier messages" button — visible when older messages exist.
-                    if hasMoreMessages {
-                        loadMoreButton
-                            .transition(.opacity)
-                    }
-
-                    // Welcome screen — shown only when chat is empty
-                    if messages.isEmpty && !isThinking {
-                        welcomeMessage
+                    if isLoadingHistory {
+                        // UX-LOADING: history is being fetched from SwiftData.
+                        // Show a centered spinner so the user sees activity, not an empty screen.
+                        historyLoadingIndicator
                             .transition(.opacity)
                     } else {
-                        ForEach(messages) { msg in
-                            MessageBubbleView(msg: msg)
-                                // Stable ID per message — VStack uses this for identity.
-                                .id(msg.id)
-                        }
-                    }
-
-                    // STREAMING BLOCK:
-                    // 1. isThinking == false → nothing
-                    // 2. isThinking == true, streamingText == "" → spinner
-                    // 3. isThinking == true, streamingText != "" → live bubble
-                    if isThinking {
-                        if streamingText.isEmpty {
-                            thinkingIndicator
+                        // "Load earlier messages" button — visible when older messages exist.
+                        if hasMoreMessages {
+                            loadMoreButton
                                 .transition(.opacity)
-                                .id("thinking-spinner")
+                        }
+
+                        // Welcome screen — shown only when chat is empty and not loading
+                        if messages.isEmpty && !isThinking {
+                            welcomeMessage
+                                .transition(.opacity)
                         } else {
-                            streamingBubble
-                                .transition(.asymmetric(
-                                    insertion: .move(edge: .bottom).combined(with: .opacity),
-                                    removal: .opacity
-                                ))
-                                .id("thinking-streaming")
+                            ForEach(messages) { msg in
+                                MessageBubbleView(msg: msg)
+                                    // Stable ID per message — VStack uses this for identity.
+                                    .id(msg.id)
+                            }
+                        }
+
+                        // STREAMING BLOCK:
+                        // 1. isThinking == false → nothing
+                        // 2. isThinking == true, streamingText == "" → spinner
+                        // 3. isThinking == true, streamingText != "" → live bubble
+                        if isThinking {
+                            if streamingText.isEmpty {
+                                thinkingIndicator
+                                    .transition(.opacity)
+                                    .id("thinking-spinner")
+                            } else {
+                                streamingBubble
+                                    .transition(.asymmetric(
+                                        insertion: .move(edge: .bottom).combined(with: .opacity),
+                                        removal: .opacity
+                                    ))
+                                    .id("thinking-streaming")
+                            }
                         }
                     }
 
@@ -172,6 +190,7 @@ struct ChatScrollView: View {
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: messages.count)
                 .animation(.easeInOut(duration: 0.25), value: isThinking)
                 .animation(.easeInOut(duration: 0.3), value: streamingText.isEmpty)
+                .animation(.easeInOut(duration: 0.2), value: isLoadingHistory)
             }
             .scrollIndicators(.never)
             // THREAD SWITCH: .task(id:) runs AFTER the view body has been committed to layout.
@@ -229,6 +248,17 @@ struct ChatScrollView: View {
     }
 
     // MARK: - Subviews
+
+    /// Centered spinner shown while history is loading from SwiftData.
+    ///
+    /// UX-LOADING: replaces the message list and welcome screen during the brief
+    /// window between app launch and SwiftData returning the thread's messages.
+    private var historyLoadingIndicator: some View {
+        ProgressView()
+            .controlSize(.regular)
+            .frame(maxWidth: .infinity)
+            .padding(.top, 40)
+    }
 
     /// "Load earlier messages" button — shown at the top when hasMoreMessages == true.
     private var loadMoreButton: some View {
@@ -414,12 +444,30 @@ private struct BlinkingCursor: View {
         hasMoreMessages: true,
         onLoadMore: {},
         isThinking: true,
+        isLoadingHistory: false,
         streamingText: "Also you can add `@MainActor` for **thread safety**...",
         runningCost: 1.23,
         headerHeight: 80,
         footerHeight: 80
     )
     .frame(width: 650, height: 500)
+    .background(Color(NSColor.windowBackgroundColor))
+}
+
+#Preview("Loading history") {
+    ChatScrollView(
+        scrollToBottomTrigger: 0,
+        messages: [],
+        hasMoreMessages: false,
+        onLoadMore: {},
+        isThinking: false,
+        isLoadingHistory: true,
+        streamingText: "",
+        runningCost: 0.0,
+        headerHeight: 60,
+        footerHeight: 80
+    )
+    .frame(width: 650, height: 300)
     .background(Color(NSColor.windowBackgroundColor))
 }
 
@@ -430,6 +478,7 @@ private struct BlinkingCursor: View {
         hasMoreMessages: false,
         onLoadMore: {},
         isThinking: false,
+        isLoadingHistory: false,
         streamingText: "",
         runningCost: 0.0,
         headerHeight: 60,

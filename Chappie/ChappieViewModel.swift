@@ -106,6 +106,11 @@
 // selectThread() loads messages via store.loadMessages().
 // send() saves messages via store.saveMessages() after each response.
 // clearHistory() saves an empty array to the thread's SwiftData record.
+//
+// LOADING HISTORY INDICATOR (UX-LOADING):
+// isLoadingThread is exposed as private(set) so ChatScrollView can show a ProgressView
+// while history is being loaded from SwiftData. This prevents the welcome screen flash
+// that occurred when the app started and the history was not yet available.
 
 import SwiftUI
 import ChappieCore
@@ -182,6 +187,12 @@ final class ChappieViewModel {
     // Balance is NOT persisted via didSet — use saveBalance(for:) / loadBalance(for:) explicitly.
     // This prevents the old global "savedBalance" key from being written accidentally.
     var currentBalance: Double?
+
+    /// True while history is being loaded from SwiftData for the selected thread.
+    ///
+    /// UX-LOADING: exposed as private(set) so ChatScrollView can show a spinner instead
+    /// of the welcome screen, preventing the flash of empty state on app launch.
+    private(set) var isLoadingThread: Bool = false
 
     // MARK: - Active Request Task
     //
@@ -826,6 +837,10 @@ final class ChappieViewModel {
         // UX-RESTORE: persist the selected thread ID for next launch
         saveLastActiveThreadId(thread.id)
 
+        // UX-LOADING: signal to ChatScrollView that history is being fetched.
+        // This prevents the welcome screen from flashing before messages appear.
+        self.isLoadingThread = true
+
         do {
             let settings = try await store.loadSettings(forThreadId: thread.id)
             self.activeThreadSettings = settings
@@ -859,17 +874,18 @@ final class ChappieViewModel {
                 as: ChatMessage.self
             )
 
-            self.isLoadingThread = true
             self.messages = loaded
             // fireScrollTrigger: true — view is on screen, safe to scroll.
             // This is the ONLY call site that passes true.
             resetPagination(fireScrollTrigger: true)
-            self.isLoadingThread = false
 
             print("[ChappieViewModel] Thread '\(thread.title)' selected (\(loaded.count) messages)")
         } catch {
             print("[ChappieViewModel] Error loading thread '\(thread.title)': \(error)")
         }
+
+        // UX-LOADING: history is ready, hide the spinner.
+        self.isLoadingThread = false
 
         await loadProjectsForThread(thread)
         buildAndSyncMemoryContext()
@@ -879,8 +895,6 @@ final class ChappieViewModel {
         // Guarantees the balance pill appears on startup even when switchProvider() was skipped.
         refreshBalanceForActiveProvider()
     }
-
-    private var isLoadingThread: Bool = false
 
     func createNewThread() {
         guard let store = threadStore else { return }
@@ -897,12 +911,10 @@ final class ChappieViewModel {
                         self.showNewThreadProviderPicker = true
                     } else {
                         await selectThread(newThread)
-                        self.isLoadingThread = true
                         self.messages = []
                         // View is on screen here — but selectThread already fired the trigger.
                         // Use false to avoid double scroll.
                         resetPagination(fireScrollTrigger: false)
-                        self.isLoadingThread = false
                         self.activeProjects = []
                         buildAndSyncMemoryContext()
                         await syncActiveMemoryContext()
@@ -959,11 +971,9 @@ final class ChappieViewModel {
         // Select the thread — this loads messages (empty) and finalizes state.
         // selectThread() calls resetPagination(fireScrollTrigger: true) internally.
         await selectThread(thread)
-        self.isLoadingThread = true
         self.messages = []
         // selectThread already fired the trigger — use false to avoid double scroll.
         resetPagination(fireScrollTrigger: false)
-        self.isLoadingThread = false
         self.activeProjects = []
         buildAndSyncMemoryContext()
         await syncActiveMemoryContext()
@@ -1168,6 +1178,7 @@ final class ChappieViewModel {
         Task {
             do {
                 var updatedIds = thread.projectIds
+                // Remove the project with matching id from the thread's binding list
                 updatedIds.removeAll { $0 == projectId }
                 try await tStore.updateProjectBindings(updatedIds, forThreadId: thread.id)
 
