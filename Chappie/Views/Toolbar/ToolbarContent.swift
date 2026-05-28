@@ -2,14 +2,19 @@
 // Chappie
 //
 // Toolbar content for the main window.
-// Contains: sidebar toggle button, settings button.
+// Contains: sidebar toggle, thread title, settings button.
+//
+// THREAD TITLE:
+// Displayed in the center of the toolbar as "Chappie — <thread name>".
+// Uses ToolbarItem(placement: .principal) — standard macOS center placement.
+// Hidden when no thread is active (e.g. onboarding state).
 //
 // SIDEBAR BUTTON:
 // Custom button with "list.bullet" icon — replaces the system NavigationSplitView
 // toggle. Placed on the leading edge to match standard macOS sidebar button position.
 //
 // BALANCE:
-// Balance is now displayed as a floating pill inside ModelPickerRow (top panel),
+// Balance is displayed as a floating pill inside ModelPickerRow (top panel),
 // tied to the active provider. It updates live during streaming.
 //
 // SETTINGS BUTTON:
@@ -24,6 +29,9 @@ struct ChappieToolbarContent: ToolbarContent {
     let isApiKeyValid: Bool
     /// Sidebar visibility binding — toggled by the leading button
     @Binding var isSidebarVisible: Bool
+    /// Active thread title — shown next to "Chappie" in the toolbar center.
+    /// nil = no thread active (onboarding), title is hidden.
+    let activeThreadTitle: String?
     /// Callback: user tapped the settings button
     let onOpenSettings: () -> Void
 
@@ -39,6 +47,29 @@ struct ChappieToolbarContent: ToolbarContent {
                 Image(systemName: "list.bullet")
             }
             .help("Показать / скрыть треды")
+        }
+
+        // Thread title — center of toolbar.
+        // Shows "Chappie — <thread name>" so the user always knows which thread is active.
+        if let title = activeThreadTitle {
+            ToolbarItem(placement: .principal) {
+                HStack(spacing: 6) {
+                    Text("Chappie")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.primary)
+
+                    Text("—")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+
+                    Text(title)
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: 300)
+                }
+            }
         }
 
         // Settings button — always visible, orange if no provider configured

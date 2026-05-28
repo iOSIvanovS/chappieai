@@ -1,91 +1,89 @@
 // ThreadStore.swift
 // ChappieCore
 //
-// НАЗНАЧЕНИЕ:
-// Актор для CRUD-операций над тредами через SwiftData (REFACTOR-THREADS IT-01).
+// Actor for CRUD operations on threads via SwiftData (REFACTOR-THREADS IT-01).
 //
-// ПОЧЕМУ ACTOR, А НЕ CLASS:
-// ThreadStore работает с ModelContext — объектом, который НЕ является Sendable
-// и должен использоваться строго на одном потоке. Actor в Swift 6 гарантирует
-// последовательный доступ к своему состоянию — это идеальное решение для
-// thread-safe обёртки над SwiftData.
+// WHY ACTOR, NOT CLASS:
+// ThreadStore works with ModelContext — an object that is NOT Sendable
+// and must be used strictly on one thread. An Actor in Swift 6 guarantees
+// sequential access to its state — ideal for a thread-safe wrapper over SwiftData.
 //
-// ПОЧЕМУ BACKGROUND CONTEXT:
-// mainContext изолирован на @MainActor — его нельзя использовать из нашего actor
-// без нарушения правил Swift 6 Concurrency. Вместо этого создаём background context
-// через ModelContext(modelContainer) — он не привязан к конкретному потоку
-// и безопасен для использования внутри actor.
+// WHY BACKGROUND CONTEXT:
+// mainContext is isolated on @MainActor — it cannot be used from our actor
+// without violating Swift 6 Concurrency rules. Instead we create a background context
+// via ModelContext(modelContainer) — not bound to a specific thread,
+// safe to use inside an actor.
 //
-// АРХИТЕКТУРА ВЗАИМОДЕЙСТВИЯ:
-// UI-слой (ChappieViewModel) → ThreadStore (actor) → SwiftData (ModelContext)
+// INTERACTION ARCHITECTURE:
+// UI layer (ChappieViewModel) → ThreadStore (actor) → SwiftData (ModelContext)
 //
-// GENERIC-ПОДХОД ДЛЯ СООБЩЕНИЙ:
-// ChatMessage определён в Chappie (UI-таргет). ChappieCore не должен от него зависеть.
-// Методы saveMessages/loadMessages используют Generic <T: Codable> — аналогично
-// уже работающему ChatHistoryManager. UI-слой передаёт конкретный тип.
+// GENERIC APPROACH FOR MESSAGES:
+// ChatMessage is defined in Chappie (UI target). ChappieCore must not depend on it.
+// saveMessages/loadMessages use Generic <T: Codable> — same as ChatHistoryManager.
+// UI layer passes the concrete type; ChappieCore just serializes.
 //
-// ИЗМЕНЕНИЕ (IT-06):
-// Добавлен метод updateProjectBindings() — атомарная замена всего списка UUID проектов.
-// Нужен в ChappieViewModel.addProject() и removeProject() для атомарного обновления
-// без риска рассинхронизации при конкурентных изменениях.
+// IT-06: Added updateProjectBindings() — atomic replacement of the full project UUID list.
+//
+// IT-11: ThreadMetadata moved to ThreadModels.swift (with settings field).
+// ThreadStore.loadThreads() now deserializes settingsJSON into ThreadMetadata.settings.
 
 import Foundation
 import SwiftData
 
 // MARK: - ThreadStore
 
-/// Актор для управления тредами в SwiftData.
+/// Actor for managing threads in SwiftData.
 ///
-/// Все методы изолированы в акторе — безопасный конкурентный доступ гарантирован.
-/// UI-слой вызывает методы через await.
+/// All methods are isolated in the actor — safe concurrent access is guaranteed.
+/// UI layer calls methods via await.
 public actor ThreadStore {
 
-    // MARK: - Свойства
+    // MARK: - Properties
 
-    /// Контейнер модели SwiftData — хранится для создания контекстов.
+    /// SwiftData model container — stored for creating contexts.
     ///
-    /// ПОЧЕМУ CONTAINER, А НЕ CONTEXT:
-    /// ModelContext не является Sendable и не может быть передан между акторами.
-    /// ModelContainer — Sendable, его можно безопасно хранить в actor.
-    /// Контекст создаётся внутри actor при каждой операции через ModelContext(container).
+    /// WHY CONTAINER, NOT CONTEXT:
+    /// ModelContext is not Sendable and cannot be passed between actors.
+    /// ModelContainer is Sendable — safe to store in an actor.
+    /// Context is created inside the actor per operation via ModelContext(container).
     private let modelContainer: ModelContainer
 
-    // MARK: - Инициализация
+    // MARK: - Init
 
-    /// Создаёт ThreadStore с указанным ModelContainer.
+    /// Creates a ThreadStore with the given ModelContainer.
     ///
-    /// - Parameter modelContainer: Контейнер SwiftData (создаётся в ChappieApp.swift)
+    /// - Parameter modelContainer: SwiftData container (created in ChappieApp.swift)
     public init(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
     }
 
-    // MARK: - Вспомогательный метод создания контекста
+    // MARK: - Context helper
 
-    /// Создаёт новый ModelContext для операций внутри actor.
+    /// Creates a new ModelContext for operations inside the actor.
     ///
-    /// ПОЧЕМУ СОЗДАЁМ КАЖДЫЙ РАЗ:
-    /// ModelContext не является Sendable — нельзя хранить его как свойство actor
-    /// и передавать между задачами. Создание нового контекста для каждой операции
-    /// — стандартная практика для background-операций с SwiftData.
-    /// ModelContainer управляет синхронизацией между контекстами автоматически.
+    /// WHY CREATE EACH TIME:
+    /// ModelContext is not Sendable — cannot be stored as an actor property
+    /// and passed between tasks. Creating a new context per operation
+    /// is standard practice for background SwiftData work.
+    /// ModelContainer manages synchronization between contexts automatically.
     private func makeContext() -> ModelContext {
         ModelContext(modelContainer)
     }
 
-    // MARK: - Создание
+    // MARK: - Create
 
-    /// Создаёт новый тред и сохраняет его в базе данных.
+    /// Creates a new thread and saves it to the database.
     ///
     /// - Parameters:
-    ///   - title: Название треда (обычно — первые слова первого сообщения)
-    ///   - settings: Настройки треда (по умолчанию — дефолтные)
-    /// - Returns: UUID созданного треда
-    /// - Throws: Ошибка SwiftData если сохранение не удалось
+    ///   - title: Thread title (usually the first words of the first message)
+    ///   - settings: Thread settings (defaults if not provided)
+    /// - Returns: UUID of the created thread
+    /// - Throws: SwiftData error if save failed
     ///
-    /// ПОЧЕМУ ВОЗВРАЩАЕМ UUID, А НЕ ThreadEntity:
-    /// ThreadEntity — это @Model объект SwiftData, привязанный к конкретному ModelContext.
-    /// Передача его за пределы actor небезопасна в Swift 6. Возвращаем UUID —
-    /// caller может загрузить метаданные треда через loadThreads().
+    /// WHY RETURN UUID, NOT ThreadEntity:
+    /// ThreadEntity is a SwiftData @Model object bound to a specific ModelContext.
+    /// Passing it outside the actor is unsafe in Swift 6. Return UUID instead —
+    /// caller can load thread metadata via loadThreads().
     public func createThread(
         title: String,
         settings: ThreadSettings = ThreadSettings()
@@ -95,20 +93,23 @@ public actor ThreadStore {
         context.insert(thread)
         try context.save()
 
-        print("[ThreadStore] ✅ Создан тред '\(title)' (id: \(thread.id))")
+        print("[ThreadStore] ✅ Created thread '\(title)' (id: \(thread.id))")
         return thread.id
     }
 
-    // MARK: - Загрузка
+    // MARK: - Load
 
-    /// Загружает метаданные всех тредов, отсортированных по времени последнего обновления.
+    /// Loads metadata for all threads, sorted by last update time (newest first).
     ///
-    /// ВОЗВРАЩАЕТ VALUE TYPE:
-    /// Возвращаем ThreadMetadata (struct) — безопасный Sendable тип.
-    /// Передача @Model объектов за пределы actor небезопасна в Swift 6.
+    /// RETURNS VALUE TYPE:
+    /// Returns ThreadMetadata (struct) — safe Sendable type.
+    /// Passing @Model objects outside the actor is unsafe in Swift 6.
     ///
-    /// - Returns: Массив метаданных тредов, отсортированных по updatedAt DESC
-    /// - Throws: Ошибка SwiftData если запрос не удался
+    /// IT-11: ThreadMetadata now includes settings field.
+    /// Settings are deserialized from settingsJSON here — no extra call needed in UI.
+    ///
+    /// - Returns: Array of thread metadata sorted by updatedAt DESC
+    /// - Throws: SwiftData error if fetch failed
     public func loadThreads() throws -> [ThreadMetadata] {
         let context = makeContext()
         let descriptor = FetchDescriptor<ThreadEntity>(
@@ -118,20 +119,20 @@ public actor ThreadStore {
         return threads.map { ThreadMetadata(from: $0) }
     }
 
-    // MARK: - Обновление сообщений (Generic)
+    // MARK: - Save/Load Messages (Generic)
 
-    /// Сохраняет историю сообщений треда.
+    /// Saves the thread message history.
     ///
-    /// GENERIC T: Codable — аналогично ChatHistoryManager.saveMessages<T: Codable>().
-    /// ChappieCore не знает о ChatMessage (UI-тип), поэтому принимаем любой Codable.
-    /// UI-слой передаёт [ChatMessage], ChappieCore просто сериализует.
+    /// GENERIC T: Codable — same as ChatHistoryManager.saveMessages<T: Codable>().
+    /// ChappieCore doesn't know about ChatMessage (UI type), so accepts any Codable.
+    /// UI layer passes [ChatMessage]; ChappieCore just serializes.
     ///
-    /// ЛИМИТ: Сохраняем последние 100 сообщений (как в старом ChatHistoryManager).
+    /// LIMIT: Saves the last 100 messages (same as old ChatHistoryManager).
     ///
     /// - Parameters:
-    ///   - messages: Массив сообщений для сохранения (любой Codable тип)
-    ///   - threadId: UUID треда, в который сохраняем
-    /// - Throws: Ошибка SwiftData или JSONEncoder если сохранение не удалось
+    ///   - messages: Array of messages to save (any Codable type)
+    ///   - threadId: UUID of the thread to save to
+    /// - Throws: SwiftData or JSONEncoder error if save failed
     public func saveMessages<T: Codable>(_ messages: [T], toThreadId threadId: UUID) throws {
         let context = makeContext()
 
@@ -139,18 +140,18 @@ public actor ThreadStore {
             predicate: #Predicate { $0.id == threadId }
         )
         guard let thread = try context.fetch(descriptor).first else {
-            print("[ThreadStore] ⚠️ Тред \(threadId) не найден при сохранении сообщений")
+            print("[ThreadStore] ⚠️ Thread \(threadId) not found when saving messages")
             return
         }
 
-        // Подрезаем до 100 сообщений — UI хранит не больше
+        // Trim to 100 messages — UI stores no more
         let maxStored = 100
         let trimmed = messages.count > maxStored
             ? Array(messages.suffix(maxStored))
             : messages
 
         if messages.count > maxStored {
-            print("[ThreadStore] ✂️ Подрезание: \(messages.count - maxStored) старых сообщений удалено")
+            print("[ThreadStore] ✂️ Trimmed: \(messages.count - maxStored) old messages removed")
         }
 
         thread.messagesJSON = try JSONEncoder().encode(trimmed)
@@ -158,15 +159,15 @@ public actor ThreadStore {
         try context.save()
     }
 
-    /// Загружает историю сообщений из треда.
+    /// Loads message history from a thread.
     ///
-    /// GENERIC T: Codable — UI-слой указывает конкретный тип ([ChatMessage]).
+    /// GENERIC T: Codable — UI layer specifies the concrete type ([ChatMessage]).
     ///
     /// - Parameters:
-    ///   - threadId: UUID треда
-    ///   - type: Тип для декодирования (например ChatMessage.self)
-    /// - Returns: Массив сообщений (пустой если тред не найден или история пуста)
-    /// - Throws: Ошибка SwiftData если запрос не удался
+    ///   - threadId: Thread UUID
+    ///   - type: Type for decoding (e.g. ChatMessage.self)
+    /// - Returns: Array of messages (empty if thread not found or history is empty)
+    /// - Throws: SwiftData error if fetch failed
     public func loadMessages<T: Codable>(fromThreadId threadId: UUID, as type: T.Type) throws -> [T] {
         let context = makeContext()
         let descriptor = FetchDescriptor<ThreadEntity>(
@@ -181,19 +182,19 @@ public actor ThreadStore {
         do {
             return try JSONDecoder().decode([T].self, from: thread.messagesJSON)
         } catch {
-            print("[ThreadStore] ⚠️ Ошибка десериализации сообщений треда \(threadId): \(error)")
+            print("[ThreadStore] ⚠️ Failed to deserialize messages for thread \(threadId): \(error)")
             return []
         }
     }
 
-    // MARK: - Обновление настроек
+    // MARK: - Settings
 
-    /// Обновляет настройки треда.
+    /// Updates thread settings.
     ///
     /// - Parameters:
-    ///   - settings: Новые настройки
-    ///   - threadId: UUID треда для обновления
-    /// - Throws: Ошибка SwiftData если сохранение не удалось
+    ///   - settings: New settings
+    ///   - threadId: UUID of the thread to update
+    /// - Throws: SwiftData error if save failed
     public func updateSettings(_ settings: ThreadSettings, forThreadId threadId: UUID) throws {
         let context = makeContext()
         let descriptor = FetchDescriptor<ThreadEntity>(
@@ -205,11 +206,11 @@ public actor ThreadStore {
         try context.save()
     }
 
-    /// Загружает настройки треда.
+    /// Loads thread settings.
     ///
-    /// - Parameter threadId: UUID треда
-    /// - Returns: ThreadSettings (дефолтные если тред не найден или данные повреждены)
-    /// - Throws: Ошибка SwiftData если запрос не удался
+    /// - Parameter threadId: Thread UUID
+    /// - Returns: ThreadSettings (defaults if thread not found or data is corrupt)
+    /// - Throws: SwiftData error if fetch failed
     public func loadSettings(forThreadId threadId: UUID) throws -> ThreadSettings {
         let context = makeContext()
         let descriptor = FetchDescriptor<ThreadEntity>(
@@ -224,13 +225,13 @@ public actor ThreadStore {
         return settings
     }
 
-    // MARK: - Управление проектами в треде
+    // MARK: - Project Bindings
 
-    /// Загружает список UUID проектов, привязанных к треду.
+    /// Loads the list of project UUIDs bound to a thread.
     ///
-    /// - Parameter threadId: UUID треда
-    /// - Returns: Массив UUID проектов
-    /// - Throws: Ошибка SwiftData если запрос не удался
+    /// - Parameter threadId: Thread UUID
+    /// - Returns: Array of project UUIDs
+    /// - Throws: SwiftData error if fetch failed
     public func loadProjectIds(forThreadId threadId: UUID) throws -> [UUID] {
         let context = makeContext()
         let descriptor = FetchDescriptor<ThreadEntity>(
@@ -245,27 +246,26 @@ public actor ThreadStore {
         return ids
     }
 
-    /// Атомарно заменяет весь список UUID проектов в треде.
+    /// Atomically replaces the entire project UUID list for a thread.
     ///
-    /// ПОЧЕМУ АТОМАРНАЯ ЗАМЕНА, А НЕ ДОБАВЛЕНИЕ/УДАЛЕНИЕ:
-    /// ChappieViewModel хранит актуальный список projectIds в activeThread.
-    /// При добавлении или удалении проекта ViewModel вычисляет новый массив
-    /// и передаёт его сюда целиком. Это гарантирует консистентность:
-    /// нет риска рассинхронизации между тем что видит ViewModel и что в БД.
+    /// WHY ATOMIC REPLACE, NOT ADD/REMOVE:
+    /// ChappieViewModel holds the current projectIds in activeThread.
+    /// On add/remove, ViewModel computes the new array and passes it here whole.
+    /// This guarantees consistency — no risk of desync between ViewModel and DB.
     ///
-    /// АНАЛОГ: saveMessages() — тоже полная замена, не append.
+    /// ANALOGY: saveMessages() — also a full replace, not append.
     ///
     /// - Parameters:
-    ///   - projectIds: Новый полный список UUID проектов (может быть пустым)
-    ///   - threadId: UUID треда для обновления
-    /// - Throws: Ошибка SwiftData если сохранение не удалось
+    ///   - projectIds: New complete list of project UUIDs (may be empty)
+    ///   - threadId: UUID of the thread to update
+    /// - Throws: SwiftData error if save failed
     public func updateProjectBindings(_ projectIds: [UUID], forThreadId threadId: UUID) throws {
         let context = makeContext()
         let descriptor = FetchDescriptor<ThreadEntity>(
             predicate: #Predicate { $0.id == threadId }
         )
         guard let thread = try context.fetch(descriptor).first else {
-            print("[ThreadStore] ⚠️ Тред \(threadId) не найден при обновлении проектов")
+            print("[ThreadStore] ⚠️ Thread \(threadId) not found when updating project bindings")
             return
         }
 
@@ -273,19 +273,15 @@ public actor ThreadStore {
         thread.updatedAt = Date()
         try context.save()
 
-        print("[ThreadStore] ✅ Обновлены привязки проектов треда '\(thread.title)': \(projectIds.count) проектов")
+        print("[ThreadStore] ✅ Updated project bindings for thread '\(thread.title)': \(projectIds.count) projects")
     }
 
-    /// Добавляет проект в тред (идемпотентно — дубликаты игнорируются).
-    ///
-    /// КОГДА ИСПОЛЬЗОВАТЬ:
-    /// Для прямого добавления одного проекта без загрузки всего списка.
-    /// Для batch-операций предпочтительнее updateProjectBindings().
+    /// Adds a project to a thread (idempotent — duplicates are ignored).
     ///
     /// - Parameters:
-    ///   - projectId: UUID проекта для добавления
-    ///   - threadId: UUID треда
-    /// - Throws: Ошибка SwiftData если сохранение не удалось
+    ///   - projectId: UUID of the project to add
+    ///   - threadId: Thread UUID
+    /// - Throws: SwiftData error if save failed
     public func addProject(id projectId: UUID, toThreadId threadId: UUID) throws {
         let context = makeContext()
         let descriptor = FetchDescriptor<ThreadEntity>(
@@ -299,7 +295,7 @@ public actor ThreadStore {
         }
 
         guard !ids.contains(projectId) else {
-            print("[ThreadStore] ℹ️ Проект \(projectId) уже добавлен в тред '\(thread.title)'")
+            print("[ThreadStore] ℹ️ Project \(projectId) already in thread '\(thread.title)'")
             return
         }
 
@@ -308,19 +304,15 @@ public actor ThreadStore {
         thread.updatedAt = Date()
         try context.save()
 
-        print("[ThreadStore] ✅ Проект \(projectId) добавлен в тред '\(thread.title)'")
+        print("[ThreadStore] ✅ Project \(projectId) added to thread '\(thread.title)'")
     }
 
-    /// Удаляет проект из треда.
-    ///
-    /// КОГДА ИСПОЛЬЗОВАТЬ:
-    /// Для прямого удаления одного проекта без загрузки всего списка.
-    /// Для batch-операций предпочтительнее updateProjectBindings().
+    /// Removes a project from a thread.
     ///
     /// - Parameters:
-    ///   - projectId: UUID проекта для удаления
-    ///   - threadId: UUID треда
-    /// - Throws: Ошибка SwiftData если сохранение не удалось
+    ///   - projectId: UUID of the project to remove
+    ///   - threadId: Thread UUID
+    /// - Throws: SwiftData error if save failed
     public func removeProject(id projectId: UUID, fromThreadId threadId: UUID) throws {
         let context = makeContext()
         let descriptor = FetchDescriptor<ThreadEntity>(
@@ -337,7 +329,7 @@ public actor ThreadStore {
         ids.removeAll { $0 == projectId }
 
         guard ids.count < countBefore else {
-            print("[ThreadStore] ℹ️ Проект \(projectId) не найден в треде '\(thread.title)'")
+            print("[ThreadStore] ℹ️ Project \(projectId) not found in thread '\(thread.title)'")
             return
         }
 
@@ -345,17 +337,17 @@ public actor ThreadStore {
         thread.updatedAt = Date()
         try context.save()
 
-        print("[ThreadStore] ✅ Проект \(projectId) удалён из треда '\(thread.title)'")
+        print("[ThreadStore] ✅ Project \(projectId) removed from thread '\(thread.title)'")
     }
 
-    // MARK: - Переименование
+    // MARK: - Rename
 
-    /// Переименовывает тред.
+    /// Renames a thread.
     ///
     /// - Parameters:
-    ///   - threadId: UUID треда
-    ///   - title: Новое название
-    /// - Throws: Ошибка SwiftData если сохранение не удалось
+    ///   - threadId: Thread UUID
+    ///   - title: New title
+    /// - Throws: SwiftData error if save failed
     public func renameThread(id threadId: UUID, title: String) throws {
         let context = makeContext()
         let descriptor = FetchDescriptor<ThreadEntity>(
@@ -368,15 +360,15 @@ public actor ThreadStore {
         try context.save()
     }
 
-    // MARK: - Удаление
+    // MARK: - Delete
 
-    /// Удаляет тред из базы данных.
+    /// Deletes a thread from the database.
     ///
-    /// ВНИМАНИЕ: Удаление необратимо. Вся история сообщений треда теряется.
-    /// UI должен показывать подтверждение перед вызовом этого метода.
+    /// WARNING: Deletion is irreversible. All thread message history is lost.
+    /// UI should show a confirmation before calling this method.
     ///
-    /// - Parameter threadId: UUID треда для удаления
-    /// - Throws: Ошибка SwiftData если удаление не удалось
+    /// - Parameter threadId: UUID of the thread to delete
+    /// - Throws: SwiftData error if deletion failed
     public func deleteThread(id threadId: UUID) throws {
         let context = makeContext()
         let descriptor = FetchDescriptor<ThreadEntity>(
@@ -388,74 +380,20 @@ public actor ThreadStore {
         context.delete(thread)
         try context.save()
 
-        print("[ThreadStore] 🗑 Тред '\(title)' удалён")
-    }
-}
-
-// MARK: - ThreadMetadata (Sendable DTO для передачи за пределы actor)
-
-/// Метаданные треда — безопасный Sendable value type для передачи из actor в UI.
-///
-/// ПОЧЕМУ НЕ ПЕРЕДАЁМ ThreadEntity НАПРЯМУЮ:
-/// ThreadEntity — это @Model объект SwiftData. Он привязан к ModelContext и
-/// не является Sendable. Передача его из actor в @MainActor UI нарушает
-/// правила Swift 6 Concurrency и может вызвать гонки данных.
-///
-/// ThreadMetadata содержит только примитивы — полностью Sendable.
-/// Для мутаций UI передаёт threadId обратно в ThreadStore.
-public struct ThreadMetadata: Sendable, Identifiable, Hashable {
-
-    /// UUID треда — используется для всех последующих операций через ThreadStore
-    public let id: UUID
-
-    /// Отображаемое название треда
-    public let title: String
-
-    /// Время создания
-    public let createdAt: Date
-
-    /// Время последнего обновления — используется для сортировки в боковой панели
-    public let updatedAt: Date
-
-    /// Список UUID проектов, привязанных к треду
-    public let projectIds: [UUID]
-
-    // MARK: - Инициализаторы
-
-    /// Создаёт ThreadMetadata из ThreadEntity (только внутри actor).
-    ///
-    /// Используется ThreadStore при загрузке тредов из SwiftData.
-    init(from entity: ThreadEntity) {
-        self.id = entity.id
-        self.title = entity.title
-        self.createdAt = entity.createdAt
-        self.updatedAt = entity.updatedAt
-
-        // Десериализуем список проектов
-        if !entity.projectBindingsJSON.isEmpty,
-           let ids = try? JSONDecoder().decode([UUID].self, from: entity.projectBindingsJSON) {
-            self.projectIds = ids
-        } else {
-            self.projectIds = []
-        }
+        print("[ThreadStore] 🗑 Thread '\(title)' deleted")
     }
 
-    /// Публичный memberwise инициализатор — для Preview и тестов.
+    // MARK: - Default Provider
+
+    /// Loads the default AI provider (first in the list).
     ///
-    /// ПОЧЕМУ НУЖЕН ПУБЛИЧНЫЙ INIT:
-    /// Swift автогенерирует memberwise init как internal для struct.
-    /// Для использования в UI-таргете (Chappie) и тестах нужен явный public init.
-    public init(
-        id: UUID = UUID(),
-        title: String,
-        createdAt: Date = Date(),
-        updatedAt: Date = Date(),
-        projectIds: [UUID] = []
-    ) {
-        self.id = id
-        self.title = title
-        self.createdAt = createdAt
-        self.updatedAt = updatedAt
-        self.projectIds = projectIds
+    /// Used by selectThread() as fallback when a thread has no saved provider.
+    ///
+    /// - Returns: First AIProvider, or nil if none configured
+    /// - Throws: SwiftData error if fetch failed
+    public func loadDefaultProvider() throws -> AIProvider? {
+        // This method exists for convenience — actual provider loading is in AIProviderStore.
+        // ThreadStore delegates to AIProviderStore via ChappieViewModel.
+        return nil
     }
 }

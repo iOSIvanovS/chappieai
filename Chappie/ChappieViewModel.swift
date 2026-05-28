@@ -58,6 +58,16 @@
 // When user switches threads, the draft for the old thread is preserved.
 // When user returns — the draft is restored. Cleared on send.
 // ContentView reads/writes draft via getDraft()/setDraft()/clearDraft().
+//
+// LAST ACTIVE THREAD (UX-RESTORE):
+// The last active thread ID is saved to UserDefaults on every selectThread() call.
+// On startup, loadThreadsAndSelectActive() restores it instead of defaulting to [0].
+// Key: "lastActiveThreadId" (UUID string).
+//
+// THREAD SETTINGS (IT-11):
+// updateThreadSettings(_:title:forThreadId:) — saves both title and ThreadSettings.
+// Called from ContentView when user saves ThreadSettingsSheet.
+// ThreadMetadata now includes settings field — no extra store call needed in UI.
 
 import SwiftUI
 import ChappieCore
@@ -189,6 +199,10 @@ final class ChappieViewModel {
     private var projectStore: ProjectStore?
     var providerStore: AIProviderStore?
 
+    // MARK: - UserDefaults keys
+
+    private let lastActiveThreadIdKey = "lastActiveThreadId"
+
     // MARK: - Init
 
     public init() {
@@ -240,6 +254,19 @@ final class ChappieViewModel {
     private func refreshBalanceForActiveProvider() {
         guard let provider = activeProvider else { return }
         self.currentBalance = loadBalance(for: provider.id)
+    }
+
+    // MARK: - Last Active Thread (UX-RESTORE)
+
+    /// Saves the active thread ID to UserDefaults so it can be restored on next launch.
+    private func saveLastActiveThreadId(_ id: UUID) {
+        UserDefaults.standard.set(id.uuidString, forKey: lastActiveThreadIdKey)
+    }
+
+    /// Returns the last active thread ID from UserDefaults, or nil if never saved.
+    private func loadLastActiveThreadId() -> UUID? {
+        guard let str = UserDefaults.standard.string(forKey: lastActiveThreadIdKey) else { return nil }
+        return UUID(uuidString: str)
     }
 
     // MARK: - Connect SwiftData
@@ -649,18 +676,26 @@ final class ChappieViewModel {
             self.threads = loaded
 
             if loaded.isEmpty {
+                // No threads — create a default one
                 let newId = try await store.createThread(title: "Новый тред")
                 let refreshed = try await store.loadThreads()
                 self.threads = refreshed
                 if let newThread = refreshed.first(where: { $0.id == newId }) {
                     await selectThread(newThread)
                 }
-            } else if let current = activeThread,
-                      let updated = loaded.first(where: { $0.id == current.id }) {
-                self.activeThread = updated
-                buildAndSyncMemoryContext()
             } else {
-                await selectThread(loaded[0])
+                // UX-RESTORE: try to restore the last active thread
+                if let lastId = loadLastActiveThreadId(),
+                   let lastThread = loaded.first(where: { $0.id == lastId }) {
+                    await selectThread(lastThread)
+                } else if let current = activeThread,
+                          let updated = loaded.first(where: { $0.id == current.id }) {
+                    self.activeThread = updated
+                    buildAndSyncMemoryContext()
+                } else {
+                    // Fallback: select the most recently updated thread
+                    await selectThread(loaded[0])
+                }
             }
         } catch {
             print("[ChappieViewModel] Error loading threads: \(error)")
@@ -671,6 +706,9 @@ final class ChappieViewModel {
         guard let store = threadStore else { return }
 
         self.activeThread = thread
+
+        // UX-RESTORE: persist the selected thread ID for next launch
+        saveLastActiveThreadId(thread.id)
 
         do {
             let settings = try await store.loadSettings(forThreadId: thread.id)
@@ -834,6 +872,54 @@ final class ChappieViewModel {
                 }
             } catch {
                 print("[ChappieViewModel] Error renaming thread: \(error)")
+            }
+        }
+    }
+
+    // MARK: - IT-11: Thread Settings Update
+
+    /// Saves updated thread settings and optionally renames the thread.
+    ///
+    /// Called from ContentView when user confirms ThreadSettingsSheet.
+    /// Updates both the title (via renameThread) and ThreadSettings (via updateSettings).
+    /// After saving, reloads threads so sidebar and toolbar reflect the new title.
+    ///
+    /// - Parameters:
+    ///   - settings: New ThreadSettings to persist
+    ///   - newTitle: New display title (may be the same as current)
+    ///   - threadId: UUID of the thread to update
+    func updateThreadSettings(_ settings: ThreadSettings, newTitle: String, forThreadId threadId: UUID) {
+        guard let store = threadStore else { return }
+
+        Task {
+            do {
+                // Save title (renameThread handles the title update)
+                try await store.renameThread(id: threadId, title: newTitle)
+
+                // Save context settings — preserve provider/model from existing settings
+                var updatedSettings = settings
+                if let currentProviderId = activeThreadSettings.activeProviderId {
+                    updatedSettings.activeProviderId = currentProviderId
+                }
+                if let currentModelName = activeThreadSettings.activeModelName {
+                    updatedSettings.activeModelName = currentModelName
+                }
+                try await store.updateSettings(updatedSettings, forThreadId: threadId)
+
+                // Reload threads so sidebar title and toolbar update immediately
+                let refreshed = try await store.loadThreads()
+                self.threads = refreshed
+
+                // If this is the active thread — update local state
+                if activeThread?.id == threadId,
+                   let updated = refreshed.first(where: { $0.id == threadId }) {
+                    self.activeThread = updated
+                    self.activeThreadSettings = updatedSettings
+                }
+
+                print("[ChappieViewModel] Thread settings saved for '\(newTitle)'")
+            } catch {
+                print("[ChappieViewModel] Error updating thread settings: \(error)")
             }
         }
     }

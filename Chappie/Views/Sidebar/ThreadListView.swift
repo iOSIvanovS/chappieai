@@ -8,6 +8,7 @@
 // - "Dumb" component — only displays data, all actions via callbacks.
 // - Active thread highlighted via selectedThreadId.
 // - orphanedThreadIds: threads whose provider/model was deleted get a ⚠️ indicator.
+// - onOpenSettings: opens ThreadSettingsSheet for the given thread (via ContentView).
 
 import SwiftUI
 import ChappieCore
@@ -24,6 +25,7 @@ struct ThreadListView: View {
     let onSelect: (ThreadMetadata) -> Void
     let onDelete: (ThreadMetadata) -> Void
     let onRename: (ThreadMetadata, String) -> Void
+    let onOpenSettings: (ThreadMetadata) -> Void
 
     // MARK: - State
 
@@ -59,6 +61,9 @@ struct ThreadListView: View {
                 },
                 onDelete: {
                     onDelete(thread)
+                },
+                onOpenSettings: {
+                    onOpenSettings(thread)
                 }
             )
         }

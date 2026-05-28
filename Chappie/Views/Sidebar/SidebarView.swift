@@ -6,7 +6,7 @@
 // No NavigationSplitView dependency — full control over appearance and behavior.
 //
 // LAYOUT (top to bottom):
-// 1. Header: "Треды" title + "New thread" button (right side) — pinned to top.
+// 1. Header: "Треды" title + "Новый" button (right side) — pinned to top.
 // 2. Thread list — scrollable, fills remaining space.
 // 3. API key warning section — shown only when no providers configured.
 //
@@ -41,6 +41,8 @@ struct SidebarView: View {
     let onCreateThread: () -> Void
     let onDeleteThread: (ThreadMetadata) -> Void
     let onRenameThread: (ThreadMetadata, String) -> Void
+    /// Opens ThreadSettingsSheet for the given thread (handled in ContentView).
+    let onOpenThreadSettings: (ThreadMetadata) -> Void
     /// Called when user taps outside the sidebar to dismiss it
     let onDismiss: () -> Void
 
@@ -74,7 +76,11 @@ struct SidebarView: View {
                                 onDismiss()
                             },
                             onDelete: onDeleteThread,
-                            onRename: onRenameThread
+                            onRename: onRenameThread,
+                            onOpenSettings: { thread in
+                                // Don't dismiss sidebar — sheet opens on top
+                                onOpenThreadSettings(thread)
+                            }
                         )
                         .listRowInsets(EdgeInsets(top: 2, leading: 6, bottom: 2, trailing: 6))
                         .listRowBackground(Color.clear)
@@ -97,7 +103,7 @@ struct SidebarView: View {
 
     // MARK: - Header
 
-    /// Top bar with "Треды" label and "+" button for creating a new thread.
+    /// Top bar with "Треды" label and "Новый" button for creating a new thread.
     /// Placed above the list so it's always accessible without scrolling.
     private var sidebarHeader: some View {
         HStack {
@@ -107,16 +113,24 @@ struct SidebarView: View {
 
             Spacer()
 
-            // New thread button — top right, always visible
+            // New thread button — top right, labelled for clarity
             Button(action: {
                 onCreateThread()
                 onDismiss()
             }) {
-                Image(systemName: "square.and.pencil")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Color.accentColor)
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
+                HStack(spacing: 4) {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 12, weight: .medium))
+                    Text("Новый")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(Color.accentColor)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    Capsule()
+                        .fill(Color.accentColor.opacity(0.12))
+                )
             }
             .buttonStyle(.plain)
             .help("Новый тред")

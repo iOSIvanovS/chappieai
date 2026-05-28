@@ -1,21 +1,23 @@
 // AppConfigTests.swift
 // ChappieCoreTests
 //
-// Юнит-тесты для AppConfig — централизованной конфигурации приложения.
+// Unit tests for AppConfig — centralized application configuration.
 //
-// ЗАЧЕМ ТЕСТИРОВАТЬ КОНФИГ:
-// AppConfig — единственный источник истины для всех "магических чисел".
-// Если кто-то случайно поставит maxOrchestratorSteps = 0 или requestTimeoutSeconds = 1,
-// это сломает всё приложение неочевидным образом. Тесты защищают от таких ошибок.
+// WHY TEST CONFIG:
+// AppConfig is the single source of truth for all "magic numbers".
+// If someone accidentally sets maxOrchestratorSteps = 0 or requestTimeoutSeconds = 1,
+// the entire app breaks in non-obvious ways. Tests guard against such errors.
 //
-// ПРИНЦИП: Проверяем не конкретные значения, а разумные диапазоны.
-// Это позволяет менять параметры тюнинга без поломки тестов.
+// PRINCIPLE: Test reasonable ranges, not specific values.
+// This allows tuning parameters without breaking tests.
 //
-// ИСТОРИЯ ИЗМЕНЕНИЙ:
-// - IT-02 (REFACTOR-THREADS): Добавлены тесты для динамического AppConfig.
-//   Новый init(maxMessagesInContext:) + формула tokenBudget = maxMessages × 500.
-//   Тест clamping: значения вне диапазона 10...100 зажимаются автоматически.
-// - maxHistoryMessages → maxMessagesInContext (поле было переименовано при рефакторинге)
+// CHANGE HISTORY:
+// - IT-02 (REFACTOR-THREADS): Added tests for dynamic AppConfig.
+//   New init(maxMessagesInContext:) + formula tokenBudget = maxMessages × 500.
+//   Clamping test: values outside 10...100 are clamped automatically.
+// - maxHistoryMessages → maxMessagesInContext (field renamed during refactoring)
+// - IT-11: Extended context range from 10...100 to 10...1000 (ThreadSettings).
+//   Updated clamping test to reflect new upper bound.
 
 import Testing
 import Foundation
@@ -24,38 +26,36 @@ import Foundation
 @Suite("AppConfig Tests")
 struct AppConfigTests {
 
-    // MARK: - Тесты дефолтных значений (AppConfig.shared)
+    // MARK: - Default value tests (AppConfig.shared)
 
-    /// Singleton shared возвращает один и тот же экземпляр.
+    /// Singleton shared returns the same instance.
     @Test("AppConfig.shared — один экземпляр (singleton)")
     func sharedIsSingleton() {
         let config1 = AppConfig.shared
         let config2 = AppConfig.shared
-        // Структуры сравниваются по значению — должны быть равны
+        // Structs compare by value — should be equal
         #expect(config1 == config2)
     }
 
-    /// maxOrchestratorSteps должен быть в разумном диапазоне.
+    /// maxOrchestratorSteps should be in a reasonable range.
     @Test("maxOrchestratorSteps в разумном диапазоне [10...1000]")
     func maxOrchestratorStepsIsReasonable() {
         let config = AppConfig.shared
-        // Меньше 10 — агент не успеет выполнить сложную задачу
-        // Больше 1000 — риск бесконечного цикла и огромных расходов
         #expect(config.maxOrchestratorSteps >= 10)
         #expect(config.maxOrchestratorSteps <= 1000)
     }
 
-    /// maxMessagesInContext — жёсткий лимит на количество сообщений в контекстном окне.
-    @Test("maxMessagesInContext в разумном диапазоне [5...100]")
+    /// maxMessagesInContext — hard limit on the number of messages in the context window.
+    @Test("maxMessagesInContext в разумном диапазоне [5...1000]")
     func maxMessagesInContextIsReasonable() {
         let config = AppConfig.shared
-        // Меньше 5 — контекст будет слишком маленьким для связного диалога
-        // Больше 100 — риск превышения контекстного окна модели
+        // Less than 5 — context too small for coherent dialogue
+        // More than 1000 — risk of exceeding model context window
         #expect(config.maxMessagesInContext >= 5)
-        #expect(config.maxMessagesInContext <= 100)
+        #expect(config.maxMessagesInContext <= 1000)
     }
 
-    /// requestTimeoutSeconds должен быть достаточным для сложных задач.
+    /// requestTimeoutSeconds should be adequate for complex tasks.
     @Test("requestTimeoutSeconds достаточен для сложных задач (>= 60 сек)")
     func requestTimeoutIsAdequate() {
         let config = AppConfig.shared
@@ -63,7 +63,7 @@ struct AppConfigTests {
         #expect(config.requestTimeoutSeconds <= 600)
     }
 
-    /// connectionTimeoutSeconds должен быть разумным.
+    /// connectionTimeoutSeconds should be reasonable.
     @Test("connectionTimeoutSeconds в разумном диапазоне [10...60]")
     func connectionTimeoutIsReasonable() {
         let config = AppConfig.shared
@@ -71,64 +71,66 @@ struct AppConfigTests {
         #expect(config.connectionTimeoutSeconds <= 60)
     }
 
-    /// connectionTimeout должен быть меньше requestTimeout.
+    /// connectionTimeout must be less than requestTimeout.
     @Test("connectionTimeout < requestTimeout (логическое ограничение)")
     func connectionTimeoutLessThanRequestTimeout() {
         let config = AppConfig.shared
         #expect(config.connectionTimeoutSeconds < config.requestTimeoutSeconds)
     }
 
-    // MARK: - Тесты динамического конфига (IT-02)
+    // MARK: - Dynamic config tests (IT-02)
 
-    /// tokenBudget вычисляется как maxMessagesInContext × 500.
+    /// tokenBudget is computed as maxMessagesInContext × 500.
     ///
-    /// ФОРМУЛА: tokenBudget = maxMessagesInContext × 500
-    /// Это ключевой инвариант IT-02 — нарушение формулы сломает всю систему контекста.
+    /// FORMULA: tokenBudget = maxMessagesInContext × 500
+    /// This is the key IT-02 invariant — breaking the formula breaks the entire context system.
     @Test("tokenBudget = maxMessagesInContext × 500 (формула IT-02)")
     func tokenBudgetFormula() {
-        // Проверяем формулу для нескольких значений
         let testCases: [(messages: Int, expectedBudget: Int)] = [
             (10, 5_000),
             (20, 10_000),
             (50, 25_000),
-            (100, 50_000)
+            (100, 50_000),
+            (500, 250_000),
+            (1000, 500_000)
         ]
 
         for testCase in testCases {
             let config = AppConfig(maxMessagesInContext: testCase.messages)
             #expect(
                 config.tokenBudget == testCase.expectedBudget,
-                "Для \(testCase.messages) сообщений ожидаем бюджет \(testCase.expectedBudget), получили \(config.tokenBudget)"
+                "For \(testCase.messages) messages expected budget \(testCase.expectedBudget), got \(config.tokenBudget)"
             )
         }
     }
 
-    /// Значения вне диапазона 10...100 зажимаются автоматически.
+    /// Values outside the range 10...1000 are clamped automatically.
     ///
-    /// ЗАЧЕМ CLAMPING:
-    /// JSON из SwiftData может содержать некорректные данные (повреждение, старая схема).
-    /// Зажимание в init() защищает от аварийных ситуаций: tokenBudget < 0 или > 50,000.
-    @Test("Clamping: значения вне диапазона 10...100 зажимаются")
+    /// WHY CLAMPING:
+    /// JSON from SwiftData may contain invalid data (corruption, old schema).
+    /// Clamping in init() protects against crashes: tokenBudget < 0 or unreasonably large.
+    /// IT-11: Upper bound extended from 100 to 1000 to support deep context setting.
+    @Test("Clamping: значения вне диапазона 10...1000 зажимаются")
     func clampingOutOfRange() {
-        // Слишком маленькое значение → зажимается до 10
+        // Too small → clamped to 10
         let tooSmall = AppConfig(maxMessagesInContext: 3)
         #expect(tooSmall.maxMessagesInContext == 10)
         #expect(tooSmall.tokenBudget == 5_000)
 
-        // Слишком большое значение → зажимается до 100
-        let tooBig = AppConfig(maxMessagesInContext: 999)
-        #expect(tooBig.maxMessagesInContext == 100)
-        #expect(tooBig.tokenBudget == 50_000)
+        // Too large → clamped to 1000
+        let tooBig = AppConfig(maxMessagesInContext: 9999)
+        #expect(tooBig.maxMessagesInContext == 1000)
+        #expect(tooBig.tokenBudget == 500_000)
 
-        // Граничные значения — не зажимаются
+        // Boundary values — not clamped
         let minValid = AppConfig(maxMessagesInContext: 10)
         #expect(minValid.maxMessagesInContext == 10)
 
-        let maxValid = AppConfig(maxMessagesInContext: 100)
-        #expect(maxValid.maxMessagesInContext == 100)
+        let maxValid = AppConfig(maxMessagesInContext: 1000)
+        #expect(maxValid.maxMessagesInContext == 1000)
     }
 
-    /// Дефолтный конфиг (shared) имеет tokenBudget = 20 × 500 = 10,000.
+    /// Default config (shared) has tokenBudget = 20 × 500 = 10,000.
     @Test("AppConfig.shared: tokenBudget = 10,000 (20 сообщений × 500)")
     func sharedTokenBudget() {
         let config = AppConfig.shared
@@ -136,7 +138,7 @@ struct AppConfigTests {
         #expect(config.tokenBudget == 10_000)
     }
 
-    /// AppConfig(settings:) создаёт конфиг из ThreadSettings корректно.
+    /// AppConfig(settings:) correctly creates config from ThreadSettings.
     @Test("AppConfig(settings:) создаётся из ThreadSettings корректно")
     func configFromThreadSettings() {
         let settings = ThreadSettings(maxMessagesInContext: 50)
@@ -146,9 +148,9 @@ struct AppConfigTests {
         #expect(config.tokenBudget == 25_000)
     }
 
-    // MARK: - Тест Codable
+    // MARK: - Codable tests
 
-    /// AppConfig проходит roundtrip encode → decode без потерь.
+    /// AppConfig passes roundtrip encode → decode without loss.
     @Test("AppConfig Codable roundtrip")
     func appConfigCodableRoundtrip() throws {
         let original = AppConfig.shared
@@ -158,7 +160,7 @@ struct AppConfigTests {
         #expect(decoded == original)
     }
 
-    /// Динамический конфиг также проходит Codable roundtrip.
+    /// Dynamic config also passes Codable roundtrip.
     @Test("AppConfig(maxMessagesInContext:) Codable roundtrip")
     func dynamicConfigCodableRoundtrip() throws {
         let original = AppConfig(maxMessagesInContext: 42)
@@ -170,16 +172,15 @@ struct AppConfigTests {
         #expect(decoded.tokenBudget == 42 * 500)
     }
 
-    // MARK: - Тест Sendable
+    // MARK: - Sendable test
 
-    /// AppConfig можно безопасно передавать между акторами (Sendable).
+    /// AppConfig can be safely passed between actors (Sendable).
     @Test("AppConfig передаётся между акторами без ошибок (Sendable)")
     func appConfigIsSendable() async {
-        // Этот тест компилируется только если AppConfig: Sendable
-        // Если Sendable убрать — будет ошибка компиляции, а не рантайм
+        // This test compiles only if AppConfig: Sendable
+        // Removing Sendable causes a compile error, not a runtime error
         let config = AppConfig(maxMessagesInContext: 30)
 
-        // Передаём в другой actor-контекст
         let result = await Task.detached {
             return config.tokenBudget
         }.value

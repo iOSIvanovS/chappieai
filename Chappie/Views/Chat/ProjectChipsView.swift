@@ -9,6 +9,11 @@
 //   Outer HStack has Spacer() so the pill hugs its content on the left.
 //   Consistent with ModelPickerRow and the bottom InputMorphView panel.
 //
+// THREAD SETTINGS GEAR:
+//   A standalone gear pill is placed on the right side of the row (via Spacer).
+//   Mirrors the balance pill pattern in ModelPickerRow.
+//   Tap → onOpenThreadSettings() → ContentView shows ThreadSettingsSheet.
+//
 // IT-09: Tap on chip opens ProjectSettingsSheet.
 // onOpenSettings(UUID) callback passes project ID to ViewModel.
 //
@@ -32,6 +37,7 @@ import ChappieCore
 /// "+" button adds a new project via NSOpenPanel.
 /// "×" button on each chip removes the project from the thread.
 /// Tap on chip opens project settings (IT-09).
+/// Gear pill on the right opens thread settings.
 struct ProjectChipsView: View {
 
     // MARK: - Input
@@ -46,8 +52,11 @@ struct ProjectChipsView: View {
     /// Called when the user taps "×" on a chip.
     let onRemoveProject: (UUID) -> Void
 
-    /// Called when the user taps a chip to open settings (IT-09).
+    /// Called when the user taps a chip to open project settings (IT-09).
     let onOpenSettings: (UUID) -> Void
+
+    /// Called when the user taps the gear pill to open thread settings.
+    let onOpenThreadSettings: () -> Void
 
     // MARK: - Local state
 
@@ -57,10 +66,11 @@ struct ProjectChipsView: View {
     // MARK: - Body
 
     var body: some View {
-        // Outer HStack: pill on the left, Spacer pushes it to hug content width.
-        // Same pattern as ModelPickerRow — no ScrollView, just a plain HStack.
-        HStack(spacing: 0) {
-            // Inner pill: hugs content naturally via fixedSize
+        // Full-width HStack: projects pill on the left, thread settings gear on the right.
+        // Same pattern as ModelPickerRow (model selector left, balance pill right).
+        HStack(spacing: 8) {
+
+            // Left: projects pill — hugs content naturally via fixedSize
             HStack(spacing: 6) {
 
                 // "Проекты" label
@@ -71,11 +81,10 @@ struct ProjectChipsView: View {
                     .padding(.vertical, 4)
                     .background(
                         Capsule()
-//                            .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
                             .fill(.white)
                     )
 
-                // Chips + add button — plain HStack, same as ModelPickerRow inner layout
+                // Chips + add button
                 HStack(spacing: 6) {
                     ForEach(projects) { project in
                         projectChip(for: project)
@@ -85,11 +94,23 @@ struct ProjectChipsView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
-            // Material only on the pill, not on the full-width row
             .background(.ultraThinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
             Spacer()
+
+            // Right: thread settings gear pill — mirrors balance pill in ModelPickerRow
+            Button(action: onOpenThreadSettings) {
+                Image(systemName: "gear")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+            }
+            .buttonStyle(.plain)
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .help("Настройки треда")
         }
     }
 
@@ -176,7 +197,6 @@ struct ProjectChipsView: View {
         Button {
             openFolderPicker()
         } label: {
-            // "+" only — compact, consistent with the pill aesthetic
             Image(systemName: "plus")
                 .font(.system(size: 11, weight: .semibold))
                 .padding(.horizontal, 5)
@@ -234,7 +254,10 @@ struct ProjectChipsView: View {
             print("Удалить: \(id)")
         },
         onOpenSettings: { id in
-            print("Настройки: \(id)")
+            print("Настройки проекта: \(id)")
+        },
+        onOpenThreadSettings: {
+            print("Настройки треда")
         }
     )
     .padding()
@@ -246,7 +269,8 @@ struct ProjectChipsView: View {
         projects: [],
         onAddProject: { _ in },
         onRemoveProject: { _ in },
-        onOpenSettings: { _ in }
+        onOpenSettings: { _ in },
+        onOpenThreadSettings: {}
     )
     .padding()
     .background(Color(NSColor.windowBackgroundColor))

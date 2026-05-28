@@ -3,6 +3,7 @@
 //
 // Data models for the multi-thread system (REFACTOR-THREADS IT-01).
 // IT-10: ThreadSettings includes activeProviderId + activeModelName for per-thread selection.
+// IT-11: ThreadMetadata now includes settings field for direct access in UI without extra store call.
 //
 // JSON SERIALIZATION PRINCIPLE:
 // SwiftData stores only primitives and Data. Complex objects (message arrays,
@@ -159,5 +160,90 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
         self.isUnlimitedContext = isUnlimitedContext
         self.activeProviderId = activeProviderId
         self.activeModelName = activeModelName
+    }
+}
+
+// MARK: - ThreadMetadata (Sendable DTO for passing outside actor)
+
+/// Thread metadata — a safe Sendable value type for passing from actor to UI.
+///
+/// WHY NOT PASS ThreadEntity DIRECTLY:
+/// ThreadEntity is a SwiftData @Model object. It is bound to a ModelContext and
+/// is not Sendable. Passing it from actor to @MainActor UI violates Swift 6
+/// Concurrency rules and can cause data races.
+///
+/// ThreadMetadata contains only primitives and value types — fully Sendable.
+/// For mutations, UI passes threadId back to ThreadStore.
+///
+/// IT-11: settings field added — allows ThreadSettingsSheet to receive current settings
+/// directly from ThreadMetadata without an additional ThreadStore call.
+public struct ThreadMetadata: Sendable, Identifiable, Hashable {
+
+    /// Thread UUID — used for all subsequent operations via ThreadStore
+    public let id: UUID
+
+    /// Display title of the thread
+    public let title: String
+
+    /// Creation time
+    public let createdAt: Date
+
+    /// Last update time — used for sorting in the sidebar
+    public let updatedAt: Date
+
+    /// List of project UUIDs bound to this thread
+    public let projectIds: [UUID]
+
+    /// Current thread settings — included so UI can show them without an extra store call.
+    /// Kept in sync: ThreadStore.loadThreads() always deserializes settingsJSON into this field.
+    public let settings: ThreadSettings
+
+    // MARK: - Initializers
+
+    /// Creates ThreadMetadata from ThreadEntity (inside actor only).
+    ///
+    /// Used by ThreadStore when loading threads from SwiftData.
+    init(from entity: ThreadEntity) {
+        self.id = entity.id
+        self.title = entity.title
+        self.createdAt = entity.createdAt
+        self.updatedAt = entity.updatedAt
+
+        // Deserialize project bindings
+        if !entity.projectBindingsJSON.isEmpty,
+           let ids = try? JSONDecoder().decode([UUID].self, from: entity.projectBindingsJSON) {
+            self.projectIds = ids
+        } else {
+            self.projectIds = []
+        }
+
+        // Deserialize thread settings — fall back to defaults if data is missing or corrupt
+        if !entity.settingsJSON.isEmpty,
+           let settings = try? JSONDecoder().decode(ThreadSettings.self, from: entity.settingsJSON) {
+            self.settings = settings
+        } else {
+            self.settings = ThreadSettings()
+        }
+    }
+
+    /// Public memberwise initializer — for Preview and tests.
+    ///
+    /// WHY EXPLICIT PUBLIC INIT:
+    /// Swift auto-generates memberwise init as internal for struct.
+    /// Explicit public init is needed for use in the UI target (Chappie) and tests.
+    public init(
+        id: UUID = UUID(),
+        title: String,
+        settings: ThreadSettings = ThreadSettings(),
+        projectIds: [UUID] = [],
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.title = title
+        self.settings = settings
+        self.projectIds = projectIds
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
     }
 }

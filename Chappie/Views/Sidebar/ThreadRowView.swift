@@ -8,11 +8,14 @@
 // If the thread's provider or model was deleted, isOrphaned=true.
 // A small ⚠️ icon is shown next to the title.
 //
-// ARCHITECTURE:
-// - Inline rename via TextField on double-click.
-// - Context menu (right-click): rename, delete.
-// - Delete button appears on hover — standard macOS pattern.
-// - Active row highlighted with accent color.
+// HOVER ACTIONS:
+// On hover — gear (settings) and trash (delete) buttons appear on the right.
+// Gear → onOpenSettings callback → ThreadSettingsSheet opens in ContentView.
+// Trash → onDelete callback.
+//
+// RENAME:
+// Double-click or context menu "Rename" → inline TextField appears.
+// Enter commits, Escape cancels.
 
 import SwiftUI
 import ChappieCore
@@ -33,6 +36,7 @@ struct ThreadRowView: View {
     let onCancelRename: () -> Void
     let onStartRename: () -> Void
     let onDelete: () -> Void
+    let onOpenSettings: () -> Void
 
     // MARK: - State
 
@@ -95,16 +99,30 @@ struct ThreadRowView: View {
 
             Spacer()
 
-            // Delete button (appears on hover or when selected)
+            // Action buttons — appear on hover or when selected, hidden during rename
             if (isHovered || isSelected) && !isEditing {
-                Button(action: onDelete) {
-                    Image(systemName: "trash")
-                        .font(.system(size: 11))
-                        .foregroundStyle(isSelected ? Color.white.opacity(0.8) : Color.secondary)
+                HStack(spacing: 4) {
+
+                    // Settings gear button
+                    Button(action: onOpenSettings) {
+                        Image(systemName: "gear")
+                            .font(.system(size: 11))
+                            .foregroundStyle(isSelected ? Color.white.opacity(0.8) : Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Настройки треда")
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
+
+                    // Delete button
+                    Button(action: onDelete) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 11))
+                            .foregroundStyle(isSelected ? Color.white.opacity(0.8) : Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Удалить тред")
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
                 }
-                .buttonStyle(.plain)
-                .help("Удалить тред")
-                .transition(.opacity.combined(with: .scale(scale: 0.8)))
             }
         }
         .padding(.horizontal, 10)
@@ -123,6 +141,11 @@ struct ThreadRowView: View {
                 onStartRename()
             } label: {
                 Label("Переименовать", systemImage: "pencil")
+            }
+            Button {
+                onOpenSettings()
+            } label: {
+                Label("Настройки треда", systemImage: "gear")
             }
             Divider()
             Button(role: .destructive) {
