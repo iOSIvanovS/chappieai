@@ -79,17 +79,27 @@
 // On thread load: initialized to the last PAGE_SIZE messages.
 // loadMoreMessages() — prepends the previous PAGE_SIZE_LOAD messages.
 // hasMoreMessages — true when there are older messages not yet displayed.
-// resetPagination() — called on every thread switch to reset the slice.
+// resetPagination(fireScrollTrigger:) — called on every thread switch.
 // visibleMessages is UNCHANGED — it is used for network context, not UI rendering.
 // This replaces LazyVStack with a plain VStack in ChatScrollView, eliminating
 // the disappearing-messages bug caused by lazy cell recycling.
 //
-// SCROLL TRIGGER FIX (UX-SCROLL-TRIGGER):
-// scrollToBottomTrigger: Int is incremented at the END of resetPagination(),
-// after displayedMessages is fully populated. ChatScrollView observes this value
-// instead of threadId — this guarantees scrollTo("bottom") fires only when the
-// VStack already contains the correct messages. Eliminates "bad range" crash that
-// occurred when threadId changed before displayedMessages was updated.
+// SCROLL TRIGGER FIX v3 (UX-SCROLL-TRIGGER-V3):
+// Root cause of "bad range for [%{public}s]":
+//   loadMessages() is called from init() BEFORE the SwiftUI view tree exists.
+//   The old resetPagination() always incremented scrollToBottomTrigger.
+//   So on first render scrollToBottomTrigger was already 1 — .task(id:) fired
+//   immediately, but ScrollView had no layout geometry yet → "bad range".
+//
+// Fix: resetPagination(fireScrollTrigger: Bool).
+//   fireScrollTrigger=false — only updates displayedMessages/hasMoreMessages/displayedStart.
+//     Used by: loadMessages() (init), clearMessages(), clearHistory(), confirmNewThread().
+//   fireScrollTrigger=true — also increments scrollToBottomTrigger.
+//     Used ONLY by: selectThread() — the only caller that has a live view tree.
+//
+// This guarantees scrollToBottomTrigger stays 0 until selectThread() is called
+// from setModelContainer() AFTER the view is on screen. The .task(id: 0) guard
+// (guard scrollToBottomTrigger > 0) remains as a second safety net.
 
 import SwiftUI
 import ChappieCore
@@ -132,11 +142,12 @@ final class ChappieViewModel {
 
     /// Scroll-to-bottom trigger for ChatScrollView.
     ///
-    /// SCROLL TRIGGER FIX (UX-SCROLL-TRIGGER):
-    /// Incremented at the END of resetPagination() — after displayedMessages is fully
-    /// populated. ChatScrollView watches this value, not threadId.
-    /// This prevents "bad range" crashes caused by scrollTo firing before the VStack
-    /// contains the correct messages for the new thread.
+    /// SCROLL TRIGGER FIX v3 (UX-SCROLL-TRIGGER-V3):
+    /// Starts at 0. Only incremented by resetPagination(fireScrollTrigger: true).
+    /// That variant is called ONLY from selectThread() — which runs after the view tree
+    /// is on screen. loadMessages() in init uses fireScrollTrigger: false, so the
+    /// trigger stays 0 during app startup, preventing "bad range" from a ScrollView
+    /// that has no geometry yet.
     private(set) var scrollToBottomTrigger: Int = 0
 
     /// Messages visible in the chat scroll view.
@@ -261,6 +272,7 @@ final class ChappieViewModel {
 
     public init() {
         self.chatHistoryManager = ChatHistoryManager.shared
+        // fireScrollTrigger: false — view tree doesn't exist yet, scrollToBottomTrigger stays 0.
         loadMessages()
         // Balance is loaded per-provider in switchProvider — not here globally.
         loadWorkspaceWithSecurityScope()
@@ -270,13 +282,14 @@ final class ChappieViewModel {
 
     /// Resets the displayed slice to the last `pageSize` messages.
     ///
-    /// Called every time a new thread is loaded. Ensures the user always sees
-    /// the most recent messages first without rendering the entire history.
+    /// - Parameter fireScrollTrigger: When true, increments scrollToBottomTrigger so
+    ///   ChatScrollView scrolls to bottom. Pass false when called before the view tree
+    ///   exists (init, loadMessages) to avoid "bad range" crash.
     ///
-    /// SCROLL TRIGGER FIX (UX-SCROLL-TRIGGER):
-    /// Increments scrollToBottomTrigger AFTER displayedMessages is populated.
-    /// This guarantees ChatScrollView's onChange fires only when VStack content is ready.
-    private func resetPagination() {
+    /// SCROLL TRIGGER FIX v3 (UX-SCROLL-TRIGGER-V3):
+    /// Only selectThread() passes fireScrollTrigger: true — it is the only caller
+    /// that runs after the view is on screen. All other callers pass false.
+    private func resetPagination(fireScrollTrigger: Bool = false) {
         let count = messages.count
         if count <= pageSize {
             // All messages fit in one page — show everything
@@ -289,9 +302,11 @@ final class ChappieViewModel {
             displayedMessages = Array(messages[displayedStart...])
             hasMoreMessages = true
         }
-        // Fire scroll trigger AFTER displayedMessages is ready — not before.
-        // ChatScrollView observes this value to scroll to bottom on thread switch.
-        scrollToBottomTrigger += 1
+        // Only fire the scroll trigger when the view tree is ready (selectThread path).
+        // Skipped during init/loadMessages — ScrollView has no geometry yet.
+        if fireScrollTrigger {
+            scrollToBottomTrigger += 1
+        }
     }
 
     /// Prepends the previous `pageSizeLoad` messages to the displayed slice.
@@ -849,9 +864,9 @@ final class ChappieViewModel {
 
             self.isLoadingThread = true
             self.messages = loaded
-            // resetPagination() populates displayedMessages AND fires scrollToBottomTrigger.
-            // This guarantees ChatScrollView scrolls only after VStack content is ready.
-            resetPagination()
+            // fireScrollTrigger: true — view is on screen, safe to scroll.
+            // This is the ONLY call site that passes true.
+            resetPagination(fireScrollTrigger: true)
             self.isLoadingThread = false
 
             print("[ChappieViewModel] Thread '\(thread.title)' selected (\(loaded.count) messages)")
@@ -887,7 +902,9 @@ final class ChappieViewModel {
                         await selectThread(newThread)
                         self.isLoadingThread = true
                         self.messages = []
-                        resetPagination()
+                        // View is on screen here — but selectThread already fired the trigger.
+                        // Use false to avoid double scroll.
+                        resetPagination(fireScrollTrigger: false)
                         self.isLoadingThread = false
                         self.activeProjects = []
                         buildAndSyncMemoryContext()
@@ -943,10 +960,12 @@ final class ChappieViewModel {
         }
 
         // Select the thread — this loads messages (empty) and finalizes state.
+        // selectThread() calls resetPagination(fireScrollTrigger: true) internally.
         await selectThread(thread)
         self.isLoadingThread = true
         self.messages = []
-        resetPagination()
+        // selectThread already fired the trigger — use false to avoid double scroll.
+        resetPagination(fireScrollTrigger: false)
         self.isLoadingThread = false
         self.activeProjects = []
         buildAndSyncMemoryContext()
@@ -1369,14 +1388,16 @@ final class ChappieViewModel {
 
     func clearMessages() {
         messages = []
-        resetPagination()
+        // View is on screen — but this is a local clear, not a thread switch.
+        // No scroll trigger needed: the list is now empty.
+        resetPagination(fireScrollTrigger: false)
     }
 
     func clearHistory() {
         messages.removeAll()
         let systemMessage = ChatMessage.message(isUser: false, text: "Память очищена. Я забыл всё, что мы обсуждали до этого момента. Готов начать с чистого листа!")
         messages.append(systemMessage)
-        resetPagination()
+        resetPagination(fireScrollTrigger: false)
 
         if let threadId = activeThread?.id, let store = threadStore {
             Task {
@@ -1543,12 +1564,15 @@ final class ChappieViewModel {
 
         if !loadedMessages.isEmpty {
             self.messages = loadedMessages
-            resetPagination()
+            // fireScrollTrigger: false — called from init(), view tree doesn't exist yet.
+            // scrollToBottomTrigger must stay 0 until selectThread() runs after view appears.
+            resetPagination(fireScrollTrigger: false)
         } else {
             if let data = UserDefaults.standard.data(forKey: "savedChatMessages"),
                let decoded = try? JSONDecoder().decode([ChatMessage].self, from: data) {
                 self.messages = decoded
-                resetPagination()
+                // fireScrollTrigger: false — same reason: still in init() context.
+                resetPagination(fireScrollTrigger: false)
                 chatHistoryManager.saveMessages(self.messages)
                 UserDefaults.standard.removeObject(forKey: "savedChatMessages")
             }
