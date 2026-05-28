@@ -41,8 +41,9 @@ Chappie/
     │   ├── MarkdownTextView.swift       # Markdown → NSAttributedString renderer
     │   ├── ModelPickerRow.swift         # Provider/model picker + balance chip
     │   ├── StatusBarView.swift          # Status bar (current tool)
-    │   ├── ProjectChipsView.swift       # [IT-06, IT-09] Project chips + tap → settings
-    │   └── ProjectSettingsSheet.swift  # [IT-09] Project settings sheet
+    │   ├── ProjectChipsView.swift       # [IT-06, IT-09] Project chips + gear chip for thread settings
+    │   ├── ProjectSettingsSheet.swift   # [IT-09] Project settings sheet
+    │   └── ThreadSettingsSheet.swift    # [IT-11] Thread settings sheet (name, context depth)
     ├── Input/
     │   ├── InputBarView.swift           # Input field + send button
     │   └── InputMorphView.swift         # Morphing input container
@@ -51,11 +52,11 @@ Chappie/
     │   ├── AddProviderSheet.swift       # Add provider sheet
     │   └── NewThreadProviderSheet.swift # Provider picker sheet when creating a thread
     ├── Sidebar/
-    │   ├── SidebarView.swift            # Sidebar container
+    │   ├── SidebarView.swift            # Sidebar container (header: "Треды" + "Новый" button)
     │   ├── ThreadListView.swift         # Thread list
-    │   └── ThreadRowView.swift          # Single thread row
+    │   └── ThreadRowView.swift          # Single thread row (gear + trash on hover)
     ├── Toolbar/
-    │   └── ToolbarContent.swift         # Toolbar: balance + settings
+    │   └── ToolbarContent.swift         # Toolbar: sidebar toggle + thread title + settings gear
     └── Onboarding/
         └── OnboardingView.swift         # Onboarding on first launch
 ```
@@ -81,19 +82,21 @@ Chappie/
 | `runningCost` | `Double` | Accumulated request cost |
 | `currentBalance` | `Double?` | Active provider balance (nil = not loaded) |
 | `activeProvider` | `AIProvider?` | Active AI provider |
-| `selectedModelName` | `String?` | Selected model for the active provider |
+| `activeModelName` | `String?` | Selected model for the active provider |
+| `activeThreadSettings` | `ThreadSettings` | Settings of the active thread (context depth, unlimited flag) |
 
 ### Key Methods
 
 | Method | Purpose |
 |--------|---------|
 | `setModelContainer(_:)` | Connects SwiftData, registers handlers |
-| `selectThread(_:)` | Loads thread + projects + syncs context + ALWAYS calls switchProvider() |
+| `selectThread(_:)` | Loads thread + projects + syncs context + ALWAYS calls switchProvider() + saves lastActiveThreadId |
 | `switchProvider(_:)` | Changes active provider, loads its balance from UserDefaults |
 | `refreshBalanceForActiveProvider()` | Loads balance from UserDefaults on startup/thread switch |
 | `addProject(url:)` | Adds a project via NSOpenPanel bookmark |
 | `removeProject(id:)` | Removes a project from the thread |
 | `updateProjectSettings(_:forProjectId:)` | **[IT-09]** Saves project settings |
+| `updateThreadSettings(_:newTitle:forThreadId:)` | **[IT-11]** Saves thread name + context settings |
 | `buildAndSyncMemoryContext()` | Assembles MemoryContext with settings (IT-09) |
 | `syncActiveMemoryContext()` | Syncs ToolExecutionService (context + settings) |
 | `send(prompt:)` | Sends a request to AIOrchestrator |
@@ -102,6 +105,7 @@ Chappie/
 
 ```
 selectThread()
+  → saveLastActiveThreadId()          ← UserDefaults key: "lastActiveThreadId"
   → loadProjectsForThread()           ← ProjectStore → activeProjects
   → switchProvider(savedOrDefault)    ← ALWAYS, even if provider didn't change
       → loadBalance(for: provider)    ← UserDefaults key: balance_<id>
@@ -184,7 +188,49 @@ Floating panel for selecting provider and model. Located above the chat (not in 
 
 ---
 
-## 8. ContentView — Sheet Management
+## 8. IT-11: ThreadSettingsSheet
+
+**Opened from two places:**
+1. Gear icon in `ThreadRowView` (hover/context menu) → `onOpenThreadSettings(thread)` → `ContentView.selectedThreadForSettings`
+2. Gear chip in `ProjectChipsView` (right side, mirrors balance pill pattern) → `onOpenThreadSettings()` → same state
+
+**Pattern:** same "dumb component" pattern as ProjectSettingsSheet.
+- Receives `ThreadMetadata` (includes `settings` field since IT-11)
+- Edits `@State draftTitle: String` and `@State draftSettings: ThreadSettings`
+- On "Save" → `onSave(newTitle, newSettings)` → `viewModel.updateThreadSettings()`
+
+**Settings:**
+- Thread name (inline TextField)
+- Context depth: slider 10...1000 messages
+- Unlimited context toggle (bypasses all trimming)
+- Info box: shows token budget (messages × 500) and chat display depth (messages × 10)
+
+**Slider step:** adaptive — 5 at 10-100, 10 at 100-500, 50 at 500-1000
+
+---
+
+## 9. IT-11: Toolbar Thread Title
+
+`ToolbarContent.swift` accepts `activeThreadTitle: String?` and renders:
+```
+[sidebar toggle]    Chappie — <thread name>    [settings gear]
+```
+Uses `.principal` placement (center of toolbar).
+Hidden when `activeThreadTitle == nil` (onboarding state).
+Title truncates with `.middle` mode at max 300pt width.
+
+---
+
+## 10. IT-11: Last Active Thread Restore (UX-RESTORE)
+
+`selectThread()` saves `thread.id.uuidString` to UserDefaults key `"lastActiveThreadId"`.
+`loadThreadsAndSelectActive()` on startup:
+1. Tries to find thread by `lastActiveThreadId` → selects it.
+2. Falls back to most recently updated thread (index 0, sorted by `updatedAt DESC`).
+
+---
+
+## 11. ContentView — Sheet Management
 
 ```swift
 // App settings sheet
@@ -192,17 +238,23 @@ Floating panel for selecting provider and model. Located above the chat (not in 
 
 // Project settings sheet (IT-09)
 .sheet(item: $selectedProjectForSettings) { project in
-    ProjectSettingsSheet(
-        project: project,
-        onSave: { viewModel.updateProjectSettings($0, forProjectId: project.id) },
-        onDismiss: { selectedProjectForSettings = nil }
-    )
+    ProjectSettingsSheet(onSave: { viewModel.updateProjectSettings(...) }, ...)
 }
+
+// Thread settings sheet (IT-11)
+.sheet(item: $selectedThreadForSettings) { thread in
+    ThreadSettingsSheet(onSave: { title, settings in
+        viewModel.updateThreadSettings(settings, newTitle: title, forThreadId: thread.id)
+    }, ...)
+}
+
+// New thread provider picker
+.sheet(isPresented: $viewModel.showNewThreadProviderPicker) { NewThreadProviderSheet(...) }
 ```
 
 ---
 
-## 9. MCPHelperLauncher
+## 12. MCPHelperLauncher
 
 Manages the lifecycle of the ChappieMCP child process.
 
@@ -213,7 +265,7 @@ Manages the lifecycle of the ChappieMCP child process.
 
 ---
 
-## 10. Security-Scoped Bookmarks
+## 13. Security-Scoped Bookmarks
 
 A security-scoped bookmark is created for each project folder.
 Stored in `ProjectEntity.bookmarkData` (SwiftData).
@@ -226,12 +278,12 @@ User adds via UI with a real bookmark.
 
 | Date | Change |
 |------|--------|
-| 2026-07-XX | Architecture files translated to English |
-| 2026-07-XX | LazyVStack + anti-jump streaming in ChatScrollView; new thread button moved to sidebar header |
-| 2026-07-XX | Bug fixed: selectThread() now ALWAYS calls switchProvider() |
-| 2026-07-XX | Bug fixed: balance chip — refreshBalanceForActiveProvider() on startup |
-| 2026-07-XX | Balance per-provider: UserDefaults key balance_<id>, ModelPickerRow chip |
-| 2026-07-XX | Bug fixed: ModelPickerRow no longer wraps text on window resize (.lineLimit, .fixedSize) |
+| 2026-05-28 | IT-11 ✅: ThreadSettingsSheet, toolbar thread title, UX-RESTORE (last-thread restore), gear in ThreadRowView + ProjectChipsView, "Новый" label on sidebar button |
 | 2026-05-26 | IT-09 ✅: ProjectSettingsSheet, ProjectChipsView.onOpenSettings, ContentView.sheet(item:) |
+| 2026-05-XX | Bug fixed: input panel stuck in thinking state (isThinking=false inside withAnimation) |
+| 2026-05-XX | Draft per thread (UX-DRAFT): threadDrafts [UUID: String] in ViewModel |
+| 2026-05-XX | LazyVStack + anti-jump streaming in ChatScrollView; new thread button moved to sidebar header |
+| 2026-05-XX | Bug fixed: selectThread() now ALWAYS calls switchProvider() (MODEL-PER-THREAD) |
+| 2026-05-XX | Balance per-provider: UserDefaults key balance_<id>, ModelPickerRow chip |
 | 2025-07-XX | IT-06..IT-08 done: ProjectChipsView, project chips, UUID-based memory |
 | 2025-07-XX | IT-05: SidebarView, ThreadListView, ThreadRowView |
