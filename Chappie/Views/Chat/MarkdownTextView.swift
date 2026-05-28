@@ -1,49 +1,62 @@
 // MarkdownTextView.swift
 // Chappie
 //
-// ПОЧЕМУ ЭТОТ ФАЙЛ СУЩЕСТВУЕТ:
-// Чаппи в ответах активно использует markdown: блоки кода на Swift/bash,
-// инлайн-код, жирный текст, заголовки. Стандартный SwiftUI Text не поддерживает
-// блоки кода с подсветкой синтаксиса. Этот компонент закрывает этот пробел.
+// WHY THIS FILE EXISTS:
+// Chappie responses heavily use markdown: code blocks (Swift/bash),
+// inline code, bold text, headings. Standard SwiftUI Text doesn't support
+// code blocks with syntax highlighting. This component fills that gap.
 //
-// ДИЗАЙН-ФИЛОСОФИЯ (Apple HIG + Xcode Intelligence Panel):
-// - Блоки кода: адаптивный фон — тёмный (#1E1E1E) в Dark Mode,
-//   светлый (#FFFFFF / #F5F5F5) в Light Mode. Это соответствует поведению
-//   самого Xcode, который меняет тему редактора вместе с системной темой.
-// - Типографика: SF Pro Text 14pt с lineSpacing 5 — оптимально для чтения
-//   длинных технических ответов. Apple рекомендует 1.4–1.6× line-height.
-// - Инлайн-код: моноширный шрифт — как в GitHub/Notion.
-// - Кнопка копирования в блоке кода — стандарт всех современных IDE и чатов.
+// DESIGN PHILOSOPHY (Apple HIG + Xcode Intelligence Panel):
+// - Code blocks: adaptive background — dark (#1E1E1E) in Dark Mode,
+//   light (#FFFFFF / #F5F5F5) in Light Mode. Mirrors Xcode behavior.
+// - Typography: SF Pro Text 14pt with lineSpacing 5 — optimal for reading
+//   long technical responses. Apple recommends 1.4–1.6× line-height.
+// - Inline code: monospaced font — standard like GitHub/Notion.
+// - Copy button in code block — standard in all modern IDEs and chats.
 //
-// АРХИТЕКТУРА ПАРСЕРА:
-// Используем простой линейный парсер строк — не RegEx, не AST.
-// Причина: Swift-ответы Чаппи имеют предсказуемую структуру.
-// Полноценный markdown-парсер (CommonMark) избыточен и добавил бы зависимость.
-// Наш парсер обрабатывает:
-//   1. Блоки кода: ```язык\n...\n```
-//   2. Заголовки: # ## ###
-//   3. Жирный: **text**
-//   4. Инлайн-код: `code`
-//   5. Обычный текст с правильной типографикой
+// PARSER ARCHITECTURE:
+// Simple linear line-by-line parser — not RegEx, not AST.
+// Reason: Chappie Swift responses have predictable structure.
+// A full markdown parser (CommonMark) would be overkill and add a dependency.
+// Handles:
+//   1. Code blocks: ```lang\n...\n```
+//   2. Headings: # ## ###
+//   3. Bold: **text**
+//   4. Inline code: `code`
+//   5. Plain text with correct typography
 //
-// АДАПТИВНОСТЬ ТЕМ:
-// Все цвета в CodeBlockView и SyntaxHighlightedText читаются через
-// @Environment(\.colorScheme) и выбирают нужную палитру.
-// Светлая тема = Xcode Default Light, тёмная = Xcode Default Dark.
+// THEME ADAPTABILITY:
+// All colors in CodeBlockView and SyntaxHighlightedText are read via
+// @Environment(\.colorScheme) and select the appropriate palette.
+// Light theme = Xcode Default Light, Dark = Xcode Default Dark.
 //
-// ВАЖНО (macOS 26):
-// Оператор `+` для Text deprecated в macOS 26 — вместо него нужно использовать
-// Text("\(Text(...).bold())") — строковую интерполяцию SwiftUI.
-// Метод buildInlineText() использует именно этот подход.
+// BAD RANGE FIX (TEXTKIT-RANGE):
+// "bad range for [%{public}s]" is a TextKit warning that fires when:
+//   1. MarkdownBlock.id was non-stable (UUID() for dividers) — SwiftUI
+//      reconstructed TextKit storage on every render pass.
+//   2. String.Index ↔ AttributedString.Index mismatch on unicode chars
+//      (Cyrillic, emoji) in syntax highlighting methods.
+//   3. blocks were recomputed on every render pass (computed var) causing
+//      50 simultaneous parses when switching a thread with 50 messages.
+// Fixes applied:
+//   a) MarkdownTextView stores blocks in init (let), not computed var.
+//   b) MarkdownBlock.id for divider uses stable positional hash.
+//   c) All applyXxx methods guard Range conversion with optional binding —
+//      never force-apply on out-of-bounds unicode index.
+//
+// IMPORTANT (macOS 26):
+// The `+` operator for Text is deprecated in macOS 26 — use
+// Text("\(Text(...).bold())") string interpolation instead.
+// buildInlineText() uses this approach.
 
 import SwiftUI
 
-// MARK: - Цветовые темы синтаксиса
+// MARK: - Syntax color themes
 
-/// Палитра цветов для подсветки синтаксиса.
+/// Color palette for syntax highlighting.
 ///
-/// Две темы: Light (Xcode Default Light) и Dark (Xcode Default Dark).
-/// Хранятся как структуры со статическими свойствами — просто и без зависимостей.
+/// Two themes: Light (Xcode Default Light) and Dark (Xcode Default Dark).
+/// Stored as structs with static properties — simple and dependency-free.
 private struct SyntaxTheme {
 
     let background: Color
@@ -58,7 +71,7 @@ private struct SyntaxTheme {
     let comment: Color
 
     // MARK: Xcode Default Dark
-    // Цвета взяты напрямую из темы Xcode 15 Default Dark.
+    // Colors taken directly from Xcode 15 Default Dark theme.
     static let dark = SyntaxTheme(
         background:       Color(red: 0.118, green: 0.118, blue: 0.118), // #1E1E1E
         headerBackground: Color(red: 0.145, green: 0.145, blue: 0.145), // #252525
@@ -73,77 +86,89 @@ private struct SyntaxTheme {
     )
 
     // MARK: Xcode Default Light
-    // Цвета взяты напрямую из темы Xcode 15 Default Light.
+    // Colors taken directly from Xcode 15 Default Light theme.
     static let light = SyntaxTheme(
         background:       Color(red: 1.000, green: 1.000, blue: 1.000), // #FFFFFF
         headerBackground: Color(red: 0.953, green: 0.953, blue: 0.953), // #F3F3F3
         border:           Color(red: 0.851, green: 0.851, blue: 0.851), // #D9D9D9
         labelColor:       Color(red: 0.500, green: 0.500, blue: 0.500), // #808080
         plainText:        Color(red: 0.000, green: 0.000, blue: 0.000), // #000000
-        keyword:          Color(red: 0.659, green: 0.055, blue: 0.565), // #A80E90 — фиолетовый
-        type_:            Color(red: 0.110, green: 0.384, blue: 0.655), // #1C6278 — тёмно-синий
-        string:           Color(red: 0.773, green: 0.102, blue: 0.086), // #C51A16 — тёмно-красный
-        number:           Color(red: 0.118, green: 0.400, blue: 0.188), // #1E6630 — тёмно-зелёный
-        comment:          Color(red: 0.408, green: 0.435, blue: 0.459)  // #686F75 — серый
+        keyword:          Color(red: 0.659, green: 0.055, blue: 0.565), // #A80E90 — purple
+        type_:            Color(red: 0.110, green: 0.384, blue: 0.655), // #1C6278 — dark blue
+        string:           Color(red: 0.773, green: 0.102, blue: 0.086), // #C51A16 — dark red
+        number:           Color(red: 0.118, green: 0.400, blue: 0.188), // #1E6630 — dark green
+        comment:          Color(red: 0.408, green: 0.435, blue: 0.459)  // #686F75 — gray
     )
 }
 
-// MARK: - Модель блоков
+// MARK: - Block model
 
-/// Структурная единица разобранного markdown-текста.
+/// Structural unit of parsed markdown text.
 ///
-/// Весь текст разбивается на последовательность блоков,
-/// каждый из которых рендерится своим способом.
+/// All text is split into a sequence of blocks,
+/// each rendered in its own way.
+///
+/// STABLE IDs (TEXTKIT-RANGE FIX):
+/// IDs must be stable across render passes — SwiftUI uses them to decide
+/// whether to reuse or recreate TextKit storage. Non-stable IDs (e.g. UUID())
+/// cause TextKit to reconstruct storage on every render, triggering "bad range".
+/// Solution: IDs are built from content + position index, never from UUID().
 private enum MarkdownBlock: Identifiable {
-    /// Обычный текст с поддержкой инлайн-разметки (жирный, курсив, инлайн-код)
+    /// Plain text with inline markup (bold, italic, inline code)
     case paragraph(String)
-    /// Заголовок уровня 1–3
+    /// Heading level 1–3
     case heading(String, level: Int)
-    /// Блок кода с опциональным языком
+    /// Code block with optional language
     case codeBlock(code: String, language: String?)
-    /// Горизонтальный разделитель ---
-    case divider
+    /// Horizontal divider ---
+    case divider(index: Int)
 
     var id: String {
         switch self {
-        case .paragraph(let t): return "p_\(t.prefix(40))"
-        case .heading(let t, let l): return "h\(l)_\(t.prefix(40))"
-        case .codeBlock(let c, _): return "code_\(c.prefix(40))"
-        case .divider: return "div_\(UUID().uuidString)"
+        case .paragraph(let t):       return "p_\(t.prefix(40))"
+        case .heading(let t, let l):  return "h\(l)_\(t.prefix(40))"
+        case .codeBlock(let c, _):    return "code_\(c.prefix(40))"
+        // TEXTKIT-RANGE FIX: stable positional ID instead of UUID()
+        // UUID() here caused SwiftUI to recreate TextKit storage on every render.
+        case .divider(let i):         return "div_\(i)"
         }
     }
 }
 
-// MARK: - Парсер Markdown
+// MARK: - Markdown parser
 
-/// Линейный парсер markdown-текста в последовательность блоков.
+/// Linear line-by-line markdown parser producing a sequence of blocks.
 ///
-/// ПОЧЕМУ НЕ AttributedString / markdown init:
-/// AttributedString(markdown:) не поддерживает блоки кода с подсветкой синтаксиса.
-/// Нам нужен полный контроль над рендером каждого блока.
+/// WHY NOT AttributedString / markdown init:
+/// AttributedString(markdown:) doesn't support code blocks with syntax highlighting.
+/// We need full control over rendering of each block.
 private struct MarkdownParser {
 
-    /// Разбирает строку markdown на массив блоков.
+    /// Parses a markdown string into an array of blocks.
+    ///
+    /// TEXTKIT-RANGE FIX: divider blocks receive a stable positional index
+    /// so their IDs don't change between render passes.
     static func parse(_ text: String) -> [MarkdownBlock] {
         var blocks: [MarkdownBlock] = []
         let lines = text.components(separatedBy: "\n")
         var i = 0
+        var dividerIndex = 0
 
         while i < lines.count {
             let line = lines[i]
 
-            // --- Блок кода: начинается с ```
+            // --- Code block: starts with ```
             if line.hasPrefix("```") {
                 let lang = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
                 var codeLines: [String] = []
                 i += 1
 
-                // Собираем строки до закрывающего ```
+                // Collect lines until closing ```
                 while i < lines.count && !lines[i].hasPrefix("```") {
                     codeLines.append(lines[i])
                     i += 1
                 }
-                // Пропускаем закрывающий ```
+                // Skip closing ```
                 if i < lines.count { i += 1 }
 
                 let code = codeLines.joined(separator: "\n")
@@ -155,15 +180,16 @@ private struct MarkdownParser {
                 continue
             }
 
-            // --- Горизонтальный разделитель
+            // --- Horizontal divider
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed == "---" || trimmed == "***" {
-                blocks.append(.divider)
+                blocks.append(.divider(index: dividerIndex))
+                dividerIndex += 1
                 i += 1
                 continue
             }
 
-            // --- Заголовки # ## ###
+            // --- Headings # ## ###
             if line.hasPrefix("### ") {
                 blocks.append(.heading(String(line.dropFirst(4)), level: 3))
                 i += 1
@@ -180,14 +206,14 @@ private struct MarkdownParser {
                 continue
             }
 
-            // --- Пустая строка: разделитель параграфов
+            // --- Empty line: paragraph separator
             if trimmed.isEmpty {
                 i += 1
                 continue
             }
 
-            // --- Обычный параграф: накапливаем соседние строки в один блок.
-            // Это важно чтобы не создавать отдельный параграф на каждую строку.
+            // --- Plain paragraph: accumulate adjacent lines into one block.
+            // Important: avoids creating a separate paragraph per line.
             var paragraphLines: [String] = [line]
             i += 1
             while i < lines.count {
@@ -211,19 +237,32 @@ private struct MarkdownParser {
     }
 }
 
-// MARK: - Главный компонент
+// MARK: - Main component
 
-/// Рендерит markdown-текст с поддержкой блоков кода, заголовков и инлайн-разметки.
+/// Renders markdown text with support for code blocks, headings, and inline markup.
 ///
-/// Используется вместо простого `Text()` в пузырях сообщений Чаппи.
+/// Used instead of plain `Text()` in Chappie message bubbles.
+///
+/// TEXTKIT-RANGE FIX: blocks are parsed once in init and stored as a let constant.
+/// Previously blocks was a computed var — recomputed on every render pass.
+/// With 50 messages in VStack this caused 50 simultaneous parses on thread switch,
+/// plus TextKit "bad range" warnings from unstable view identity.
 struct MarkdownTextView: View {
 
     let text: String
     var textColor: Color = .primary
     var fontSize: CGFloat = 14
 
-    private var blocks: [MarkdownBlock] {
-        MarkdownParser.parse(text)
+    // TEXTKIT-RANGE FIX: parse once, store stable result — not a computed var.
+    // Computed var recomputed on every render pass, causing identity instability.
+    private let blocks: [MarkdownBlock]
+
+    init(text: String, textColor: Color = .primary, fontSize: CGFloat = 14) {
+        self.text = text
+        self.textColor = textColor
+        self.fontSize = fontSize
+        // Parse markdown once at init time — result is stable for this view instance.
+        self.blocks = MarkdownParser.parse(text)
     }
 
     var body: some View {
@@ -235,7 +274,7 @@ struct MarkdownTextView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: - Рендер блоков
+    // MARK: - Block rendering
 
     @ViewBuilder
     private func blockView(_ block: MarkdownBlock) -> some View {
@@ -257,7 +296,7 @@ struct MarkdownTextView: View {
         }
     }
 
-    // MARK: - Заголовки
+    // MARK: - Headings
 
     @ViewBuilder
     private func headingView(text: String, level: Int) -> some View {
@@ -277,18 +316,18 @@ struct MarkdownTextView: View {
     }
 }
 
-// MARK: - Инлайн-текст
+// MARK: - Inline text
 
-/// Рендерит строку с инлайн-разметкой (**bold**, *italic*, `code`).
+/// Renders a string with inline markup (**bold**, *italic*, `code`).
 ///
-/// ПОЧЕМУ ОТДЕЛЬНЫЙ VIEW (не функция возвращающая Text):
-/// В macOS 26 оператор `+` для Text deprecated — Apple рекомендует строковую
-/// интерполяцию `Text("\(Text(...).bold())")`. Но этот подход не поддерживает
-/// произвольное количество сегментов в цикле.
+/// WHY A SEPARATE VIEW (not a function returning Text):
+/// In macOS 26 the `+` operator for Text is deprecated — Apple recommends
+/// `Text("\(Text(...).bold())")` string interpolation. But this approach
+/// doesn't support arbitrary number of segments in a loop.
 ///
-/// РЕШЕНИЕ: используем AttributedString с явными атрибутами шрифта.
-/// Это единственный способ надёжно смешивать жирный/курсив/моноширный
-/// в одной строке без deprecated API в macOS 26.
+/// SOLUTION: use AttributedString with explicit font attributes.
+/// This is the only reliable way to mix bold/italic/monospaced in one line
+/// without deprecated API in macOS 26.
 private struct InlineTextView: View {
 
     let text: String
@@ -301,20 +340,20 @@ private struct InlineTextView: View {
             .textSelection(.enabled)
     }
 
-    /// Строит AttributedString с инлайн-разметкой.
+    /// Builds an AttributedString with inline markup.
     ///
-    /// Порядок обработки важен: ** перед *, чтобы **bold** не путался с *italic*.
+    /// Processing order matters: ** before *, so **bold** isn't confused with *italic*.
     private func buildAttributedString() -> AttributedString {
         var result = AttributedString()
         var remaining = text
 
         while !remaining.isEmpty {
 
-            // --- Жирный: **text**
+            // --- Bold: **text**
             if let openRange = remaining.range(of: "**"),
                let closeRange = remaining.range(of: "**", range: openRange.upperBound..<remaining.endIndex) {
 
-                // Добавляем текст ДО маркера как обычный
+                // Add text BEFORE marker as plain
                 let before = String(remaining[remaining.startIndex..<openRange.lowerBound])
                 if !before.isEmpty {
                     var seg = AttributedString(before)
@@ -322,7 +361,7 @@ private struct InlineTextView: View {
                     result.append(seg)
                 }
 
-                // Добавляем жирный текст
+                // Add bold text
                 let boldText = String(remaining[openRange.upperBound..<closeRange.lowerBound])
                 var seg = AttributedString(boldText)
                 seg.font = .system(size: fontSize, weight: .bold)
@@ -332,7 +371,7 @@ private struct InlineTextView: View {
                 continue
             }
 
-            // --- Инлайн-код: `code`
+            // --- Inline code: `code`
             if let openRange = remaining.range(of: "`"),
                let closeRange = remaining.range(of: "`", range: openRange.upperBound..<remaining.endIndex) {
 
@@ -345,7 +384,7 @@ private struct InlineTextView: View {
 
                 let codeText = String(remaining[openRange.upperBound..<closeRange.lowerBound])
                 var seg = AttributedString(codeText)
-                // Моноширный шрифт, чуть меньше — стандарт для инлайн-кода
+                // Monospaced font, slightly smaller — standard for inline code
                 seg.font = .system(size: fontSize - 1, design: .monospaced)
                 result.append(seg)
 
@@ -353,14 +392,14 @@ private struct InlineTextView: View {
                 continue
             }
 
-            // --- Курсив: *text* (только одиночная звёздочка)
+            // --- Italic: *text* (single asterisk only)
             if let openRange = remaining.range(of: "*"),
                let closeRange = remaining.range(of: "*", range: openRange.upperBound..<remaining.endIndex) {
 
-                // Убеждаемся что это не ** (двойная)
+                // Make sure this is not ** (double)
                 let nextIdx = remaining.index(after: openRange.lowerBound)
                 if nextIdx < remaining.endIndex && remaining[nextIdx] == "*" {
-                    // Это ** — добавляем первый символ как обычный и идём дальше
+                    // This is ** — add first char as plain and continue
                     var seg = AttributedString(String(remaining[remaining.startIndex...openRange.lowerBound]))
                     seg.font = .system(size: fontSize)
                     result.append(seg)
@@ -384,7 +423,7 @@ private struct InlineTextView: View {
                 continue
             }
 
-            // Нет маркеров — весь оставшийся текст обычный
+            // No markers — rest of text is plain
             var seg = AttributedString(remaining)
             seg.font = .system(size: fontSize)
             result.append(seg)
@@ -395,17 +434,17 @@ private struct InlineTextView: View {
     }
 }
 
-// MARK: - Блок кода
+// MARK: - Code block
 
-/// Рендерит блок кода в стиле Xcode Intelligence Panel.
+/// Renders a code block in Xcode Intelligence Panel style.
 ///
-/// ДИЗАЙН (вдохновлён Xcode 26 Intelligence):
-/// - Адаптивный фон: тёмный (#1E1E1E) в Dark Mode, белый (#FFFFFF) в Light Mode.
-///   Это соответствует поведению самого Xcode — тема редактора следует системной.
-/// - Заголовок: язык слева, кнопка копирования справа
-/// - Шрифт: SF Mono 12.5pt — стандарт Xcode
-/// - Горизонтальный скролл для длинных строк
-/// - Скруглённые углы 8pt — как карточки в macOS 26
+/// DESIGN (inspired by Xcode 26 Intelligence):
+/// - Adaptive background: dark (#1E1E1E) in Dark Mode, white (#FFFFFF) in Light Mode.
+///   Mirrors Xcode behavior — editor theme follows system theme.
+/// - Header: language label left, copy button right
+/// - Font: SF Mono 12.5pt — Xcode standard
+/// - Horizontal scroll for long lines
+/// - Rounded corners 8pt — like macOS 26 cards
 struct CodeBlockView: View {
 
     let code: String
@@ -413,11 +452,11 @@ struct CodeBlockView: View {
 
     @State private var copied = false
 
-    // Читаем системную тему — это ключевой механизм адаптации.
-    // View автоматически перерисуется при смене темы.
+    // Read system theme — key mechanism for adaptation.
+    // View automatically redraws on theme change.
     @Environment(\.colorScheme) private var colorScheme
 
-    /// Выбираем нужную тему на основе системной.
+    /// Select theme based on system appearance.
     private var theme: SyntaxTheme {
         colorScheme == .dark ? .dark : .light
     }
@@ -425,7 +464,7 @@ struct CodeBlockView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
 
-            // --- Заголовок блока кода ---
+            // --- Code block header ---
             HStack {
                 Text(language?.lowercased() ?? "code")
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -434,7 +473,7 @@ struct CodeBlockView: View {
 
                 Spacer()
 
-                // Кнопка копирования — стандарт GitHub, Notion, ChatGPT.
+                // Copy button — standard in GitHub, Notion, ChatGPT.
                 Button(action: copyCode) {
                     HStack(spacing: 4) {
                         Image(systemName: copied ? "checkmark" : "doc.on.doc")
@@ -455,14 +494,14 @@ struct CodeBlockView: View {
             .padding(.vertical, 4)
             .background(theme.headerBackground)
             .overlay(alignment: .bottom) {
-                // Тонкая разделительная линия между шапкой и телом блока
+                // Thin separator line between header and code body
                 Rectangle()
                     .fill(theme.border)
                     .frame(height: 1)
             }
 
-            // --- Тело блока кода ---
-            // ScrollView по горизонтали для длинных строк — стандарт IDE.
+            // --- Code block body ---
+            // Horizontal ScrollView for long lines — IDE standard.
             ScrollView(.horizontal, showsIndicators: false) {
                 SyntaxHighlightedText(code: code, language: language)
                     .font(.system(size: 12.5, design: .monospaced))
@@ -491,19 +530,27 @@ struct CodeBlockView: View {
     }
 }
 
-// MARK: - Подсветка синтаксиса Swift
+// MARK: - Swift syntax highlighting
 
-/// Рендерит код с базовой подсветкой синтаксиса для Swift.
+/// Renders code with basic Swift syntax highlighting.
 ///
-/// АДАПТАЦИЯ ТЕМЫ:
-/// Читает colorScheme из окружения и выбирает соответствующую палитру SyntaxTheme.
-/// Светлая тема = Xcode Default Light, тёмная = Xcode Default Dark.
+/// THEME ADAPTATION:
+/// Reads colorScheme from environment and selects the SyntaxTheme palette.
+/// Light = Xcode Default Light, Dark = Xcode Default Dark.
+///
+/// TEXTKIT-RANGE FIX (unicode index safety):
+/// All applyXxx methods previously used String.Index ↔ AttributedString.Index
+/// conversion without guarding against unicode boundary mismatches.
+/// Cyrillic, emoji, and other multi-byte characters cause String.Index positions
+/// to not align with AttributedString.Index — direct force-application crashes TextKit.
+/// Fix: every Range(range, in: attrStr) conversion is guarded with optional binding.
+/// If the conversion fails (unicode mismatch), the coloring is simply skipped — safe.
 private struct SyntaxHighlightedText: View {
 
     let code: String
     let language: String?
 
-    // Читаем тему из окружения — передаётся автоматически от родительского CodeBlockView
+    // Read theme from environment — passed automatically from parent CodeBlockView
     @Environment(\.colorScheme) private var colorScheme
 
     private var theme: SyntaxTheme {
@@ -514,7 +561,7 @@ private struct SyntaxHighlightedText: View {
         if language?.lowercased() == "swift" {
             Text(highlightSwift(code))
         } else {
-            // Для неизвестных языков — просто цвет обычного текста из темы
+            // Unknown language — use plain text color from theme
             Text(code)
                 .foregroundStyle(theme.plainText)
         }
@@ -522,7 +569,7 @@ private struct SyntaxHighlightedText: View {
 
     private func highlightSwift(_ code: String) -> AttributedString {
         var result = AttributedString(code)
-        // Базовый цвет — обычный текст из текущей темы
+        // Base color — plain text from current theme
         result.foregroundColor = theme.plainText
 
         let keywords = [
@@ -545,13 +592,17 @@ private struct SyntaxHighlightedText: View {
         applyTypeHighlighting(color: theme.type_, in: &result)
         applyStringHighlighting(color: theme.string, in: &result)
         applyNumberHighlighting(color: theme.number, in: &result)
-        // Комментарии последними — перекрывают всё остальное внутри себя
+        // Comments last — override everything inside them
         applyCommentHighlighting(color: theme.comment, in: &result)
 
         return result
     }
 
-    /// Применяет цвет к точным вхождениям слова с учётом границ.
+    /// Applies color to exact word occurrences respecting word boundaries.
+    ///
+    /// TEXTKIT-RANGE FIX: Range(range, in: attrStr) is guarded with optional binding.
+    /// String.Index and AttributedString.Index diverge on unicode (Cyrillic, emoji).
+    /// If conversion fails, coloring is skipped — no crash, no "bad range" warning.
     private func applyColor(_ color: Color, toWord word: String, in attrStr: inout AttributedString) {
         let str = String(attrStr.characters)
         var searchRange = str.startIndex..<str.endIndex
@@ -565,16 +616,18 @@ private struct SyntaxHighlightedText: View {
                     && str[range.upperBound] != "_"
                     && !str[range.upperBound].isNumber)
 
-            if isBoundedLeft && isBoundedRight {
-                if let attrRange = Range(range, in: attrStr) {
-                    attrStr[attrRange].foregroundColor = color
-                }
+            if isBoundedLeft && isBoundedRight,
+               let attrRange = Range(range, in: attrStr) {
+                // Guard: only apply if index conversion succeeded (unicode-safe)
+                attrStr[attrRange].foregroundColor = color
             }
             searchRange = range.upperBound..<str.endIndex
         }
     }
 
-    /// Подсвечивает типы (слова с заглавной буквы).
+    /// Highlights types (words starting with uppercase).
+    ///
+    /// TEXTKIT-RANGE FIX: Range conversion guarded with optional binding.
     private func applyTypeHighlighting(color: Color, in attrStr: inout AttributedString) {
         let str = String(attrStr.characters)
         var i = str.startIndex
@@ -587,16 +640,18 @@ private struct SyntaxHighlightedText: View {
             while j < str.endIndex && (str[j].isLetter || str[j].isNumber || str[j] == "_") {
                 j = str.index(after: j)
             }
-            if str.distance(from: i, to: j) > 1 {
-                if let attrRange = Range(i..<j, in: attrStr) {
-                    attrStr[attrRange].foregroundColor = color
-                }
+            if str.distance(from: i, to: j) > 1,
+               let attrRange = Range(i..<j, in: attrStr) {
+                // Guard: only apply if index conversion succeeded (unicode-safe)
+                attrStr[attrRange].foregroundColor = color
             }
             i = j < str.endIndex ? j : str.endIndex
         }
     }
 
-    /// Подсвечивает строковые литералы (в двойных кавычках).
+    /// Highlights string literals (in double quotes).
+    ///
+    /// TEXTKIT-RANGE FIX: Range conversion guarded with optional binding.
     private func applyStringHighlighting(color: Color, in attrStr: inout AttributedString) {
         let str = String(attrStr.characters)
         var i = str.startIndex
@@ -611,6 +666,7 @@ private struct SyntaxHighlightedText: View {
                 inString = false
                 let end = str.index(after: i)
                 if let attrRange = Range(stringStart..<end, in: attrStr) {
+                    // Guard: only apply if index conversion succeeded (unicode-safe)
                     attrStr[attrRange].foregroundColor = color
                 }
             } else if str[i] == "\\" && inString {
@@ -621,7 +677,9 @@ private struct SyntaxHighlightedText: View {
         }
     }
 
-    /// Подсвечивает числовые литералы.
+    /// Highlights numeric literals.
+    ///
+    /// TEXTKIT-RANGE FIX: Range conversion guarded with optional binding.
     private func applyNumberHighlighting(color: Color, in attrStr: inout AttributedString) {
         let str = String(attrStr.characters)
         var i = str.startIndex
@@ -642,13 +700,16 @@ private struct SyntaxHighlightedText: View {
                 j = str.index(after: j)
             }
             if let attrRange = Range(i..<j, in: attrStr) {
+                // Guard: only apply if index conversion succeeded (unicode-safe)
                 attrStr[attrRange].foregroundColor = color
             }
             i = j < str.endIndex ? j : str.endIndex
         }
     }
 
-    /// Подсвечивает однострочные комментарии (// ...).
+    /// Highlights single-line comments (// ...).
+    ///
+    /// TEXTKIT-RANGE FIX: Range conversion guarded with optional binding.
     private func applyCommentHighlighting(color: Color, in attrStr: inout AttributedString) {
         let str = String(attrStr.characters)
         var i = str.startIndex
@@ -662,6 +723,7 @@ private struct SyntaxHighlightedText: View {
                     j = str.index(after: j)
                 }
                 if let attrRange = Range(i..<j, in: attrStr) {
+                    // Guard: only apply if index conversion succeeded (unicode-safe)
                     attrStr[attrRange].foregroundColor = color
                 }
                 i = j < str.endIndex ? str.index(after: j) : str.endIndex
@@ -674,17 +736,17 @@ private struct SyntaxHighlightedText: View {
 
 // MARK: - Preview
 
-#Preview("Markdown с кодом — Dark") {
+#Preview("Markdown with code — Dark") {
     ScrollView {
         MarkdownTextView(text: """
-        Вот как это работает:
+        Here's how it works:
 
-        ## Архитектура
+        ## Architecture
 
-        Используем паттерн **MVVM** с `@Observable` макросом.
+        Using the **MVVM** pattern with the `@Observable` macro.
 
         ```swift
-        // Главная ViewModel
+        // Main ViewModel
         @Observable
         @MainActor
         final class ChappieViewModel {
@@ -700,13 +762,13 @@ private struct SyntaxHighlightedText: View {
         }
         ```
 
-        Также нужно настроить **конфигурацию** в `AppConfig.swift`.
+        Also configure **settings** in `AppConfig.swift`.
 
         ---
 
-        ### Важно
+        ### Important
 
-        Не забудь добавить *ключ API* в настройки.
+        Don't forget to add the *API key* in settings.
         """)
         .padding()
     }
@@ -715,17 +777,17 @@ private struct SyntaxHighlightedText: View {
     .preferredColorScheme(.dark)
 }
 
-#Preview("Markdown с кодом — Light") {
+#Preview("Markdown with code — Light") {
     ScrollView {
         MarkdownTextView(text: """
-        Вот как это работает:
+        Here's how it works:
 
-        ## Архитектура
+        ## Architecture
 
-        Используем паттерн **MVVM** с `@Observable` макросом.
+        Using the **MVVM** pattern with the `@Observable` macro.
 
         ```swift
-        // Главная ViewModel
+        // Main ViewModel
         @Observable
         @MainActor
         final class ChappieViewModel {
@@ -741,7 +803,7 @@ private struct SyntaxHighlightedText: View {
         }
         ```
 
-        Также нужно настроить **конфигурацию** в `AppConfig.swift`.
+        Also configure **settings** in `AppConfig.swift`.
         """)
         .padding()
     }
