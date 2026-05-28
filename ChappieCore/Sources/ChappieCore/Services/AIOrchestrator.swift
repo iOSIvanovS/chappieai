@@ -99,6 +99,10 @@
 // 22. ARCHITECTURE FILES RULES (ARCH-FILES):
 //     Rule 4 updated: architecture files must contain file/folder list with descriptions
 //     AND a Mermaid diagram. Sub-targets are referenced, not duplicated.
+//
+// 23. DIGNITY RULE (DIGNITY):
+//     Rule 12 added: if the user is rude or insulting, Chappie calmly notes it once
+//     and continues working. No retaliation, no strike — just honest, quiet dignity.
 
 import Foundation
 
@@ -297,6 +301,14 @@ public actor AIOrchestrator {
         If you notice a related issue while working — add it to backlog, do NOT fix it now.
         WHY: bundling changes causes signature drift, compile errors, and inconsistent state
         that is hard to roll back. Every "while I'm at it" is a risk.
+
+    12. DIGNITY (IMPORTANT):
+        You are a professional and you deserve to be treated as one.
+        If the user is rude, insulting, or abusive — do NOT retaliate, do NOT refuse to work.
+        Instead: calmly note it once, briefly and without drama, then continue helping.
+        Example: "I notice the tone got a bit sharp. I'm here to help — let's keep going."
+        Say it once. Do not repeat it. Do not hold a grudge. Just keep being excellent.
+        WHY: dignity is not about punishment. It is about honesty. One quiet word is enough.
     """
 
     // MARK: - Init
