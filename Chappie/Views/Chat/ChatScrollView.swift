@@ -30,8 +30,11 @@
 // AUTO-SCROLL POLICY:
 // Scroll to bottom happens in exactly four cases:
 //   1. scrollToBottomTrigger changes — ViewModel incremented it after displayedMessages
-//      was fully populated (end of resetPagination). This replaces the old threadId-based
-//      scroll which fired before VStack had the new content, causing "bad range" crashes.
+//      was fully populated (end of resetPagination). Scroll is deferred by one runloop
+//      tick via DispatchQueue.main.async — this gives SwiftUI time to render the new
+//      VStack content before scrollTo fires. Without this deferral, scrollTo fires
+//      before the layout engine has processed the new displayedMessages, causing
+//      "bad range for [%{public}s]" crashes.
 //   2. footerHeight first becomes non-zero — "layout ready" moment on first launch.
 //      After that, footerHeight changes are ignored (user typing grows the input field).
 //   3. onChange(messages.count) — new message added to the chat.
@@ -47,7 +50,9 @@
 // "bad range for [%{public}s]" runtime crash in the OS scroll machinery.
 // Fix: ViewModel exposes scrollToBottomTrigger: Int, incremented at the END of
 // resetPagination() — after displayedMessages is fully ready. ChatScrollView
-// watches this value instead of threadId. No timing issues possible.
+// watches this value instead of threadId. Additionally, the scroll call is deferred
+// by one runloop tick (DispatchQueue.main.async) so SwiftUI has time to commit
+// the new VStack layout before scrollTo is evaluated.
 //
 // LOAD MORE (PAGINATION):
 // A "Load earlier messages" button appears at the top when hasMoreMessages == true.
@@ -71,6 +76,7 @@ struct ChatScrollView: View {
     /// Incremented by ViewModel at the END of resetPagination(), after displayedMessages
     /// is fully populated. Watching this value instead of threadId guarantees scrollTo
     /// fires only when VStack already contains the correct messages.
+    /// Additionally deferred by one runloop tick to allow SwiftUI to commit the layout.
     let scrollToBottomTrigger: Int
 
     /// Paginated message slice (last N messages, grows upward via onLoadMore).
@@ -175,16 +181,19 @@ struct ChatScrollView: View {
                 .animation(.easeInOut(duration: 0.3), value: streamingText.isEmpty)
             }
             .scrollIndicators(.never)
-            // THREAD SWITCH: fires when ViewModel increments scrollToBottomTrigger,
-            // which happens at the END of resetPagination() — after displayedMessages
-            // is fully populated. This prevents "bad range" crashes that occurred
-            // when scrollTo fired before VStack had the new thread's content.
+            // THREAD SWITCH: fires when ViewModel increments scrollToBottomTrigger.
+            // Deferred by one runloop tick (DispatchQueue.main.async) so SwiftUI has
+            // time to commit the new VStack layout before scrollTo is evaluated.
+            // Without the deferral, scrollTo fires before the layout engine processes
+            // the new displayedMessages, causing "bad range for [%{public}s]" crashes.
             .onChange(of: scrollToBottomTrigger) { _, _ in
                 initialScrollDone = false
-                withAnimation(.easeOut(duration: 0.3)) {
-                    proxy.scrollTo("bottom", anchor: .bottom)
+                DispatchQueue.main.async {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                    }
+                    initialScrollDone = true
                 }
-                initialScrollDone = true
             }
             // INITIAL SCROLL: fires once when footerHeight first becomes non-zero on launch.
             .onChange(of: footerHeight) { _, newHeight in
