@@ -34,25 +34,20 @@
 //      because .task(id:) is guaranteed to run AFTER the view body has been applied to
 //      the layout tree. onChange fires during the render pass — before layout is committed.
 //      A 50ms sleep inside the task gives the VStack time to measure its content.
-//      This eliminates "bad range for [%{public}s]" which was caused by proxy.scrollTo
-//      firing before ScrollView knew about the "bottom" anchor geometry.
-//   2. footerHeight first becomes non-zero — "layout ready" moment on first launch.
-//      After that, footerHeight changes are ignored (user typing grows the input field).
+//   2. footerHeight becomes non-zero AND messages are already loaded — "layout ready" moment.
+//      Guard: only fires when messages.count > 0 to avoid scrollTo on empty layout.
 //   3. onChange(messages.count) — new message added to the chat.
 //   4. onChange(streamingText) — Chappie is streaming a response (live bubble grows).
 // Intentionally NOT scrolling when footerHeight changes after initial scroll
 // so the user can freely read mid-chat while typing a long message.
 //
-// SCROLL TRIGGER FIX (UX-SCROLL-TRIGGER, v2):
-// Previously used onChange(of: scrollToBottomTrigger) + DispatchQueue.main.async.
-// Problem: DispatchQueue.main.async defers by one runloop tick, but SwiftUI layout
-// is also async and may take multiple ticks. scrollTo fired before ScrollView had
-// committed the new VStack geometry, causing "bad range" warnings.
-// Fix: replaced onChange with .task(id: scrollToBottomTrigger).
-// .task(id:) is a SwiftUI-native lifecycle hook that runs AFTER the view body
-// has been applied. Combined with a 50ms Task.sleep, this gives the layout engine
-// enough time to measure the new VStack content before scrollTo is evaluated.
-// This is the correct and idiomatic SwiftUI solution for post-layout side effects.
+// NOTE ON "bad range for [%{public}s]" IN XCODE CONSOLE:
+// This warning is NOT caused by our code. It is an internal CoreData/SwiftData OSLog
+// decode error that fires when SwiftData performs its first PostSaveMaintenance
+// (incremental_vacuum) after the ModelContainer opens. It is a system-level log
+// formatting issue in Apple's CoreData framework — harmless, does not affect the app.
+// It appears immediately after "[ChappieViewModel] Loaded N providers" because that
+// is when SwiftData completes its first write operation.
 //
 // LOAD MORE (PAGINATION):
 // A "Load earlier messages" button appears at the top when hasMoreMessages == true.
@@ -72,7 +67,6 @@ struct ChatScrollView: View {
 
     /// Scroll-to-bottom trigger from ViewModel.
     ///
-    /// SCROLL TRIGGER FIX v2 (UX-SCROLL-TRIGGER):
     /// Incremented by ViewModel at the END of resetPagination(), after displayedMessages
     /// is fully populated. Watched via .task(id:) — not onChange — because .task(id:)
     /// runs after the view body has been committed to the layout tree.
@@ -186,8 +180,6 @@ struct ChatScrollView: View {
             // .task(id:) is SwiftUI's post-layout hook: safe to call proxy.scrollTo here.
             // The 50ms sleep gives the VStack additional time to measure its full height
             // before scrollTo evaluates the "bottom" anchor geometry.
-            // Without this sleep, scrollTo can still fire before ScrollView has measured
-            // the new content on slow devices or large message lists.
             .task(id: scrollToBottomTrigger) {
                 // Skip the very first trigger (value = 0 on init before any thread loads).
                 guard scrollToBottomTrigger > 0 else { return }
@@ -199,9 +191,14 @@ struct ChatScrollView: View {
                 }
                 initialScrollDone = true
             }
-            // INITIAL SCROLL: fires once when footerHeight first becomes non-zero on launch.
+            // INITIAL SCROLL: fires when footerHeight first becomes non-zero on launch.
+            // Guard: messages.count > 0 — prevents scrollTo when displayedMessages is still
+            // empty (selectThread not yet completed). Without this guard, proxy.scrollTo fires
+            // as soon as InputMorphView appears, before VStack has any content.
+            // The primary scroll on thread load is handled by scrollToBottomTrigger (.task path).
+            // This handler is a fallback for the very first layout-ready moment.
             .onChange(of: footerHeight) { _, newHeight in
-                guard !initialScrollDone, newHeight > 0 else { return }
+                guard !initialScrollDone, newHeight > 0, messages.count > 0 else { return }
                 initialScrollDone = true
                 withAnimation(.easeOut(duration: 0.3)) {
                     proxy.scrollTo("bottom", anchor: .bottom)
