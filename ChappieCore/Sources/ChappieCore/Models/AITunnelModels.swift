@@ -2,85 +2,78 @@
 //  AITunnelModels.swift
 //  ChappieCore
 //
-//  Codable/Sendable модели для работы с API AITunnel (OpenAI-совместимый протокол
-//  с расширениями Anthropic — в частности, Prompt Caching).
+//  Codable/Sendable models for working with the AI provider API (OpenAI-compatible protocol
+//  with Anthropic extensions — in particular, Prompt Caching).
 //
-//  ИЗМЕНЕНИЕ (ТД-7 — Стриминг):
-//  Добавлено поле `stream` в AITunnelRequest и новые модели для разбора SSE-чанков.
+//  CHANGE (ТД-7 — Streaming):
+//  Added `stream` field to AITunnelRequest and new models for SSE chunk parsing.
 //
-//  ИЗМЕНЕНИЕ (ТД-COST — Prompt Caching):
-//  Добавлены типы AIContentBlock и AIMessageContent для поддержки кэширования промптов.
-//  Anthropic позволяет пометить блоки контента флагом `cache_control: {type: "ephemeral"}`.
-//  Такие блоки кэшируются на 5 минут и при повторных запросах стоят ~10% от обычной цены.
-//  Это критически важно: системный промпт Чаппи — огромный и отправляется с КАЖДЫМ запросом.
+//  CHANGE (ТД-COST — Prompt Caching):
+//  Added AIContentBlock and AIMessageContent types for prompt caching support.
 //
-//  ИЗМЕНЕНИЕ (SINGLE-STREAM — Единый стриминговый цикл):
-//  Добавлен инициализатор AIMessage(role:content:toolCalls:) для создания сообщений
-//  с tool_calls из стримингового буфера. Это нужно для нового подхода без probe-запроса.
+//  CHANGE (SINGLE-STREAM — Unified streaming cycle):
+//  Added AIMessage(role:content:toolCalls:) initializer.
 //
-//  ИЗМЕНЕНИЕ (CACHE-PARSE — Парсинг кэша AITunnel):
-//  AITunnel использует нестандартные имена полей для статистики кэша:
-//    - Стандарт Anthropic: cache_creation_input_tokens, cache_read_input_tokens (верхний уровень)
-//    - AITunnel: prompt_tokens_details.cache_write_tokens, prompt_tokens_details.cached_tokens
-//  Добавлена структура AIPromptTokensDetails для парсинга вложенного объекта.
-//  Вычисляемые свойства в AIUsage обеспечивают единый интерфейс для logCacheStats.
+//  CHANGE (CACHE-PARSE — AITunnel cache parsing):
+//  AITunnel uses non-standard field names for cache stats via prompt_tokens_details.
 //
-//  ИЗМЕНЕНИЕ (TOP-LEVEL-CACHE — Автоматическое кэширование через top-level cache_control):
-//  Добавлено поле `cache_control: AICacheControl?` в AITunnelRequest.
-//  Это top-level поле (рядом с model, messages) — AITunnel шлюз сам управляет
-//  брейкпоинтом по мере роста диалога. Никаких per-block cache_control в сообщениях.
-//  TTL 1 час — оптимально для длинных сессий разработки.
+//  CHANGE (TOP-LEVEL-CACHE — Automatic caching via top-level cache_control):
+//  Added `cache_control: AICacheControl?` to AITunnelRequest.
+//
+//  CHANGE (MULTIMODAL — Multimodal content parts):
+//  Added AIMultimodalPart struct and .multimodal case to AIMessageContent.
+//  Used for user messages that contain image or file attachments.
+//  Encodes to OpenAI vision format: array of {type, text} or {type, image_url} objects.
 
 import Foundation
 
 // MARK: - Prompt Caching: Content Blocks
 
-/// Управляющий тег кэширования — используется как top-level поле в AITunnelRequest.
+/// Cache control tag — used as a top-level field in AITunnelRequest.
 ///
-/// ПОЧЕМУ TOP-LEVEL, А НЕ PER-BLOCK:
-/// AITunnel — OpenAI-совместимый шлюз. Поле `content` в сообщениях ОБЯЗАНО быть строкой.
-/// Если передать массив объектов с cache_control внутри сообщений — шлюз ломает соединение.
-/// Правильный способ — top-level cache_control в теле запроса. Шлюз сам двигает
-/// брейкпоинт по мере роста диалога (sticky routing).
+/// WHY TOP-LEVEL, NOT PER-BLOCK:
+/// AITunnel is an OpenAI-compatible gateway. The `content` field in messages MUST be a string.
+/// Passing an array of objects with cache_control inside messages breaks the gateway connection.
+/// The correct approach is top-level cache_control in the request body. The gateway moves
+/// the breakpoint automatically as the conversation grows (sticky routing).
 ///
-/// ПОЧЕМУ TTL 1 ЧАС:
-/// Сессии разработки с Чаппи длятся часами. Дефолтный TTL 5 минут означает, что
-/// системный промпт (тысячи токенов) пересчитывается каждые 5 минут простоя.
-/// С TTL 1 час кэш живёт через перерывы и экономит до 90% стоимости системного промпта.
+/// WHY TTL 1 HOUR:
+/// Chappie development sessions last hours. The default 5-minute TTL means the system prompt
+/// (thousands of tokens) is recomputed every 5 minutes of inactivity.
+/// With TTL 1h the cache survives breaks and saves up to 90% of system prompt cost.
 public struct AICacheControl: Codable, Sendable {
-    /// Тип кэша. На момент написания поддерживается только "ephemeral".
+    /// Cache type. Currently only "ephemeral" is supported.
     public let type: String
-    /// Время жизни кэша. "1h" = 1 час, nil = 5 минут (по умолчанию).
+    /// Cache TTL. "1h" = 1 hour, nil = 5 minutes (default).
     public let ttl: String?
 
-    /// Стандартный кэш на 5 минут (для per-block использования, если потребуется).
     public init(type: String = "ephemeral", ttl: String? = nil) {
         self.type = type
         self.ttl = ttl
     }
 
-    /// Фабричный метод: кэш на 1 час — оптимально для длинных сессий разработки.
+    /// Factory: 1-hour cache — optimal for long development sessions.
     public static let oneHour = AICacheControl(type: "ephemeral", ttl: "1h")
 
-    /// Фабричный метод: кэш на 5 минут (по умолчанию).
+    /// Factory: 5-minute cache (default).
     public static let fiveMinutes = AICacheControl(type: "ephemeral", ttl: nil)
 }
 
-/// Один блок контента в сообщении — текст с опциональным тегом кэширования.
+/// One content block in a message — text with optional cache tag.
 ///
-/// ЗАЧЕМ БЛОКИ ВМЕСТО СТРОКИ:
-/// Стандартный OpenAI-формат использует `content: String`. Но Anthropic расширил
-/// протокол: `content` может быть массивом объектов `[{type, text, cache_control?}]`.
-/// Только через этот формат можно пометить контент для кэширования.
+/// WHY BLOCKS INSTEAD OF STRING:
+/// Standard OpenAI format uses `content: String`. But Anthropic extended the protocol:
+/// `content` can be an array of objects `[{type, text, cache_control?}]`.
+/// Only through this format can content be marked for caching.
 ///
-/// ВАЖНО: Эта структура сохранена для совместимости с декодированием ответов API.
-/// В запросах мы НЕ используем per-block cache_control — только top-level в AITunnelRequest.
+/// IMPORTANT: This struct is kept for response decoding compatibility.
+/// In requests we do NOT use per-block cache_control — only top-level in AITunnelRequest.
 public struct AIContentBlock: Codable, Sendable {
-    /// Тип блока. Для текста всегда "text".
+    /// Block type. Always "text" for text blocks.
     public let type: String
-    /// Текстовое содержимое блока.
+    /// Text content of the block.
     public let text: String
-    /// Опциональный тег кэширования. Если nil — блок не кэшируется.
+    /// Optional cache tag. nil = not cached.
     public let cache_control: AICacheControl?
 
     public init(text: String, cacheControl: AICacheControl? = nil) {
@@ -89,42 +82,106 @@ public struct AIContentBlock: Codable, Sendable {
         self.cache_control = cacheControl
     }
 
-    /// Удобный фабричный метод для создания кэшируемого блока.
+    /// Factory: cached block.
     public static func cached(_ text: String) -> AIContentBlock {
         AIContentBlock(text: text, cacheControl: AICacheControl())
     }
 
-    /// Удобный фабричный метод для создания обычного (некэшируемого) блока.
+    /// Factory: plain (non-cached) block.
     public static func plain(_ text: String) -> AIContentBlock {
         AIContentBlock(text: text, cacheControl: nil)
     }
 }
 
-/// Полиморфный контент сообщения: либо простая строка, либо массив блоков.
+// MARK: - Multimodal Content Parts
+
+/// One part of a multimodal message — either plain text or an image (via data URI).
 ///
-/// ЗАЧЕМ ENUM:
-/// API принимает оба формата. Для всех сообщений используем строку — она компактнее
-/// и гарантированно совместима с AITunnel шлюзом. Массив блоков сохранён для
-/// декодирования ответов, которые теоретически могут прийти в расширенном формате.
-public enum AIMessageContent: Sendable {
-    /// Простая строка — для всех сообщений в запросах к AITunnel.
+/// WHY THIS TYPE:
+/// OpenAI vision API requires `content` to be an array of typed parts when sending images:
+///   [
+///     { "type": "text", "text": "What's in this image?" },
+///     { "type": "image_url", "image_url": { "url": "data:image/jpeg;base64,..." } }
+///   ]
+///
+/// For non-image files (PDF, TXT) we inline their content as a text part with a header,
+/// since most models cannot process binary formats directly — but can read extracted text.
+///
+/// DESIGN DECISION — send everything, handle errors gracefully:
+/// We do not filter by model capability. If the model rejects the content type,
+/// the API returns an error which ChappieViewModel surfaces as a human-friendly message.
+public enum AIMultimodalPart: Encodable, Sendable {
+
+    /// Plain text part — the user's typed prompt.
     case text(String)
-    /// Массив блоков — для декодирования ответов в расширенном формате.
+
+    /// Image part — base64 data URI. Used for image/jpeg, image/png, image/gif, image/webp.
+    case imageURL(String)
+
+    // MARK: - Encodable
+
+    // Encodes to OpenAI vision format:
+    // text  → { "type": "text",      "text": "..." }
+    // image → { "type": "image_url", "image_url": { "url": "data:..." } }
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .text(let content):
+            try container.encode("text", forKey: .type)
+            try container.encode(content, forKey: .text)
+        case .imageURL(let url):
+            try container.encode("image_url", forKey: .type)
+            let imageURLObj = ImageURLObject(url: url)
+            try container.encode(imageURLObj, forKey: .imageURL)
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case text
+        case imageURL = "image_url"
+    }
+
+    // Nested struct for the image_url object
+    private struct ImageURLObject: Encodable {
+        let url: String
+    }
+}
+
+// MARK: - AIMessageContent
+
+/// Polymorphic message content: plain string, array of cached blocks, or multimodal parts.
+///
+/// WHY ENUM:
+/// API accepts all formats. For plain text messages we use .text — compact and compatible.
+/// For messages with image/file attachments we use .multimodal — encodes to vision array.
+/// .blocks is kept for response decoding that may arrive in extended Anthropic format.
+public enum AIMessageContent: Sendable {
+    /// Plain string — for all non-multimodal messages.
+    case text(String)
+    /// Array of content blocks — for decoding responses in extended Anthropic format.
     case blocks([AIContentBlock])
+    /// Array of typed parts — for user messages with image/file attachments (OpenAI vision).
+    case multimodal([AIMultimodalPart])
 }
 
 extension AIMessageContent: Encodable {
     public func encode(to encoder: Encoder) throws {
         switch self {
         case .text(let string):
-            // Кодируем как обычную строку — стандартный OpenAI-формат, совместимый с AITunnel
+            // Encode as plain string — standard OpenAI format, compatible with AITunnel
             var container = encoder.singleValueContainer()
             try container.encode(string)
         case .blocks(let blocks):
-            // Кодируем как массив объектов — расширенный Anthropic-формат.
-            // ВНИМАНИЕ: НЕ использовать в запросах к AITunnel — шлюз не принимает массивы.
+            // Encode as array of objects — extended Anthropic format.
+            // WARNING: do NOT use in requests to AITunnel — gateway rejects arrays.
             var container = encoder.singleValueContainer()
             try container.encode(blocks)
+        case .multimodal(let parts):
+            // Encode as array of typed parts — OpenAI vision format.
+            // Used when the user message contains image or file attachments.
+            var container = encoder.singleValueContainer()
+            try container.encode(parts)
         }
     }
 }
@@ -132,13 +189,13 @@ extension AIMessageContent: Encodable {
 extension AIMessageContent: Decodable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
-        // Сначала пробуем декодировать как строку (наиболее частый случай в ответах API)
+        // Try string first (most common case in API responses)
         if let string = try? container.decode(String.self) {
             self = .text(string)
         } else if let blocks = try? container.decode([AIContentBlock].self) {
             self = .blocks(blocks)
         } else {
-            // Если ни то ни другое — считаем пустой строкой, не падаем
+            // Neither — treat as empty string, don't crash
             self = .text("")
         }
     }
@@ -146,37 +203,24 @@ extension AIMessageContent: Decodable {
 
 // MARK: - Request Models
 
-/// Тело POST-запроса к API AI-провайдера.
+/// POST request body for the AI provider API.
 ///
-/// ПОЛЕ cache_control (TOP-LEVEL CACHING):
-/// Это ключевое поле для автоматического кэширования промптов через AITunnel.
-/// Размещается на верхнем уровне запроса (рядом с model, messages) — это НЕ то же самое,
-/// что per-block cache_control внутри сообщений.
+/// FIELD cache_control (TOP-LEVEL CACHING):
+/// Key field for automatic prompt caching via AITunnel.
+/// Placed at the top level of the request (alongside model, messages) — this is NOT
+/// the same as per-block cache_control inside messages.
 ///
-/// Как это работает:
-/// 1. Мы передаём `cache_control: {"type": "ephemeral", "ttl": "1h"}` в теле запроса.
-/// 2. AITunnel включает sticky routing: повторные запросы с тем же диалогом идут
-///    к тому же провайдеру (Anthropic), где уже есть кэш.
-/// 3. Шлюз сам двигает брейкпоинт по мере роста диалога — нам ничего делать не нужно.
-/// 4. Экономия: системный промпт Чаппи (~3000+ токенов) стоит 10% при cache hit.
-///
-/// ПОЛЕ stream:
-/// - `stream = false` (по умолчанию) → обычный блокирующий ответ
-/// - `stream = true`  → сервер возвращает поток `data: {...}\n\n` чанков
+/// FIELD stream:
+/// - `stream = false` (default) → standard blocking response
+/// - `stream = true`  → server returns a stream of `data: {...}\n\n` chunks
 public struct AITunnelRequest: Encodable, Sendable {
     public let model: String
     public let messages: [AIMessage]
     public let temperature: Double?
     public let tools: [AITool]?
-    /// Включает SSE-стриминг (Server-Sent Events).
-    /// При true сервер начинает отдавать токены немедленно по мере генерации.
+    /// Enables SSE streaming (Server-Sent Events).
     public let stream: Bool
-    /// Top-level кэш-контроль для автоматического кэширования промптов.
-    ///
-    /// ПОЧЕМУ TOP-LEVEL, А НЕ ВНУТРИ СООБЩЕНИЙ:
-    /// AITunnel требует именно этот формат для автоматического multi-turn кэширования.
-    /// Per-block cache_control внутри content[] ломает OpenAI-совместимый шлюз.
-    /// С TTL 1h кэш живёт через перерывы в сессии.
+    /// Top-level cache control for automatic prompt caching.
     public let cache_control: AICacheControl?
 
     public init(
@@ -196,48 +240,32 @@ public struct AITunnelRequest: Encodable, Sendable {
     }
 }
 
-/// Единичное сообщение в диалоге (роль + контент + опциональные поля).
+/// A single message in the conversation (role + content + optional fields).
 ///
-/// ИЗМЕНЕНИЕ (ТД-COST):
-/// Поле `content` теперь `AIMessageContent?` вместо `String?`.
-/// `AIMessageContent` — enum, который прозрачно кодируется либо как строка,
-/// либо как массив блоков. Это позволяет помечать отдельные сообщения для кэширования
-/// без изменения всей остальной логики.
+/// FIELD `content` is `AIMessageContent?` — polymorphic:
+///   .text(String)                — plain text, used for all standard messages
+///   .blocks([AIContentBlock])    — Anthropic extended format, kept for decoding
+///   .multimodal([AIMultimodalPart]) — OpenAI vision format, used for messages with attachments
 ///
-/// Добавлено вычисляемое свойство `contentString` для обратной совместимости —
-/// все места, которые читают текст ответа модели, продолжают работать без изменений.
-///
-/// ИЗМЕНЕНИЕ (SINGLE-STREAM):
-/// Добавлен инициализатор с параметром `toolCalls: [AIToolCall]` — используется
-/// в AIOrchestrator при создании сообщения из стримингового буфера с tool_calls.
-///
-/// ПРАВИЛО ДЛЯ AITunnel:
-/// Поле content в сообщениях ВСЕГДА должно быть строкой (.text), НИКОГДА .blocks.
-/// Кэширование — через top-level cache_control в AITunnelRequest, не здесь.
+/// `contentString` computed property provides backward-compatible string access.
 public struct AIMessage: Codable, Sendable {
     public var role: String
-    /// Полиморфный контент: строка или массив блоков с cache_control.
-    /// В запросах к AITunnel — ВСЕГДА строка. Блоки — только для декодирования ответов.
     public var content: AIMessageContent?
     public var tool_calls: [AIToolCall]?
     public var tool_call_id: String?
     public var name: String?
 
-    /// Удобный доступ к тексту контента без разбора enum вручную.
-    ///
-    /// ЗАЧЕМ: Многие места в коде (AIOrchestrator, ChatHistoryManager и др.) читают
-    /// `message.content` как строку. Это свойство даёт им обратную совместимость:
-    /// не нужно везде писать `if case .text(let s) = message.content`.
+    /// Convenient string access — no manual enum unwrapping needed.
     public var contentString: String? {
         guard let content else { return nil }
         switch content {
         case .text(let s): return s
         case .blocks(let blocks): return blocks.map(\.text).joined()
+        case .multimodal: return nil  // Multimodal has no single string representation
         }
     }
 
-    /// Инициализатор со строкой — для обратной совместимости со всем существующим кодом.
-    /// Большинство мест создают AIMessage(role:content:) — они продолжают работать.
+    /// Standard string initializer — backward compatible with all existing code.
     public init(
         role: String,
         content: String? = nil,
@@ -252,11 +280,7 @@ public struct AIMessage: Codable, Sendable {
         self.name = name
     }
 
-    /// Инициализатор с блоками — сохранён для совместимости, но НЕ использовать в запросах.
-    ///
-    /// ВНИМАНИЕ: Этот инициализатор создаёт сообщение с .blocks контентом.
-    /// Такой формат НЕ совместим с AITunnel шлюзом при отправке запросов.
-    /// Использовать только для тестирования или если AITunnel явно поддержит per-block кэш.
+    /// Blocks initializer — kept for compatibility, NOT for use in AITunnel requests.
     public init(
         role: String,
         contentBlocks: [AIContentBlock],
@@ -271,17 +295,30 @@ public struct AIMessage: Codable, Sendable {
         self.name = name
     }
 
-    /// Инициализатор для создания assistant-сообщения с tool_calls из стримингового буфера.
+    /// Multimodal initializer — for user messages with image/file attachments.
     ///
-    /// ЗАЧЕМ ОТДЕЛЬНЫЙ ИНИЦИАЛИЗАТОР:
-    /// В новом едином стриминговом цикле (без probe-запроса) AIOrchestrator накапливает
-    /// ответ модели в текстовом буфере и после завершения потока создаёт AIMessage
-    /// для добавления в историю сессии. Этот инициализатор делает создание такого
-    /// сообщения явным и семантически понятным.
+    /// MULTIMODAL: Creates a message with .multimodal content that encodes to
+    /// OpenAI vision array format. Used by buildRawNetworkHistory() when the
+    /// user message has attachments.
+    public init(
+        role: String,
+        multimodalParts: [AIMultimodalPart],
+        tool_calls: [AIToolCall]? = nil,
+        tool_call_id: String? = nil,
+        name: String? = nil
+    ) {
+        self.role = role
+        self.content = .multimodal(multimodalParts)
+        self.tool_calls = tool_calls
+        self.tool_call_id = tool_call_id
+        self.name = name
+    }
+
+    /// Streaming assistant message initializer — for creating messages from streaming buffer.
     ///
-    /// ПОЧЕМУ content И toolCalls одновременно:
-    /// В стриминговом режиме модель может вернуть и текст и tool_calls в одном ответе
-    /// (например, "Сейчас сделаю это..." + вызов инструмента). Оба поля опциональны.
+    /// WHY SEPARATE: In the unified streaming cycle (no probe request), AIOrchestrator
+    /// accumulates the response in a text buffer and creates an AIMessage after the stream ends.
+    /// This initializer makes that creation explicit and semantically clear.
     public init(
         role: String,
         content: String?,
@@ -322,10 +359,10 @@ public struct AIFunctionDefinition: Codable, Sendable {
 }
 
 public struct AIToolParameters: Codable, Sendable {
-    public var type: String = "object" // 🔥 КЛОД ТРЕБУЕТ ЭТО ПОЛЕ ВСЕГДА!
+    public var type: String = "object"
     public let properties: [String: AIToolProperty]
     public let required: [String]?
-    
+
     public init(type: String = "object", properties: [String: AIToolProperty], required: [String]? = nil) {
         self.type = type
         self.properties = properties
@@ -345,14 +382,14 @@ public struct AIToolProperty: Codable, Sendable {
 
 // MARK: - Response Models (Non-Streaming)
 
-/// Полный ответ API при обычном (не-стриминговом) запросе.
+/// Full API response for a non-streaming request.
 public struct AITunnelResponse: Decodable, Sendable {
     public let id: String?
     public let choices: [AIChoice]
     public let usage: AIUsage?
 }
 
-/// Один вариант ответа модели (обычно choices[0]).
+/// One response choice (usually choices[0]).
 public struct AIChoice: Decodable, Sendable {
     public let message: AIMessage
     public let finish_reason: String?
@@ -360,40 +397,21 @@ public struct AIChoice: Decodable, Sendable {
 
 // MARK: - Cache Statistics
 
-/// Детализация токенов промпта — вложенный объект `prompt_tokens_details`.
+/// Prompt token breakdown — nested object `prompt_tokens_details`.
 ///
-/// ПОЧЕМУ ОТДЕЛЬНАЯ СТРУКТУРА:
-/// AITunnel отдаёт статистику кэша НЕ на верхнем уровне usage (как стандартный Anthropic),
-/// а вложенным объектом prompt_tokens_details. Это нестандартное расширение провайдера.
-///
-/// Стандарт Anthropic:
-///   { "cache_creation_input_tokens": 2414, "cache_read_input_tokens": 2384 }
-///
-/// AITunnel:
-///   { "prompt_tokens_details": { "cache_write_tokens": 2414, "cached_tokens": 2384 } }
-///
-/// Структура парсит оба варианта для совместимости.
+/// WHY SEPARATE STRUCT:
+/// AITunnel returns cache stats NOT at the top level of usage (like standard Anthropic),
+/// but as a nested object prompt_tokens_details. This is a non-standard provider extension.
 public struct AIPromptTokensDetails: Decodable, Sendable {
-    /// Токены, записанные в кэш в этом запросе (AITunnel-специфичное поле).
+    /// Tokens written to cache in this request (AITunnel-specific field).
     public let cache_write_tokens: Int?
-    /// Токены, прочитанные из кэша (AITunnel-специфичное поле).
+    /// Tokens read from cache (AITunnel-specific field).
     public let cached_tokens: Int?
-    /// Аудио-токены (не используется, но парсим для полноты).
     public let audio_tokens: Int?
-    /// Видео-токены (не используется, но парсим для полноты).
     public let video_tokens: Int?
 }
 
-/// Статистика использования токенов и финансовая информация.
-///
-/// ИЗМЕНЕНИЕ (ТД-COST — Prompt Caching):
-/// Добавлены поля для парсинга статистики кэша.
-///
-/// ИЗМЕНЕНИЕ (CACHE-PARSE):
-/// AITunnel использует нестандартные имена полей — через вложенный объект
-/// `prompt_tokens_details`. Добавлено поле `prompt_tokens_details: AIPromptTokensDetails?`.
-/// Вычисляемые свойства `effectiveCacheCreation` и `effectiveCacheRead` объединяют
-/// оба варианта (стандартный Anthropic + AITunnel) в единый интерфейс.
+/// Token usage statistics and financial information.
 public struct AIUsage: Decodable, Sendable {
     public let prompt_tokens: Int?
     public let completion_tokens: Int?
@@ -401,30 +419,22 @@ public struct AIUsage: Decodable, Sendable {
     public let cost_rub: Double?
     public let balance: Double?
 
-    /// Стандартные поля Anthropic (могут отсутствовать у AITunnel).
-    /// Токены, записанные в кэш в этом запросе (стоят x1.25 от обычной цены).
+    /// Standard Anthropic fields (may be absent for AITunnel).
     public let cache_creation_input_tokens: Int?
-    /// Токены, прочитанные из кэша (стоят x0.1 от обычной цены).
     public let cache_read_input_tokens: Int?
 
-    /// Нестандартный объект AITunnel с детализацией кэша.
+    /// Non-standard AITunnel cache breakdown object.
     public let prompt_tokens_details: AIPromptTokensDetails?
 
-    // MARK: - Вычисляемые свойства для единого интерфейса
+    // MARK: - Computed properties for unified interface
 
-    /// Токены, записанные в кэш — работает и с Anthropic, и с AITunnel форматом.
-    ///
-    /// ПРИОРИТЕТ: Сначала смотрим на стандартное поле Anthropic,
-    /// если нет — берём из вложенного объекта AITunnel.
+    /// Tokens written to cache — works with both Anthropic and AITunnel formats.
     public var effectiveCacheCreation: Int {
         if let standard = cache_creation_input_tokens, standard > 0 { return standard }
         return prompt_tokens_details?.cache_write_tokens ?? 0
     }
 
-    /// Токены, прочитанные из кэша — работает и с Anthropic, и с AITunnel форматом.
-    ///
-    /// ПРИОРИТЕТ: Сначала смотрим на стандартное поле Anthropic,
-    /// если нет — берём из вложенного объекта AITunnel.
+    /// Tokens read from cache — works with both Anthropic and AITunnel formats.
     public var effectiveCacheRead: Int {
         if let standard = cache_read_input_tokens, standard > 0 { return standard }
         return prompt_tokens_details?.cached_tokens ?? 0
@@ -457,84 +467,82 @@ public struct AIToolCallFunction: Codable, Sendable {
 
 // MARK: - Streaming Models (SSE)
 
-/// Один чанк SSE-потока.
+/// One SSE stream chunk.
 ///
-/// Сервер отдаёт поток строк вида:
+/// Server sends a stream of lines like:
 ///   data: {"id":"...","choices":[{"delta":{"content":"Hi"},"finish_reason":null}]}\n\n
 ///   data: [DONE]\n\n
 ///
-/// Каждая такая строка (кроме [DONE]) декодируется в AIStreamChunk.
-/// Поле `usage` присутствует только в последнем чанке перед [DONE] —
-/// именно оттуда берём стоимость и баланс.
+/// Each such line (except [DONE]) decodes into AIStreamChunk.
+/// The `usage` field is present only in the last chunk before [DONE].
 public struct AIStreamChunk: Decodable, Sendable {
     public let id: String?
     public let choices: [AIStreamChoice]
-    /// Статистика токенов — приходит только в финальном чанке.
+    /// Token stats — present only in the final chunk.
     public let usage: AIUsage?
 }
 
-/// Один вариант ответа внутри SSE-чанка.
+/// One response choice inside an SSE chunk.
 public struct AIStreamChoice: Decodable, Sendable {
-    /// Дельта-обновление: новые токены или начало tool_call.
+    /// Delta update: new tokens or start of a tool_call.
     public let delta: AIStreamDelta
-    /// "stop" означает конец генерации, nil — продолжение.
+    /// "stop" = end of generation, nil = continues.
     public let finish_reason: String?
 }
 
-/// Дельта-обновление: приращение текста или вызов инструмента.
+/// Delta update: text increment or tool call.
 ///
-/// ПОЧЕМУ ДВА ОПЦИОНАЛЬНЫХ ПОЛЯ:
-/// Модель генерирует либо текст (`content`), либо вызов инструмента (`tool_calls`),
-/// но никогда оба сразу. Первый чанк с tool_call содержит id и name,
-/// последующие чанки — только `arguments` (JSON накапливается постепенно).
+/// WHY TWO OPTIONAL FIELDS:
+/// The model generates either text (`content`) or a tool call (`tool_calls`), never both
+/// simultaneously. The first tool_call chunk contains id and name; subsequent chunks
+/// contain only `arguments` (JSON accumulates gradually).
 public struct AIStreamDelta: Decodable, Sendable {
-    /// Новые токены текста (nil если это tool_call чанк).
+    /// New text tokens (nil if this is a tool_call chunk).
     public let content: String?
-    /// Вызовы инструментов — приходят частями, нужно накапливать.
+    /// Tool calls — arrive in parts, must be accumulated.
     public let tool_calls: [AIStreamToolCall]?
 }
 
-/// Частичный вызов инструмента из SSE-потока.
+/// Partial tool call from SSE stream.
 ///
-/// В отличие от AIToolCall (полный, из не-стримингового ответа),
-/// этот объект приходит по кусочкам:
-///   - Первый чанк: id="call_abc", function.name="write_file", function.arguments="{"
-///   - Последующие: id=nil, function.name=nil, function.arguments="path"
-/// Поэтому index обязателен — по нему накапливаем аргументы в правильный слот.
+/// Unlike AIToolCall (complete, from non-streaming response), this arrives in pieces:
+///   - First chunk: id="call_abc", function.name="write_file", function.arguments="{"
+///   - Subsequent: id=nil, function.name=nil, function.arguments="path"
+/// Therefore index is required — used to accumulate arguments into the correct slot.
 public struct AIStreamToolCall: Decodable, Sendable {
-    /// Порядковый номер tool_call (для параллельных вызовов).
+    /// Sequential number of the tool_call (for parallel calls).
     public let index: Int
-    /// ID вызова — присутствует только в первом чанке этого tool_call.
+    /// Call ID — present only in the first chunk of this tool_call.
     public let id: String?
-    /// Тип — обычно "function", присутствует только в первом чанке.
+    /// Type — usually "function", present only in the first chunk.
     public let type: String?
-    /// Частичные данные функции.
+    /// Partial function data.
     public let function: AIStreamToolCallFunction?
 }
 
-/// Частичные данные функции из SSE-потока.
+/// Partial function data from SSE stream.
 public struct AIStreamToolCallFunction: Decodable, Sendable {
-    /// Имя функции — только в первом чанке.
+    /// Function name — only in the first chunk.
     public let name: String?
-    /// Кусочек JSON-аргументов — накапливается по чанкам.
+    /// Piece of JSON arguments — accumulates across chunks.
     public let arguments: String?
 }
 
 // MARK: - Streaming Result
 
-/// Полный результат стримингового запроса с поддержкой инструментов.
+/// Complete result of a streaming request with tool call support.
 ///
-/// ЗАЧЕМ ОТДЕЛЬНАЯ СТРУКТУРА:
-/// streamRequestWithTools() должен вернуть не только поток токенов,
-/// но и собранные tool_calls (которые приходят по кусочкам в дельтах).
-/// Эта структура агрегирует всё что накопилось за время потока.
+/// WHY SEPARATE STRUCT:
+/// streamRequestWithTools() must return not just the token stream,
+/// but also the assembled tool_calls (which arrive in pieces in deltas).
+/// This struct aggregates everything accumulated during the stream.
 public struct AIStreamResult: Sendable {
-    /// Накопленный текстовый ответ (пустой если был только tool_call).
+    /// Accumulated text response (empty if only tool_calls were returned).
     public let text: String
-    /// Собранные вызовы инструментов (nil если был только текстовый ответ).
+    /// Assembled tool calls (nil if only text was returned).
     public let toolCalls: [AIToolCall]?
-    /// Стоимость запроса в рублях.
+    /// Request cost in rubles.
     public let cost: Double?
-    /// Обновлённый баланс после запроса.
+    /// Updated balance after the request.
     public let balance: Double?
 }

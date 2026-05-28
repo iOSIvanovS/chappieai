@@ -130,13 +130,23 @@
 //
 // MULTIMODAL (MULTIMODAL-STEP1):
 // ChatMessage.message case gained a 6th field `attachments: [AttachedFile]`.
-// buildRawNetworkHistory() pattern updated — `_` added for attachments.
-// Attachment → API encoding will be added in Step 3 (AIOrchestrator layer).
 //
 // MULTIMODAL (MULTIMODAL-STEP2):
 // send(prompt:attachments:) now accepts [AttachedFile].
 // User message is stored with attachments in ChatMessage.message.
-// Attachments are passed into buildRawNetworkHistory() for Step 3 encoding.
+//
+// MULTIMODAL (MULTIMODAL-STEP3):
+// buildRawNetworkHistory() returns history EXCLUDING the last user message.
+// The last user message is built separately as AIMessage and passed to
+// orchestrator.process(currentMessage:) — preserving multimodal content.
+//
+// MULTIMODAL ENCODING STRATEGY:
+//   Images → AIMultimodalPart.imageURL (base64 data URI, OpenAI vision format)
+//   PDF/TXT → AIMultimodalPart.text (filename header + decoded text content)
+//   Other binary → AIMultimodalPart.text (filename header + size note)
+// Plain text messages are still encoded as AIMessage(role:content:String) — no change.
+// Error handling: if the model rejects the content type, the API error is surfaced
+// as a human-friendly message by ChappieViewModel's error handler in send().
 
 import SwiftUI
 import ChappieCore
@@ -161,46 +171,26 @@ final class ChappieViewModel {
     var messages: [ChatMessage] = []
 
     /// Messages visible in the chat scroll view — paginated slice for UI rendering.
-    ///
-    /// PAGINATION (UX-PAGINATION):
-    /// Always shows the last N messages on thread load.
-    /// Grows upward as user calls loadMoreMessages().
-    /// Does NOT affect visibleMessages — that is used for network context only.
     private(set) var displayedMessages: [ChatMessage] = []
 
     /// True when there are older messages above the current displayedMessages slice.
     private(set) var hasMoreMessages: Bool = false
 
     /// Index into `messages` marking the start of the current displayed slice.
-    /// displayedMessages = messages[displayedStart...]
     private var displayedStart: Int = 0
 
     /// Scroll-to-bottom trigger for ChatScrollView.
-    ///
-    /// SCROLL TRIGGER FIX v3 (UX-SCROLL-TRIGGER-V3):
-    /// Starts at 0. Only incremented by resetPagination(fireScrollTrigger: true).
-    /// That variant is called ONLY from selectThread() — which runs after the view tree
-    /// is on screen. All other callers pass false, keeping the trigger at 0 during
-    /// app startup, preventing "bad range" from a ScrollView with no geometry yet.
     private(set) var scrollToBottomTrigger: Int = 0
 
-    /// Messages visible in the chat scroll view.
-    ///
-    /// VISIBILITY DEPTH = contextDepth × 10.
-    /// If unlimited context — all messages are shown.
-    /// This ensures chat history is proportional to what gets sent to the model.
+    /// Messages visible in the chat scroll view (for context window building).
     var visibleMessages: [ChatMessage] {
         let onlyMessages = messages.filter { msg in
             if case .message = msg { return true }
             return false
         }
-
-        // Unlimited context — show everything
         if activeThreadSettings.isUnlimitedContext {
             return onlyMessages
         }
-
-        // Chat depth = context depth × 10
         let chatDepth = activeThreadSettings.maxMessagesInContext * 10
         return Array(onlyMessages.suffix(chatDepth))
     }
@@ -209,32 +199,11 @@ final class ChappieViewModel {
     var streamingText: String = ""
     var runningCost: Double = 0.0
     var currentToolCall: String? = nil
-
-    // Balance is NOT persisted via didSet — use saveBalance(for:) / loadBalance(for:) explicitly.
-    // This prevents the old global "savedBalance" key from being written accidentally.
     var currentBalance: Double?
 
-    /// True while history is being loaded from SwiftData for the selected thread.
-    ///
-    /// UX-LOADING: exposed as private(set) so ChatScrollView can show a spinner instead
-    /// of the welcome screen, preventing the flash of empty state on app launch.
-    ///
-    /// UX-LOADING-FIX: set to true at the very top of selectThread(), before activeThread
-    /// is updated, so there is never a rendered frame with isLoadingThread=false + messages=[].
     private(set) var isLoadingThread: Bool = false
-
-    /// True after the very first selectThread() completes on app launch.
-    ///
-    /// UX-APP-READY: ContentView shows a ProgressView until this is true.
-    /// This replaces the old 300ms timer-based isReady flag in ContentView.
-    /// isAppReady and isLoadingThread=false are set together at the end of selectThread(),
-    /// so SwiftUI never sees a frame where the app is "ready" but history isn't loaded yet.
     private(set) var isAppReady: Bool = false
 
-    // MARK: - Active Request Task
-    //
-    // Stored so cancelCurrentRequest() can cancel it at any time.
-    // Nil when no request is in flight.
     private var currentRequestTask: Task<Void, Never>? = nil
 
     // MARK: - Threads (IT-05)
@@ -260,19 +229,10 @@ final class ChappieViewModel {
 
     // MARK: - IT-10: AI Providers
 
-    /// All configured AI providers.
     var providers: [AIProvider] = []
-
-    /// The provider currently active for this thread.
-    /// nil = no provider configured yet (onboarding required).
     var activeProvider: AIProvider? = nil
-
-    /// The model name currently active for this thread.
-    /// Must be one of activeProvider.models, or the thread is considered orphaned.
     var activeModelName: String? = nil
 
-    /// True when the active thread's provider or model is no longer available.
-    /// Chat view shows a warning banner and model picker to recover.
     var isThreadOrphaned: Bool {
         guard let provider = activeProvider else {
             return activeThreadSettings.activeProviderId != nil
@@ -284,17 +244,11 @@ final class ChappieViewModel {
         return false
     }
 
-    /// Controls the new-thread provider+model picker sheet (IT-10).
     var showNewThreadProviderPicker: Bool = false
-
-    /// Pending thread waiting for provider+model selection (IT-10).
     var pendingNewThread: ThreadMetadata? = nil
 
     // MARK: - Draft per thread (UX-DRAFT)
-    //
-    // Stores unsent input text keyed by thread ID.
-    // Allows user to switch threads without losing what they were typing.
-    // Drafts are in-memory only — not persisted across app restarts.
+
     private var threadDrafts: [UUID: String] = [:]
 
     // MARK: - Dependencies
@@ -326,41 +280,24 @@ final class ChappieViewModel {
 
     // MARK: - Pagination (UX-PAGINATION)
 
-    /// Resets the displayed slice to the last `pageSize` messages.
-    ///
-    /// - Parameter fireScrollTrigger: When true, increments scrollToBottomTrigger so
-    ///   ChatScrollView scrolls to bottom. Pass false when called before the view tree
-    ///   exists to avoid "bad range" crash.
-    ///
-    /// SCROLL TRIGGER FIX v3 (UX-SCROLL-TRIGGER-V3):
-    /// Only selectThread() passes fireScrollTrigger: true — it is the only caller
-    /// that runs after the view is on screen. All other callers pass false.
     private func resetPagination(fireScrollTrigger: Bool = false) {
         let count = messages.count
         if count <= pageSize {
-            // All messages fit in one page — show everything
             displayedStart = 0
             displayedMessages = messages
             hasMoreMessages = false
         } else {
-            // Show only the last pageSize messages; older ones available via loadMoreMessages()
             displayedStart = count - pageSize
             displayedMessages = Array(messages[displayedStart...])
             hasMoreMessages = true
         }
-        // Only fire the scroll trigger when the view tree is ready (selectThread path).
         if fireScrollTrigger {
             scrollToBottomTrigger += 1
         }
     }
 
-    /// Prepends the previous `pageSizeLoad` messages to the displayed slice.
-    ///
-    /// Called when the user scrolls to the top of ChatScrollView.
-    /// Does nothing if all messages are already displayed.
     func loadMoreMessages() {
         guard hasMoreMessages, displayedStart > 0 else { return }
-
         let newStart = max(0, displayedStart - pageSizeLoad)
         let additionalMessages = Array(messages[newStart..<displayedStart])
         displayedStart = newStart
@@ -368,53 +305,39 @@ final class ChappieViewModel {
         hasMoreMessages = displayedStart > 0
     }
 
-    /// Appends a newly received message to displayedMessages without full reset.
-    ///
-    /// Called after send() receives a final response or when user sends a message.
-    /// Avoids rebuilding the entire slice — just appends to the end.
     private func appendToDisplayed(_ message: ChatMessage) {
         displayedMessages.append(message)
     }
 
     // MARK: - Draft Management (UX-DRAFT)
 
-    /// Returns the saved draft for the given thread, or empty string if none.
     func getDraft(for threadId: UUID) -> String {
         threadDrafts[threadId] ?? ""
     }
 
-    /// Saves the current input text as a draft for the given thread.
-    /// Called by ContentView whenever prompt changes and a thread is active.
     func setDraft(_ text: String, for threadId: UUID) {
         threadDrafts[threadId] = text
     }
 
-    /// Clears the draft for the given thread after the message is sent.
     func clearDraft(for threadId: UUID) {
         threadDrafts.removeValue(forKey: threadId)
     }
 
     // MARK: - Balance Storage (per-provider)
 
-    /// UserDefaults key scoped to a specific provider id.
     private func balanceKey(for providerId: UUID) -> String {
         "balance_\(providerId.uuidString)"
     }
 
-    /// Persists balance for the given provider.
     private func saveBalance(_ balance: Double, for providerId: UUID) {
         UserDefaults.standard.set(balance, forKey: balanceKey(for: providerId))
     }
 
-    /// Loads the last known balance for the given provider. Returns nil if never set.
     private func loadBalance(for providerId: UUID) -> Double? {
         let key = balanceKey(for: providerId)
         return UserDefaults.standard.object(forKey: key) as? Double
     }
 
-    /// Refreshes currentBalance from UserDefaults for the currently active provider.
-    /// Called at the end of selectThread() to guarantee the balance pill is visible on startup,
-    /// regardless of which switchProvider() path was taken (or skipped).
     private func refreshBalanceForActiveProvider() {
         guard let provider = activeProvider else { return }
         self.currentBalance = loadBalance(for: provider.id)
@@ -422,12 +345,10 @@ final class ChappieViewModel {
 
     // MARK: - Last Active Thread (UX-RESTORE)
 
-    /// Saves the active thread ID to UserDefaults so it can be restored on next launch.
     private func saveLastActiveThreadId(_ id: UUID) {
         UserDefaults.standard.set(id.uuidString, forKey: lastActiveThreadIdKey)
     }
 
-    /// Returns the last active thread ID from UserDefaults, or nil if never saved.
     private func loadLastActiveThreadId() -> UUID? {
         guard let str = UserDefaults.standard.string(forKey: lastActiveThreadIdKey) else { return nil }
         return UUID(uuidString: str)
@@ -471,7 +392,6 @@ final class ChappieViewModel {
 
     // MARK: - IT-10: User Name
 
-    /// Saves the user's name directly to global SwiftData memory.
     func saveUserName(_ name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -502,7 +422,6 @@ final class ChappieViewModel {
         }
     }
 
-    /// Reads the user's name from global SwiftData memory.
     func loadUserName() async -> String? {
         guard let store = memoryStore else { return nil }
         do {
@@ -527,7 +446,6 @@ final class ChappieViewModel {
         do {
             let loaded = try await store.loadProviders()
             self.providers = loaded
-            // Don't set activeProvider here — selectThread() will do it per-thread.
             print("[ChappieViewModel] Loaded \(loaded.count) providers")
         } catch {
             print("[ChappieViewModel] Failed to load providers: \(error)")
@@ -545,7 +463,6 @@ final class ChappieViewModel {
         self.activeProvider = provider
         self.activeModelName = model.isEmpty ? nil : model
 
-        // Load the last known balance for this specific provider.
         self.currentBalance = loadBalance(for: provider.id)
 
         if let ts = toolService, let fs = fileSystem, let mm = memoryManager {
@@ -557,9 +474,6 @@ final class ChappieViewModel {
             )
         }
 
-        // Save provider+model selection into the active thread's settings.
-        // This is what makes the selection per-thread — without saving here,
-        // selectThread() won't know which provider/model to restore next time.
         if activeThread != nil {
             var settings = activeThreadSettings
             settings.activeProviderId = provider.id
@@ -840,7 +754,6 @@ final class ChappieViewModel {
             self.threads = loaded
 
             if loaded.isEmpty {
-                // No threads — create a default one
                 let newId = try await store.createThread(title: "Новый тред")
                 let refreshed = try await store.loadThreads()
                 self.threads = refreshed
@@ -848,7 +761,6 @@ final class ChappieViewModel {
                     await selectThread(newThread)
                 }
             } else {
-                // UX-RESTORE: try to restore the last active thread
                 if let lastId = loadLastActiveThreadId(),
                    let lastThread = loaded.first(where: { $0.id == lastId }) {
                     await selectThread(lastThread)
@@ -857,7 +769,6 @@ final class ChappieViewModel {
                     self.activeThread = updated
                     buildAndSyncMemoryContext()
                 } else {
-                    // Fallback: select the most recently updated thread
                     await selectThread(loaded[0])
                 }
             }
@@ -869,46 +780,28 @@ final class ChappieViewModel {
     func selectThread(_ thread: ThreadMetadata) async {
         guard let store = threadStore else { return }
 
-        // UX-LOADING-FIX: set loading state and clear messages BEFORE updating activeThread.
-        // This guarantees SwiftUI never renders a frame with isLoadingThread=false + messages=[]
-        // simultaneously — which caused the welcome screen to flash on app launch.
-        // The spinner is shown from this point until history is fully loaded.
         self.isLoadingThread = true
         self.messages = []
         self.displayedMessages = []
 
         self.activeThread = thread
 
-        // UX-RESTORE: persist the selected thread ID for next launch
         saveLastActiveThreadId(thread.id)
 
         do {
             let settings = try await store.loadSettings(forThreadId: thread.id)
             self.activeThreadSettings = settings
 
-            // MODEL-PER-THREAD FIX:
-            // ALWAYS call switchProvider when selecting a thread — never skip it.
-            // This ensures activeProvider/activeModelName always match the selected thread,
-            // not the previously active one.
-            //
-            // Priority order:
-            // 1. Thread has a saved provider → restore it exactly.
-            // 2. Thread has no saved provider → use the default provider.
-            // 3. No providers configured at all → leave activeProvider as nil (onboarding state).
             if let providerId = settings.activeProviderId,
                let provider = providers.first(where: { $0.id == providerId }) {
-                // Restore the exact provider+model saved for this thread.
                 await switchProvider(provider, modelName: settings.activeModelName)
             } else if let provStore = providerStore,
                       let defaultProvider = try? await provStore.loadDefaultProvider() {
-                // Thread has no saved provider — fall back to the default.
-                // Use the model from settings if it matches, otherwise use provider's first model.
                 let modelName = settings.activeModelName.flatMap { name in
                     defaultProvider.models.contains(name) ? name : nil
                 } ?? defaultProvider.models.first
                 await switchProvider(defaultProvider, modelName: modelName, from: provStore)
             }
-            // If no providers at all — activeProvider stays nil (onboarding banner shows).
 
             let loaded = try await store.loadMessages(
                 fromThreadId: thread.id,
@@ -916,8 +809,6 @@ final class ChappieViewModel {
             )
 
             self.messages = loaded
-            // fireScrollTrigger: true — view is on screen, safe to scroll.
-            // This is the ONLY call site that passes true.
             resetPagination(fireScrollTrigger: true)
 
             print("[ChappieViewModel] Thread '\(thread.title)' selected (\(loaded.count) messages)")
@@ -925,9 +816,6 @@ final class ChappieViewModel {
             print("[ChappieViewModel] Error loading thread '\(thread.title)': \(error)")
         }
 
-        // UX-LOADING + UX-APP-READY: set both flags together in one assignment block.
-        // SwiftUI will see both changes in the same render pass — no intermediate frame
-        // where isLoadingThread=false but isAppReady=false (or vice versa).
         self.isLoadingThread = false
         self.isAppReady = true
 
@@ -935,8 +823,6 @@ final class ChappieViewModel {
         buildAndSyncMemoryContext()
         await syncActiveMemoryContext()
 
-        // Always sync balance from UserDefaults for the active provider.
-        // Guarantees the balance pill appears on startup even when switchProvider() was skipped.
         refreshBalanceForActiveProvider()
     }
 
@@ -956,8 +842,6 @@ final class ChappieViewModel {
                     } else {
                         await selectThread(newThread)
                         self.messages = []
-                        // View is on screen here — but selectThread already fired the trigger.
-                        // Use false to avoid double scroll.
                         resetPagination(fireScrollTrigger: false)
                         self.activeProjects = []
                         buildAndSyncMemoryContext()
@@ -972,51 +856,32 @@ final class ChappieViewModel {
         }
     }
 
-    /// Confirms new thread creation with provider, model, custom title and context settings.
-    ///
-    /// IT-12: Extended from 2 to 4 parameters — title and ThreadSettings are now set
-    /// immediately upon thread creation, before selectThread() is called.
-    /// This ensures the thread appears in the sidebar with the correct name right away.
-    ///
-    /// - Parameters:
-    ///   - providerId: UUID of the selected AI provider
-    ///   - modelName: Selected model name within the provider
-    ///   - title: User-defined thread name (defaults to "Новый тред" if empty)
-    ///   - settings: ThreadSettings with context depth and unlimited flag
     func confirmNewThread(with providerId: UUID, modelName: String, title: String, settings: ThreadSettings) async {
         guard let thread = pendingNewThread,
               let store = threadStore else { return }
         self.pendingNewThread = nil
         self.showNewThreadProviderPicker = false
 
-        // Apply provider selection first so switchProvider() saves it into thread settings.
         if let provider = providers.first(where: { $0.id == providerId }) {
             await switchProvider(provider, modelName: modelName)
         }
 
-        // Save custom title — rename from default "Новый тред" to user-provided name.
         let finalTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         if !finalTitle.isEmpty && finalTitle != "Новый тред" {
             try? await store.renameThread(id: thread.id, title: finalTitle)
         }
 
-        // Persist context settings (depth + unlimited flag) immediately.
-        // Provider/model are already saved by switchProvider() above.
         var updatedSettings = settings
         updatedSettings.activeProviderId = providerId
         updatedSettings.activeModelName = modelName.isEmpty ? nil : modelName
         try? await store.updateSettings(updatedSettings, forThreadId: thread.id)
 
-        // Reload threads so sidebar shows the new title immediately.
         if let refreshed = try? await store.loadThreads() {
             self.threads = refreshed
         }
 
-        // Select the thread — this loads messages (empty) and finalizes state.
-        // selectThread() calls resetPagination(fireScrollTrigger: true) internally.
         await selectThread(thread)
         self.messages = []
-        // selectThread already fired the trigger — use false to avoid double scroll.
         resetPagination(fireScrollTrigger: false)
         self.activeProjects = []
         buildAndSyncMemoryContext()
@@ -1031,7 +896,6 @@ final class ChappieViewModel {
         guard let store = threadStore else { return }
         Task {
             try? await store.deleteThread(id: thread.id)
-            // Reload threads after cancellation to keep sidebar in sync
             let refreshed = try? await store.loadThreads()
             if let refreshed { self.threads = refreshed }
         }
@@ -1040,7 +904,6 @@ final class ChappieViewModel {
     func deleteThread(_ thread: ThreadMetadata) {
         guard let store = threadStore else { return }
 
-        // Clean up draft for deleted thread
         threadDrafts.removeValue(forKey: thread.id)
 
         Task {
@@ -1090,25 +953,13 @@ final class ChappieViewModel {
 
     // MARK: - IT-11: Thread Settings Update
 
-    /// Saves updated thread settings and optionally renames the thread.
-    ///
-    /// Called from ContentView when user confirms ThreadSettingsSheet.
-    /// Updates both the title (via renameThread) and ThreadSettings (via updateSettings).
-    /// After saving, reloads threads so sidebar and toolbar reflect the new title.
-    ///
-    /// - Parameters:
-    ///   - settings: New ThreadSettings to persist
-    ///   - newTitle: New display title (may be the same as current)
-    ///   - threadId: UUID of the thread to update
     func updateThreadSettings(_ settings: ThreadSettings, newTitle: String, forThreadId threadId: UUID) {
         guard let store = threadStore else { return }
 
         Task {
             do {
-                // Save title (renameThread handles the title update)
                 try await store.renameThread(id: threadId, title: newTitle)
 
-                // Save context settings — preserve provider/model from existing settings
                 var updatedSettings = settings
                 if let currentProviderId = activeThreadSettings.activeProviderId {
                     updatedSettings.activeProviderId = currentProviderId
@@ -1118,11 +969,9 @@ final class ChappieViewModel {
                 }
                 try await store.updateSettings(updatedSettings, forThreadId: threadId)
 
-                // Reload threads so sidebar title and toolbar update immediately
                 let refreshed = try await store.loadThreads()
                 self.threads = refreshed
 
-                // If this is the active thread — update local state
                 if activeThread?.id == threadId,
                    let updated = refreshed.first(where: { $0.id == threadId }) {
                     self.activeThread = updated
@@ -1222,7 +1071,6 @@ final class ChappieViewModel {
         Task {
             do {
                 var updatedIds = thread.projectIds
-                // Remove the project with matching id from the thread's binding list
                 updatedIds.removeAll { $0 == projectId }
                 try await tStore.updateProjectBindings(updatedIds, forThreadId: thread.id)
 
@@ -1279,16 +1127,19 @@ final class ChappieViewModel {
 
     /// Sends a prompt (and optional file attachments) to the orchestrator.
     ///
-    /// MULTIMODAL-STEP2:
-    /// attachments are stored in the user ChatMessage immediately.
-    /// They will be encoded into API content blocks in Step 3 (AIOrchestrator).
-    /// For now buildRawNetworkHistory() ignores them (placeholder `_`).
+    /// MULTIMODAL-STEP3 ARCHITECTURE:
+    /// 1. User message is stored in messages[] with attachments (for UI and persistence).
+    /// 2. buildRawNetworkHistory() returns HISTORY ONLY — excludes the last user message
+    ///    (the one just appended). This is the "completed pairs" history.
+    /// 3. The current user turn is built as an AIMessage (possibly multimodal) and passed
+    ///    to orchestrator.process(currentMessage:) separately.
+    /// 4. AIOrchestrator appends currentMessage to the context window as the final user turn.
     ///
-    /// STATE TRANSITION RULE (THINKING-STUCK FIX):
-    /// isThinking = false is always set INSIDE the same withAnimation{} block that
-    /// clears streamingText and appends the final message. This guarantees SwiftUI
-    /// applies all three changes atomically in one render pass, so InputMorphView
-    /// never sees isThinking=true after the response is already displayed.
+    /// WHY THIS APPROACH:
+    /// The old approach passed the full messages[] (including the new user message) as history,
+    /// then relied on string deduplication in buildContextWindow(). This broke for multimodal
+    /// messages because their contentString is nil — dedup never triggered, causing double-send.
+    /// The new approach cleanly separates "history" from "current turn".
     func send(prompt: String, attachments: [AttachedFile] = []) {
         guard !prompt.isEmpty || !attachments.isEmpty else { return }
         guard let orchestrator = orchestrator else {
@@ -1311,11 +1162,16 @@ final class ChappieViewModel {
         currentToolCall = nil
         runningCost = 0.0
 
-        let networkHistory = buildRawNetworkHistory()
+        // Build history BEFORE the new user message (exclude it — it's the current turn).
+        // buildRawNetworkHistory() now takes a count to exclude the last N messages.
+        let networkHistory = buildRawNetworkHistory(excludingLast: 1)
+
+        // Build the current turn as an AIMessage (multimodal if attachments present).
+        let currentAIMessage = buildCurrentAIMessage(text: prompt, attachments: attachments)
+
         let config = activeConfig
         let memoryContext = activeMemoryContext
         let activeThreadId = activeThread?.id
-        // Capture provider id so balance can be saved to the right key even if provider changes mid-flight.
         let activeProviderId = activeProvider?.id
 
         currentRequestTask = Task {
@@ -1323,6 +1179,7 @@ final class ChappieViewModel {
                 let result = try await orchestrator.process(
                     prompt: prompt,
                     history: networkHistory,
+                    currentMessage: currentAIMessage,
                     config: config,
                     memoryContext: memoryContext,
                     onToolCall: { toolName, targetPath in
@@ -1345,8 +1202,6 @@ final class ChappieViewModel {
                             self.runningCost = cumulativeCost
                         }
                     },
-                    // Live balance update — ticks the balance pill in ModelPickerRow during streaming.
-                    // Also persists the value under the active provider's key.
                     onBalanceUpdate: { newBalance in
                         Task { @MainActor in
                             self.currentBalance = newBalance
@@ -1368,20 +1223,14 @@ final class ChappieViewModel {
                     summary: summary
                 )
 
-                // THINKING-STUCK FIX:
-                // isThinking = false is set INSIDE withAnimation together with streamingText
-                // and messages.append. This ensures SwiftUI sees all three changes in one
-                // render pass — InputMorphView transitions back to idle atomically.
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
                     self.streamingText = ""
                     self.currentToolCall = nil
                     self.isThinking = false
                     self.messages.append(aiMessage)
-                    // Append AI response to displayed slice without full reset
                     self.appendToDisplayed(aiMessage)
                 }
 
-                // Final balance from orchestrator result (may differ from last streaming update).
                 if let newBalance = result.newBalance {
                     self.currentBalance = newBalance
                     if let pid = activeProviderId {
@@ -1389,8 +1238,6 @@ final class ChappieViewModel {
                     }
                 }
 
-                // Save messages to SwiftData after each response.
-                // Explicitly @MainActor to avoid race conditions with @Observable property updates.
                 if let threadId = activeThreadId, let store = self.threadStore {
                     let currentMessages = self.messages
                     Task { @MainActor in
@@ -1431,7 +1278,6 @@ final class ChappieViewModel {
         }
     }
 
-    /// Cancels the currently running AI request.
     func cancelCurrentRequest() {
         guard let task = currentRequestTask else { return }
         print("[ChappieViewModel] Cancelling current request...")
@@ -1442,8 +1288,6 @@ final class ChappieViewModel {
 
     func clearMessages() {
         messages = []
-        // View is on screen — but this is a local clear, not a thread switch.
-        // No scroll trigger needed: the list is now empty.
         resetPagination(fireScrollTrigger: false)
     }
 
@@ -1462,11 +1306,23 @@ final class ChappieViewModel {
 
     // MARK: - Build Network History
 
-    private func buildRawNetworkHistory() -> [AIMessage] {
-        return messages.compactMap { msg -> AIMessage? in
-            // MULTIMODAL-STEP1/STEP2: pattern updated for 6-field .message case.
-            // attachments are ignored here — Step 3 will handle encoding them into API content blocks.
-            guard case .message(_, let isUser, let text, _, let summary, _) = msg else {
+    /// Builds the AIMessage history array for the orchestrator.
+    ///
+    /// MULTIMODAL-STEP3:
+    /// The `excludingLast` parameter allows excluding the N most recent messages.
+    /// In send(), we pass excludingLast: 1 to exclude the user message just appended —
+    /// it is passed separately as currentMessage to orchestrator.process().
+    ///
+    /// For historical user messages with attachments, encodes them as multimodal content
+    /// (OpenAI vision format) so the model can reference them in follow-up turns.
+    private func buildRawNetworkHistory(excludingLast: Int = 0) -> [AIMessage] {
+        // Determine the slice of messages to process
+        let sourceMessages = excludingLast > 0 && messages.count > excludingLast
+            ? Array(messages.dropLast(excludingLast))
+            : messages
+
+        return sourceMessages.compactMap { msg -> AIMessage? in
+            guard case .message(_, let isUser, let text, _, let summary, let attachments) = msg else {
                 return nil
             }
 
@@ -1481,12 +1337,89 @@ final class ChappieViewModel {
 
             let role = isUser ? "user" : "assistant"
 
-            if !isUser, let summary = summary {
-                let textWithSummary = text + "\n<summary>\(summary)</summary>"
-                return AIMessage(role: role, content: textWithSummary)
+            // Assistant messages are always plain text (possibly with summary substitution)
+            if !isUser {
+                if let summary = summary {
+                    let textWithSummary = text + "\n<summary>\(summary)</summary>"
+                    return AIMessage(role: role, content: textWithSummary)
+                }
+                return AIMessage(role: role, content: text)
             }
 
+            // User messages: encode as multimodal if attachments are present
+            if !attachments.isEmpty {
+                var parts: [AIMultimodalPart] = []
+                if !text.isEmpty {
+                    parts.append(.text(text))
+                }
+                for attachment in attachments {
+                    parts.append(multimodalPart(for: attachment))
+                }
+                return AIMessage(role: role, multimodalParts: parts)
+            }
+
+            // Plain text user message — standard encoding
             return AIMessage(role: role, content: text)
+        }
+    }
+
+    /// Builds the AIMessage for the current user turn.
+    ///
+    /// MULTIMODAL-STEP3:
+    /// When attachments are present, returns a multimodal AIMessage with image/file parts.
+    /// For plain text messages, returns a standard text AIMessage.
+    /// This message is passed to orchestrator.process(currentMessage:) and appended
+    /// as the final user turn in the context window.
+    private func buildCurrentAIMessage(text: String, attachments: [AttachedFile]) -> AIMessage {
+        guard !attachments.isEmpty else {
+            // Plain text — standard message
+            return AIMessage(role: "user", content: text)
+        }
+
+        // Build multimodal parts
+        var parts: [AIMultimodalPart] = []
+        if !text.isEmpty {
+            parts.append(.text(text))
+        }
+        for attachment in attachments {
+            parts.append(multimodalPart(for: attachment))
+        }
+        return AIMessage(role: "user", multimodalParts: parts)
+    }
+
+    /// Converts an AttachedFile into the appropriate AIMultimodalPart for the API.
+    ///
+    /// ENCODING RULES:
+    ///   Images → base64 data URI (OpenAI vision format)
+    ///   PDF    → attempt UTF-8 text extraction; fall back to size note if binary
+    ///   TXT    → UTF-8 string content with filename header
+    ///   Other  → filename + size note (let the model decide what to do)
+    private func multimodalPart(for attachment: AttachedFile) -> AIMultimodalPart {
+        switch attachment.mimeType {
+        case .imageJpeg, .imagePng, .imageGif, .imageWebp:
+            // Images are sent as base64 data URIs — standard OpenAI vision format
+            return .imageURL(attachment.dataURI)
+
+        case .plainText:
+            // Text files: decode as UTF-8 and send content inline
+            let content = String(data: attachment.data, encoding: .utf8)
+                ?? String(data: attachment.data, encoding: .isoLatin1)
+                ?? "[Could not decode text content]"
+            return .text("File: \(attachment.filename)\n\n\(content)")
+
+        case .pdf:
+            // PDFs: attempt UTF-8 extraction (works for text-layer PDFs)
+            // Real PDF parsing (PDFKit) is a future enhancement
+            if let text = String(data: attachment.data, encoding: .utf8), !text.isEmpty {
+                return .text("File: \(attachment.filename)\n\n\(text)")
+            }
+            let sizeKB = attachment.data.count / 1024
+            return .text("File: \(attachment.filename) (PDF, \(sizeKB)KB) — binary content, cannot extract text inline.")
+
+        case .other:
+            // Unknown format: send filename and size; let the model handle it
+            let sizeKB = attachment.data.count / 1024
+            return .text("File: \(attachment.filename) (\(attachment.mimeType.rawValue), \(sizeKB)KB)")
         }
     }
 

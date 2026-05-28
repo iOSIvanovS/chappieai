@@ -103,6 +103,13 @@
 // 23. DIGNITY RULE (DIGNITY):
 //     Rule 12 added: if the user is rude or insulting, Chappie calmly notes it once
 //     and continues working. No retaliation, no strike — just honest, quiet dignity.
+//
+// 24. MULTIMODAL (MULTIMODAL-STEP3):
+//     process() accepts optional currentMessage: AIMessage? parameter.
+//     When provided, it is used as the final user message instead of
+//     AIMessage(role: "user", content: prompt). This allows multimodal content
+//     (images, files) to be passed correctly as OpenAI vision array format.
+//     buildContextWindow() deduplication updated to handle multimodal messages.
 
 import Foundation
 
@@ -332,13 +339,23 @@ public actor AIOrchestrator {
 
     /// Runs the full agentic loop for the given prompt.
     ///
+    /// MULTIMODAL-STEP3:
+    /// Optional `currentMessage` parameter allows passing a pre-built AIMessage
+    /// (e.g. multimodal content with images) as the current user turn.
+    /// When provided, it replaces the default AIMessage(role: "user", content: prompt).
+    /// The `prompt` string is still used for context window deduplication and token estimation.
+    ///
     /// - Parameters:
+    ///   - prompt: Text of the user's message (used for deduplication and token budget).
+    ///   - currentMessage: Optional pre-built AIMessage for the current turn.
+    ///     Pass this when the message contains multimodal content (images, files).
+    ///     When nil — AIMessage(role: "user", content: prompt) is used.
     ///   - onCostUpdate: Called after each step with cumulative cost in RUB.
     ///   - onBalanceUpdate: Called after each step that returns a balance from the provider.
-    ///     Use this to update the balance pill in real time during streaming.
     public func process(
         prompt: String,
         history: [AIMessage],
+        currentMessage: AIMessage? = nil,
         config: AppConfig = .shared,
         memoryContext: MemoryContext = .empty,
         onToolCall: @escaping @Sendable (String, String) -> Void,
@@ -352,7 +369,12 @@ public actor AIOrchestrator {
             memoryContext: memoryContext
         )
 
-        var sessionHistory = buildContextWindow(from: history, currentPrompt: prompt, config: config)
+        var sessionHistory = buildContextWindow(
+            from: history,
+            currentPrompt: prompt,
+            currentMessage: currentMessage,
+            config: config
+        )
 
         var totalCost: Double = 0.0
         var latestBalance: Double? = nil
@@ -421,9 +443,19 @@ public actor AIOrchestrator {
 
     // MARK: - Smart Context Window
 
+    /// Builds the context window from history + current user message.
+    ///
+    /// MULTIMODAL-STEP3:
+    /// Accepts optional currentMessage: AIMessage? — when provided, appends it as-is
+    /// (preserving multimodal content). When nil, appends AIMessage(role: "user", content: prompt).
+    ///
+    /// Deduplication: checks if the last history message is a plain text user message
+    /// matching the current prompt. Multimodal messages are never deduplicated
+    /// (their contentString is nil, so the string comparison always fails).
     private func buildContextWindow(
         from history: [AIMessage],
         currentPrompt: String,
+        currentMessage: AIMessage? = nil,
         config: AppConfig
     ) -> [AIMessage] {
         let budget = config.tokenBudget
@@ -434,10 +466,14 @@ public actor AIOrchestrator {
         let totalTokensBefore = history.reduce(0) { $0 + estimateTokens($1) }
         print("[AIOrchestrator] History: \(history.count) msgs, ~\(totalTokensBefore) tokens | Budget: \(budget) (\(maxMessages) msgs x 500)")
 
+        // Deduplicate: remove last history message if it's a plain text user message
+        // matching the current prompt. Multimodal messages are never removed here —
+        // their contentString is nil so the comparison always returns false.
         let deduplicatedHistory: [AIMessage]
         if let lastMessage = history.last,
            lastMessage.role == "user",
-           lastMessage.contentString == currentPrompt {
+           let lastContent = lastMessage.contentString,
+           lastContent == currentPrompt {
             deduplicatedHistory = Array(history.dropLast())
             print("[AIOrchestrator] Dedup: removed duplicate last message")
         } else {
@@ -475,7 +511,14 @@ public actor AIOrchestrator {
         }
 
         var contextWindow = selectedOlder + recentMessages
-        contextWindow.append(AIMessage(role: "user", content: currentPrompt))
+
+        // Append the current user message:
+        // Use the pre-built multimodal message if provided, otherwise build from prompt string.
+        if let message = currentMessage {
+            contextWindow.append(message)
+        } else {
+            contextWindow.append(AIMessage(role: "user", content: currentPrompt))
+        }
 
         let totalTokensAfter = contextWindow.reduce(0) { $0 + estimateTokens($1) }
         print("[AIOrchestrator] Sending: \(contextWindow.count) msgs, ~\(totalTokensAfter) tokens (compressed from \(totalTokensBefore))")
