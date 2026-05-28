@@ -30,11 +30,12 @@
 // AUTO-SCROLL POLICY:
 // Scroll to bottom happens in exactly four cases:
 //   1. scrollToBottomTrigger changes — ViewModel incremented it after displayedMessages
-//      was fully populated (end of resetPagination). Scroll is deferred by one runloop
-//      tick via DispatchQueue.main.async — this gives SwiftUI time to render the new
-//      VStack content before scrollTo fires. Without this deferral, scrollTo fires
-//      before the layout engine has processed the new displayedMessages, causing
-//      "bad range for [%{public}s]" crashes.
+//      was fully populated (end of resetPagination). Uses .task(id:) instead of onChange
+//      because .task(id:) is guaranteed to run AFTER the view body has been applied to
+//      the layout tree. onChange fires during the render pass — before layout is committed.
+//      A 50ms sleep inside the task gives the VStack time to measure its content.
+//      This eliminates "bad range for [%{public}s]" which was caused by proxy.scrollTo
+//      firing before ScrollView knew about the "bottom" anchor geometry.
 //   2. footerHeight first becomes non-zero — "layout ready" moment on first launch.
 //      After that, footerHeight changes are ignored (user typing grows the input field).
 //   3. onChange(messages.count) — new message added to the chat.
@@ -42,17 +43,16 @@
 // Intentionally NOT scrolling when footerHeight changes after initial scroll
 // so the user can freely read mid-chat while typing a long message.
 //
-// SCROLL TRIGGER FIX (UX-SCROLL-TRIGGER):
-// Previously used onChange(of: threadId) to detect thread switches.
-// Problem: threadId changes early in selectThread() (self.activeThread = thread),
-// but displayedMessages is populated later after async loads (switchProvider, loadMessages).
-// Calling scrollTo("bottom") before VStack has the correct content causes
-// "bad range for [%{public}s]" runtime crash in the OS scroll machinery.
-// Fix: ViewModel exposes scrollToBottomTrigger: Int, incremented at the END of
-// resetPagination() — after displayedMessages is fully ready. ChatScrollView
-// watches this value instead of threadId. Additionally, the scroll call is deferred
-// by one runloop tick (DispatchQueue.main.async) so SwiftUI has time to commit
-// the new VStack layout before scrollTo is evaluated.
+// SCROLL TRIGGER FIX (UX-SCROLL-TRIGGER, v2):
+// Previously used onChange(of: scrollToBottomTrigger) + DispatchQueue.main.async.
+// Problem: DispatchQueue.main.async defers by one runloop tick, but SwiftUI layout
+// is also async and may take multiple ticks. scrollTo fired before ScrollView had
+// committed the new VStack geometry, causing "bad range" warnings.
+// Fix: replaced onChange with .task(id: scrollToBottomTrigger).
+// .task(id:) is a SwiftUI-native lifecycle hook that runs AFTER the view body
+// has been applied. Combined with a 50ms Task.sleep, this gives the layout engine
+// enough time to measure the new VStack content before scrollTo is evaluated.
+// This is the correct and idiomatic SwiftUI solution for post-layout side effects.
 //
 // LOAD MORE (PAGINATION):
 // A "Load earlier messages" button appears at the top when hasMoreMessages == true.
@@ -72,11 +72,10 @@ struct ChatScrollView: View {
 
     /// Scroll-to-bottom trigger from ViewModel.
     ///
-    /// SCROLL TRIGGER FIX (UX-SCROLL-TRIGGER):
+    /// SCROLL TRIGGER FIX v2 (UX-SCROLL-TRIGGER):
     /// Incremented by ViewModel at the END of resetPagination(), after displayedMessages
-    /// is fully populated. Watching this value instead of threadId guarantees scrollTo
-    /// fires only when VStack already contains the correct messages.
-    /// Additionally deferred by one runloop tick to allow SwiftUI to commit the layout.
+    /// is fully populated. Watched via .task(id:) — not onChange — because .task(id:)
+    /// runs after the view body has been committed to the layout tree.
     let scrollToBottomTrigger: Int
 
     /// Paginated message slice (last N messages, grows upward via onLoadMore).
@@ -181,19 +180,24 @@ struct ChatScrollView: View {
                 .animation(.easeInOut(duration: 0.3), value: streamingText.isEmpty)
             }
             .scrollIndicators(.never)
-            // THREAD SWITCH: fires when ViewModel increments scrollToBottomTrigger.
-            // Deferred by one runloop tick (DispatchQueue.main.async) so SwiftUI has
-            // time to commit the new VStack layout before scrollTo is evaluated.
-            // Without the deferral, scrollTo fires before the layout engine processes
-            // the new displayedMessages, causing "bad range for [%{public}s]" crashes.
-            .onChange(of: scrollToBottomTrigger) { _, _ in
+            // THREAD SWITCH: .task(id:) runs AFTER the view body has been committed to layout.
+            // This is the key difference from onChange — onChange fires DURING the render pass,
+            // before the layout engine has processed the new VStack content.
+            // .task(id:) is SwiftUI's post-layout hook: safe to call proxy.scrollTo here.
+            // The 50ms sleep gives the VStack additional time to measure its full height
+            // before scrollTo evaluates the "bottom" anchor geometry.
+            // Without this sleep, scrollTo can still fire before ScrollView has measured
+            // the new content on slow devices or large message lists.
+            .task(id: scrollToBottomTrigger) {
+                // Skip the very first trigger (value = 0 on init before any thread loads).
+                guard scrollToBottomTrigger > 0 else { return }
                 initialScrollDone = false
-                DispatchQueue.main.async {
-                    withAnimation(.easeOut(duration: 0.3)) {
-                        proxy.scrollTo("bottom", anchor: .bottom)
-                    }
-                    initialScrollDone = true
+                // 50ms: enough for VStack layout to complete, imperceptible to the user.
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                withAnimation(.easeOut(duration: 0.3)) {
+                    proxy.scrollTo("bottom", anchor: .bottom)
                 }
+                initialScrollDone = true
             }
             // INITIAL SCROLL: fires once when footerHeight first becomes non-zero on launch.
             .onChange(of: footerHeight) { _, newHeight in
