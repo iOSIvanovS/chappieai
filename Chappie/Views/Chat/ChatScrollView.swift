@@ -29,15 +29,25 @@
 //
 // AUTO-SCROLL POLICY:
 // Scroll to bottom happens in exactly four cases:
-//   1. threadId changes — user switched to another thread. Reset initialScrollDone,
-//      then perform an immediate animated scroll (VStack renders all cells instantly,
-//      no two-phase hack needed).
+//   1. scrollToBottomTrigger changes — ViewModel incremented it after displayedMessages
+//      was fully populated (end of resetPagination). This replaces the old threadId-based
+//      scroll which fired before VStack had the new content, causing "bad range" crashes.
 //   2. footerHeight first becomes non-zero — "layout ready" moment on first launch.
 //      After that, footerHeight changes are ignored (user typing grows the input field).
 //   3. onChange(messages.count) — new message added to the chat.
 //   4. onChange(streamingText) — Chappie is streaming a response (live bubble grows).
 // Intentionally NOT scrolling when footerHeight changes after initial scroll
 // so the user can freely read mid-chat while typing a long message.
+//
+// SCROLL TRIGGER FIX (UX-SCROLL-TRIGGER):
+// Previously used onChange(of: threadId) to detect thread switches.
+// Problem: threadId changes early in selectThread() (self.activeThread = thread),
+// but displayedMessages is populated later after async loads (switchProvider, loadMessages).
+// Calling scrollTo("bottom") before VStack has the correct content causes
+// "bad range for [%{public}s]" runtime crash in the OS scroll machinery.
+// Fix: ViewModel exposes scrollToBottomTrigger: Int, incremented at the END of
+// resetPagination() — after displayedMessages is fully ready. ChatScrollView
+// watches this value instead of threadId. No timing issues possible.
 //
 // LOAD MORE (PAGINATION):
 // A "Load earlier messages" button appears at the top when hasMoreMessages == true.
@@ -55,8 +65,13 @@ import SwiftUI
 /// Pagination logic lives in ViewModel, not here.
 struct ChatScrollView: View {
 
-    /// Active thread ID — used to detect thread switches and reset scroll state.
-    let threadId: UUID?
+    /// Scroll-to-bottom trigger from ViewModel.
+    ///
+    /// SCROLL TRIGGER FIX (UX-SCROLL-TRIGGER):
+    /// Incremented by ViewModel at the END of resetPagination(), after displayedMessages
+    /// is fully populated. Watching this value instead of threadId guarantees scrollTo
+    /// fires only when VStack already contains the correct messages.
+    let scrollToBottomTrigger: Int
 
     /// Paginated message slice (last N messages, grows upward via onLoadMore).
     let messages: [ChatMessage]
@@ -160,9 +175,11 @@ struct ChatScrollView: View {
                 .animation(.easeInOut(duration: 0.3), value: streamingText.isEmpty)
             }
             .scrollIndicators(.never)
-            // THREAD SWITCH: VStack renders all cells immediately, so a single animated
-            // scroll is sufficient — no two-phase hack needed (that was a LazyVStack workaround).
-            .onChange(of: threadId) { _, _ in
+            // THREAD SWITCH: fires when ViewModel increments scrollToBottomTrigger,
+            // which happens at the END of resetPagination() — after displayedMessages
+            // is fully populated. This prevents "bad range" crashes that occurred
+            // when scrollTo fired before VStack had the new thread's content.
+            .onChange(of: scrollToBottomTrigger) { _, _ in
                 initialScrollDone = false
                 withAnimation(.easeOut(duration: 0.3)) {
                     proxy.scrollTo("bottom", anchor: .bottom)
@@ -375,7 +392,7 @@ private struct BlinkingCursor: View {
 
 #Preview("With history and streaming") {
     ChatScrollView(
-        threadId: UUID(),
+        scrollToBottomTrigger: 1,
         messages: [
             .message(isUser: true, text: "Show me a code example"),
             .message(
@@ -398,7 +415,7 @@ private struct BlinkingCursor: View {
 
 #Preview("Empty chat") {
     ChatScrollView(
-        threadId: nil,
+        scrollToBottomTrigger: 0,
         messages: [],
         hasMoreMessages: false,
         onLoadMore: {},

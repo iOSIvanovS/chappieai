@@ -90,6 +90,12 @@
 //   hasMoreMessages and onLoadMore are forwarded so the "Load earlier" button works.
 //   visibleMessages is still used for network context — not for UI rendering.
 //
+// SCROLL TRIGGER FIX (UX-SCROLL-TRIGGER):
+//   ChatScrollView receives scrollToBottomTrigger instead of threadId.
+//   ViewModel increments this value at the END of resetPagination() — after
+//   displayedMessages is fully populated. This prevents "bad range" crashes
+//   that occurred when scrollTo fired before VStack had the new thread's content.
+//
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
 // IT-11: Thread settings sheet, last-thread restore.
@@ -339,12 +345,11 @@ struct ContentView: View {
             }
             .frame(height: 0) // Zero-height probe — does not affect layout
 
-            // PAGINATION (UX-PAGINATION):
-            // displayedMessages — paginated slice from ViewModel (last 50, grows upward).
-            // hasMoreMessages — true when older messages exist above the current slice.
-            // onLoadMore — prepends the previous 30 messages without scrolling.
+            // SCROLL TRIGGER FIX (UX-SCROLL-TRIGGER):
+            // scrollToBottomTrigger replaces threadId — ensures scrollTo fires only after
+            // displayedMessages is fully populated (incremented at end of resetPagination).
             ChatScrollView(
-                threadId: viewModel.activeThread?.id,
+                scrollToBottomTrigger: viewModel.scrollToBottomTrigger,
                 messages: viewModel.displayedMessages,
                 hasMoreMessages: viewModel.hasMoreMessages,
                 onLoadMore: { viewModel.loadMoreMessages() },

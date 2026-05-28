@@ -246,6 +246,10 @@ struct InputMorphView: View {
                 .scaleEffect(isThinking ? 0.96 : 1, anchor: .bottom)
 
             thinkingView
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(.white))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .opacity(isThinking ? 1 : 0)
                 .scaleEffect(isThinking ? 1 : 0.96, anchor: .bottom)
         }

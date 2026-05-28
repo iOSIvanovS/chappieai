@@ -83,6 +83,13 @@
 // visibleMessages is UNCHANGED — it is used for network context, not UI rendering.
 // This replaces LazyVStack with a plain VStack in ChatScrollView, eliminating
 // the disappearing-messages bug caused by lazy cell recycling.
+//
+// SCROLL TRIGGER FIX (UX-SCROLL-TRIGGER):
+// scrollToBottomTrigger: Int is incremented at the END of resetPagination(),
+// after displayedMessages is fully populated. ChatScrollView observes this value
+// instead of threadId — this guarantees scrollTo("bottom") fires only when the
+// VStack already contains the correct messages. Eliminates "bad range" crash that
+// occurred when threadId changed before displayedMessages was updated.
 
 import SwiftUI
 import ChappieCore
@@ -122,6 +129,15 @@ final class ChappieViewModel {
     /// Index into `messages` marking the start of the current displayed slice.
     /// displayedMessages = messages[displayedStart...]
     private var displayedStart: Int = 0
+
+    /// Scroll-to-bottom trigger for ChatScrollView.
+    ///
+    /// SCROLL TRIGGER FIX (UX-SCROLL-TRIGGER):
+    /// Incremented at the END of resetPagination() — after displayedMessages is fully
+    /// populated. ChatScrollView watches this value, not threadId.
+    /// This prevents "bad range" crashes caused by scrollTo firing before the VStack
+    /// contains the correct messages for the new thread.
+    private(set) var scrollToBottomTrigger: Int = 0
 
     /// Messages visible in the chat scroll view.
     ///
@@ -256,6 +272,10 @@ final class ChappieViewModel {
     ///
     /// Called every time a new thread is loaded. Ensures the user always sees
     /// the most recent messages first without rendering the entire history.
+    ///
+    /// SCROLL TRIGGER FIX (UX-SCROLL-TRIGGER):
+    /// Increments scrollToBottomTrigger AFTER displayedMessages is populated.
+    /// This guarantees ChatScrollView's onChange fires only when VStack content is ready.
     private func resetPagination() {
         let count = messages.count
         if count <= pageSize {
@@ -269,6 +289,9 @@ final class ChappieViewModel {
             displayedMessages = Array(messages[displayedStart...])
             hasMoreMessages = true
         }
+        // Fire scroll trigger AFTER displayedMessages is ready — not before.
+        // ChatScrollView observes this value to scroll to bottom on thread switch.
+        scrollToBottomTrigger += 1
     }
 
     /// Prepends the previous `pageSizeLoad` messages to the displayed slice.
@@ -826,7 +849,8 @@ final class ChappieViewModel {
 
             self.isLoadingThread = true
             self.messages = loaded
-            // Reset pagination to last pageSize messages for this thread
+            // resetPagination() populates displayedMessages AND fires scrollToBottomTrigger.
+            // This guarantees ChatScrollView scrolls only after VStack content is ready.
             resetPagination()
             self.isLoadingThread = false
 
@@ -937,6 +961,7 @@ final class ChappieViewModel {
         guard let store = threadStore else { return }
         Task {
             try? await store.deleteThread(id: thread.id)
+            // Reload threads after cancellation to keep sidebar in sync
             let refreshed = try? await store.loadThreads()
             if let refreshed { self.threads = refreshed }
         }
