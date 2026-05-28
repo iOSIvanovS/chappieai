@@ -52,6 +52,12 @@
 // so SwiftUI applies it atomically with streamingText = "" and messages.append().
 // The background save Task is explicitly @MainActor to avoid race conditions
 // with @Observable property updates.
+//
+// DRAFT PER THREAD (UX-DRAFT):
+// threadDrafts: [UUID: String] stores unsent input text per thread.
+// When user switches threads, the draft for the old thread is preserved.
+// When user returns — the draft is restored. Cleared on send.
+// ContentView reads/writes draft via getDraft()/setDraft()/clearDraft().
 
 import SwiftUI
 import ChappieCore
@@ -158,6 +164,13 @@ final class ChappieViewModel {
     /// Pending thread waiting for provider+model selection (IT-10).
     var pendingNewThread: ThreadMetadata? = nil
 
+    // MARK: - Draft per thread (UX-DRAFT)
+    //
+    // Stores unsent input text keyed by thread ID.
+    // Allows user to switch threads without losing what they were typing.
+    // Drafts are in-memory only — not persisted across app restarts.
+    private var threadDrafts: [UUID: String] = [:]
+
     // MARK: - Dependencies
 
     private var fileSystem: FileSystemManager?
@@ -183,6 +196,24 @@ final class ChappieViewModel {
         loadMessages()
         // Balance is loaded per-provider in switchProvider — not here globally.
         loadWorkspaceWithSecurityScope()
+    }
+
+    // MARK: - Draft Management (UX-DRAFT)
+
+    /// Returns the saved draft for the given thread, or empty string if none.
+    func getDraft(for threadId: UUID) -> String {
+        threadDrafts[threadId] ?? ""
+    }
+
+    /// Saves the current input text as a draft for the given thread.
+    /// Called by ContentView whenever prompt changes and a thread is active.
+    func setDraft(_ text: String, for threadId: UUID) {
+        threadDrafts[threadId] = text
+    }
+
+    /// Clears the draft for the given thread after the message is sent.
+    func clearDraft(for threadId: UUID) {
+        threadDrafts.removeValue(forKey: threadId)
     }
 
     // MARK: - Balance Storage (per-provider)
@@ -758,6 +789,9 @@ final class ChappieViewModel {
 
     func deleteThread(_ thread: ThreadMetadata) {
         guard let store = threadStore else { return }
+
+        // Clean up draft for deleted thread
+        threadDrafts.removeValue(forKey: thread.id)
 
         Task {
             do {

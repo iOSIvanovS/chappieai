@@ -43,6 +43,13 @@
 //   Lives inside ModelPickerRow (right side). Receives viewModel.currentBalance.
 //   Updates live during streaming via onBalanceUpdate callback in AIOrchestrator.
 //
+// DRAFT PER THREAD (UX-DRAFT):
+//   prompt is synced with viewModel.threadDrafts on every thread switch.
+//   onChange(of: viewModel.activeThread?.id) saves old draft, restores new one.
+//   onChange(of: prompt) writes the current text into the draft for the active thread.
+//   On send: draft is cleared via viewModel.clearDraft().
+//   This ensures each thread remembers its own unsent text across switches.
+//
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
 
@@ -175,9 +182,17 @@ struct ContentView: View {
                         isSidebarVisible = false
                     },
                     onSelectThread: { thread in
+                        // Save current draft before switching threads
+                        if let currentId = viewModel.activeThread?.id {
+                            viewModel.setDraft(prompt, for: currentId)
+                        }
                         Task { await viewModel.selectThread(thread) }
                     },
                     onCreateThread: {
+                        // Save current draft before creating a new thread
+                        if let currentId = viewModel.activeThread?.id {
+                            viewModel.setDraft(prompt, for: currentId)
+                        }
                         viewModel.createNewThread()
                     },
                     onDeleteThread: { thread in
@@ -203,6 +218,20 @@ struct ContentView: View {
         // ultraThinMaterial gives the title bar a frosted-glass look
         .toolbarBackground(.ultraThinMaterial, for: .windowToolbar)
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: isSidebarVisible)
+        // Restore draft when active thread changes (e.g. after selectThread completes)
+        .onChange(of: viewModel.activeThread?.id) { _, newThreadId in
+            if let id = newThreadId {
+                prompt = viewModel.getDraft(for: id)
+            } else {
+                prompt = ""
+            }
+        }
+        // Keep draft in sync as user types — written on every keystroke
+        .onChange(of: prompt) { _, newValue in
+            if let threadId = viewModel.activeThread?.id {
+                viewModel.setDraft(newValue, for: threadId)
+            }
+        }
     }
 
     // MARK: - Main Chat Area
@@ -323,6 +352,10 @@ struct ContentView: View {
 
     private func sendMessage() {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        // Clear draft for this thread before sending
+        if let threadId = viewModel.activeThread?.id {
+            viewModel.clearDraft(for: threadId)
+        }
         viewModel.send(prompt: prompt)
         prompt = ""
     }
