@@ -1,126 +1,142 @@
 // ChatMessage.swift
 // Chappie
 //
-// ПОЧЕМУ ЭТОТ ФАЙЛ СУЩЕСТВУЕТ:
-// Ранее ChatMessage был struct прямо в ChappieViewModel.swift и нёс две разные роли:
-//   1. Обычное сообщение пользователя или ИИ (текст, стоимость)
-//   2. Технический лог вызова инструмента (эмодзи-строка "🛠 Выполняю: write_file -> ...")
-// Смешение ролей в одном типе — классический запах кода. MessageBubbleView не мог
-// рендерить их по-разному, история чата засорялась техническими строками,
-// фильтрация в ViewModel была хрупкой (проверка по содержимому строки!).
+// WHY THIS FILE EXISTS:
+// Formerly ChatMessage was a struct in ChappieViewModel.swift mixing two roles:
+//   1. A regular user/AI text message (text, cost)
+//   2. A technical tool-call log ("🛠 Executing: write_file -> ...")
+// Mixing roles in one type is a classic code smell. MessageBubbleView could not
+// render them differently; chat history was polluted with technical strings;
+// filtering in ViewModel was fragile (checking string content!).
 //
-// РЕШЕНИЕ (ТД-6):
-// ChatMessage становится enum с двумя семантически чёткими кейсами.
-// MessageBubbleView теперь знает, что именно рендерить — и делает это красиво.
+// SOLUTION (ТД-6):
+// ChatMessage becomes an enum with two semantically clear cases.
+// MessageBubbleView now knows exactly what to render — and does it beautifully.
 //
-// ИЗМЕНЕНИЕ (ТД-COST-SUMMARY — Self-Summary):
-// В кейс .message добавлено поле `summary: String?`.
-// Это краткая выжимка ответа Чаппи, извлечённая из тега <summary>...</summary>.
-// При подготовке истории для API: если summary есть и сообщение "старое" (вне
-// свежего окна) — вместо полного текста подставляется summary. Это радикально
-// сокращает количество токенов без потери смысла контекста.
+// CHANGE (ТД-COST-SUMMARY — Self-Summary):
+// Added field `summary: String?` to the .message case.
+// This is a brief digest of Chappie's response extracted from the <summary>...</summary> tag.
+// When building history for the API: if summary is present and the message is "old"
+// (outside the recent window) — the summary is substituted for the full text.
+// This radically reduces token count without losing context meaning.
 //
-// ПОЧЕМУ ПОЛЕ В МОДЕЛИ, А НЕ В VIEWMODEL:
-// Summary — это неотъемлемая часть сообщения. Оно должно сохраняться на диск
-// вместе с остальными данными сообщения, чтобы быть доступным при следующем
-// запуске приложения. Хранить его в ViewModel отдельно — значит создавать
-// хрупкую синхронизацию двух источников истины.
+// CHANGE (MULTIMODAL):
+// Added field `attachments: [AttachedFile]` to the .message case.
+// Attachments are stored inline (base64 in JSON) for persistence simplicity.
+// The API layer (AIOrchestrator) reads attachments and builds multimodal content blocks.
+// MessageBubbleView renders image thumbnails inline and file chips for other types.
 
 import Foundation
 
-/// Единица истории чата — либо текстовое сообщение, либо лог вызова инструмента.
+/// A single unit of chat history — either a text message or a tool-call log.
 ///
-/// Зачем enum, а не struct с флагом: Enum с ассоциированными значениями
-/// делает невозможным создание "некорректного" состояния. Нельзя случайно
-/// создать сообщение с `isToolCall: true` и при этом заполнить поле `cost`.
-/// Компилятор сам следит за корректностью через exhaustive switch.
+/// WHY ENUM, NOT STRUCT WITH FLAG: An enum with associated values makes it impossible
+/// to create an "invalid" state. You can't accidentally create a message with
+/// `isToolCall: true` and a `cost` field. The compiler enforces correctness
+/// via exhaustive switch.
 public enum ChatMessage: Identifiable, Hashable, Codable {
 
-    // MARK: - Кейсы
+    // MARK: - Cases
 
-    /// Обычное текстовое сообщение — от пользователя или от ИИ.
+    /// A regular text message — from the user or from the AI.
     ///
-    /// - isUser: true = пользователь (справа, синий), false = Чаппи (слева, нейтральный)
-    /// - text: Текст сообщения (поддерживает Markdown через TextSelection).
-    ///   Для ответов Чаппи: полный текст БЕЗ тега <summary> (он уже извлечён и скрыт).
-    /// - cost: Стоимость запроса в рублях — только у финальных ответов ИИ
-    /// - summary: Краткая выжимка ответа (1-3 предложения), извлечённая из тега <summary>.
-    ///   nil для сообщений пользователя и коротких ответов без тега.
-    ///   Используется при подготовке истории для API вместо полного текста.
-    case message(id: UUID = UUID(), isUser: Bool, text: String, cost: Double? = nil, summary: String? = nil)
+    /// - isUser: true = user (right, blue), false = Chappie (left, neutral)
+    /// - text: Message text (supports Markdown). For Chappie responses: full text
+    ///   WITHOUT the <summary> tag (already extracted and hidden).
+    /// - cost: Request cost in RUB — only on final AI responses.
+    /// - summary: Brief digest extracted from <summary>...</summary>.
+    ///   nil for user messages and short responses without the tag.
+    ///   Used when building API history instead of the full text.
+    /// - attachments: Files attached by the user. Empty array for AI responses.
+    ///   Stored inline as base64 for persistence.
+    case message(
+        id: UUID = UUID(),
+        isUser: Bool,
+        text: String,
+        cost: Double? = nil,
+        summary: String? = nil,
+        attachments: [AttachedFile] = []
+    )
 
-    /// Лог вызова инструмента — технический шаг агентного цикла.
+    /// A tool-call log — a technical step in the agentic cycle.
     ///
-    /// Зачем хранить в истории: Пользователю важно видеть "мыслительный процесс"
-    /// Чаппи — какие файлы он читал, что писал. Это прозрачность и доверие.
-    /// Но при подготовке контекста для API эти записи фильтруются — модели
-    /// не нужно знать о своих же инструментах из прошлых шагов.
+    /// WHY KEEP IN HISTORY: The user needs to see Chappie's "thought process" —
+    /// which files were read, what was written. Transparency builds trust.
+    /// But these records are filtered out when preparing context for the API —
+    /// the model doesn't need to know about its own past tool calls.
     ///
-    /// - toolName: Имя инструмента ("write_file", "read_file", "memorize" и т.д.)
-    /// - targetPath: Путь к файлу или ключ памяти (пустая строка если нет)
+    /// - toolName: Tool name ("write_file", "read_file", "memorize", etc.)
+    /// - targetPath: File path or memory key (empty string if none)
     case toolCall(id: UUID = UUID(), toolName: String, targetPath: String)
 
     // MARK: - Identifiable
 
-    /// Уникальный идентификатор — нужен для ForEach и ScrollViewReader.scrollTo()
+    /// Unique identifier — needed for ForEach and ScrollViewReader.scrollTo()
     public var id: UUID {
         switch self {
-        case .message(let id, _, _, _, _): return id
+        case .message(let id, _, _, _, _, _): return id
         case .toolCall(let id, _, _): return id
         }
     }
 
-    // MARK: - Удобные вычисляемые свойства
+    // MARK: - Convenience Computed Properties
 
-    /// Является ли это сообщением пользователя (для фильтрации при подготовке контекста API)
+    /// Whether this is a user message (for filtering when building the API context).
     public var isUser: Bool {
         switch self {
-        case .message(_, let isUser, _, _, _): return isUser
+        case .message(_, let isUser, _, _, _, _): return isUser
         case .toolCall: return false
         }
     }
 
-    /// Текст сообщения — только для кейса .message, иначе nil
+    /// Message text — only for .message case, nil otherwise.
     public var text: String? {
         switch self {
-        case .message(_, _, let text, _, _): return text
+        case .message(_, _, let text, _, _, _): return text
         case .toolCall: return nil
         }
     }
 
-    /// Стоимость запроса — только для финальных ответов ИИ
+    /// Request cost — only for final AI responses.
     public var cost: Double? {
         switch self {
-        case .message(_, _, _, let cost, _): return cost
+        case .message(_, _, _, let cost, _, _): return cost
         case .toolCall: return nil
         }
     }
 
-    /// Краткая выжимка ответа для подстановки в историю API.
+    /// Brief response digest for substitution in API history.
     ///
-    /// Присутствует только у ответов Чаппи (isUser == false) и только
-    /// если модель добавила тег <summary> в конце ответа.
+    /// Present only on Chappie responses (isUser == false) where the model
+    /// added a <summary> tag at the end of the response.
     public var summary: String? {
         switch self {
-        case .message(_, _, _, _, let summary): return summary
+        case .message(_, _, _, _, let summary, _): return summary
         case .toolCall: return nil
         }
     }
 
-    /// Является ли это логом вызова инструмента
+    /// Files attached to this message. Empty for AI responses and tool calls.
+    public var attachments: [AttachedFile] {
+        switch self {
+        case .message(_, _, _, _, _, let attachments): return attachments
+        case .toolCall: return []
+        }
+    }
+
+    /// Whether this is a tool-call log entry.
     public var isToolCall: Bool {
         if case .toolCall = self { return true }
         return false
     }
 
-    // MARK: - Codable (ручная реализация для enum с ассоциированными значениями)
+    // MARK: - Codable (manual — enum with associated values)
 
-    // Зачем ручная реализация: Swift не умеет автоматически синтезировать Codable
-    // для enum с ассоциированными значениями, если нужен конкретный формат JSON.
-    // Мы хотим сохранять историю в читаемом формате, совместимом со старыми версиями.
+    // WHY MANUAL: Swift cannot auto-synthesize Codable for enums with associated values
+    // if a specific JSON format is required. We want a readable, forward-compatible format.
 
     private enum CodingKeys: String, CodingKey {
-        case type, id, isUser, text, cost, summary, toolName, targetPath
+        case type, id, isUser, text, cost, summary, attachments, toolName, targetPath
     }
 
     private enum MessageType: String, Codable {
@@ -130,20 +146,21 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let type = try container.decodeIfPresent(MessageType.self, forKey: .type) ?? .message
-        let id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        let id   = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
 
         switch type {
         case .message:
-            let isUser = try container.decode(Bool.self, forKey: .isUser)
-            let text = try container.decode(String.self, forKey: .text)
-            let cost = try container.decodeIfPresent(Double.self, forKey: .cost)
-            // summary декодируется опционально — старые записи без этого поля
-            // будут иметь summary == nil, что полностью корректно
-            let summary = try container.decodeIfPresent(String.self, forKey: .summary)
-            self = .message(id: id, isUser: isUser, text: text, cost: cost, summary: summary)
+            let isUser      = try container.decode(Bool.self, forKey: .isUser)
+            let text        = try container.decode(String.self, forKey: .text)
+            let cost        = try container.decodeIfPresent(Double.self, forKey: .cost)
+            // summary decoded optionally — old records without this field get nil (correct)
+            let summary     = try container.decodeIfPresent(String.self, forKey: .summary)
+            // attachments decoded optionally — old records without this field get [] (correct)
+            let attachments = try container.decodeIfPresent([AttachedFile].self, forKey: .attachments) ?? []
+            self = .message(id: id, isUser: isUser, text: text, cost: cost, summary: summary, attachments: attachments)
 
         case .toolCall:
-            let toolName = try container.decode(String.self, forKey: .toolName)
+            let toolName   = try container.decode(String.self, forKey: .toolName)
             let targetPath = try container.decodeIfPresent(String.self, forKey: .targetPath) ?? ""
             self = .toolCall(id: id, toolName: toolName, targetPath: targetPath)
         }
@@ -153,19 +170,23 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
         var container = encoder.container(keyedBy: CodingKeys.self)
 
         switch self {
-        case .message(let id, let isUser, let text, let cost, let summary):
+        case .message(let id, let isUser, let text, let cost, let summary, let attachments):
             try container.encode(MessageType.message, forKey: .type)
-            try container.encode(id, forKey: .id)
+            try container.encode(id,     forKey: .id)
             try container.encode(isUser, forKey: .isUser)
-            try container.encode(text, forKey: .text)
-            try container.encodeIfPresent(cost, forKey: .cost)
-            // Сохраняем summary только если он есть — экономим место в JSON
+            try container.encode(text,   forKey: .text)
+            try container.encodeIfPresent(cost,    forKey: .cost)
+            // Save summary only if present — saves space in JSON
             try container.encodeIfPresent(summary, forKey: .summary)
+            // Save attachments only if non-empty — old messages stay compact
+            if !attachments.isEmpty {
+                try container.encode(attachments, forKey: .attachments)
+            }
 
         case .toolCall(let id, let toolName, let targetPath):
             try container.encode(MessageType.toolCall, forKey: .type)
-            try container.encode(id, forKey: .id)
-            try container.encode(toolName, forKey: .toolName)
+            try container.encode(id,         forKey: .id)
+            try container.encode(toolName,   forKey: .toolName)
             try container.encode(targetPath, forKey: .targetPath)
         }
     }

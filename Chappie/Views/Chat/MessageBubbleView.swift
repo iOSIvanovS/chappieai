@@ -1,68 +1,73 @@
 // MessageBubbleView.swift
 // Chappie
 //
-// ПОЧЕМУ ЭТОТ ФАЙЛ СУЩЕСТВУЕТ:
-// Ранее MessageBubble был приватной структурой внутри ContentView.swift.
-// Вынесен в отдельный файл, чтобы:
-//   1. ContentView не превращался в монолит
-//   2. Компонент можно было переиспользовать (например, в поиске или предпросмотре)
-//   3. Визуальная логика пузыря сообщения была изолирована и легко менялась
+// WHY THIS FILE EXISTS:
+// Formerly MessageBubble was a private struct inside ContentView.swift.
+// Extracted to a separate file to:
+//   1. Keep ContentView from becoming a monolith
+//   2. Allow reuse (e.g. in search or preview)
+//   3. Isolate the visual bubble logic so it's easy to change
 //
-// ИЗМЕНЕНИЕ (Этап 6 — ТД-6):
-// MessageBubbleView теперь принимает типизированный enum ChatMessage вместо struct.
+// CHANGE (Stage 6 — ТД-6):
+// MessageBubbleView now takes a typed enum ChatMessage instead of a struct.
 //
-// ИЗМЕНЕНИЕ (ТД-UX-PERF — Оптимизация производительности UI):
-// Кейс .toolCall полностью убран из рендера этого компонента.
-// .toolCall больше не попадают в ленту — они отображаются в StatusBarView.
-// MessageBubbleView теперь рендерит ТОЛЬКО .message (текстовые сообщения).
+// CHANGE (ТД-UX-PERF — UI performance optimization):
+// .toolCall is completely removed from this component's render.
+// .toolCall entries no longer appear in the feed — they are shown in StatusBarView.
+// MessageBubbleView now renders ONLY .message (text messages).
 //
-// ИЗМЕНЕНИЕ (ТД-COST-SUMMARY — Self-Summary):
-// В кейсе .message появилось 5-е поле `summary: String?`.
-// Паттерн деструктуризации обновлён — добавлен `_` для summary.
+// CHANGE (ТД-COST-SUMMARY — Self-Summary):
+// .message case gained a 5th field `summary: String?`.
+// Destructuring pattern updated — `_` added for summary.
 //
-// ИЗМЕНЕНИЕ (UX-ANIMATION — Плавное появление пузырей):
-// Добавлен .transition на пузырь: новые сообщения плавно въезжают снизу
-// с одновременным fade-in.
+// CHANGE (UX-ANIMATION — Smooth bubble appearance):
+// Added .transition on the bubble: new messages smoothly slide in from the bottom
+// with simultaneous fade-in.
 //
-// ИЗМЕНЕНИЕ (UX-TYPOGRAPHY — Типографика и Markdown):
-// Пузырь Чаппи теперь использует MarkdownTextView вместо Text():
-//   - Блоки кода в стиле Xcode Intelligence Panel (тёмный фон, подсветка Swift)
-//   - Инлайн-код, жирный, курсив, заголовки
+// CHANGE (UX-TYPOGRAPHY — Typography and Markdown):
+// Chappie's bubble now uses MarkdownTextView instead of Text():
+//   - Code blocks in Xcode Intelligence Panel style (dark background, Swift highlighting)
+//   - Inline code, bold, italic, headings
 //   - SF Pro Text 14pt, lineSpacing 5 (Apple HIG: 1.3–1.5× line-height)
-//   - Кнопка копирования в блоках кода
+//   - Copy button in code blocks
 //
-// ИЗМЕНЕНИЕ (UX-COST-IN-BUBBLE — Стоимость внутри пузыря):
-// Стоимость перенесена из-под пузыря ВНУТРЬ него — в правый нижний угол.
-// Используется ZStack(alignment: .bottomTrailing) + padding(.bottom, 18) под текстом.
-// Показывается только у сообщений Чаппи (isUser == false) с известной стоимостью.
-// Это стандартный UX-паттерн мессенджеров (WhatsApp, Telegram) — время/статус внутри.
+// CHANGE (UX-COST-IN-BUBBLE — Cost inside bubble):
+// Cost moved from below the bubble INTO it — bottom-trailing corner.
+// Uses ZStack(alignment: .bottomTrailing) + padding(.bottom, 18) under the text.
+// Shown only for Chappie messages (isUser == false) with known cost.
+// Standard messenger UX pattern (WhatsApp, Telegram) — time/status inside.
 //
-// ДИЗАЙН ПУЗЫРЕЙ (Apple HIG + macOS 26):
-// Пользователь: акцентный цвет (синий), белый текст — "наши" сообщения
-// Чаппи: чистый фон с тонкой границей, как карточки в macOS 26 — нейтральный
-// Оба пузыря: cornerRadius 12, тень 0.1 opacity — лёгкая, не агрессивная
+// CHANGE (MULTIMODAL):
+// .message case gained a 6th field `attachments: [AttachedFile]`.
+// Destructuring pattern updated — `_` added for attachments.
+// Attachment rendering (image thumbnails, file chips) will be added in Step 4.
+//
+// BUBBLE DESIGN (Apple HIG + macOS 26):
+// User: accent color (blue), white text — "our" messages
+// Chappie: clean background with thin border, like macOS 26 cards — neutral
+// Both bubbles: cornerRadius 12, shadow 0.1 opacity — light, not aggressive
 
 import SwiftUI
 
-/// Визуальное представление текстового сообщения в истории чата.
+/// Visual representation of a text message in the chat history.
 ///
-/// Рендерит только `.message` — пузырь с текстом от пользователя или от Чаппи.
-/// Пузырь Чаппи использует MarkdownTextView для поддержки кода и форматирования.
-/// Пузырь пользователя использует обычный Text — пользователь не пишет markdown.
+/// Renders only `.message` — a bubble with text from the user or from Chappie.
+/// Chappie's bubble uses MarkdownTextView for code and formatting support.
+/// User's bubble uses plain Text — users don't write markdown.
 struct MessageBubbleView: View {
 
     let msg: ChatMessage
 
     var body: some View {
-        // Рендерим только .message. .toolCall в этот компонент не попадают.
-        // ВАЖНО: паттерн деструктурирует ВСЕ 5 полей кейса .message:
-        //   id, isUser, text, cost, summary
-        // summary игнорируется через `_` — в UI он не показывается.
-        if case .message(_, let isUser, let text, let cost, _) = msg {
+        // Render only .message. .toolCall entries don't reach this component.
+        // IMPORTANT: pattern destructures ALL 6 fields of the .message case:
+        //   id, isUser, text, cost, summary, attachments
+        // summary and attachments are ignored via `_` — not shown in this view yet.
+        if case .message(_, let isUser, let text, let cost, _, _) = msg {
             messageBubble(isUser: isUser, text: text, cost: cost)
-                // АНИМАЦИЯ ПОЯВЛЕНИЯ:
-                // .asymmetric: появление — въезд снизу + fade, исчезновение — только fade.
-                // Это стандартный UX-паттерн мессенджеров (iMessage, Telegram).
+                // APPEARANCE ANIMATION:
+                // .asymmetric: insertion — slide from bottom + fade, removal — fade only.
+                // Standard messenger UX pattern (iMessage, Telegram).
                 .transition(
                     .asymmetric(
                         insertion: .move(edge: .bottom).combined(with: .opacity),
@@ -72,24 +77,24 @@ struct MessageBubbleView: View {
         }
     }
 
-    // MARK: - Рендер пузыря
+    // MARK: - Bubble Render
 
-    /// Пузырь текстового сообщения.
+    /// Text message bubble.
     ///
-    /// Пользователь — справа, акцентный цвет, белый текст, обычный Text.
-    /// Чаппи — слева, нейтральный фон с границей, MarkdownTextView с поддержкой кода.
+    /// User — right-aligned, accent color, white text, plain Text.
+    /// Chappie — left-aligned, neutral background with border, MarkdownTextView with code support.
     @ViewBuilder
     private func messageBubble(isUser: Bool, text: String, cost: Double?) -> some View {
         HStack(alignment: .bottom, spacing: 8) {
-            // Сообщения пользователя прижимаем вправо через левый Spacer
+            // Push user messages to the right via leading Spacer
             if isUser { Spacer(minLength: 40) }
 
             if isUser {
-                // ПУЗЫРЬ ПОЛЬЗОВАТЕЛЯ:
-                // Простой Text — пользователь не пишет markdown.
-                // Белый текст на акцентном фоне.
-                // Стоимость у пользовательских сообщений не показывается —
-                // стоимость относится к ответу Чаппи, а не к вопросу.
+                // USER BUBBLE:
+                // Plain Text — users don't write markdown.
+                // White text on accent background.
+                // Cost is not shown for user messages —
+                // cost belongs to Chappie's response, not the question.
                 Text(text)
                     .font(.system(size: 14))
                     .lineSpacing(4)
@@ -99,8 +104,8 @@ struct MessageBubbleView: View {
                     .padding(.vertical, 10)
                     .background(Color.accentColor)
                     .clipShape(
-                        // Скруглённые углы: все 12pt, кроме нижнего правого — 4pt.
-                        // Этот приём из iMessage создаёт "хвост" пузыря без лишней графики.
+                        // Rounded corners: all 12pt except bottom-trailing — 4pt.
+                        // This iMessage trick creates a bubble "tail" without extra graphics.
                         UnevenRoundedRectangle(
                             topLeadingRadius: 12,
                             bottomLeadingRadius: 12,
@@ -109,22 +114,22 @@ struct MessageBubbleView: View {
                         )
                     )
             } else {
-                // ПУЗЫРЬ ЧАППИ:
-                // ZStack позволяет разместить стоимость поверх контента в правом нижнем углу.
-                // Это стандартный паттерн мессенджеров (WhatsApp, Telegram) — метаданные
-                // сообщения (время, статус, цена) располагаются внутри пузыря.
+                // CHAPPIE BUBBLE:
+                // ZStack lets us overlay cost in the bottom-trailing corner.
+                // Standard messenger pattern (WhatsApp, Telegram) — message metadata
+                // (time, status, price) lives inside the bubble.
                 ZStack(alignment: .bottomTrailing) {
 
-                    // Основной контент: MarkdownTextView с поддержкой кода и форматирования.
+                    // Main content: MarkdownTextView with code and formatting support.
                     MarkdownTextView(text: text, fontSize: 14)
-                        // Нижний отступ резервирует место для строки стоимости,
-                        // чтобы она не перекрывала последнюю строку текста.
-                        // Отступ применяется только когда стоимость есть.
+                        // Bottom padding reserves space for the cost line,
+                        // so it doesn't overlap the last line of text.
+                        // Padding only applied when cost is present.
                         .padding(.bottom, cost != nil ? 18 : 0)
 
-                    // СТОИМОСТЬ ЗАПРОСА — правый нижний угол пузыря.
-                    // Показываем только для сообщений Чаппи с известной стоимостью.
-                    // Tertiary foreground — ненавязчивый цвет, не отвлекает от текста.
+                    // REQUEST COST — bottom-trailing corner of the bubble.
+                    // Shown only for Chappie messages with known cost.
+                    // Tertiary foreground — unobtrusive color, doesn't distract from text.
                     if let cost = cost {
                         Text(String(format: "🪙 %.2f ₽", cost))
                             .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -134,12 +139,12 @@ struct MessageBubbleView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background(
-                    // Адаптивный фон: белый в Light mode, тёмно-серый в Dark mode.
-                    // Используем textBackgroundColor — стандарт Apple для "поверхности".
+                    // Adaptive background: white in Light mode, dark grey in Dark mode.
+                    // textBackgroundColor — Apple standard for "surface".
                     Color(NSColor.textBackgroundColor)
                 )
                 .clipShape(
-                    // Зеркальный вариант: нижний левый угол — 4pt ("хвост" слева).
+                    // Mirror variant: bottom-leading corner — 4pt ("tail" on the left).
                     UnevenRoundedRectangle(
                         topLeadingRadius: 12,
                         bottomLeadingRadius: 4,
@@ -148,8 +153,8 @@ struct MessageBubbleView: View {
                     )
                 )
                 .overlay(
-                    // Тонкая граница — отделяет пузырь от фона окна.
-                    // Особенно важна в Light mode где фон пузыря близок к фону окна.
+                    // Thin border — separates bubble from window background.
+                    // Especially important in Light mode where bubble bg is close to window bg.
                     UnevenRoundedRectangle(
                         topLeadingRadius: 12,
                         bottomLeadingRadius: 4,
@@ -160,35 +165,35 @@ struct MessageBubbleView: View {
                 )
             }
 
-            // Сообщения Чаппи прижимаем влево через правый Spacer
+            // Push Chappie messages to the left via trailing Spacer
             if !isUser { Spacer(minLength: 40) }
         }
-        // Используем id сообщения как anchor для ScrollViewReader.scrollTo()
+        // Use message id as anchor for ScrollViewReader.scrollTo()
         .id(msg.id)
     }
 }
 
 // MARK: - Preview
 
-#Preview("Сообщения") {
+#Preview("Messages") {
     ScrollView {
         VStack(spacing: 16) {
-            MessageBubbleView(msg: .message(isUser: true, text: "Привет, Чаппи! Как дела?"))
+            MessageBubbleView(msg: .message(isUser: true, text: "Hey Chappie! How's it going?"))
 
             MessageBubbleView(msg: .message(
                 isUser: false,
-                text: "Привет, Босс! 🚀 Всё отлично.\n\nВот пример кода:\n\n```swift\n// Стриминговый ответ\nfunc streamResponse() async {\n    for await token in stream {\n        await MainActor.run {\n            streamingText += token\n        }\n    }\n}\n```\n\nИспользуй **async/await** для работы с потоками.",
+                text: "Hey! 🚀 All good.\n\nHere's a code example:\n\n```swift\n// Streaming response\nfunc streamResponse() async {\n    for await token in stream {\n        await MainActor.run {\n            streamingText += token\n        }\n    }\n}\n```\n\nUse **async/await** for working with streams.",
                 cost: 1.23
             ))
 
             MessageBubbleView(msg: .message(
                 isUser: true,
-                text: "Понял, спасибо! А что насчёт `@Observable`?"
+                text: "Got it, thanks! What about `@Observable`?"
             ))
 
             MessageBubbleView(msg: .message(
                 isUser: false,
-                text: "## @Observable\n\n`@Observable` — это макрос Swift 5.9, который заменяет `ObservableObject`.\n\n**Преимущества:**\n- Нет `@Published` — все свойства автоматически отслеживаются\n- Работает с `@State` во View\n- Полная совместимость со Swift 6\n\n```swift\n@Observable\nfinal class ViewModel {\n    var count: Int = 0  // автоматически отслеживается\n}\n```",
+                text: "## @Observable\n\n`@Observable` is a Swift 5.9 macro that replaces `ObservableObject`.\n\n**Advantages:**\n- No `@Published` — all properties are tracked automatically\n- Works with `@State` in Views\n- Full Swift 6 compatibility\n\n```swift\n@Observable\nfinal class ViewModel {\n    var count: Int = 0  // tracked automatically\n}\n```",
                 cost: 0.87
             ))
         }

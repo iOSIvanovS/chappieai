@@ -127,6 +127,11 @@
 //   by then → SwiftUI sees (isLoadingThread=false, messages=[]) → welcome screen flashes.
 //   New approach: isAppReady and isLoadingThread=false are set in the SAME selectThread()
 //   call → SwiftUI never sees a frame where the app is "ready" but history isn't loaded.
+//
+// MULTIMODAL (MULTIMODAL-STEP1):
+// ChatMessage.message case gained a 6th field `attachments: [AttachedFile]`.
+// buildRawNetworkHistory() pattern updated — `_` added for attachments.
+// Attachment → API encoding will be added in Step 3 (AIOrchestrator layer).
 
 import SwiftUI
 import ChappieCore
@@ -1450,7 +1455,9 @@ final class ChappieViewModel {
 
     private func buildRawNetworkHistory() -> [AIMessage] {
         return messages.compactMap { msg -> AIMessage? in
-            guard case .message(_, let isUser, let text, _, let summary) = msg else {
+            // MULTIMODAL-STEP1: pattern updated for 6-field .message case.
+            // attachments are ignored here — Step 3 will handle encoding them into API content blocks.
+            guard case .message(_, let isUser, let text, _, let summary, _) = msg else {
                 return nil
             }
 
