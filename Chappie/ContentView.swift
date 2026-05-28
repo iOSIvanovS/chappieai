@@ -73,11 +73,17 @@
 //   NewThreadProviderSheet now returns (providerId, modelName, title, ThreadSettings).
 //   confirmNewThread() accepts all four and saves title + settings immediately.
 //
-// SOFT LOCK (isThinking):
+// SOFT LOCK (isThinking) — IT-13:
 //   isThinking is forwarded to ChappieToolbarContent, SidebarView, ModelPickerRow,
 //   and ProjectChipsView. While true: toolbar buttons, thread switching/deletion/rename/
 //   settings, model picker, project attach/detach, and thread settings gear are all disabled.
 //   This prevents race conditions when AI is writing a response.
+//
+// AUTO-CLOSE SETTINGS (IT-13 / TASK-5):
+//   onChange(of: viewModel.isThinking): when isThinking becomes true and showSettings
+//   is open — the sheet is dismissed automatically (showSettings = false).
+//   This handles the edge case where the user opened Settings and then a response
+//   arrived (e.g. triggered from another thread or via a background event).
 //
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
@@ -85,6 +91,7 @@
 // IT-12: Thread name in ProjectChipsView chip, gear removed from ThreadRowView hover,
 //        NewThreadProviderSheet extended with name + context settings.
 // IT-13: Soft lock — toolbar, sidebar, model picker, project chips disabled while isThinking.
+//        Auto-close SettingsView when isThinking becomes true (TASK-5).
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -299,6 +306,14 @@ struct ContentView: View {
         .onChange(of: prompt) { _, newValue in
             if let threadId = viewModel.activeThread?.id {
                 viewModel.setDraft(newValue, for: threadId)
+            }
+        }
+        // TASK-5 (IT-13): auto-close SettingsView when AI starts responding.
+        // If the user had Settings open and a request begins — dismiss the sheet
+        // to prevent interaction with settings during an active AI response.
+        .onChange(of: viewModel.isThinking) { _, isThinking in
+            if isThinking && showSettings {
+                showSettings = false
             }
         }
     }
