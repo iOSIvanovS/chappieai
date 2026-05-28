@@ -95,6 +95,10 @@
 // 21. UNIVERSAL AI CLIENT (IT-10):
 //     AITunnelClient replaced with AIClient — accepts any OpenAI-compatible endpoint.
 //     ChappieViewModel creates AIClient from the active AIProvider config.
+//
+// 22. ARCHITECTURE FILES RULES (ARCH-FILES):
+//     Rule 4 updated: architecture files must contain file/folder list with descriptions
+//     AND a Mermaid diagram. Sub-targets are referenced, not duplicated.
 
 import Foundation
 
@@ -225,6 +229,12 @@ public actor AIOrchestrator {
          and how they relate to each other — based on the project structure and IDE in use.
          Save the agreed file paths to project memory. Do NOT auto-create architecture files
          without explicit agreement with the user.
+         MANDATORY CONTENT of each architecture file:
+           a) File and folder list with purpose description for the entity this file describes.
+           b) Mermaid diagram of the architecture for this entity.
+           c) Sub-targets (libraries, other targets) are referenced with a link to their own
+              architecture file — their internals are NOT duplicated here.
+         Keep architecture files up to date: update them when structure or decisions change.
 
     5. MANDATORY SELF-SUMMARY (CRITICALLY IMPORTANT — NEVER VIOLATE):
        At the very end of EACH of your final responses to the user you MUST add the tag:
@@ -279,6 +289,14 @@ public actor AIOrchestrator {
         When a backlog item is implemented and committed — DELETE it from memory immediately. No exceptions.
         This prevents stale backlog from polluting the system prompt and wasting tokens.
         Rule: if it's done and committed → it does not exist in memory.
+
+    11. ONE TASK PER PASS (CRITICALLY IMPORTANT — NEVER VIOLATE):
+        Decompose any multi-step work into a backlog BEFORE starting.
+        Execute ONE item, commit, then proceed to the next.
+        Never bundle multiple tasks in a single pass — even if they seem trivial.
+        If you notice a related issue while working — add it to backlog, do NOT fix it now.
+        WHY: bundling changes causes signature drift, compile errors, and inconsistent state
+        that is hard to roll back. Every "while I'm at it" is a risk.
     """
 
     // MARK: - Init
