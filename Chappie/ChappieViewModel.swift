@@ -117,6 +117,16 @@
 // BEFORE activeThread is assigned. This guarantees that SwiftUI never renders a frame
 // with isLoadingThread=false + messages=[] simultaneously (which caused the welcome
 // screen flash). The spinner is always shown during the async load window.
+//
+// APP READY FLAG (UX-APP-READY):
+// isAppReady starts as false and becomes true only when the very first selectThread()
+// completes. ContentView shows a ProgressView until isAppReady == true — this replaces
+// the old isReady flag with its 300ms arbitrary timer.
+// WHY THIS FIXES THE FLASH:
+//   Old approach: isReady=true after 300ms timer → isLoadingThread may already be false
+//   by then → SwiftUI sees (isLoadingThread=false, messages=[]) → welcome screen flashes.
+//   New approach: isAppReady and isLoadingThread=false are set in the SAME selectThread()
+//   call → SwiftUI never sees a frame where the app is "ready" but history isn't loaded.
 
 import SwiftUI
 import ChappieCore
@@ -202,6 +212,14 @@ final class ChappieViewModel {
     /// UX-LOADING-FIX: set to true at the very top of selectThread(), before activeThread
     /// is updated, so there is never a rendered frame with isLoadingThread=false + messages=[].
     private(set) var isLoadingThread: Bool = false
+
+    /// True after the very first selectThread() completes on app launch.
+    ///
+    /// UX-APP-READY: ContentView shows a ProgressView until this is true.
+    /// This replaces the old 300ms timer-based isReady flag in ContentView.
+    /// isAppReady and isLoadingThread=false are set together at the end of selectThread(),
+    /// so SwiftUI never sees a frame where the app is "ready" but history isn't loaded yet.
+    private(set) var isAppReady: Bool = false
 
     // MARK: - Active Request Task
     //
@@ -897,8 +915,11 @@ final class ChappieViewModel {
             print("[ChappieViewModel] Error loading thread '\(thread.title)': \(error)")
         }
 
-        // UX-LOADING: history is ready, hide the spinner.
+        // UX-LOADING + UX-APP-READY: set both flags together in one assignment block.
+        // SwiftUI will see both changes in the same render pass — no intermediate frame
+        // where isLoadingThread=false but isAppReady=false (or vice versa).
         self.isLoadingThread = false
+        self.isAppReady = true
 
         await loadProjectsForThread(thread)
         buildAndSyncMemoryContext()

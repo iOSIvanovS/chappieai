@@ -101,6 +101,14 @@
 //   While true: a centered ProgressView is shown instead of messages or welcome screen.
 //   This prevents the "flash of welcome message" on app launch.
 //
+// APP READY FLAG (UX-APP-READY):
+//   ContentView shows a ProgressView until viewModel.isAppReady == true.
+//   isAppReady is set by ViewModel at the end of the FIRST selectThread() call.
+//   This replaces the old isReady + 300ms timer approach that caused a welcome-screen
+//   flash: the timer could expire while isLoadingThread was already false but messages
+//   were still empty — producing one rendered frame with the welcome message visible.
+//   With isAppReady, the app becomes "visible" only after history is fully loaded.
+//
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
 // IT-11: Thread settings sheet, last-thread restore.
@@ -121,7 +129,6 @@ struct ContentView: View {
     @State private var viewModel = ChappieViewModel()
     @State private var prompt: String = ""
     @State private var showSettings: Bool = false
-    @State private var isReady: Bool = false
     @State private var isSidebarVisible: Bool = false
 
     @State private var selectedProjectForSettings: ProjectMetadata? = nil
@@ -146,7 +153,10 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if !isReady {
+            if !viewModel.isAppReady {
+                // UX-APP-READY: show a spinner until the first selectThread() completes.
+                // This prevents any flash of the welcome screen or empty chat state
+                // during the async SwiftData load on app launch.
                 ProgressView("Загрузка...")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if viewModel.providers.isEmpty {
@@ -157,15 +167,11 @@ struct ContentView: View {
         }
         .onAppear {
             viewModel.setModelContainer(modelContext.container)
-            Task {
-                try? await Task.sleep(nanoseconds: 300_000_000)
-                isReady = true
-            }
         }
         .onChange(of: viewModel.providers.count) { _, newCount in
-            if newCount > 0 && !isReady {
-                isReady = true
-            }
+            // If onboarding just completed (provider added) — switch to main content.
+            // isAppReady will already be true at this point since selectThread() ran.
+            _ = newCount
         }
     }
 
