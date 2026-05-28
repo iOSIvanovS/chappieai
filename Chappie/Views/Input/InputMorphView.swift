@@ -246,7 +246,7 @@ struct InputMorphView: View {
                 .scaleEffect(isThinking ? 0.96 : 1, anchor: .bottom)
 
             thinkingView
-                .padding(.horizontal, 8)
+                .padding(.horizontal, 12)
                 .padding(.vertical, 4)
                 .background(Capsule().fill(.white))
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -352,12 +352,12 @@ struct InputMorphView: View {
         HStack(spacing: 12) {
             Image(systemName: "gearshape.arrow.triangle.2.circlepath")
                 .font(.system(size: 13))
-                .foregroundStyle(.secondary)
+                //.foregroundStyle(.secondary)
                 .symbolEffect(.rotate, options: .repeating)
 
             Text(currentToolCall ?? "Думаю…")
                 .font(.system(size: 12, weight: .regular, design: .monospaced))
-                .foregroundStyle(.secondary)
+                //.foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .contentTransition(.numericText())
@@ -370,7 +370,7 @@ struct InputMorphView: View {
                     .font(.system(size: 12, weight: .medium))
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            //.foregroundStyle(.secondary)
             .help("Прервать текущий запрос")
         }
         .frame(height: Layout.collapsedHeight)
