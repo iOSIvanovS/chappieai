@@ -105,19 +105,26 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
 
     /// Maximum number of messages in the context window.
     ///
-    /// RANGE: 10...100
+    /// RANGE: 10...1000
     /// DEFAULT: 20 (10,000 tokens — a reasonable balance)
     ///
     /// TOKEN BUDGET FORMULA:
     /// tokenBudget = maxMessagesInContext × 500
-    /// Examples: 10 → 5,000 | 20 → 10,000 | 50 → 25,000 | 100 → 50,000
+    /// Examples: 10 → 5,000 | 20 → 10,000 | 100 → 50,000 | 1000 → 500,000
     public var maxMessagesInContext: Int
+
+    /// When true — no context trimming is applied. All messages are sent as-is.
+    ///
+    /// WHY A SEPARATE FLAG, NOT maxMessagesInContext = Int.max:
+    /// Int.max in JSON/Codable is fragile. An explicit Bool is clear and safe.
+    /// AppConfig.init(settings:) checks this flag and sets maxMessages/tokenBudget to Int.max.
+    public var isUnlimitedContext: Bool
 
     /// Computed token budget based on message count.
     /// NOT stored in JSON — computed each time.
     /// Intentional: changing the formula requires no data migration.
     public var tokenBudget: Int {
-        maxMessagesInContext * 500
+        isUnlimitedContext ? Int.max : maxMessagesInContext * 500
     }
 
     // MARK: - IT-10: Active AI Provider + Model
@@ -143,10 +150,13 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
 
     public init(
         maxMessagesInContext: Int = 20,
+        isUnlimitedContext: Bool = false,
         activeProviderId: UUID? = nil,
         activeModelName: String? = nil
     ) {
-        self.maxMessagesInContext = max(10, min(100, maxMessagesInContext))
+        // Clamp to valid range — guard against corrupted JSON values
+        self.maxMessagesInContext = max(10, min(1000, maxMessagesInContext))
+        self.isUnlimitedContext = isUnlimitedContext
         self.activeProviderId = activeProviderId
         self.activeModelName = activeModelName
     }

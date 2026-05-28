@@ -40,6 +40,12 @@
 // selectThread() always calls refreshBalanceForActiveProvider() at the end,
 // regardless of which code path was taken. This guarantees the pill is visible
 // after app launch even if switchProvider() was not called during thread selection.
+//
+// MODEL BUG FIX (MODEL-PER-THREAD):
+// selectThread() ALWAYS calls switchProvider() — even when activeProvider is already set.
+// If the thread has no saved provider, the default provider is used.
+// This ensures activeProvider/activeModelName always reflect the SELECTED THREAD,
+// not the previously active thread.
 
 import SwiftUI
 import ChappieCore
@@ -57,12 +63,25 @@ final class ChappieViewModel {
         didSet { saveMessages() }
     }
 
+    /// Messages visible in the chat scroll view.
+    ///
+    /// VISIBILITY DEPTH = contextDepth × 10.
+    /// If unlimited context — all messages are shown.
+    /// This ensures chat history is proportional to what gets sent to the model.
     var visibleMessages: [ChatMessage] {
         let onlyMessages = messages.filter { msg in
             if case .message = msg { return true }
             return false
         }
-        return Array(onlyMessages.suffix(30))
+
+        // Unlimited context — show everything
+        if activeThreadSettings.isUnlimitedContext {
+            return onlyMessages
+        }
+
+        // Chat depth = context depth × 10
+        let chatDepth = activeThreadSettings.maxMessagesInContext * 10
+        return Array(onlyMessages.suffix(chatDepth))
     }
 
     var isThinking = false
@@ -175,7 +194,6 @@ final class ChappieViewModel {
     /// Loads the last known balance for the given provider. Returns nil if never set.
     private func loadBalance(for providerId: UUID) -> Double? {
         let key = balanceKey(for: providerId)
-        // object(forKey:) returns nil when key is absent; cast to Double? handles that.
         return UserDefaults.standard.object(forKey: key) as? Double
     }
 
@@ -281,10 +299,7 @@ final class ChappieViewModel {
         do {
             let loaded = try await store.loadProviders()
             self.providers = loaded
-            if let defaultProvider = try await store.loadDefaultProvider() {
-                let defaultModel = defaultProvider.models.first
-                await switchProvider(defaultProvider, modelName: defaultModel, from: store)
-            }
+            // Don't set activeProvider here — selectThread() will do it per-thread.
             print("[ChappieViewModel] Loaded \(loaded.count) providers")
         } catch {
             print("[ChappieViewModel] Failed to load providers: \(error)")
@@ -314,6 +329,9 @@ final class ChappieViewModel {
             )
         }
 
+        // Save provider+model selection into the active thread's settings.
+        // This is what makes the selection per-thread — without saving here,
+        // selectThread() won't know which provider/model to restore next time.
         if activeThread != nil {
             var settings = activeThreadSettings
             settings.activeProviderId = provider.id
@@ -621,19 +639,29 @@ final class ChappieViewModel {
             let settings = try await store.loadSettings(forThreadId: thread.id)
             self.activeThreadSettings = settings
 
+            // MODEL-PER-THREAD FIX:
+            // ALWAYS call switchProvider when selecting a thread — never skip it.
+            // This ensures activeProvider/activeModelName always match the selected thread,
+            // not the previously active one.
+            //
+            // Priority order:
+            // 1. Thread has a saved provider → restore it exactly.
+            // 2. Thread has no saved provider → use the default provider.
+            // 3. No providers configured at all → leave activeProvider as nil (onboarding state).
             if let providerId = settings.activeProviderId,
                let provider = providers.first(where: { $0.id == providerId }) {
-                // Thread has a saved provider — switch to it (also loads balance).
+                // Restore the exact provider+model saved for this thread.
                 await switchProvider(provider, modelName: settings.activeModelName)
-            } else if activeProvider == nil, let provStore = providerStore {
-                // No active provider yet — load the default one (also loads balance).
-                if let defaultProvider = try? await provStore.loadDefaultProvider() {
-                    await switchProvider(defaultProvider, modelName: defaultProvider.models.first, from: provStore)
-                }
+            } else if let provStore = providerStore,
+                      let defaultProvider = try? await provStore.loadDefaultProvider() {
+                // Thread has no saved provider — fall back to the default.
+                // Use the model from settings if it matches, otherwise use provider's first model.
+                let modelName = settings.activeModelName.flatMap { name in
+                    defaultProvider.models.contains(name) ? name : nil
+                } ?? defaultProvider.models.first
+                await switchProvider(defaultProvider, modelName: modelName, from: provStore)
             }
-            // If neither branch ran (thread has no saved provider but activeProvider is already set
-            // from loadProvidersAndSetActive), we still need to surface the balance for that provider.
-            // refreshBalanceForActiveProvider() below handles this case unconditionally.
+            // If no providers at all — activeProvider stays nil (onboarding banner shows).
 
             let loaded = try await store.loadMessages(
                 fromThreadId: thread.id,
@@ -939,7 +967,6 @@ final class ChappieViewModel {
         // Capture provider id so balance can be saved to the right key even if provider changes mid-flight.
         let activeProviderId = activeProvider?.id
 
-        // Store the task so cancelCurrentRequest() can cancel it
         currentRequestTask = Task {
             do {
                 let result = try await orchestrator.process(
@@ -995,7 +1022,6 @@ final class ChappieViewModel {
                 }
 
                 // Final balance from orchestrator result (may differ from last streaming update).
-                // Persist under the provider's key.
                 if let newBalance = result.newBalance {
                     self.currentBalance = newBalance
                     if let pid = activeProviderId {

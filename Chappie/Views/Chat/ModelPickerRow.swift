@@ -72,7 +72,7 @@ struct ModelPickerRow: View {
                 .padding(.vertical, 4)
                 .background(
                     Capsule()
-                        .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
+                        .fill(.white)
                 )
 
             // Provider + model selector button
@@ -94,7 +94,7 @@ struct ModelPickerRow: View {
                 .padding(.vertical, 4)
                 .background(
                     Capsule()
-                        .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
+                        .fill(.white)
                 )
                 .overlay(
                     Capsule()
@@ -137,17 +137,21 @@ struct ModelPickerRow: View {
     private func balancePill(balance: Double) -> some View {
         HStack(spacing: 5) {
             Image(systemName: "creditcard.fill")
-                .font(.system(size: 11))
+                .font(.system(size: 10))
                 .foregroundStyle(.green)
 
             Text(String(format: "%.2f ₽", balance))
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .fixedSize()
                 // Animate digit changes so the number visibly ticks down during streaming
                 .contentTransition(.numericText())
         }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Capsule().fill(.white))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .background(.ultraThinMaterial)

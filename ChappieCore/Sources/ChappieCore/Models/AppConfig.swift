@@ -1,167 +1,191 @@
 // AppConfig.swift
 // ChappieCore
 //
-// Централизованная конфигурация приложения.
+// Centralized application configuration.
 //
-// ИСТОРИЯ ИЗМЕНЕНИЙ:
-// - IT-02 (REFACTOR-THREADS): AppConfig стал динамическим.
-//   Добавлен публичный init(maxMessagesInContext:) для создания конфига из настроек треда.
-//   tokenBudget теперь вычисляется автоматически: maxMessagesInContext × 500.
-//   AppConfig.shared остаётся как дефолтный конфиг (20 сообщений = 10,000 токенов).
+// CHANGE HISTORY:
+// - IT-02 (REFACTOR-THREADS): AppConfig became dynamic.
+//   Added public init(maxMessagesInContext:) to create config from thread settings.
+//   tokenBudget is now computed automatically: maxMessagesInContext × 500.
+//   AppConfig.shared remains as the default config (20 messages = 10,000 tokens).
 //
-// - tokenBudget: 30,000 → 12,000 → 6,000 → динамический (maxMessages × 500)
-//   Причина последнего снижения: формула estimateTokens() была неверной (символы/4 вместо
-//   UTF8байты/4×1.5). После исправления формулы реальный бюджет стал ~вдвое меньше ожидаемого.
-//   6,000 в новых единицах ≈ ~10,000-12,000 реальных токенов — это и было нашей целью.
+// - tokenBudget: 30,000 → 12,000 → 6,000 → dynamic (maxMessages × 500)
+//   Reason for last reduction: estimateTokens() formula was wrong (chars/4 instead of
+//   UTF8bytes/4×1.5). After fixing the formula, real budget was ~2x less than expected.
+//   6,000 in new units ≈ ~10,000-12,000 real tokens — that was our target.
 //
-// - recentFullMessages: 6 → 3 (последние 3 обмена = текущая задача, этого достаточно)
+// - recentFullMessages: 6 → 3 (last 3 exchanges = current task, sufficient)
 //
 // - summaryThreshold: 800 → 400 → 200
-//   Причина снижения: агрессивнее суммаризируем. 200 единиц ≈ ~500-600 реальных токенов.
-//   Ответы короче этого — короткие реплики, не стоит их сжимать.
+//   Reason: more aggressive summarization. 200 units ≈ ~500-600 real tokens.
+//   Messages shorter than this are short replies, not worth summarizing.
 //
-// - maxMessagesInContext: добавлен как жёсткий лимит поверх токенного бюджета.
-//   Причина: tokenBudget позволял набрать 30+ коротких сообщений-саммари, хотя
-//   модели не нужна длинная цепочка коротких реплик — ей нужен смысловой контекст задачи.
-//   12 → 20 (дефолт для тредов): 20 сообщений × 500 = 10,000 токенов — разумный баланс.
+// - maxMessagesInContext: added as hard limit on top of token budget.
+//   Reason: tokenBudget allowed 30+ short summary-messages, but the model needs
+//   semantic context, not a long chain of short replies.
+//   12 → 20 (thread default): 20 messages × 500 = 10,000 tokens — reasonable balance.
+//
+// - Range extended: 10...100 → 10...1000
+//   isUnlimitedContext flag added: when true, all limits are set to Int.max.
 
 import Foundation
 
-/// Централизованная конфигурация приложения.
+/// Centralized application configuration.
 ///
-/// ПРИНЦИП: Все "магические числа" живут здесь, а не разбросаны по коду.
-/// Это единственное место, где нужно менять параметры при тюнинге производительности.
+/// PRINCIPLE: All "magic numbers" live here, not scattered through the code.
+/// This is the single place to change parameters when tuning performance.
 ///
-/// АРХИТЕКТУРНОЕ РЕШЕНИЕ (IT-02):
-/// AppConfig теперь ДИНАМИЧЕСКИЙ — создаётся из настроек треда.
-/// Каждый тред имеет свой AppConfig с нужной глубиной контекста.
-/// AIOrchestrator.process() принимает config как параметр (с дефолтом AppConfig.shared).
-/// Это позволяет разным тредам иметь разные параметры без глобального синглтона.
+/// ARCHITECTURAL DECISION (IT-02):
+/// AppConfig is now DYNAMIC — created from thread settings.
+/// Each thread has its own AppConfig with the required context depth.
+/// AIOrchestrator.process() accepts config as a parameter (default: AppConfig.shared).
+/// This allows different threads to have different parameters without a global singleton.
 public struct AppConfig: Codable, Equatable, Sendable {
 
-    // MARK: - Синглтон (дефолтный конфиг)
+    // MARK: - Singleton (default config)
 
-    /// Глобальный дефолтный конфиг — используется когда тред не имеет своих настроек.
+    /// Global default config — used when a thread has no custom settings.
     ///
-    /// ДЕФОЛТ: 20 сообщений = 10,000 токенов.
-    /// Это разумный баланс между глубиной контекста и стоимостью запроса.
+    /// DEFAULT: 20 messages = 10,000 tokens.
+    /// Reasonable balance between context depth and request cost.
     public static let shared = AppConfig()
 
-    // MARK: - Параметры
+    // MARK: - Parameters
 
-    /// Максимальное число шагов оркестратора в одном reasoning loop.
+    /// Maximum number of orchestrator steps in one reasoning loop.
     ///
-    /// Защищает от бесконечных петель если модель "зациклится" на инструментах.
-    /// Захардкожен — пользователь не должен это менять.
+    /// Guards against infinite loops if the model gets stuck on tools.
+    /// Hardcoded — user should not change this.
     public let maxOrchestratorSteps: Int
 
-    /// Максимальный токенный бюджет истории для отправки в LLM.
+    /// Maximum token budget for history sent to the LLM.
     ///
-    /// ФОРМУЛА (IT-02): tokenBudget = maxMessagesInContext × 500
+    /// FORMULA (IT-02): tokenBudget = maxMessagesInContext × 500
+    /// UNLIMITED: Int.max when isUnlimitedContext = true — no trimming at all.
     ///
-    /// ЕДИНИЦЫ ИЗМЕРЕНИЯ (важно!):
-    /// Значение измеряется в единицах функции estimateTokens():
-    ///   estimateTokens = UTF8байты / 4 × 1.5
+    /// UNITS (important!):
+    /// Measured in units of estimateTokens():
+    ///   estimateTokens = UTF8bytes / 4 × 1.5
     ///
-    /// ДИАПАЗОН:
-    /// 10 сообщений → 5,000 токенов (минимум)
-    /// 20 сообщений → 10,000 токенов (дефолт)
-    /// 50 сообщений → 25,000 токенов
-    /// 100 сообщений → 50,000 токенов (максимум)
+    /// RANGE:
+    /// 10 messages → 5,000 tokens (minimum)
+    /// 20 messages → 10,000 tokens (default)
+    /// 100 messages → 50,000 tokens
+    /// 1000 messages → 500,000 tokens (maximum)
+    /// Int.max → unlimited (no trimming)
     ///
-    /// Системный промпт (~3,000 токенов) не входит в этот бюджет — он кэшируется отдельно.
+    /// System prompt (~3,000 tokens) is NOT included — it is cached separately.
     public let tokenBudget: Int
 
-    /// Жёсткий лимит на количество сообщений в контекстном окне.
+    /// Hard limit on the number of messages in the context window.
     ///
-    /// ПОЧЕМУ НУЖЕН ОТДЕЛЬНО ОТ tokenBudget:
-    /// tokenBudget контролирует суммарный объём токенов, но не количество сообщений.
-    /// Если история состоит из 30+ коротких сообщений-саммари (~50-100 токенов каждое),
-    /// они все помещаются в бюджет, но создают длинную бесполезную цепочку.
-    /// Модели не нужна история из 30 коротких реплик — ей нужен смысловой контекст.
+    /// WHY SEPARATE FROM tokenBudget:
+    /// tokenBudget controls total token volume, not message count.
+    /// If history has 30+ short summary-messages (~50-100 tokens each),
+    /// they all fit in budget but create a useless long chain.
+    /// The model needs semantic context, not 30 short replies.
     ///
-    /// ДИАПАЗОН ДЛЯ ПОЛЬЗОВАТЕЛЯ: 10...100
-    /// ДЕФОЛТ: 20 (разумный баланс для большинства задач)
+    /// RANGE: 10...1000
+    /// DEFAULT: 20 (reasonable balance for most tasks)
+    /// UNLIMITED: Int.max when isUnlimitedContext = true
     public let maxMessagesInContext: Int
 
-    /// Количество последних сообщений, которые всегда отправляются ПОЛНОСТЬЮ (без замены на summary).
+    /// When true — no context trimming is applied. All messages are sent as-is.
+    /// Both tokenBudget and maxMessagesInContext are set to Int.max.
+    public let isUnlimitedContext: Bool
+
+    /// Number of most recent messages always sent FULLY (without summary replacement).
     ///
-    /// ПОЧЕМУ 3:
-    /// 3 последних обмена = пользователь поставил задачу + Чаппи начал делать + текущий шаг.
-    /// Этого достаточно для непрерывности диалога. Захардкожен — технический параметр.
+    /// WHY 3:
+    /// 3 last exchanges = user set a task + Chappie started doing it + current step.
+    /// Sufficient for conversational continuity. Hardcoded — technical parameter.
     public let recentFullMessages: Int
 
-    /// Минимальный размер сообщения в единицах estimateTokens() для суммаризации.
+    /// Minimum message size in estimateTokens() units for summarization.
     ///
-    /// ПОЧЕМУ 200:
-    /// 200 единиц × (4/1.5) ≈ 533 UTF-8 байта ≈ ~130-260 символов (зависит от языка).
-    /// Это примерно 2-3 строки текста. Сообщения короче этого — короткие реплики,
-    /// их суммаризировать бессмысленно (summary был бы длиннее оригинала).
-    /// Захардкожен — технический параметр.
+    /// WHY 200:
+    /// 200 units × (4/1.5) ≈ 533 UTF-8 bytes ≈ ~130-260 chars (language-dependent).
+    /// Roughly 2-3 lines of text. Messages shorter than this are short replies —
+    /// summarizing them is pointless (summary would be longer than the original).
+    /// Hardcoded — technical parameter.
     public let summaryThreshold: Int
 
-    /// Таймаут ожидания ответа от API в секундах.
+    /// API response timeout in seconds.
     ///
-    /// ПОЧЕМУ 300 СЕКУНД (5 минут):
-    /// Стандартный таймаут URLSession — 60 секунд. Этого катастрофически мало для Чаппи,
-    /// который в одном reasoning loop может выполнить десятки вызовов инструментов.
-    /// Сложные задачи — инспекция проекта, рефакторинг нескольких файлов — занимают 2-4 минуты.
+    /// WHY 300 SECONDS (5 minutes):
+    /// Default URLSession timeout is 60 seconds — catastrophically low for Chappie,
+    /// which may execute dozens of tool calls in one reasoning loop.
+    /// Complex tasks — project inspection, multi-file refactoring — take 2-4 minutes.
     public let requestTimeoutSeconds: TimeInterval
 
-    /// Таймаут ожидания установки соединения с сервером в секундах.
+    /// Connection establishment timeout in seconds.
     ///
-    /// ПОЧЕМУ 30 СЕКУНД:
-    /// Если соединение не устанавливается за 30 секунд — это явная сетевая проблема.
+    /// WHY 30 SECONDS:
+    /// If connection is not established in 30 seconds — clear network issue.
     public let connectionTimeoutSeconds: TimeInterval
 
-    // MARK: - Инициализация
+    // MARK: - Initialization
 
-    /// Создаёт дефолтный конфиг (20 сообщений, 10,000 токенов).
+    /// Creates the default config (20 messages, 10,000 tokens).
     ///
-    /// Используется для AppConfig.shared и как дефолт в AIOrchestrator.process().
+    /// Used for AppConfig.shared and as default in AIOrchestrator.process().
     private init() {
         self.maxOrchestratorSteps    = 100
         self.maxMessagesInContext    = 20
-        // Формула: 20 × 500 = 10,000 токенов
         self.tokenBudget             = 20 * 500
+        self.isUnlimitedContext      = false
         self.recentFullMessages      = 3
         self.summaryThreshold        = 200
         self.requestTimeoutSeconds   = 300
         self.connectionTimeoutSeconds = 30
     }
 
-    /// Создаёт конфиг из настроек треда.
+    /// Creates a config from thread settings.
     ///
-    /// АРХИТЕКТУРНОЕ РЕШЕНИЕ (IT-02):
-    /// Вместо глобального синглтона — конфиг создаётся из настроек конкретного треда.
-    /// tokenBudget вычисляется автоматически по формуле maxMessagesInContext × 500.
-    /// Остальные технические параметры захардкожены — пользователь их не видит.
+    /// ARCHITECTURAL DECISION (IT-02):
+    /// Instead of a global singleton — config is created from specific thread settings.
+    /// tokenBudget is computed automatically by formula maxMessagesInContext × 500.
+    /// Other technical parameters are hardcoded — user does not see them.
     ///
-    /// - Parameter maxMessagesInContext: Глубина контекста (10...100).
-    ///   Зажимается в допустимый диапазон автоматически.
-    public init(maxMessagesInContext: Int) {
-        // Зажимаем в допустимый диапазон — защита от некорректных данных из JSON
-        let clamped = max(10, min(100, maxMessagesInContext))
+    /// UNLIMITED MODE:
+    /// When settings.isUnlimitedContext = true, both maxMessagesInContext and tokenBudget
+    /// are set to Int.max. The orchestrator's buildContextWindow() skips all trimming.
+    ///
+    /// - Parameter settings: Thread settings with context depth and unlimited flag.
+    public init(settings: ThreadSettings) {
+        self.maxOrchestratorSteps    = 100
+        self.isUnlimitedContext      = settings.isUnlimitedContext
+        self.recentFullMessages      = 3
+        self.summaryThreshold        = 200
+        self.requestTimeoutSeconds   = 300
+        self.connectionTimeoutSeconds = 30
 
+        if settings.isUnlimitedContext {
+            // No trimming — send everything to the model
+            self.maxMessagesInContext = Int.max
+            self.tokenBudget          = Int.max
+        } else {
+            // Clamp to valid range — guard against corrupted JSON values
+            let clamped = max(10, min(1000, settings.maxMessagesInContext))
+            self.maxMessagesInContext = clamped
+            // FORMULA: each message "costs" 500 token budget units.
+            // Ensures linear relationship between user setting and real budget.
+            self.tokenBudget          = clamped * 500
+        }
+    }
+
+    /// Convenience init from raw message count (used in tests and legacy code).
+    ///
+    /// - Parameter maxMessagesInContext: Context depth (10...1000). Clamped automatically.
+    public init(maxMessagesInContext: Int) {
+        let clamped = max(10, min(1000, maxMessagesInContext))
         self.maxOrchestratorSteps    = 100
         self.maxMessagesInContext    = clamped
-        // ФОРМУЛА: каждое сообщение "стоит" 500 токенов бюджета.
-        // Это обеспечивает линейную зависимость между настройкой пользователя и реальным бюджетом.
-        // При превышении бюджета включается механизм двойного отсечения из buildContextWindow().
         self.tokenBudget             = clamped * 500
+        self.isUnlimitedContext      = false
         self.recentFullMessages      = 3
         self.summaryThreshold        = 200
         self.requestTimeoutSeconds   = 300
         self.connectionTimeoutSeconds = 30
-    }
-
-    /// Создаёт конфиг из ThreadSettings (удобный фабричный метод).
-    ///
-    /// Позволяет ChappieViewModel создавать конфиг одной строкой:
-    /// ```swift
-    /// let config = AppConfig(settings: activeThread.settings)
-    /// ```
-    public init(settings: ThreadSettings) {
-        self.init(maxMessagesInContext: settings.maxMessagesInContext)
     }
 }

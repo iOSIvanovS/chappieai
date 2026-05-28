@@ -9,9 +9,21 @@
 // ChatScrollView fills the entire ZStack behind the floating panels.
 // It does NOT know about InputMorphView height directly.
 // Instead it receives headerHeight and footerHeight — transparent spacers at the
-// top and bottom of the VStack inside ScrollView.
+// top and bottom of the LazyVStack inside ScrollView.
 // This guarantees the first and last messages are always fully readable
 // regardless of the panel heights (including dynamic growth of the input editor).
+//
+// LAZYVSTACK (PERFORMANCE):
+// Messages are rendered lazily — only visible ones are in the render tree.
+// This is critical for large histories (context depth × 10 = up to 10,000 messages).
+// Regular VStack would render everything at once and freeze the UI.
+//
+// SCROLL ANCHOR STRATEGY (prevents jumping during streaming):
+// Each message has a stable .id(msg.id). Bottom sentinel is Color.clear.id("bottom").
+// During streaming: scrollTo("bottom") is called on every streamingText change.
+// This pins the view to the bottom WITHOUT layout recalculation jumping.
+// Key insight: proxy.scrollTo without animation during streaming (instant snap),
+// with animation only for discrete events (new message, thread switch).
 //
 // AUTO-SCROLL POLICY:
 // Scroll to bottom happens in exactly four cases:
@@ -19,7 +31,7 @@
 //      then scroll after a short delay so the new messages have time to render.
 //   2. footerHeight first becomes non-zero — "layout ready" moment on first launch.
 //      After that, footerHeight changes are ignored (user typing grows the input field).
-//   3. onChange(messages) — new message added to the chat.
+//   3. onChange(messages.count) — new message added to the chat.
 //   4. onChange(streamingText) — Chappie is streaming a response (live bubble grows).
 // Intentionally NOT scrolling when footerHeight changes after initial scroll
 // so the user can freely read mid-chat while typing a long message.
@@ -29,16 +41,16 @@
 
 import SwiftUI
 
-/// Scrollable message list with auto-scroll and thinking indicator.
+/// Scrollable message list with auto-scroll, lazy rendering, and streaming anchor.
 ///
-/// IMPORTANT: Accepts `visibleMessages` — already filtered list (only .message, max 30).
-/// Filtering happens in ViewModel, not here.
+/// IMPORTANT: Accepts `visibleMessages` — already filtered and depth-limited list.
+/// Filtering and depth calculation happen in ViewModel, not here.
 struct ChatScrollView: View {
 
     /// Active thread ID — used to detect thread switches and reset scroll state.
     let threadId: UUID?
 
-    /// Filtered message list (only .message, max 30)
+    /// Depth-limited message list (only .message, up to contextDepth × 10)
     let messages: [ChatMessage]
 
     /// Flag: Chappie is thinking (show spinner or streaming bubble)
@@ -75,22 +87,25 @@ struct ChatScrollView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(spacing: 16) {
+                // LazyVStack — only renders visible messages.
+                // Critical for large histories (up to 10,000 messages with unlimited context).
+                LazyVStack(spacing: 16) {
 
                     // Transparent header spacer — matches top floating panel height.
-                    // Invisible but reserves space so messages start below the panel.
                     Color.clear
                         .frame(height: headerHeight)
-                        .id("TopSpacer")
+                        .id("top")
 
                     // Welcome screen — shown only when chat is empty
                     if messages.isEmpty && !isThinking {
                         welcomeMessage
                             .transition(.opacity)
                     } else {
-                        // ForEach works with at most 30 items
                         ForEach(messages) { msg in
                             MessageBubbleView(msg: msg)
+                                // Stable ID per message — LazyVStack uses this for identity.
+                                // Without explicit id, LazyVStack may re-render on any list change.
+                                .id(msg.id)
                         }
                     }
 
@@ -113,58 +128,56 @@ struct ChatScrollView: View {
                         }
                     }
 
-                    // Transparent footer spacer — matches bottom floating panel height.
-                    // Invisible but reserves space so the last message stays above the panel.
+                    // Transparent footer spacer + bottom sentinel.
+                    // scrollTo("bottom") always lands here — below the last message.
                     Color.clear
                         .frame(height: footerHeight + bottomGap)
-                        .id("BottomSpacer")
+                        .id("bottom")
                 }
                 .padding(.horizontal, 16)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: messages)
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: messages.count)
                 .animation(.easeInOut(duration: 0.25), value: isThinking)
                 .animation(.easeInOut(duration: 0.3), value: streamingText.isEmpty)
             }
-            // Hide scrollbar — not needed in this chat UI aesthetic
             .scrollIndicators(.never)
             // THREAD SWITCH: reset scroll state and jump to bottom after new messages render.
-            // Small delay gives SwiftUI time to lay out the new message list before scrolling.
             .onChange(of: threadId) { _, _ in
                 initialScrollDone = false
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                     withAnimation(.easeOut(duration: 0.3)) {
-                        proxy.scrollTo("BottomSpacer", anchor: .bottom)
+                        proxy.scrollTo("bottom", anchor: .bottom)
                     }
                     initialScrollDone = true
                 }
             }
             // INITIAL SCROLL: fires once when footerHeight first becomes non-zero on launch.
-            // This is the true "layout ready" moment — the bottom panel has reported
-            // its real height and the footer spacer has settled to its final size.
-            // After this, footerHeight changes (user typing) do NOT trigger scrolling.
             .onChange(of: footerHeight) { _, newHeight in
                 guard !initialScrollDone, newHeight > 0 else { return }
                 initialScrollDone = true
                 withAnimation(.easeOut(duration: 0.3)) {
-                    proxy.scrollTo("BottomSpacer", anchor: .bottom)
+                    proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
-            // Case 3: new message sent or received → scroll to bottom.
-            .onChange(of: messages) { _, _ in
+            // New message added → animated scroll to bottom.
+            // Keyed on count, not the array itself — avoids triggering on message content edits.
+            .onChange(of: messages.count) { _, _ in
                 withAnimation(.easeOut(duration: 0.3)) {
-                    proxy.scrollTo("BottomSpacer", anchor: .bottom)
+                    proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
-            // Scroll when thinking starts so the spinner/bubble is visible.
+            // Thinking starts → scroll so spinner/bubble is visible.
             .onChange(of: isThinking) { _, isThinking in
                 if isThinking {
                     withAnimation(.easeOut(duration: 0.3)) {
-                        proxy.scrollTo("BottomSpacer", anchor: .bottom)
+                        proxy.scrollTo("bottom", anchor: .bottom)
                     }
                 }
             }
-            // Case 4: streaming response is growing → keep bottom pinned.
+            // STREAMING: NO animation — instant snap prevents the "jumping" effect.
+            // Animation here causes layout recalculation on every token, which makes
+            // the scroll position bounce. Instant scrollTo keeps the view pinned smoothly.
             .onChange(of: streamingText) { _, _ in
-                proxy.scrollTo("BottomSpacer", anchor: .bottom)
+                proxy.scrollTo("bottom", anchor: .bottom)
             }
         }
     }
@@ -172,8 +185,6 @@ struct ChatScrollView: View {
     // MARK: - Subviews
 
     /// Welcome message for empty chat.
-    ///
-    /// Design: neutral left-aligned bubble — like Chappie's first message.
     private var welcomeMessage: some View {
         HStack(alignment: .bottom, spacing: 8) {
             VStack(alignment: .leading, spacing: 4) {

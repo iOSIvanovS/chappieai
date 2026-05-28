@@ -71,7 +71,8 @@ struct ProjectChipsView: View {
                     .padding(.vertical, 4)
                     .background(
                         Capsule()
-                            .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
+//                            .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
+                            .fill(.white)
                     )
 
                 // Chips + add button — plain HStack, same as ModelPickerRow inner layout
@@ -132,7 +133,7 @@ struct ProjectChipsView: View {
         .padding(.vertical, 4)
         .background(
             Capsule()
-                .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
+                .fill(.white)
         )
         .overlay(
             Capsule()
@@ -178,12 +179,12 @@ struct ProjectChipsView: View {
             // "+" only — compact, consistent with the pill aesthetic
             Image(systemName: "plus")
                 .font(.system(size: 11, weight: .semibold))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 5)
                 .foregroundStyle(Color.accentColor)
                 .background(
                     Capsule()
-                        .fill(Color(NSColor.textBackgroundColor).opacity(0.6))
+                        .fill(.white)
                         .overlay(
                             Capsule()
                                 .stroke(Color.accentColor.opacity(0.35), lineWidth: 1)

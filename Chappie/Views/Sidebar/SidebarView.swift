@@ -5,6 +5,11 @@
 // Implemented as a standalone VStack with ultraThinMaterial + cornerRadius.
 // No NavigationSplitView dependency — full control over appearance and behavior.
 //
+// LAYOUT (top to bottom):
+// 1. Header: "Треды" title + "New thread" button (right side) — pinned to top.
+// 2. Thread list — scrollable, fills remaining space.
+// 3. API key warning section — shown only when no providers configured.
+//
 // PRINCIPLE "DUMB COMPONENT":
 // SidebarView doesn't know about ThreadStore or SwiftData.
 // All data comes via parameters, all actions via callbacks.
@@ -44,6 +49,12 @@ struct SidebarView: View {
     var body: some View {
         VStack(spacing: 0) {
 
+            // HEADER: title + new thread button — always visible at the top
+            sidebarHeader
+
+            Divider()
+                .opacity(0.5)
+
             // Thread list — scrollable
             List {
                 Section {
@@ -69,11 +80,6 @@ struct SidebarView: View {
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                     }
-                } header: {
-                    Text("Треды")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .textCase(nil)
                 }
 
                 if !isApiKeyValid {
@@ -83,30 +89,40 @@ struct SidebarView: View {
             .scrollContentBackground(.hidden)
             .listStyle(.sidebar)
             .scrollIndicators(.never)
+        }
+        // ultraThinMaterial — frosted glass, consistent with toolbar and input panel
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
 
-            // "New Thread" button pinned to the bottom
+    // MARK: - Header
+
+    /// Top bar with "Треды" label and "+" button for creating a new thread.
+    /// Placed above the list so it's always accessible without scrolling.
+    private var sidebarHeader: some View {
+        HStack {
+            Text("Треды")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+
+            Spacer()
+
+            // New thread button — top right, always visible
             Button(action: {
                 onCreateThread()
                 onDismiss()
             }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 14))
-                    Text("Новый тред")
-                        .font(.system(size: 13, weight: .medium))
-                    Spacer()
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .contentShape(Rectangle())
+                Image(systemName: "square.and.pencil")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(Color.accentColor)
+            .help("Новый тред")
         }
-        // ultraThinMaterial — frosted glass, consistent with toolbar and input panel
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
-        // Clip to the rounded shape
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
 
     // MARK: - API Key Warning

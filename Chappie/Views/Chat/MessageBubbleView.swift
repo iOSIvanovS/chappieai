@@ -128,7 +128,7 @@ struct MessageBubbleView: View {
                     if let cost = cost {
                         Text(String(format: "🪙 %.2f ₽", cost))
                             .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 .padding(.horizontal, 14)
