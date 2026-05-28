@@ -46,6 +46,12 @@
 // If the thread has no saved provider, the default provider is used.
 // This ensures activeProvider/activeModelName always reflect the SELECTED THREAD,
 // not the previously active thread.
+//
+// INPUT PANEL BUG FIX (THINKING-STUCK):
+// isThinking = false is set INSIDE withAnimation{} in the success path,
+// so SwiftUI applies it atomically with streamingText = "" and messages.append().
+// The background save Task is explicitly @MainActor to avoid race conditions
+// with @Observable property updates.
 
 import SwiftUI
 import ChappieCore
@@ -942,6 +948,12 @@ final class ChappieViewModel {
 
     /// Sends a prompt to the orchestrator.
     /// Stores the Task in currentRequestTask so it can be cancelled at any time.
+    ///
+    /// STATE TRANSITION RULE (THINKING-STUCK FIX):
+    /// isThinking = false is always set INSIDE the same withAnimation{} block that
+    /// clears streamingText and appends the final message. This guarantees SwiftUI
+    /// applies all three changes atomically in one render pass, so InputMorphView
+    /// never sees isThinking=true after the response is already displayed.
     func send(prompt: String) {
         guard !prompt.isEmpty else { return }
         guard let orchestrator = orchestrator else {
@@ -1010,9 +1022,14 @@ final class ChappieViewModel {
                 let (displayText, summary) = self.extractAndCleanSummary(from: rawResponse)
                 let finalCost = result.totalCost
 
+                // THINKING-STUCK FIX:
+                // isThinking = false is set INSIDE withAnimation together with streamingText
+                // and messages.append. This ensures SwiftUI sees all three changes in one
+                // render pass — InputMorphView transitions back to idle atomically.
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
                     self.streamingText = ""
                     self.currentToolCall = nil
+                    self.isThinking = false
                     self.messages.append(.message(
                         isUser: false,
                         text: displayText,
@@ -1029,14 +1046,14 @@ final class ChappieViewModel {
                     }
                 }
 
+                // Background save — explicitly @MainActor to avoid race conditions
+                // with @Observable property updates on self.threads.
                 if let threadId = activeThreadId, let store = self.threadStore {
                     let currentMessages = self.messages
-                    Task {
+                    Task { @MainActor in
                         try? await store.saveMessages(currentMessages, toThreadId: threadId)
                         let refreshed = try? await store.loadThreads()
-                        if let refreshed {
-                            await MainActor.run { self.threads = refreshed }
-                        }
+                        if let refreshed { self.threads = refreshed }
                     }
                 }
 
@@ -1045,6 +1062,7 @@ final class ChappieViewModel {
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
                     self.streamingText = ""
                     self.currentToolCall = nil
+                    self.isThinking = false
                 }
 
             } catch ChappieError.cancelled {
@@ -1052,17 +1070,18 @@ final class ChappieViewModel {
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
                     self.streamingText = ""
                     self.currentToolCall = nil
+                    self.isThinking = false
                 }
 
             } catch {
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
                     self.streamingText = ""
                     self.currentToolCall = nil
+                    self.isThinking = false
                     self.messages.append(.message(isUser: false, text: "Упс, ошибка: \(error.localizedDescription)"))
                 }
             }
 
-            self.isThinking = false
             self.currentRequestTask = nil
         }
     }
