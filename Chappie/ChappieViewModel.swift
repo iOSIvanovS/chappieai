@@ -111,6 +111,12 @@
 // isLoadingThread is exposed as private(set) so ChatScrollView can show a ProgressView
 // while history is being loaded from SwiftData. This prevents the welcome screen flash
 // that occurred when the app started and the history was not yet available.
+//
+// LOADING HISTORY FIX (UX-LOADING-FIX):
+// isLoadingThread = true and messages = [] are set at the very beginning of selectThread(),
+// BEFORE activeThread is assigned. This guarantees that SwiftUI never renders a frame
+// with isLoadingThread=false + messages=[] simultaneously (which caused the welcome
+// screen flash). The spinner is always shown during the async load window.
 
 import SwiftUI
 import ChappieCore
@@ -192,6 +198,9 @@ final class ChappieViewModel {
     ///
     /// UX-LOADING: exposed as private(set) so ChatScrollView can show a spinner instead
     /// of the welcome screen, preventing the flash of empty state on app launch.
+    ///
+    /// UX-LOADING-FIX: set to true at the very top of selectThread(), before activeThread
+    /// is updated, so there is never a rendered frame with isLoadingThread=false + messages=[].
     private(set) var isLoadingThread: Bool = false
 
     // MARK: - Active Request Task
@@ -832,14 +841,18 @@ final class ChappieViewModel {
     func selectThread(_ thread: ThreadMetadata) async {
         guard let store = threadStore else { return }
 
+        // UX-LOADING-FIX: set loading state and clear messages BEFORE updating activeThread.
+        // This guarantees SwiftUI never renders a frame with isLoadingThread=false + messages=[]
+        // simultaneously — which caused the welcome screen to flash on app launch.
+        // The spinner is shown from this point until history is fully loaded.
+        self.isLoadingThread = true
+        self.messages = []
+        self.displayedMessages = []
+
         self.activeThread = thread
 
         // UX-RESTORE: persist the selected thread ID for next launch
         saveLastActiveThreadId(thread.id)
-
-        // UX-LOADING: signal to ChatScrollView that history is being fetched.
-        // This prevents the welcome screen from flashing before messages appear.
-        self.isLoadingThread = true
 
         do {
             let settings = try await store.loadSettings(forThreadId: thread.id)
