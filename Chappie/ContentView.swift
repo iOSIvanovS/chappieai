@@ -72,11 +72,17 @@
 //   NewThreadProviderSheet now returns (providerId, modelName, title, ThreadSettings).
 //   confirmNewThread() accepts all four and saves title + settings immediately.
 //
+// SOFT LOCK (isThinking):
+//   SidebarView receives isThinking from ViewModel.
+//   While true: thread switching, deletion, rename, settings, and "Новый" are disabled.
+//   This prevents race conditions when AI is writing a response to the current thread.
+//
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
 // IT-11: Thread settings sheet, last-thread restore.
 // IT-12: Thread name in ProjectChipsView chip, gear removed from ThreadRowView hover,
 //        NewThreadProviderSheet extended with name + context settings.
+// IT-13: Soft lock — sidebar interactions disabled while isThinking == true.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -225,11 +231,13 @@ struct ContentView: View {
                     .transition(.opacity)
 
                 // Floating sidebar panel
+                // IT-13: isThinking forwarded — disables thread switching/deletion while AI responds
                 SidebarView(
                     isApiKeyValid: !viewModel.providers.isEmpty,
                     threads: viewModel.threads,
                     selectedThreadId: viewModel.activeThread?.id,
                     orphanedThreadIds: orphanedThreadIds,
+                    isThinking: viewModel.isThinking,
                     onOpenSettings: {
                         showSettings = true
                         isSidebarVisible = false

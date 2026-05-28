@@ -9,6 +9,10 @@
 // - Active thread highlighted via selectedThreadId.
 // - orphanedThreadIds: threads whose provider/model was deleted get a ⚠️ indicator.
 // - onOpenSettings: opens ThreadSettingsSheet for the given thread (via ContentView).
+//
+// SOFT LOCK:
+// isThinking is forwarded to each ThreadRowView.
+// While true — tap, delete, rename, and settings are disabled per row.
 
 import SwiftUI
 import ChappieCore
@@ -21,6 +25,8 @@ struct ThreadListView: View {
     let threads: [ThreadMetadata]
     let selectedThreadId: UUID?
     let orphanedThreadIds: Set<UUID>
+    /// Forwarded from ViewModel — disables row interactions while AI is responding.
+    let isThinking: Bool
 
     let onSelect: (ThreadMetadata) -> Void
     let onDelete: (ThreadMetadata) -> Void
@@ -41,6 +47,7 @@ struct ThreadListView: View {
                 isSelected: thread.id == selectedThreadId,
                 isEditing: editingThreadId == thread.id,
                 isOrphaned: orphanedThreadIds.contains(thread.id),
+                isThinking: isThinking,
                 editingTitle: $editingTitle,
                 onTap: {
                     onSelect(thread)

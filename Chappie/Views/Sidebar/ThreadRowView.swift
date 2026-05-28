@@ -18,6 +18,11 @@
 // RENAME:
 // Double-click or context menu "Rename" → inline TextField appears.
 // Enter commits, Escape cancels.
+//
+// SOFT LOCK (isThinking):
+// When AI is thinking — tap, delete, and context menu actions are disabled.
+// Visual cue: row opacity reduced to 0.5, cursor shows "not allowed".
+// This prevents race conditions: switching thread while AI writes to current one.
 
 import SwiftUI
 import ChappieCore
@@ -31,6 +36,8 @@ struct ThreadRowView: View {
     let isSelected: Bool
     let isEditing: Bool
     let isOrphaned: Bool
+    /// When true — tap, delete, and settings are disabled (AI is responding).
+    let isThinking: Bool
     @Binding var editingTitle: String
 
     let onTap: () -> Void
@@ -101,10 +108,8 @@ struct ThreadRowView: View {
 
             Spacer()
 
-            // On hover — only delete button.
-            // Gear was removed (IT-12): too small to hit in the row.
-            // Settings are in context menu and in the ProjectChipsView chip.
-            if (isHovered || isSelected) && !isEditing {
+            // Delete button — hidden while AI is thinking to prevent race conditions
+            if (isHovered || isSelected) && !isEditing && !isThinking {
                 Button(action: onDelete) {
                     Image(systemName: "trash")
                         .font(.system(size: 11))
@@ -123,29 +128,49 @@ struct ThreadRowView: View {
                       ? Color.accentColor
                       : (isHovered ? Color.primary.opacity(0.06) : Color.clear))
         )
-        .onTapGesture { onTap() }
-        .onTapGesture(count: 2) { onStartRename() }
+        // Tap is disabled while AI is thinking — prevents switching thread mid-response
+        .onTapGesture {
+            guard !isThinking else { return }
+            onTap()
+        }
+        .onTapGesture(count: 2) {
+            guard !isThinking else { return }
+            onStartRename()
+        }
         .onHover { isHovered = $0 }
+        // Dimmed when locked — visual cue that row is not interactive
+        .opacity(isThinking && !isSelected ? 0.5 : 1.0)
         .contextMenu {
+            // Context menu items are individually disabled during thinking
             Button {
+                guard !isThinking else { return }
                 onStartRename()
             } label: {
                 Label("Переименовать", systemImage: "pencil")
             }
+            .disabled(isThinking)
+
             Button {
+                guard !isThinking else { return }
                 onOpenSettings()
             } label: {
                 Label("Настройки треда", systemImage: "gear")
             }
+            .disabled(isThinking)
+
             Divider()
+
             Button(role: .destructive) {
+                guard !isThinking else { return }
                 onDelete()
             } label: {
                 Label("Удалить", systemImage: "trash")
             }
+            .disabled(isThinking)
         }
         .animation(.easeInOut(duration: 0.15), value: isHovered)
         .animation(.easeInOut(duration: 0.15), value: isSelected)
+        .animation(.easeInOut(duration: 0.2), value: isThinking)
     }
 
     @FocusState private var isTextFieldFocused: Bool

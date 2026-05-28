@@ -14,6 +14,10 @@
 // SidebarView doesn't know about ThreadStore or SwiftData.
 // All data comes via parameters, all actions via callbacks.
 // Business logic lives in ChappieViewModel.
+//
+// SOFT LOCK:
+// isThinking is forwarded to ThreadListView.
+// "Новый" button is also disabled while AI is responding.
 
 import SwiftUI
 import ChappieCore
@@ -33,6 +37,8 @@ struct SidebarView: View {
     let selectedThreadId: UUID?
     /// Thread IDs whose provider or model was deleted — shown with ⚠️ indicator.
     let orphanedThreadIds: Set<UUID>
+    /// When true — thread switching, deletion, and new thread creation are disabled.
+    let isThinking: Bool
 
     // MARK: - Callbacks
 
@@ -71,6 +77,7 @@ struct SidebarView: View {
                             threads: threads,
                             selectedThreadId: selectedThreadId,
                             orphanedThreadIds: orphanedThreadIds,
+                            isThinking: isThinking,
                             onSelect: { thread in
                                 onSelectThread(thread)
                                 onDismiss()
@@ -105,6 +112,7 @@ struct SidebarView: View {
 
     /// Top bar with "Треды" label and "Новый" button for creating a new thread.
     /// Placed above the list so it's always accessible without scrolling.
+    /// "Новый" is disabled while AI is thinking — prevents creating thread mid-response.
     private var sidebarHeader: some View {
         HStack {
             Text("Треды")
@@ -113,8 +121,9 @@ struct SidebarView: View {
 
             Spacer()
 
-            // New thread button — top right, labelled for clarity
+            // New thread button — disabled while AI is responding
             Button(action: {
+                guard !isThinking else { return }
                 onCreateThread()
                 onDismiss()
             }) {
@@ -124,16 +133,20 @@ struct SidebarView: View {
                     Text("Новый")
                         .font(.system(size: 12, weight: .medium))
                 }
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(isThinking ? Color.secondary : Color.accentColor)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
                 .background(
                     Capsule()
-                        .fill(Color.accentColor.opacity(0.12))
+                        .fill(isThinking
+                              ? Color.secondary.opacity(0.08)
+                              : Color.accentColor.opacity(0.12))
                 )
             }
             .buttonStyle(.plain)
-            .help("Новый тред")
+            .disabled(isThinking)
+            .help(isThinking ? "Подождите — Чаппи думает..." : "Новый тред")
+            .animation(.easeInOut(duration: 0.2), value: isThinking)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
