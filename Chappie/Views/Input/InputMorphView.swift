@@ -22,6 +22,12 @@
 // - onHeightChange callback fires whenever the panel's rendered height changes.
 // - ContentView uses this to set bottomPadding on ChatScrollView, so the last message
 //   is never hidden under the panel — on launch, on grow, or on collapse.
+//
+// SCROLLBAR NOTE:
+// - NSScrollView vertical scroller is intentionally DISABLED (hasVerticalScroller = false).
+//   The panel height is fully controlled by our editorHeight state — the scrollbar is
+//   redundant AND causes a layout jitter: macOS reserves width for it before hiding,
+//   which makes the text field width jump as the user types. Removing it fixes this.
 
 import SwiftUI
 import AppKit
@@ -229,8 +235,11 @@ struct ChappieTextEditorView: NSViewRepresentable {
 
         let scrollView = NSScrollView()
         scrollView.documentView = textView
-        scrollView.hasVerticalScroller = true
-        scrollView.autohidesScrollers = true
+        // Vertical scroller is intentionally OFF — the panel height is managed by editorHeight
+        // state, so a scrollbar is redundant. More importantly: when autohidesScrollers = true,
+        // macOS still reserves space for the scrollbar before hiding it, which causes the text
+        // field width to jitter as the user types. Disabling it entirely eliminates the jitter.
+        scrollView.hasVerticalScroller = false
         scrollView.drawsBackground = false
         scrollView.backgroundColor = .clear
 
