@@ -86,20 +86,26 @@
 //
 // SCROLL TRIGGER FIX v3 (UX-SCROLL-TRIGGER-V3):
 // Root cause of "bad range for [%{public}s]":
-//   loadMessages() is called from init() BEFORE the SwiftUI view tree exists.
 //   The old resetPagination() always incremented scrollToBottomTrigger.
 //   So on first render scrollToBottomTrigger was already 1 — .task(id:) fired
 //   immediately, but ScrollView had no layout geometry yet → "bad range".
 //
 // Fix: resetPagination(fireScrollTrigger: Bool).
 //   fireScrollTrigger=false — only updates displayedMessages/hasMoreMessages/displayedStart.
-//     Used by: loadMessages() (init), clearMessages(), clearHistory(), confirmNewThread().
+//     Used by: clearMessages(), clearHistory(), confirmNewThread().
 //   fireScrollTrigger=true — also increments scrollToBottomTrigger.
 //     Used ONLY by: selectThread() — the only caller that has a live view tree.
 //
 // This guarantees scrollToBottomTrigger stays 0 until selectThread() is called
 // from setModelContainer() AFTER the view is on screen. The .task(id: 0) guard
 // (guard scrollToBottomTrigger > 0) remains as a second safety net.
+//
+// CHAT HISTORY STORAGE (IT-13):
+// Messages are stored per-thread in SwiftData via ThreadStore.
+// ChatHistoryManager (file-based) has been removed.
+// selectThread() loads messages via store.loadMessages().
+// send() saves messages via store.saveMessages() after each response.
+// clearHistory() saves an empty array to the thread's SwiftData record.
 
 import SwiftUI
 import ChappieCore
@@ -121,9 +127,7 @@ final class ChappieViewModel {
 
     var workspaceURL: URL?
 
-    var messages: [ChatMessage] = [] {
-        didSet { saveMessages() }
-    }
+    var messages: [ChatMessage] = []
 
     /// Messages visible in the chat scroll view — paginated slice for UI rendering.
     ///
@@ -145,9 +149,8 @@ final class ChappieViewModel {
     /// SCROLL TRIGGER FIX v3 (UX-SCROLL-TRIGGER-V3):
     /// Starts at 0. Only incremented by resetPagination(fireScrollTrigger: true).
     /// That variant is called ONLY from selectThread() — which runs after the view tree
-    /// is on screen. loadMessages() in init uses fireScrollTrigger: false, so the
-    /// trigger stays 0 during app startup, preventing "bad range" from a ScrollView
-    /// that has no geometry yet.
+    /// is on screen. All other callers pass false, keeping the trigger at 0 during
+    /// app startup, preventing "bad range" from a ScrollView with no geometry yet.
     private(set) var scrollToBottomTrigger: Int = 0
 
     /// Messages visible in the chat scroll view.
@@ -254,7 +257,6 @@ final class ChappieViewModel {
 
     private var aiClient: AIClient?
     private var orchestrator: AIOrchestrator?
-    private var chatHistoryManager: ChatHistoryManager
 
     // MARK: - SwiftData
 
@@ -271,10 +273,6 @@ final class ChappieViewModel {
     // MARK: - Init
 
     public init() {
-        self.chatHistoryManager = ChatHistoryManager.shared
-        // fireScrollTrigger: false — view tree doesn't exist yet, scrollToBottomTrigger stays 0.
-        loadMessages()
-        // Balance is loaded per-provider in switchProvider — not here globally.
         loadWorkspaceWithSecurityScope()
     }
 
@@ -284,7 +282,7 @@ final class ChappieViewModel {
     ///
     /// - Parameter fireScrollTrigger: When true, increments scrollToBottomTrigger so
     ///   ChatScrollView scrolls to bottom. Pass false when called before the view tree
-    ///   exists (init, loadMessages) to avoid "bad range" crash.
+    ///   exists to avoid "bad range" crash.
     ///
     /// SCROLL TRIGGER FIX v3 (UX-SCROLL-TRIGGER-V3):
     /// Only selectThread() passes fireScrollTrigger: true — it is the only caller
@@ -303,7 +301,6 @@ final class ChappieViewModel {
             hasMoreMessages = true
         }
         // Only fire the scroll trigger when the view tree is ready (selectThread path).
-        // Skipped during init/loadMessages — ScrollView has no geometry yet.
         if fireScrollTrigger {
             scrollToBottomTrigger += 1
         }
@@ -1215,8 +1212,6 @@ final class ChappieViewModel {
     func setWorkspace(_ url: URL) {
         workspaceURL = url
         initializeServices(for: url)
-        chatHistoryManager = ChatHistoryManager(workspaceURL: url)
-        loadMessages()
         saveWorkspaceWithSecurityScope(url)
         MCPHelperLauncher.shared.restartWithWorkspace(url)
 
@@ -1335,8 +1330,8 @@ final class ChappieViewModel {
                     }
                 }
 
-                // Background save — explicitly @MainActor to avoid race conditions
-                // with @Observable property updates on self.threads.
+                // Save messages to SwiftData after each response.
+                // Explicitly @MainActor to avoid race conditions with @Observable property updates.
                 if let threadId = activeThreadId, let store = self.threadStore {
                     let currentMessages = self.messages
                     Task { @MainActor in
@@ -1552,33 +1547,6 @@ final class ChappieViewModel {
         return cleanedText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    // MARK: - Local Message Storage
-
-    private func saveMessages() {
-        guard !isLoadingThread else { return }
-        chatHistoryManager.saveMessages(messages)
-    }
-
-    private func loadMessages() {
-        let loadedMessages: [ChatMessage] = chatHistoryManager.loadMessages()
-
-        if !loadedMessages.isEmpty {
-            self.messages = loadedMessages
-            // fireScrollTrigger: false — called from init(), view tree doesn't exist yet.
-            // scrollToBottomTrigger must stay 0 until selectThread() runs after view appears.
-            resetPagination(fireScrollTrigger: false)
-        } else {
-            if let data = UserDefaults.standard.data(forKey: "savedChatMessages"),
-               let decoded = try? JSONDecoder().decode([ChatMessage].self, from: data) {
-                self.messages = decoded
-                // fireScrollTrigger: false — same reason: still in init() context.
-                resetPagination(fireScrollTrigger: false)
-                chatHistoryManager.saveMessages(self.messages)
-                UserDefaults.standard.removeObject(forKey: "savedChatMessages")
-            }
-        }
-    }
-
     // MARK: - Security-Scoped Bookmarks (macOS Sandbox)
 
     private func saveWorkspaceWithSecurityScope(_ url: URL) {
@@ -1615,8 +1583,6 @@ final class ChappieViewModel {
             _ = url.startAccessingSecurityScopedResource()
             self.workspaceURL = url
             initializeServices(for: url)
-            chatHistoryManager = ChatHistoryManager(workspaceURL: url)
-            loadMessages()
             if isStale { saveWorkspaceWithSecurityScope(url) }
             MCPHelperLauncher.shared.launch(workspacePath: url.path)
 
@@ -1631,8 +1597,6 @@ final class ChappieViewModel {
             if let url = fallbackURL {
                 self.workspaceURL = url
                 initializeServices(for: url)
-                chatHistoryManager = ChatHistoryManager(workspaceURL: url)
-                loadMessages()
                 MCPHelperLauncher.shared.launch(workspacePath: url.path)
             }
         }
