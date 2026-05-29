@@ -11,11 +11,21 @@
 // FLOW WRAPPING (IT-14):
 //   Project chips use FlowLayout — a custom Layout that packs items
 //   left-to-right and wraps to the next line when width is exceeded.
-//   IMPORTANT: the chips pill must NOT be inside an HStack with a Spacer —
-//   that would offer FlowLayout infinite width and suppress wrapping.
-//   Instead both pills (projects + thread settings) are laid out via
-//   a custom Layout (ChipsRowLayout) that gives the left pill only the
-//   space that remains after the right pill is placed.
+//
+//   LAYOUT STRATEGY — HStack with layoutPriority:
+//   - Right pill (gear + thread name): .fixedSize() — takes exactly its intrinsic width.
+//   - Spacer(minLength: 8) — fixed gap between the two pills.
+//   - Left pill (projects): .layoutPriority(1) — gets the remaining width.
+//     FlowLayout inside sees a finite maxWidth and wraps correctly.
+//
+//   WHY NOT ChipsRowLayout (custom Layout):
+//     sizeThatFits(.unspecified) for the left pill passes width=nil to FlowLayout,
+//     which treats it as infinity — intrinsic size is always huge, min(intrinsic, available)
+//     collapses to available, and the pill always fills all remaining space.
+//
+//   WHY NOT HStack + Spacer without layoutPriority:
+//     HStack offers each child its full available width independently,
+//     so FlowLayout sees ∞ and never wraps.
 //
 // THREAD SETTINGS CHIP (IT-12):
 //   Right-side pill shows gear icon + thread name.
@@ -45,89 +55,6 @@
 
 import SwiftUI
 import ChappieCore
-
-// MARK: - ChipsRowLayout
-
-/// Two-column layout: right pill is measured first (intrinsic size),
-/// left pill gets min(its intrinsic width, remaining width).
-///
-/// This makes the left pill compact when there is plenty of space
-/// (just like the "Модель" pill in ModelPickerRow), and only starts
-/// wrapping its chips when the window is narrow enough that the
-/// intrinsic width no longer fits.
-///
-/// WHY NOT HStack + Spacer:
-///   HStack offers each child its full available width independently,
-///   so FlowLayout sees ∞ and never wraps.
-///   WHY NOT leftWidth = totalWidth - rightWidth - spacing:
-///   That forces the left pill to always fill all remaining space,
-///   stretching its background to the right pill — wrong.
-private struct ChipsRowLayout: Layout {
-
-    var spacing: CGFloat = 8
-
-    func sizeThatFits(
-        proposal: ProposedViewSize,
-        subviews: Subviews,
-        cache: inout ()
-    ) -> CGSize {
-        guard subviews.count == 2 else { return .zero }
-        let totalWidth = proposal.width ?? 0
-
-        // Right pill: natural width
-        let rightSize = subviews[1].sizeThatFits(.unspecified)
-        let rightWidth = min(rightSize.width, totalWidth)
-
-        // Left pill: available space after right pill
-        let leftAvailable = max(0, totalWidth - rightWidth - spacing)
-
-        // Measure left pill intrinsic width first (no constraint)
-        let leftIntrinsic = subviews[0].sizeThatFits(.unspecified)
-
-        // Left pill gets min(intrinsic, available) — compact when space allows,
-        // constrained (and wrapping) when window is narrow
-        let leftWidth = min(leftIntrinsic.width, leftAvailable)
-        let leftSize = subviews[0].sizeThatFits(
-            ProposedViewSize(width: leftWidth, height: nil)
-        )
-
-        let totalHeight = max(leftSize.height, rightSize.height)
-        return CGSize(width: totalWidth, height: totalHeight)
-    }
-
-    func placeSubviews(
-        in bounds: CGRect,
-        proposal: ProposedViewSize,
-        subviews: Subviews,
-        cache: inout ()
-    ) {
-        guard subviews.count == 2 else { return }
-
-        let totalWidth = bounds.width
-
-        // Right pill: natural size, pinned to the right edge
-        let rightSize = subviews[1].sizeThatFits(.unspecified)
-        let rightWidth = min(rightSize.width, totalWidth)
-        let rightX = bounds.maxX - rightWidth
-
-        subviews[1].place(
-            at: CGPoint(x: rightX, y: bounds.minY),
-            anchor: .topLeading,
-            proposal: ProposedViewSize(width: rightWidth, height: nil)
-        )
-
-        // Left pill: min(intrinsic, available), placed at left edge
-        let leftAvailable = max(0, totalWidth - rightWidth - spacing)
-        let leftIntrinsic = subviews[0].sizeThatFits(.unspecified)
-        let leftWidth = min(leftIntrinsic.width, leftAvailable)
-
-        subviews[0].place(
-            at: CGPoint(x: bounds.minX, y: bounds.minY),
-            anchor: .topLeading,
-            proposal: ProposedViewSize(width: leftWidth, height: nil)
-        )
-    }
-}
 
 // MARK: - ProjectChipsView
 
@@ -167,11 +94,15 @@ struct ProjectChipsView: View {
     // MARK: - Body
 
     var body: some View {
-        // ChipsRowLayout: left pill is compact (intrinsic size) when space allows,
-        // wraps chips only when the window is too narrow to fit them all.
-        ChipsRowLayout(spacing: 8) {
+        // HStack with layoutPriority layout strategy (IT-14):
+        //   Right pill gets fixedSize (intrinsic width).
+        //   Left pill gets layoutPriority(1) — SwiftUI gives it the remaining width.
+        //   FlowLayout inside left pill sees a finite maxWidth and wraps correctly.
+        HStack(alignment: .top, spacing: 8) {
 
             // Left: projects pill — wraps chips via FlowLayout
+            // layoutPriority(1) ensures SwiftUI resolves right pill's size first,
+            // then gives left pill the remaining finite width.
             FlowLayout(spacing: 6) {
 
                 // "Проекты" static label
@@ -197,8 +128,13 @@ struct ProjectChipsView: View {
             .padding(.vertical, 8)
             .background(.ultraThinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            // layoutPriority(1): left pill gets remaining width after right pill is sized.
+            // This is the key that makes FlowLayout see a finite maxWidth.
+            .layoutPriority(1)
 
             // Right: gear chip — opens thread settings.
+            // fixedSize() ensures it takes only its intrinsic width,
+            // leaving the rest for the left pill.
             // Locked while AI is thinking — shake animation on tap (IT-13).
             Button(action: onOpenThreadSettings) {
                 HStack(spacing: 5) {
@@ -223,6 +159,8 @@ struct ProjectChipsView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
             .buttonStyle(.plain)
+            // fixedSize: right pill takes exactly its intrinsic width — no stretching.
+            .fixedSize()
             // Soft lock: shake on tap when locked (IT-13)
             .shakeOnTap(isLocked: isThinking)
         }
