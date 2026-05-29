@@ -8,6 +8,24 @@
 //   2. Allow reuse (e.g. in search or preview)
 //   3. Isolate the visual bubble logic so it's easy to change
 //
+// BUBBLE WIDTH STRATEGY:
+// GeometryReader was used here to measure available width and pass it to FlowLayout
+// inside AttachmentsView. This caused a critical layout bug: GeometryReader inside
+// a ScrollView's VStack always receives infinite height from the scroll container,
+// so it expands to fill the whole screen — bubbles overlapped like playing cards.
+//
+// FIX: GeometryReader is completely removed.
+// Instead we use containerRelativeFrame(.horizontal, alignment:) which:
+//   1. Measures the CONTAINER width (the VStack column), not the scroll content height
+//   2. Does NOT expand vertically — it only constrains the horizontal axis
+//   3. Wraps to natural height automatically
+// The 75% fraction cap (bubbleMaxWidthFraction) is applied directly inside
+// containerRelativeFrame's count/span/spacing API.
+//
+// For AttachmentsView / FlowLayout: they receive a finite maxWidth because the
+// bubble itself is already capped. FlowLayout's sizeThatFits gets a real proposal
+// width and wraps thumbnails correctly.
+//
 // CHANGE (Stage 6 — ТД-6):
 // MessageBubbleView now takes a typed enum ChatMessage instead of a struct.
 //
@@ -15,10 +33,6 @@
 // .toolCall is completely removed from this component's render.
 // .toolCall entries no longer appear in the feed — they are shown in StatusBarView.
 // MessageBubbleView now renders ONLY .message (text messages).
-//
-// CHANGE (ТД-COST-SUMMARY — Self-Summary):
-// .message case gained a 5th field `summary: String?`.
-// Destructuring pattern updated — `_` added for summary.
 //
 // CHANGE (UX-ANIMATION — Smooth bubble appearance):
 // Added .transition on the bubble: new messages smoothly slide in from the bottom
@@ -50,14 +64,6 @@
 // Chappie: clean background with thin border, like macOS 26 cards — neutral
 // Both bubbles: cornerRadius 12, shadow 0.1 opacity — light, not aggressive
 //
-// IMAGE WRAPPING FIX:
-// Images were in a plain HStack — no wrapping, forcing the bubble (and window) wide.
-// Fix: images now use FlowLayout just like file chips. The bubble itself gets
-// frame(maxWidth: bubbleMaxWidth) so FlowLayout receives a finite proposal width
-// and wraps thumbnails onto new rows when the window is narrow.
-// .fixedSize(horizontal: false) was the culprit — it fed width=nil to FlowLayout,
-// making it think it had infinite space and never wrap.
-//
 // FLOW LAYOUT (IT-14):
 // FlowLayout for file chips moved to Shared/FlowLayout.swift — shared with ProjectChipsView.
 // The private duplicate has been removed from this file.
@@ -65,7 +71,7 @@
 import SwiftUI
 import QuickLook
 
-// Maximum bubble width as a fraction of available space.
+// Maximum bubble width as a fraction of the container (VStack column) width.
 // 0.75 matches Telegram/iMessage: wide enough for long text, never full-width.
 private let bubbleMaxWidthFraction: CGFloat = 0.75
 
@@ -83,21 +89,12 @@ struct MessageBubbleView: View {
         // IMPORTANT: pattern destructures ALL 6 fields of the .message case:
         //   id, isUser, text, cost, summary, attachments
         if case .message(_, let isUser, let text, let cost, _, let attachments) = msg {
-            // GeometryReader gives us the real available width so we can cap the bubble.
-            // Without this, FlowLayout inside AttachmentsView gets width=nil (infinite)
-            // and never wraps — the bubble stretches to fit all thumbnails in one row.
-            GeometryReader { geo in
-                messageBubble(
-                    isUser: isUser,
-                    text: text,
-                    cost: cost,
-                    attachments: attachments,
-                    maxBubbleWidth: geo.size.width * bubbleMaxWidthFraction
-                )
-            }
-            // GeometryReader is greedy — it takes all space. fixedSize(vertical) lets
-            // the row collapse to the bubble's natural height.
-            .fixedSize(horizontal: false, vertical: true)
+            messageBubble(
+                isUser: isUser,
+                text: text,
+                cost: cost,
+                attachments: attachments
+            )
             // APPEARANCE ANIMATION:
             // .asymmetric: insertion — slide from bottom + fade, removal — fade only.
             .transition(
@@ -117,16 +114,15 @@ struct MessageBubbleView: View {
         isUser: Bool,
         text: String,
         cost: Double?,
-        attachments: [AttachedFile],
-        maxBubbleWidth: CGFloat
+        attachments: [AttachedFile]
     ) -> some View {
         HStack(alignment: .bottom, spacing: 8) {
             if isUser { Spacer(minLength: 40) }
 
             if isUser {
                 // USER BUBBLE
-                // frame(maxWidth:) caps the bubble AND gives FlowLayout a finite width
-                // so image thumbnails wrap correctly when the window is narrow.
+                // containerRelativeFrame caps width to 75% of the VStack column
+                // WITHOUT expanding vertically — safe inside ScrollView.
                 VStack(alignment: .trailing, spacing: 6) {
                     if !attachments.isEmpty {
                         AttachmentsView(attachments: attachments, isUser: true)
@@ -141,7 +137,6 @@ struct MessageBubbleView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .frame(maxWidth: maxBubbleWidth, alignment: .trailing)
                 .background(Color.accentColor)
                 .clipShape(
                     UnevenRoundedRectangle(
@@ -151,6 +146,13 @@ struct MessageBubbleView: View {
                         topTrailingRadius: 12
                     )
                 )
+                // Cap bubble width to 75% of the container column.
+                // containerRelativeFrame only constrains the horizontal axis —
+                // height stays natural (wraps content). Safe inside ScrollView.
+                .containerRelativeFrame(.horizontal) { width, _ in
+                    width * bubbleMaxWidthFraction
+                }
+
             } else {
                 // CHAPPIE BUBBLE
                 ZStack(alignment: .bottomTrailing) {
@@ -174,7 +176,6 @@ struct MessageBubbleView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .frame(maxWidth: maxBubbleWidth, alignment: .leading)
                 .background(Color(NSColor.textBackgroundColor))
                 .clipShape(
                     UnevenRoundedRectangle(
@@ -193,6 +194,10 @@ struct MessageBubbleView: View {
                     )
                     .stroke(Color.primary.opacity(0.08), lineWidth: 1)
                 )
+                // Cap bubble width to 75% of the container column.
+                .containerRelativeFrame(.horizontal) { width, _ in
+                    width * bubbleMaxWidthFraction
+                }
             }
 
             if !isUser { Spacer(minLength: 40) }
@@ -211,8 +216,8 @@ struct MessageBubbleView: View {
 /// WHY FlowLayout FOR IMAGES:
 /// Previously HStack was used — it never wraps, so 7 images = 7×80+6×6 = 596px minimum.
 /// FlowLayout wraps thumbnails onto new rows when the available width is exceeded.
-/// The parent bubble passes a finite maxWidth via frame(maxWidth:), so FlowLayout
-/// always receives a real proposal width and wraps correctly.
+/// The parent bubble is already capped via containerRelativeFrame, so FlowLayout
+/// receives a finite proposal width and wraps correctly.
 private struct AttachmentsView: View {
 
     let attachments: [AttachedFile]
