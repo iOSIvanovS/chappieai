@@ -151,6 +151,11 @@
 // Plain text messages are still encoded as AIMessage(role:content:String) — no change.
 // Error handling: if the model rejects the content type, the API error is surfaced
 // as a human-friendly message by ChappieViewModel's error handler in send().
+//
+// WEB FETCH TOOL:
+// WebFetchService is created in initializeServices() alongside other services.
+// It is passed to ToolExecutionService via the webFetch: parameter.
+// No additional wiring needed — ToolExecutionService handles the web_fetch tool internally.
 
 import SwiftUI
 import ChappieCore
@@ -259,6 +264,7 @@ final class ChappieViewModel {
 
     private var fileSystem: FileSystemManager?
     private var memoryManager: MemoryManager?
+    private var webFetchService: WebFetchService?
     private var toolService: ToolExecutionService?
 
     private var aiClient: AIClient?
@@ -1484,9 +1490,14 @@ final class ChappieViewModel {
             }
         }
 
+        // WebFetchService — created once per workspace, shared with ToolExecutionService
+        let wf = WebFetchService()
+        self.webFetchService = wf
+
         let socketPath = MCPHelperLauncher.shared.socketPath
 
-        let ts = ToolExecutionService(fileSystem: fs, memoryManager: mm, socketPath: socketPath)
+        // Pass WebFetchService into ToolExecutionService via DI
+        let ts = ToolExecutionService(fileSystem: fs, memoryManager: mm, socketPath: socketPath, webFetch: wf)
         self.toolService = ts
 
         if let client = aiClient {

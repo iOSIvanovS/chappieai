@@ -91,6 +91,13 @@
 //   - Only code — is absolutely reliable and context-independent.
 // DETECTOR: Unicode scalar range U+0400–U+04FF (basic Cyrillic).
 // Checked: key, type, jsonString — all three required fields.
+//
+// ARCHITECTURAL DECISION — WEB FETCH TOOL:
+// WebFetchService is injected via init() as an optional dependency.
+// Default value is nil — for backward compatibility with existing init calls.
+// When nil, web_fetch tool returns a clear error message.
+// WHY OPTIONAL: avoids breaking existing ToolExecutionService initializers
+// in tests and other callers that don't need web fetch.
 
 import Foundation
 
@@ -118,6 +125,11 @@ public actor ToolExecutionService {
     private let fileSystem: FileSystemManager
     private let memoryManager: MemoryManager
     private let mcpBridge: MCPToolBridge
+
+    // MARK: - Web Fetch
+
+    /// Optional web fetch service — injected from outside to keep ChappieCore dependency-free.
+    private let webFetch: WebFetchService?
 
     // MARK: - Active memory context (IT-08)
 
@@ -147,11 +159,13 @@ public actor ToolExecutionService {
     public init(
         fileSystem: FileSystemManager,
         memoryManager: MemoryManager,
-        socketPath: String = "/tmp/com.chappie.mcp.sock"
+        socketPath: String = "/tmp/com.chappie.mcp.sock",
+        webFetch: WebFetchService? = nil
     ) {
         self.fileSystem = fileSystem
         self.memoryManager = memoryManager
         self.mcpBridge = MCPToolBridge(socketPath: socketPath)
+        self.webFetch = webFetch
     }
 
     // MARK: - Active memory context update (IT-08)
@@ -309,7 +323,7 @@ public actor ToolExecutionService {
             return .allowed
         }
 
-        // All other tools (list_files, read_file, write_file, delete_file) — allowed for executor
+        // All other tools (list_files, read_file, write_file, delete_file, web_fetch) — allowed for executor
         return .allowed
     }
 
@@ -416,6 +430,23 @@ public actor ToolExecutionService {
                         "path": AIToolProperty(type: "string", description: "Относительный путь к удаляемому файлу")
                     ],
                     required: ["path"]
+                )
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "web_fetch",
+                description: """
+                Загрузить веб-страницу по URL и вернуть её текстовое содержимое (без HTML-разметки).
+                Используй для получения документации, статей, GitHub-страниц и любых публичных веб-ресурсов.
+                Шум (nav, header, footer, рекламные блоки) автоматически удаляется — остаётся только смысловой контент.
+                Лимит: 100 000 символов после очистки. Если страница больше — контент обрезается с конца с пометкой.
+                """,
+                parameters: AIToolParameters(
+                    properties: [
+                        "url": AIToolProperty(type: "string", description: "Абсолютный URL страницы (http или https)."),
+                        "selector": AIToolProperty(type: "string", description: "Опциональный CSS-селектор для извлечения конкретного блока: имя тега ('article'), '.class-name' или '#element-id'. Если не указан — обрабатывается вся страница.")
+                    ],
+                    required: ["url"]
                 )
             )),
 
@@ -721,6 +752,19 @@ public actor ToolExecutionService {
                 }
                 try await fileSystem.deleteFile(at: path)
                 return "Успешно: Файл \(path) удален."
+
+            // MARK: - Web Fetch
+
+            case "web_fetch":
+                guard let service = webFetch else {
+                    return "❌ web_fetch: service not available. WebFetchService was not injected into ToolExecutionService."
+                }
+                guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
+                      let url = args["url"], !url.isEmpty else {
+                    return "❌ web_fetch: missing required argument 'url'."
+                }
+                let selector = args["selector"]
+                return await service.fetch(urlString: url, selector: selector)
 
             // MARK: - Long-term memory (IT-08)
 
