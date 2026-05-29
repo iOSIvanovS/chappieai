@@ -491,7 +491,8 @@ struct InputMorphView: View {
             thinkingView
                 .padding(.horizontal, 12)
                 .padding(.vertical, 4)
-                .background(Capsule().fill(.white))
+                // Adaptive background — controlBackgroundColor switches correctly in dark mode
+                .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .opacity(isThinking ? 1 : 0)
                 .scaleEffect(isThinking ? 1 : 0.96, anchor: .bottom)

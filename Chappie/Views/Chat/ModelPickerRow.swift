@@ -68,7 +68,7 @@ struct ModelPickerRow: View {
 
     private var modelPill: some View {
         HStack(spacing: 6) {
-            // "Модель" static label
+            // "Модель" static label — adaptive color responds correctly to dark/light theme
             Text("Модель")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
@@ -78,7 +78,7 @@ struct ModelPickerRow: View {
                 .padding(.vertical, 4)
                 .background(
                     Capsule()
-                        .fill(.white)
+                        .fill(Color(NSColor.controlBackgroundColor))
                 )
 
             // Provider + model selector button — disabled while AI is thinking
@@ -98,9 +98,10 @@ struct ModelPickerRow: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
+                // Adaptive background — controlBackgroundColor switches correctly in dark mode
                 .background(
                     Capsule()
-                        .fill(.white)
+                        .fill(Color(NSColor.controlBackgroundColor))
                 )
                 .overlay(
                     Capsule()
@@ -161,7 +162,8 @@ struct ModelPickerRow: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Capsule().fill(.white))
+        // Adaptive background — controlBackgroundColor switches correctly in dark mode
+        .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .padding(.horizontal, 14)
         .padding(.vertical, 8)

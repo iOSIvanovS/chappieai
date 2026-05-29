@@ -85,7 +85,7 @@ struct ProjectChipsView: View {
             // Left: projects pill — hugs content naturally via fixedSize
             HStack(spacing: 6) {
 
-                // "Проекты" label
+                // "Проекты" label — adaptive color responds correctly to dark/light theme
                 Text("Проекты")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -93,7 +93,7 @@ struct ProjectChipsView: View {
                     .padding(.vertical, 4)
                     .background(
                         Capsule()
-                            .fill(.white)
+                            .fill(Color(NSColor.controlBackgroundColor))
                     )
 
                 // Chips + add button
@@ -128,7 +128,8 @@ struct ProjectChipsView: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(Capsule().fill(.white))
+                // Adaptive background — controlBackgroundColor switches correctly in dark mode
+                .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
@@ -182,9 +183,10 @@ struct ProjectChipsView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
+        // Adaptive background — controlBackgroundColor switches correctly in dark mode
         .background(
             Capsule()
-                .fill(.white)
+                .fill(Color(NSColor.controlBackgroundColor))
         )
         .overlay(
             Capsule()
@@ -237,8 +239,9 @@ struct ProjectChipsView: View {
                 .padding(.vertical, 5)
                 .foregroundStyle(isThinking ? Color.secondary : Color.accentColor)
                 .background(
+                    // Adaptive background — controlBackgroundColor switches correctly in dark mode
                     Capsule()
-                        .fill(.white)
+                        .fill(Color(NSColor.controlBackgroundColor))
                         .overlay(
                             Capsule()
                                 .stroke(
