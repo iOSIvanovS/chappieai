@@ -139,6 +139,19 @@
 //   the delegate is created, the captured value is stale. Solution: pass isThinking via
 //   a closure (getter) so each call reads the current value from the parent's state.
 //
+//   KEY BUG FIX — overlay stuck after drop:
+//   performDrop on macOS does NOT trigger dropExited after a successful drop.
+//   Setting dropState = .idle via defer inside performDrop fires synchronously before
+//   the function returns, but SwiftUI may batch the update. We use DispatchQueue.main.async
+//   to ensure the state reset happens in the next runloop pass after SwiftUI processes
+//   the drop result — this guarantees the overlay disappears.
+//
+//   KEY BUG FIX — folders show blue overlay:
+//   info.hasItemsConforming(to: [.fileURL]) returns true for folders too, because
+//   directories also conform to .fileURL UTType. To synchronously distinguish files
+//   from folders we read NSPasteboard directly and check isDirectory on each URL.
+//   If ALL resolved URLs are directories → state becomes .blocked (red overlay).
+//
 //   resolveDroppedFiles() runs URL resolution on a background Task, appends on @MainActor.
 //   Folders are silently skipped (isDirectory check inside resolveDroppedFiles).
 //
@@ -200,6 +213,7 @@ private struct ChappieDropDelegate: DropDelegate {
     }
 
     func dropExited(info: DropInfo) {
+        // User dragged out of the window without dropping — reset immediately
         dropState = .idle
     }
 
@@ -212,7 +226,12 @@ private struct ChappieDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        defer { dropState = .idle }
+        // BUG FIX: macOS does NOT call dropExited after a successful performDrop.
+        // defer {} fires synchronously before return, but SwiftUI batches updates.
+        // Using async ensures the overlay disappears in the next runloop pass,
+        // after SwiftUI has already processed the drop result.
+        DispatchQueue.main.async { dropState = .idle }
+
         // Block the actual drop if AI is thinking or no valid files were present
         guard dropState == .allowed else { return false }
         let providers = info.itemProviders(for: [.fileURL])
@@ -223,16 +242,40 @@ private struct ChappieDropDelegate: DropDelegate {
     // MARK: - Private
 
     /// Determines whether the current drag payload is droppable and updates dropState.
+    ///
+    /// BUG FIX — folders show blue overlay:
+    /// info.hasItemsConforming(to: [.fileURL]) returns true for folders too, because
+    /// directories conform to .fileURL just like regular files. To distinguish them
+    /// synchronously (DropInfo has no async API), we read NSPasteboard directly and
+    /// check isDirectory on each resolved URL. If only directories are present → blocked.
     private func updateState(info: DropInfo) {
-        // Read current isThinking via closure — avoids stale value from delegate creation
+        // Block while AI is responding
         guard !isThinkingGetter() else {
             dropState = .blocked
             return
         }
-        // Optimistically allow if there are any file URLs present.
-        // Folder-vs-file distinction happens later in resolveDroppedFiles (async).
-        let hasFiles = info.hasItemsConforming(to: [.fileURL])
-        dropState = hasFiles ? .allowed : .blocked
+
+        // Read URLs from pasteboard synchronously to check for real files vs. directories
+        let pasteboard = NSPasteboard(name: .drag)
+        guard let items = pasteboard.pasteboardItems, !items.isEmpty else {
+            dropState = .blocked
+            return
+        }
+
+        // Resolve each pasteboard item to a URL and check if it's a regular file
+        let hasRegularFile = items.contains { item in
+            guard
+                let urlString = item.string(forType: .fileURL),
+                let url = URL(string: urlString)
+            else { return false }
+
+            var isDir: ObjCBool = false
+            let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+            // Only count it as "valid" if it exists and is NOT a directory
+            return exists && !isDir.boolValue
+        }
+
+        dropState = hasRegularFile ? .allowed : .blocked
     }
 }
 
