@@ -67,6 +67,14 @@
 //      Fix: rows wrapped in a stable TableRow struct with a content-hash-based ID
 //      so SwiftUI can diff and reuse unchanged rows.
 //
+// WINDOW MIN-WIDTH FIX (CODE BLOCK):
+// .fixedSize(horizontal: true, vertical: false) was applied to SyntaxHighlightedText
+// inside ScrollView(.horizontal). fixedSize(horizontal: true) tells SwiftUI "give me
+// as much width as I need" — this requirement propagates UP through the layout tree
+// and prevents the window from being resized narrower than the longest code line.
+// Fix: removed fixedSize entirely. ScrollView(.horizontal) already handles overflow
+// correctly — content scrolls horizontally without forcing the window to expand.
+//
 // IMPORTANT (macOS 26):
 // The `+` operator for Text is deprecated in macOS 26 — use
 // Text("\(Text(...).bold())") string interpolation instead.
@@ -737,6 +745,13 @@ private struct InlineTextView: View {
 /// - Font: SF Mono 12.5pt — Xcode standard
 /// - Horizontal scroll for long lines
 /// - Rounded corners 8pt — like macOS 26 cards
+///
+/// WINDOW MIN-WIDTH FIX:
+/// .fixedSize(horizontal: true) was previously applied to SyntaxHighlightedText.
+/// This propagated a "give me infinite width" demand up through the layout tree,
+/// preventing the window from being resized narrower than the longest code line.
+/// Fix: fixedSize removed entirely. ScrollView(.horizontal) handles overflow
+/// without affecting the parent window's minimum resizable width.
 struct CodeBlockView: View {
 
     let code: String
@@ -794,13 +809,16 @@ struct CodeBlockView: View {
 
             // --- Code block body ---
             // Horizontal ScrollView for long lines — IDE standard.
+            // NO fixedSize(horizontal: true) here — that modifier propagates a
+            // "give me infinite width" demand up the layout tree and prevents the
+            // window from being resized narrower than the longest code line.
+            // ScrollView(.horizontal) handles overflow correctly without fixedSize.
             ScrollView(.horizontal, showsIndicators: false) {
                 SyntaxHighlightedText(code: code, language: language)
                     .font(.system(size: 12.5, design: .monospaced))
                     .lineSpacing(4)
                     .padding(12)
                     .textSelection(.enabled)
-                    .fixedSize(horizontal: true, vertical: false)
             }
             .background(theme.background)
         }
