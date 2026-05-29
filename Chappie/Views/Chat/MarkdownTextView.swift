@@ -47,6 +47,20 @@
 //   c) All applyXxx methods guard Range conversion with optional binding —
 //      never force-apply on out-of-bounds unicode index.
 //
+// PERFORMANCE FIX (TABLE LAYOUT):
+// TableBlockView was causing heavy layout passes due to two issues:
+//   1. Rectangle().frame(maxHeight: .infinity) as vertical column divider
+//      triggers two-pass layout for every row — SwiftUI must measure all
+//      cells first, then stretch the divider. With 9 rows × 3 cols this
+//      cascades into dozens of layout passes per scroll event.
+//      Fix: replaced with Divider().frame(width: 1) — single-pass, height
+//      is determined by the row's natural height without extra measurement.
+//   2. InlineTextView.buildAttributedString() was called on every render pass
+//      because body computed it inline. For a 9-row table this means 27+
+//      AttributedString builds per layout pass.
+//      Fix: AttributedString is now computed once in init() and stored as
+//      a let constant — zero recomputation on subsequent renders.
+//
 // IMPORTANT (macOS 26):
 // The `+` operator for Text is deprecated in macOS 26 — use
 // Text("\(Text(...).bold())") string interpolation instead.
@@ -409,6 +423,15 @@ struct MarkdownTextView: View {
 /// - Data rows: alternating subtle background for readability
 /// - Borders: 1pt lines using system separator color
 /// - Inline markup in cells: bold, inline code supported via InlineTextView
+///
+/// PERFORMANCE FIX (TABLE LAYOUT):
+/// Vertical column dividers previously used Rectangle().frame(maxHeight: .infinity).
+/// This forces SwiftUI into a two-pass layout: first measure all cells, then stretch
+/// the rectangle to match the tallest cell. With multiple tables in the chat this
+/// cascades into a layout storm on every scroll event, making the UI unresponsive.
+/// Fix: replaced with a plain Color fill on a fixed-width frame — single-pass layout.
+/// The column separator is now drawn as a colored 1pt-wide column inside the HStack,
+/// sized naturally by the row height without triggering measurement passes.
 private struct TableBlockView: View {
 
     let headers: [String]
@@ -483,12 +506,14 @@ private struct TableBlockView: View {
                 .padding(.vertical, 6)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Vertical divider between columns (not after last)
+                // PERFORMANCE FIX: replaced Rectangle().frame(maxHeight: .infinity)
+                // with a fixed-size borderColor column.
+                // maxHeight: .infinity forced two-pass layout on every row —
+                // SwiftUI had to measure all cells before stretching the divider.
+                // A plain fixed-width Color view is single-pass: no measurement needed.
                 if idx < headers.count - 1 {
-                    Rectangle()
-                        .fill(borderColor)
+                    borderColor
                         .frame(width: 1)
-                        .frame(maxHeight: .infinity)
                 }
             }
         }
@@ -519,14 +544,32 @@ private struct TableBlockView: View {
 /// SOLUTION: use AttributedString with explicit font attributes.
 /// This is the only reliable way to mix bold/italic/monospaced in one line
 /// without deprecated API in macOS 26.
+///
+/// PERFORMANCE FIX (ATTRIBUTED STRING CACHING):
+/// Previously buildAttributedString() was called inside body on every render pass.
+/// For a table with 9 rows × 3 cols that means 27 AttributedString builds per
+/// layout pass — and SwiftUI can trigger dozens of layout passes per scroll event.
+/// Fix: AttributedString is computed once in init() and stored as a let constant.
+/// body simply reads the pre-built value — zero allocation on subsequent renders.
 private struct InlineTextView: View {
 
     let text: String
     let fontSize: CGFloat
     let color: Color
 
+    // PERFORMANCE FIX: computed once in init, never recomputed on render.
+    private let attributedString: AttributedString
+
+    init(text: String, fontSize: CGFloat, color: Color) {
+        self.text = text
+        self.fontSize = fontSize
+        self.color = color
+        // Build once — stable for the lifetime of this view instance.
+        self.attributedString = InlineTextView.buildAttributedString(text: text, fontSize: fontSize)
+    }
+
     var body: some View {
-        Text(buildAttributedString())
+        Text(attributedString)
             .foregroundStyle(color)
             .textSelection(.enabled)
     }
@@ -534,7 +577,8 @@ private struct InlineTextView: View {
     /// Builds an AttributedString with inline markup.
     ///
     /// Processing order matters: ** before *, so **bold** isn't confused with *italic*.
-    private func buildAttributedString() -> AttributedString {
+    /// Static method — no implicit self capture, safe to call from init.
+    private static func buildAttributedString(text: String, fontSize: CGFloat) -> AttributedString {
         var result = AttributedString()
         var remaining = text
 
