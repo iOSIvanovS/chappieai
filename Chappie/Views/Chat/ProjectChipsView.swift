@@ -1,13 +1,19 @@
 // ProjectChipsView.swift
 // Chappie
 //
-// Horizontal row of project chips for the current thread.
-// Displayed as a floating rounded pill above the message list.
+// Floating pill row showing project chips for the current thread.
+// Chips wrap to new lines when the window is narrowed (FlowLayout).
 //
 // CHIP STYLE:
-//   Only the inner HStack (label + chips + add button) gets ultraThinMaterial pill background.
-//   Outer HStack has Spacer() so the pill hugs its content on the left.
+//   Only the inner content gets ultraThinMaterial pill background.
 //   Consistent with ModelPickerRow and the bottom InputMorphView panel.
+//
+// FLOW WRAPPING (IT-14):
+//   Project chips use FlowLayout — a custom Layout that packs items
+//   left-to-right and wraps to the next line when width is exceeded.
+//   This prevents the pill from overflowing the window on narrow sizes.
+//   The "Проекты" label + chips + add button all live inside FlowLayout,
+//   so the label stays on the first line and chips flow naturally after it.
 //
 // THREAD SETTINGS CHIP (IT-12):
 //   Right-side pill shows gear icon only (no thread name — saves space).
@@ -40,20 +46,15 @@ import ChappieCore
 
 // MARK: - ProjectChipsView
 
-/// Horizontal row of project chips for the current thread.
-///
-/// Shows projects bound to the thread.
-/// "+" button adds a new project via NSOpenPanel.
-/// "×" button on each chip removes the project from the thread.
-/// Tap on chip opens project settings (IT-09).
-/// Gear pill on the right opens thread settings (IT-12).
+/// Floating pill showing project chips for the current thread.
+/// Chips wrap to new lines on narrow windows via FlowLayout.
 struct ProjectChipsView: View {
 
     // MARK: - Input
 
     let projects: [ProjectMetadata]
 
-    /// Active thread name — used in tooltip for the gear chip.
+    /// Active thread name — used as label in the gear chip.
     let threadName: String?
 
     /// When true — add/remove project and thread settings gear are locked (IT-13).
@@ -83,12 +84,12 @@ struct ProjectChipsView: View {
     var body: some View {
         // Full-width HStack: projects pill on the left, thread settings chip on the right.
         // Same pattern as ModelPickerRow (model selector left, balance pill right).
-        HStack(spacing: 8) {
+        HStack(alignment: .top, spacing: 8) {
 
-            // Left: projects pill — hugs content naturally via fixedSize
-            HStack(spacing: 6) {
+            // Left: projects pill — wraps content via FlowLayout
+            FlowLayout(spacing: 6) {
 
-                // "Проекты" label — adaptive color responds correctly to dark/light theme
+                // "Проекты" static label
                 Text("Проекты")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -99,24 +100,23 @@ struct ProjectChipsView: View {
                             .fill(Color(NSColor.controlBackgroundColor))
                     )
 
-                // Chips + add button
-                HStack(spacing: 6) {
-                    ForEach(projects) { project in
-                        projectChip(for: project)
-                    }
-                    addButton
+                // Project chips — one per project
+                ForEach(projects) { project in
+                    projectChip(for: project)
                 }
+
+                // "+" add button
+                addButton
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background(.ultraThinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
-            Spacer()
+            Spacer(minLength: 0)
 
             // Right: gear chip — opens thread settings.
             // Locked while AI is thinking — shake animation on tap (IT-13).
-            // Uses shakeOnTap instead of .disabled() to keep full opacity.
             Button(action: onOpenThreadSettings) {
                 HStack(spacing: 5) {
                     Image(systemName: "gear")
@@ -132,7 +132,6 @@ struct ProjectChipsView: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                // Adaptive background — controlBackgroundColor switches correctly in dark mode
                 .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .padding(.horizontal, 14)
@@ -141,7 +140,7 @@ struct ProjectChipsView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
             .buttonStyle(.plain)
-            // Soft lock: shake on tap when locked — replaces old opacity(0.5) + .disabled()
+            // Soft lock: shake on tap when locked (IT-13)
             .shakeOnTap(isLocked: isThinking)
         }
     }
@@ -185,7 +184,6 @@ struct ProjectChipsView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        // Adaptive background — controlBackgroundColor switches correctly in dark mode
         .background(
             Capsule()
                 .fill(Color(NSColor.controlBackgroundColor))
@@ -200,21 +198,16 @@ struct ProjectChipsView: View {
             }
         }
         .onTapGesture {
-            // Tap on chip → open project settings (IT-09)
             if !isThinking {
                 onOpenSettings(project.id)
             }
         }
-        // Soft lock: shake on tap when locked — replaces old opacity(0.5) + .disabled()
+        // Soft lock: shake on tap when locked (IT-13)
         .shakeOnTap(isLocked: isThinking)
         .help("Проект: \(project.displayName) (\(project.settings.agentRole.displayName))\nТап — настройки\(isThinking ? "" : ", × — убрать из треда")")
     }
 
     /// Small agent role indicator next to the project name.
-    ///
-    /// WHY:
-    /// User should immediately see in which mode the agent works with each project.
-    /// Lock icon = advisor (read-only), bolt icon = executor.
     @ViewBuilder
     private func roleIndicator(for role: AgentRole) -> some View {
         switch role {
@@ -232,8 +225,6 @@ struct ProjectChipsView: View {
     // MARK: - Add button
 
     /// "+" button to attach a new project folder to the thread.
-    /// Locked while AI is thinking — shake animation on tap (IT-13).
-    /// Uses shakeOnTap instead of .disabled() to keep full opacity.
     private var addButton: some View {
         Button {
             openFolderPicker()
@@ -244,20 +235,15 @@ struct ProjectChipsView: View {
                 .padding(.vertical, 5)
                 .foregroundStyle(Color.accentColor)
                 .background(
-                    // Adaptive background — controlBackgroundColor switches correctly in dark mode
                     Capsule()
                         .fill(Color(NSColor.controlBackgroundColor))
                         .overlay(
                             Capsule()
-                                .stroke(
-                                    Color.accentColor.opacity(0.35),
-                                    lineWidth: 1
-                                )
+                                .stroke(Color.accentColor.opacity(0.35), lineWidth: 1)
                         )
                 )
         }
         .buttonStyle(.plain)
-        // Soft lock: shake on tap when locked — replaces old opacity(0.5) + .disabled()
         .shakeOnTap(isLocked: isThinking)
         .help(isThinking ? "Нельзя добавить проект пока Чаппи думает" : "Добавить папку проекта к этому треду")
     }
@@ -292,24 +278,22 @@ struct ProjectChipsView: View {
                 id: UUID(),
                 displayName: "MyApp",
                 settings: ProjectSettings(agentRole: .advisor)
+            ),
+            ProjectMetadata(
+                id: UUID(),
+                displayName: "Backend API",
+                settings: ProjectSettings(agentRole: .executor, isProgrammingProject: true)
             )
         ],
         threadName: "Разработка Chappie",
         isThinking: false,
-        onAddProject: { url in
-            print("Добавить: \(url.lastPathComponent)")
-        },
-        onRemoveProject: { id in
-            print("Удалить: \(id)")
-        },
-        onOpenSettings: { id in
-            print("Настройки проекта: \(id)")
-        },
-        onOpenThreadSettings: {
-            print("Настройки треда")
-        }
+        onAddProject: { _ in },
+        onRemoveProject: { _ in },
+        onOpenSettings: { _ in },
+        onOpenThreadSettings: {}
     )
     .padding()
+    .frame(width: 300) // narrow window to test wrapping
     .background(Color(NSColor.windowBackgroundColor))
 }
 
@@ -324,20 +308,6 @@ struct ProjectChipsView: View {
         ],
         threadName: "Разработка Chappie",
         isThinking: true,
-        onAddProject: { _ in },
-        onRemoveProject: { _ in },
-        onOpenSettings: { _ in },
-        onOpenThreadSettings: {}
-    )
-    .padding()
-    .background(Color(NSColor.windowBackgroundColor))
-}
-
-#Preview("Пустой список") {
-    ProjectChipsView(
-        projects: [],
-        threadName: "Новый тред",
-        isThinking: false,
         onAddProject: { _ in },
         onRemoveProject: { _ in },
         onOpenSettings: { _ in },

@@ -55,6 +55,10 @@
 // Fix: images are now rendered as a plain HStack with fixed 80×80 thumbnails,
 // wrapped in .fixedSize(horizontal: false, vertical: true) so the grid never
 // forces the bubble wider than its natural text content.
+//
+// FLOW LAYOUT (IT-14):
+// FlowLayout for file chips moved to Shared/FlowLayout.swift — shared with ProjectChipsView.
+// The private duplicate has been removed from this file.
 
 import SwiftUI
 import QuickLook
@@ -216,7 +220,7 @@ private struct AttachmentsView: View {
                 .quickLookPreview($previewURL)
             }
 
-            // FILE CHIPS
+            // FILE CHIPS — use shared FlowLayout from Shared/FlowLayout.swift
             if !files.isEmpty {
                 FlowLayout(spacing: 6) {
                     ForEach(files) { file in
@@ -228,8 +232,6 @@ private struct AttachmentsView: View {
     }
 
     /// Write attachment data to a temp file so QuickLook can open it.
-    ///
-    /// Returns the temp URL or nil on failure.
     private func writeTempFile(_ file: AttachedFile) -> URL? {
         let dir = FileManager.default.temporaryDirectory
         let url = dir.appendingPathComponent(file.filename)
@@ -305,60 +307,6 @@ private struct FileChipView: View {
         .foregroundStyle(isUser ? Color.white : Color.primary)
         .clipShape(Capsule())
         .help(file.filename)
-    }
-}
-
-// MARK: - FlowLayout
-
-/// Simple left-to-right wrapping layout for file chips.
-///
-/// SwiftUI doesn't have a native flow layout, so we implement a minimal one.
-/// Uses a fixed-width preference key approach: each chip reports its size,
-/// and the layout wraps to the next row when the row overflows.
-private struct FlowLayout: Layout {
-
-    var spacing: CGFloat = 6
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let maxWidth = proposal.width ?? .infinity
-        var currentX: CGFloat = 0
-        var currentRowHeight: CGFloat = 0
-        var totalHeight: CGFloat = 0
-
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if currentX + size.width > maxWidth, currentX > 0 {
-                // Wrap to next row
-                totalHeight += currentRowHeight + spacing
-                currentX = 0
-                currentRowHeight = 0
-            }
-            currentX += size.width + spacing
-            currentRowHeight = max(currentRowHeight, size.height)
-        }
-        totalHeight += currentRowHeight
-        return CGSize(width: maxWidth, height: totalHeight)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var currentX = bounds.minX
-        var currentY = bounds.minY
-        var currentRowHeight: CGFloat = 0
-
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if currentX + size.width > bounds.maxX, currentX > bounds.minX {
-                currentY += currentRowHeight + spacing
-                currentX = bounds.minX
-                currentRowHeight = 0
-            }
-            subview.place(
-                at: CGPoint(x: currentX, y: currentY),
-                proposal: ProposedViewSize(size)
-            )
-            currentX += size.width + spacing
-            currentRowHeight = max(currentRowHeight, size.height)
-        }
     }
 }
 
