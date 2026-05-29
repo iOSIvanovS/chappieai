@@ -294,8 +294,12 @@ extension ProjectSettings {
     /// - Role: EXECUTOR
     /// - Programming project: yes
     /// - Git: full [git_add, git_commit, git_checkout, git_log, git_reset, git_revert, git_status] [git_diff: ALWAYS FORBIDDEN]
-    /// - Tests: run + write
-    /// - Architecture files: enabled (English)
+    /// - Tests: run + create allowed (build_project, run_tests, read_build_log, write test files).
+    ///   You are required to write tests for business logic, services, and non-trivial algorithms when necessary.
+    ///   You are required to run tests after changes when necessary. UI layer tests are low ROI and not required unless explicitly requested.
+    /// - Architecture files: enabled (english). Discuss file paths with user before creating.
+    ///   If architecture files are found, save their paths to project memory and use them as a reference during development when relevant.
+    ///   If editing is allowed, you are required to keep them up to date after code changes that affect the described structure.
     /// - Code comments: enabled (English)
     /// ```
     ///
@@ -326,21 +330,34 @@ extension ProjectSettings {
                 lines.append("- Git: \(gitAccess.rawValue) [\(toolsList)] [git_diff: ALWAYS FORBIDDEN]")
             }
 
-            // Tests
+            // Tests — expanded instructions for the agent
             switch testsAccess {
             case .none:
                 lines.append("- Tests: BLOCKED (enable in project settings)")
             case .readOnly:
                 lines.append("- Tests: read logs only (read_build_log). run_tests is BLOCKED.")
             case .run:
-                lines.append("- Tests: run allowed (build_project, run_tests, read_build_log). Creating new tests: BLOCKED.")
+                lines.append("""
+                - Tests: run allowed (build_project, run_tests, read_build_log). Creating new tests: BLOCKED. \
+                You are required to run tests after changes when necessary. \
+                UI layer tests are low ROI and not required unless explicitly requested.
+                """)
             case .write:
-                lines.append("- Tests: run + create allowed (build_project, run_tests, read_build_log, write test files).")
+                lines.append("""
+                - Tests: run + create allowed (build_project, run_tests, read_build_log, write test files). \
+                You are required to write tests for business logic, services, and non-trivial algorithms when necessary. \
+                You are required to run tests after changes when necessary. \
+                UI layer tests are low ROI and not required unless explicitly requested.
+                """)
             }
 
-            // Architecture
+            // Architecture — expanded instructions for the agent
             if architectureEnabled {
-                lines.append("- Architecture files: enabled (\(architectureLanguage.rawValue)). Discuss file paths with user before creating.")
+                lines.append("""
+                - Architecture files: enabled (\(architectureLanguage.rawValue)). Discuss file paths with user before creating. \
+                If architecture files are found, save their paths to project memory and use them as a reference during development when relevant. \
+                You are required to keep architecture files up to date after code changes that affect the described structure.
+                """)
             } else {
                 lines.append("- Architecture files: read-only (enable write in project settings)")
             }
