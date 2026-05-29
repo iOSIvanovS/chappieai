@@ -43,6 +43,14 @@
 // - Only the thinkingView uses collapsedHeight (via its own fixed frame).
 // - editorHeight controls only ChappieTextEditorView's height, not the whole panel.
 // - This prevents the "chips overflow above panel" bug when the editor grows tall.
+//
+// DRAG & DROP (DND):
+// - The entire InputMorphView accepts file drops via .onDrop(of: [.fileURL]).
+// - While files are hovering over the panel, isDragTargeted = true → overlay appears.
+// - Overlay: semi-transparent accent fill + dashed border + icon + label.
+// - On drop: each NSItemProvider is resolved to a URL → AttachedFile.load().
+// - Deduplication by filename matches the paperclip button behavior.
+// - Drop is disabled while isThinking — no files during AI response.
 
 import SwiftUI
 import AppKit
@@ -263,6 +271,38 @@ private struct AttachmentChipsRow: View {
     }
 }
 
+// MARK: - Drop Overlay
+
+/// Semi-transparent overlay shown while files are being dragged over the input panel.
+/// Communicates the drop target zone clearly to the user.
+private struct DropOverlayView: View {
+    var body: some View {
+        ZStack {
+            // Frosted accent fill — clearly marks the drop zone without blocking the panel
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.accentColor.opacity(0.12))
+
+            // Dashed border — standard macOS drop target convention
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(
+                    Color.accentColor.opacity(0.7),
+                    style: StrokeStyle(lineWidth: 2, dash: [6, 4])
+                )
+
+            // Icon + label
+            VStack(spacing: 6) {
+                Image(systemName: "arrow.down.doc.fill")
+                    .font(.system(size: 28))
+                    .foregroundStyle(Color.accentColor)
+                Text("Отпусти для прикрепления")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Color.accentColor)
+            }
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.97)))
+    }
+}
+
 // MARK: - ChappieTextView
 
 /// NSTextView subclass with direct keyDown interception.
@@ -470,6 +510,8 @@ struct InputMorphView: View {
     @State private var showEmojiPicker: Bool = false
     /// Files pending attachment — cleared on send.
     @State private var attachments: [AttachedFile] = []
+    /// True while files are being dragged over the panel — shows drop overlay.
+    @State private var isDragTargeted: Bool = false
 
     // MARK: - Computed
 
@@ -504,15 +546,31 @@ struct InputMorphView: View {
                 .scaleEffect(isThinking ? 1 : 0.96, anchor: .bottom)
                 // Thinking view always occupies collapsedHeight — no layout influence when hidden
                 .frame(height: isThinking ? Layout.collapsedHeight : 0)
+
+            // DROP OVERLAY: shown while files hover over the panel.
+            // Rendered on top of everything — pointer events pass through when hidden.
+            if isDragTargeted && !isThinking {
+                DropOverlayView()
+                    .allowsHitTesting(false)
+            }
         }
         .padding(12)
         // ultraThinMaterial gives the frosted-glass look matching the toolbar above
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
         .padding(.horizontal)
         .padding(.bottom, 16)
+        // Drag & drop: accept file URLs dropped anywhere on the panel.
+        // Disabled while isThinking to prevent confusion during AI response.
+        .onDrop(
+            of: [.fileURL],
+            isTargeted: isThinking ? .constant(false) : $isDragTargeted
+        ) { providers in
+            handleDrop(providers: providers)
+        }
         .animation(.spring(response: 0.38, dampingFraction: 0.82), value: isThinking)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: editorHeight)
         .animation(.spring(response: 0.25, dampingFraction: 0.8), value: attachments.isEmpty)
+        .animation(.easeInOut(duration: 0.15), value: isDragTargeted)
         // Report total rendered height via GeometryReader so ChatScrollView can pad correctly.
         // background(GeometryReader) is a standard SwiftUI pattern — doesn't affect layout.
         .background(
@@ -703,9 +761,47 @@ struct InputMorphView: View {
         guard panel.runModal() == .OK else { return }
 
         let newFiles = panel.urls.compactMap { AttachedFile.load(from: $0) }
+        appendFiles(newFiles)
+    }
 
+    /// Resolves dropped NSItemProviders to file URLs and appends them as attachments.
+    /// Returns true immediately — actual loading happens asynchronously.
+    @discardableResult
+    private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        guard !providers.isEmpty else { return false }
+
+        for provider in providers {
+            // .fileURL UTType gives us the actual file path on disk
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                // Item can arrive as URL, Data (encoded URL), or String
+                var resolvedURL: URL?
+
+                if let url = item as? URL {
+                    resolvedURL = url
+                } else if let data = item as? Data,
+                          let urlString = String(data: data, encoding: .utf8) {
+                    // macOS sometimes delivers the URL as a percent-encoded string in Data
+                    resolvedURL = URL(string: urlString)
+                }
+
+                guard let fileURL = resolvedURL, fileURL.isFileURL else { return }
+
+                // Load file and append on main actor — UI must update on main thread
+                Task { @MainActor in
+                    if let file = AttachedFile.load(from: fileURL) {
+                        appendFiles([file])
+                    }
+                }
+            }
+        }
+
+        return true
+    }
+
+    /// Appends new files to attachments, deduplicating by filename.
+    /// Shared by both the file picker and the drop handler.
+    private func appendFiles(_ newFiles: [AttachedFile]) {
         withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-            // Deduplicate by filename to avoid accidental double-attach of the same file
             let existingNames = Set(attachments.map(\.filename))
             let unique = newFiles.filter { !existingNames.contains($0.filename) }
             attachments.append(contentsOf: unique)
