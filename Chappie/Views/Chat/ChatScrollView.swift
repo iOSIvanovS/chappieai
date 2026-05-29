@@ -41,6 +41,14 @@
 // Intentionally NOT scrolling when footerHeight changes after initial scroll
 // so the user can freely read mid-chat while typing a long message.
 //
+// CHAT WIDTH MEASUREMENT (bubble max-width):
+// A single background GeometryReader on the ScrollView measures the column width once.
+// The measured value is injected into the environment as chatWidth.
+// MessageBubbleView reads chatWidth from the environment and computes maxBubble = width * 0.75.
+// WHY: having GeometryReader inside each bubble caused 2-3 layout passes per bubble,
+// meaning 150+ passes on every scroll frame for 50 messages. One GeometryReader here
+// measures once and all bubbles share the result — O(1) instead of O(n).
+//
 // NOTE ON "bad range for [%{public}s]" IN XCODE CONSOLE:
 // This warning is NOT caused by our code. It is an internal CoreData/SwiftData OSLog
 // decode error that fires when SwiftData performs its first PostSaveMaintenance
@@ -70,100 +78,53 @@ import SwiftUI
 /// Pagination logic lives in ViewModel, not here.
 struct ChatScrollView: View {
 
-    /// Scroll-to-bottom trigger from ViewModel.
-    ///
-    /// Incremented by ViewModel at the END of resetPagination(), after displayedMessages
-    /// is fully populated. Watched via .task(id:) — not onChange — because .task(id:)
-    /// runs after the view body has been committed to the layout tree.
     let scrollToBottomTrigger: Int
-
-    /// Paginated message slice (last N messages, grows upward via onLoadMore).
     let messages: [ChatMessage]
-
-    /// True when there are older messages not yet loaded into the displayed slice.
     let hasMoreMessages: Bool
-
-    /// Called when user taps "Load earlier messages" — ViewModel prepends more.
     let onLoadMore: () -> Void
-
-    /// Flag: Chappie is thinking (show spinner or streaming bubble)
     let isThinking: Bool
-
-    /// True while history is being loaded from SwiftData.
-    ///
-    /// UX-LOADING: when true, a centered ProgressView replaces the message list.
-    /// Prevents the welcome screen from flashing before history is ready.
     let isLoadingHistory: Bool
-
-    /// Accumulated streaming response text.
-    ///
-    /// Empty → show spinner (Chappie is calling tools).
-    /// Non-empty → show live streaming bubble.
-    /// After streaming ends ViewModel resets this to "" and appends .message to history.
     let streamingText: String
-
-    /// Cumulative cost of the current request — running total.
-    ///
-    /// Updated after each internal orchestrator API call.
-    /// Displayed in the bottom-right corner of the streaming bubble.
     let runningCost: Double
-
-    /// Height of the top floating panel — used as a transparent header spacer
-    /// so the first message is never hidden behind the panel.
     let headerHeight: CGFloat
-
-    /// Height of the bottom floating panel — used as a transparent footer spacer
-    /// so the last message is never hidden behind the input panel.
     let footerHeight: CGFloat
 
-    /// Extra breathing room below the last message.
     private let bottomGap: CGFloat = 12
 
-    /// True after the first scroll-to-bottom on app launch or thread switch.
-    /// Prevents footerHeight changes (user typing) from scrolling mid-chat.
     @State private var initialScrollDone = false
+
+    // Measured width of the scroll column — injected into environment for all bubbles.
+    // Default 600 is used on the first layout pass before measurement completes.
+    @State private var chatWidth: CGFloat = 600
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                // Plain VStack — all displayed messages are always in the render tree.
-                // Performance is managed by pagination: only the last 50 messages are
-                // shown initially. LazyVStack was causing disappearing-messages bugs.
                 VStack(spacing: 16) {
 
-                    // Transparent header spacer — matches top floating panel height.
                     Color.clear
                         .frame(height: headerHeight)
                         .id("top")
 
                     if isLoadingHistory {
-                        // UX-LOADING: history is being fetched from SwiftData.
-                        // Show a centered spinner so the user sees activity, not an empty screen.
                         historyLoadingIndicator
                             .transition(.opacity)
                     } else {
-                        // "Load earlier messages" button — visible when older messages exist.
                         if hasMoreMessages {
                             loadMoreButton
                                 .transition(.opacity)
                         }
 
-                        // Welcome screen — shown only when chat is empty and not loading
                         if messages.isEmpty && !isThinking {
                             welcomeMessage
                                 .transition(.opacity)
                         } else {
                             ForEach(messages) { msg in
                                 MessageBubbleView(msg: msg)
-                                    // Stable ID per message — VStack uses this for identity.
                                     .id(msg.id)
                             }
                         }
 
-                        // STREAMING BLOCK:
-                        // 1. isThinking == false → nothing
-                        // 2. isThinking == true, streamingText == "" → spinner
-                        // 3. isThinking == true, streamingText != "" → live bubble
                         if isThinking {
                             if streamingText.isEmpty {
                                 thinkingIndicator
@@ -180,8 +141,6 @@ struct ChatScrollView: View {
                         }
                     }
 
-                    // Transparent footer spacer + bottom sentinel.
-                    // scrollTo("bottom") always lands here — below the last message.
                     Color.clear
                         .frame(height: footerHeight + bottomGap)
                         .id("bottom")
@@ -193,29 +152,33 @@ struct ChatScrollView: View {
                 .animation(.easeInOut(duration: 0.2), value: isLoadingHistory)
             }
             .scrollIndicators(.never)
-            // THREAD SWITCH: .task(id:) runs AFTER the view body has been committed to layout.
-            // This is the key difference from onChange — onChange fires DURING the render pass,
-            // before the layout engine has processed the new VStack content.
-            // .task(id:) is SwiftUI's post-layout hook: safe to call proxy.scrollTo here.
-            // The 50ms sleep gives the VStack additional time to measure its full height
-            // before scrollTo evaluates the "bottom" anchor geometry.
+            // CHAT WIDTH MEASUREMENT:
+            // background GeometryReader sits behind the ScrollView content — it does NOT
+            // affect layout (background doesn't participate in sizing).
+            // We subtract horizontal padding (16×2=32) to get the usable column width.
+            // The measured value is stable after the first layout — no repeated passes.
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear {
+                            chatWidth = max(geo.size.width - 32, 200)
+                        }
+                        .onChange(of: geo.size.width) { _, newWidth in
+                            chatWidth = max(newWidth - 32, 200)
+                        }
+                }
+            )
+            // Inject measured width into environment so all MessageBubbleViews read it.
+            .environment(\.chatWidth, chatWidth)
             .task(id: scrollToBottomTrigger) {
-                // Skip the very first trigger (value = 0 on init before any thread loads).
                 guard scrollToBottomTrigger > 0 else { return }
                 initialScrollDone = false
-                // 50ms: enough for VStack layout to complete, imperceptible to the user.
                 try? await Task.sleep(nanoseconds: 50_000_000)
                 withAnimation(.easeOut(duration: 0.3)) {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
                 initialScrollDone = true
             }
-            // INITIAL SCROLL: fires when footerHeight first becomes non-zero on launch.
-            // Guard: messages.count > 0 — prevents scrollTo when displayedMessages is still
-            // empty (selectThread not yet completed). Without this guard, proxy.scrollTo fires
-            // as soon as InputMorphView appears, before VStack has any content.
-            // The primary scroll on thread load is handled by scrollToBottomTrigger (.task path).
-            // This handler is a fallback for the very first layout-ready moment.
             .onChange(of: footerHeight) { _, newHeight in
                 guard !initialScrollDone, newHeight > 0, messages.count > 0 else { return }
                 initialScrollDone = true
@@ -223,14 +186,11 @@ struct ChatScrollView: View {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
-            // New message added → animated scroll to bottom.
-            // Keyed on count, not the array itself — avoids triggering on message content edits.
             .onChange(of: messages.count) { _, _ in
                 withAnimation(.easeOut(duration: 0.3)) {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
-            // Thinking starts → scroll so spinner/bubble is visible.
             .onChange(of: isThinking) { _, isThinking in
                 if isThinking {
                     withAnimation(.easeOut(duration: 0.3)) {
@@ -238,9 +198,6 @@ struct ChatScrollView: View {
                     }
                 }
             }
-            // STREAMING: NO animation — instant snap prevents the "jumping" effect.
-            // Animation here causes layout recalculation on every token, which makes
-            // the scroll position bounce. Instant scrollTo keeps the view pinned smoothly.
             .onChange(of: streamingText) { _, _ in
                 proxy.scrollTo("bottom", anchor: .bottom)
             }
@@ -249,10 +206,6 @@ struct ChatScrollView: View {
 
     // MARK: - Subviews
 
-    /// Centered spinner shown while history is loading from SwiftData.
-    ///
-    /// UX-LOADING: replaces the message list and welcome screen during the brief
-    /// window between app launch and SwiftData returning the thread's messages.
     private var historyLoadingIndicator: some View {
         ProgressView()
             .controlSize(.regular)
@@ -260,7 +213,6 @@ struct ChatScrollView: View {
             .padding(.top, 40)
     }
 
-    /// "Load earlier messages" button — shown at the top when hasMoreMessages == true.
     private var loadMoreButton: some View {
         Button(action: onLoadMore) {
             HStack(spacing: 6) {
@@ -283,7 +235,6 @@ struct ChatScrollView: View {
         .frame(maxWidth: .infinity)
     }
 
-    /// Welcome message for empty chat.
     private var welcomeMessage: some View {
         HStack(alignment: .bottom, spacing: 8) {
             VStack(alignment: .leading, spacing: 4) {
@@ -320,7 +271,6 @@ struct ChatScrollView: View {
         }
     }
 
-    /// Spinner — shown while Chappie is thinking or calling tools.
     private var thinkingIndicator: some View {
         HStack {
             ProgressView()
@@ -350,14 +300,6 @@ struct ChatScrollView: View {
         }
     }
 
-    /// Live bubble with growing streaming response text.
-    ///
-    /// WHY MarkdownTextView NOT Text:
-    /// Chappie may start writing a code block mid-stream.
-    /// MarkdownTextView handles unclosed blocks gracefully.
-    ///
-    /// COST IN BOTTOM-RIGHT CORNER:
-    /// ZStack alignment: .bottomTrailing pins the cost label over content.
     private var streamingBubble: some View {
         HStack(alignment: .bottom, spacing: 8) {
             ZStack(alignment: .bottomTrailing) {
