@@ -49,6 +49,13 @@
 // User: accent color (blue), white text — "our" messages
 // Chappie: clean background with thin border, like macOS 26 cards — neutral
 // Both bubbles: cornerRadius 12, shadow 0.1 opacity — light, not aggressive
+//
+// FIX (BUG-IMAGE-BUBBLE-WIDTH):
+// User bubble with image-only content was stretching to full chat width.
+// Root cause: LazyVGrid with fixed columns consumed the full proposed width from Spacer.
+// Fix: .fixedSize() on LazyVGrid — it requests only the space it needs.
+// Fix: .fixedSize(horizontal: true, vertical: false) on user bubble VStack — shrinks
+//      to content width when there is no text to fill the bubble.
 
 import SwiftUI
 import QuickLook
@@ -94,6 +101,10 @@ struct MessageBubbleView: View {
 
             if isUser {
                 // USER BUBBLE
+                // .fixedSize(horizontal: true, vertical: false):
+                // When there is no text (image-only message), the VStack would otherwise
+                // stretch to fill the full width offered by the Spacer. fixedSize tells
+                // SwiftUI to use the VStack's ideal (content) width instead.
                 VStack(alignment: .trailing, spacing: 6) {
                     // Attachments above the text
                     if !attachments.isEmpty {
@@ -107,6 +118,7 @@ struct MessageBubbleView: View {
                             .textSelection(.enabled)
                     }
                 }
+                .fixedSize(horizontal: true, vertical: false)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background(Color.accentColor)
@@ -189,7 +201,11 @@ private struct AttachmentsView: View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
             // IMAGE THUMBNAILS
             if !images.isEmpty {
-                // Wrapping flow: up to 3 per row, each 80×80
+                // Fixed columns grid: each cell is 80×80, up to 3 per row.
+                // .fixedSize() is CRITICAL here: without it, LazyVGrid would consume
+                // the full proposed width from the parent (which is stretched by Spacer),
+                // causing the bubble to expand to full chat width even for a single image.
+                // With .fixedSize(), the grid reports its intrinsic width = n*80 + spacing.
                 LazyVGrid(
                     columns: Array(repeating: GridItem(.fixed(80), spacing: 6), count: min(images.count, 3)),
                     spacing: 6
@@ -201,6 +217,7 @@ private struct AttachmentsView: View {
                         }
                     }
                 }
+                .fixedSize()
                 // QuickLook preview sheet triggered by tapping a thumbnail
                 .quickLookPreview($previewURL)
             }
