@@ -9,35 +9,19 @@
 //   3. Isolate the visual bubble logic so it's easy to change
 //
 // BUBBLE WIDTH STRATEGY:
-// GeometryReader is intentionally NOT used here. GeometryReader inside a VStack
-// causes 2-3 layout passes per bubble, which means 150+ passes for 50 messages
-// on every scroll frame — catastrophic for performance.
+// No GeometryReader. No environment width injection.
+// The native SwiftUI approach:
+//   - HStack with Spacer(minLength: 40) on the opposite side pushes the bubble
+//     to at most ~75% of available width organically.
+//   - .frame(maxWidth: .infinity) lets the bubble fill its side of the HStack.
+//   - The window can resize freely — no measured value creates a minimum-width floor.
 //
-// Instead, ChatScrollView measures its own width once via a background GeometryReader
-// and passes `chatWidth` down to each bubble via the environment.
-// Each bubble computes maxWidth = chatWidth * 0.75 from a single stable value.
-// This is O(1) per bubble — zero extra layout passes.
+// IMAGE GRID:
+// LazyVGrid is wrapped in a fixed-column layout (up to 3 × 80pt cells).
+// It does NOT expand the bubble — the grid is constrained by the bubble's own width.
 
 import SwiftUI
 import QuickLook
-
-// MARK: - Environment Key
-
-/// Carries the chat column width from ChatScrollView down to every bubble.
-///
-/// Set once in ChatScrollView via .environment(\.chatWidth, measured).
-/// Read in MessageBubbleView to compute maxBubble = chatWidth * 0.75.
-/// Default 600 is a safe fallback for previews and initial layout.
-private struct ChatWidthKey: EnvironmentKey {
-    static let defaultValue: CGFloat = 600
-}
-
-extension EnvironmentValues {
-    var chatWidth: CGFloat {
-        get { self[ChatWidthKey.self] }
-        set { self[ChatWidthKey.self] = newValue }
-    }
-}
 
 // MARK: - MessageBubbleView
 
@@ -49,10 +33,6 @@ extension EnvironmentValues {
 struct MessageBubbleView: View {
 
     let msg: ChatMessage
-
-    // Width of the chat column, injected once from ChatScrollView.
-    // Used to compute maxBubble = chatWidth * 0.75 without GeometryReader.
-    @Environment(\.chatWidth) private var chatWidth
 
     var body: some View {
         // Render only .message. .toolCall entries don't reach this component.
@@ -76,15 +56,14 @@ struct MessageBubbleView: View {
         cost: Double?,
         attachments: [AttachedFile]
     ) -> some View {
-        // Max bubble width: 75% of chat column width.
-        // Computed from environment value — zero extra layout passes.
-        let maxBubble = chatWidth * 0.75
-
         HStack(alignment: .bottom, spacing: 8) {
+            // Push user bubble to the right
             if isUser { Spacer(minLength: 40) }
 
             if isUser {
                 // USER BUBBLE
+                // .frame(maxWidth: .infinity) + Spacer(minLength:40) on the left
+                // naturally limits the bubble to ~75% width without any measurement.
                 VStack(alignment: .trailing, spacing: 6) {
                     if !attachments.isEmpty {
                         AttachmentsView(attachments: attachments, isUser: true)
@@ -95,12 +74,13 @@ struct MessageBubbleView: View {
                             .lineSpacing(4)
                             .foregroundStyle(.white)
                             .textSelection(.enabled)
+                            // horizontal: false — text wraps, never pushes bubble wider
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .frame(maxWidth: maxBubble, alignment: .trailing)
+                .frame(maxWidth: .infinity, alignment: .trailing)
                 .background(Color.accentColor)
                 .clipShape(
                     UnevenRoundedRectangle(
@@ -131,7 +111,7 @@ struct MessageBubbleView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .frame(maxWidth: maxBubble, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color(NSColor.textBackgroundColor))
                 .clipShape(
                     UnevenRoundedRectangle(
@@ -152,6 +132,7 @@ struct MessageBubbleView: View {
                 )
             }
 
+            // Push Chappie bubble to the left
             if !isUser { Spacer(minLength: 40) }
         }
         .id(msg.id)
@@ -177,8 +158,9 @@ private struct AttachmentsView: View {
     var body: some View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
             if !images.isEmpty {
-                // Fixed columns grid: each cell is 80×80, up to 3 per row.
-                // Column count capped by actual image count — no empty column slots.
+                // Fixed 80pt columns, up to 3 per row.
+                // The grid is constrained by the bubble width — it does NOT
+                // expand the bubble. Images are clipped to their cell frame.
                 LazyVGrid(
                     columns: Array(
                         repeating: GridItem(.fixed(80), spacing: 6),
@@ -192,6 +174,9 @@ private struct AttachmentsView: View {
                         }
                     }
                 }
+                // Prevent the grid from reporting an ideal width larger than its container.
+                // fixedSize(horizontal: false) means: "don't ask for more width than given".
+                .fixedSize(horizontal: false, vertical: true)
                 .quickLookPreview($previewURL)
             }
 
@@ -369,7 +354,6 @@ private struct FlowLayout: Layout {
         }
         .padding()
     }
-    .environment(\.chatWidth, 650)
     .frame(width: 650, height: 800)
     .background(Color(NSColor.windowBackgroundColor))
 }

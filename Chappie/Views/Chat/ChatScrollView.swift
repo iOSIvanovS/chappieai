@@ -41,13 +41,11 @@
 // Intentionally NOT scrolling when footerHeight changes after initial scroll
 // so the user can freely read mid-chat while typing a long message.
 //
-// CHAT WIDTH MEASUREMENT (bubble max-width):
-// A single background GeometryReader on the ScrollView measures the column width once.
-// The measured value is injected into the environment as chatWidth.
-// MessageBubbleView reads chatWidth from the environment and computes maxBubble = width * 0.75.
-// WHY: having GeometryReader inside each bubble caused 2-3 layout passes per bubble,
-// meaning 150+ passes on every scroll frame for 50 messages. One GeometryReader here
-// measures once and all bubbles share the result — O(1) instead of O(n).
+// BUBBLE WIDTH STRATEGY:
+// No GeometryReader. No environment injection.
+// Each bubble uses HStack + Spacer(minLength: 40) on the opposite side.
+// SwiftUI distributes the available width: bubble gets ~75%, Spacer gets ~25%.
+// The window can resize freely — no measured value creates a minimum-width floor.
 //
 // NOTE ON "bad range for [%{public}s]" IN XCODE CONSOLE:
 // This warning is NOT caused by our code. It is an internal CoreData/SwiftData OSLog
@@ -92,10 +90,6 @@ struct ChatScrollView: View {
     private let bottomGap: CGFloat = 12
 
     @State private var initialScrollDone = false
-
-    // Measured width of the scroll column — injected into environment for all bubbles.
-    // Default 600 is used on the first layout pass before measurement completes.
-    @State private var chatWidth: CGFloat = 600
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -152,24 +146,6 @@ struct ChatScrollView: View {
                 .animation(.easeInOut(duration: 0.2), value: isLoadingHistory)
             }
             .scrollIndicators(.never)
-            // CHAT WIDTH MEASUREMENT:
-            // background GeometryReader sits behind the ScrollView content — it does NOT
-            // affect layout (background doesn't participate in sizing).
-            // We subtract horizontal padding (16×2=32) to get the usable column width.
-            // The measured value is stable after the first layout — no repeated passes.
-            .background(
-                GeometryReader { geo in
-                    Color.clear
-                        .onAppear {
-                            chatWidth = max(geo.size.width - 32, 200)
-                        }
-                        .onChange(of: geo.size.width) { _, newWidth in
-                            chatWidth = max(newWidth - 32, 200)
-                        }
-                }
-            )
-            // Inject measured width into environment so all MessageBubbleViews read it.
-            .environment(\.chatWidth, chatWidth)
             .task(id: scrollToBottomTrigger) {
                 guard scrollToBottomTrigger > 0 else { return }
                 initialScrollDone = false
