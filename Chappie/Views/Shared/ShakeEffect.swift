@@ -4,18 +4,24 @@
 // Reusable spring-shake animation for locked UI elements.
 //
 // USAGE:
-//   .modifier(ShakeOnTap(isLocked: isThinking))
+//   .shakeOnTap(isLocked: isThinking)
+//   // Do NOT use .disabled() together — it causes automatic opacity(0.5).
+//   // shakeOnTap handles hit-testing suppression internally via allowsHitTesting.
 //
 // BEHAVIOR:
-//   When isLocked == true and the user taps — the view shakes left-right
-//   like a spring ("I don't want to be pressed!").
-//   When isLocked == false — tap passes through normally (no shake, no intercept).
+//   When isLocked == true:
+//     - Real button tap is blocked via allowsHitTesting(false).
+//     - A transparent overlay on top catches the tap and plays the shake animation.
+//     - The element stays fully visible at opacity(1.0).
+//   When isLocked == false:
+//     - allowsHitTesting(true) — tap reaches the real button normally.
+//     - No overlay, no shake, zero visual effect.
 //
-// WHY THIS APPROACH:
-//   Replaces the old opacity(0.5) dimming during isThinking.
-//   Elements stay fully visible and readable — only blocked taps produce feedback.
-//   The shake is short (0.4s), spring-based, and does NOT block the hit area —
-//   a transparent overlay intercepts the tap only when locked.
+// WHY NOT .disabled():
+//   SwiftUI automatically applies opacity(0.5) to .disabled() views and propagates
+//   this through the environment — there is no reliable way to override it from outside.
+//   Using allowsHitTesting(false) + overlay achieves the same blocking behavior
+//   without any opacity side effects.
 
 import SwiftUI
 
@@ -43,22 +49,25 @@ struct ShakeEffect: GeometryEffect {
 
 // MARK: - ShakeOnTap ViewModifier
 
-/// Modifier that intercepts taps when locked and plays a spring-shake animation.
+/// Modifier that blocks taps when locked and plays a spring-shake animation.
 ///
-/// - When `isLocked == false`: modifier is invisible — taps pass through to the real button.
-/// - When `isLocked == true`: a transparent overlay catches the tap and triggers the shake.
+/// Replaces .disabled() to avoid SwiftUI's automatic opacity(0.5) side effect.
+/// Uses allowsHitTesting(false) on the real view + a transparent overlay that
+/// catches the tap and triggers the shake — keeping the element fully visible.
 struct ShakeOnTap: ViewModifier {
 
-    /// When true — taps are intercepted and a shake is played instead.
+    /// When true — real taps are blocked and shake plays on tap.
     let isLocked: Bool
 
     @State private var shakePhase: CGFloat = 0
 
     func body(content: Content) -> some View {
         content
-            // Apply shake geometry to the wrapped view
+            // Block real taps when locked — no opacity side effect unlike .disabled()
+            .allowsHitTesting(!isLocked)
+            // Apply shake geometry effect
             .modifier(ShakeEffect(animatableData: shakePhase))
-            // Transparent tap interceptor — only active when locked
+            // Transparent overlay intercepts taps when locked and triggers shake
             .overlay(
                 Group {
                     if isLocked {
@@ -87,8 +96,10 @@ struct ShakeOnTap: ViewModifier {
 
 extension View {
 
-    /// Intercepts taps when `isLocked == true` and plays a spring-shake animation.
+    /// Blocks taps when `isLocked == true` and plays a spring-shake animation on tap.
     /// When `isLocked == false` — has zero effect on the view.
+    ///
+    /// Use this INSTEAD of .disabled() to avoid SwiftUI's automatic opacity(0.5).
     func shakeOnTap(isLocked: Bool) -> some View {
         modifier(ShakeOnTap(isLocked: isLocked))
     }

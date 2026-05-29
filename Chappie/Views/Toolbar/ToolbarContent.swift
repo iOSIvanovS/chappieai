@@ -22,9 +22,11 @@
 // Always visible. Turns orange when no AI provider is configured.
 //
 // SOFT LOCK (IT-13):
-// When isThinking == true — both toolbar buttons are disabled.
+// When isThinking == true — both toolbar buttons are locked via shakeOnTap().
 // Tapping them triggers a spring-shake animation ("I don't want to be pressed!")
 // instead of the old opacity(0.5) dimming — buttons stay fully visible.
+// shakeOnTap() uses allowsHitTesting(false) internally — NOT .disabled() —
+// to avoid SwiftUI's automatic opacity(0.5) side effect.
 
 import SwiftUI
 
@@ -35,7 +37,7 @@ struct ChappieToolbarContent: ToolbarContent {
     let isApiKeyValid: Bool
     /// Sidebar visibility binding — toggled by the leading button
     @Binding var isSidebarVisible: Bool
-    /// When true — both toolbar buttons are disabled (AI is responding)
+    /// When true — both toolbar buttons are locked (AI is responding)
     let isThinking: Bool
     /// Callback: user tapped the settings button
     let onOpenSettings: () -> Void
@@ -43,7 +45,8 @@ struct ChappieToolbarContent: ToolbarContent {
     var body: some ToolbarContent {
 
         // Sidebar toggle — leading edge, matches standard macOS sidebar button position.
-        // Disabled while AI is responding — shake on tap instead of dimming (IT-13).
+        // Locked while AI is responding — shake on tap instead of dimming (IT-13).
+        // Uses shakeOnTap (allowsHitTesting) instead of .disabled() to keep full opacity.
         ToolbarItem(placement: .navigation) {
             Button {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
@@ -52,20 +55,19 @@ struct ChappieToolbarContent: ToolbarContent {
             } label: {
                 Image(systemName: "list.bullet")
             }
-            .disabled(isThinking)
             .shakeOnTap(isLocked: isThinking)
             .help(isThinking ? "Нельзя открыть сайдбар пока Чаппи думает" : "Показать / скрыть треды")
         }
 
         // Settings button — always visible, orange if no provider configured.
-        // Disabled while AI is responding — shake on tap instead of dimming (IT-13).
+        // Locked while AI is responding — shake on tap instead of dimming (IT-13).
+        // Uses shakeOnTap (allowsHitTesting) instead of .disabled() to keep full opacity.
         ToolbarItem(placement: .primaryAction) {
             Button {
                 onOpenSettings()
             } label: {
                 Image(systemName: "gear")
             }
-            .disabled(isThinking)
             .shakeOnTap(isLocked: isThinking)
             .help(isThinking ? "Нельзя открыть настройки пока Чаппи думает" : "Настройки Чаппи")
             // VISUAL SIGNAL: orange gear = no provider configured

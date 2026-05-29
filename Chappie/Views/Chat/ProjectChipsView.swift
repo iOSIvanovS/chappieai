@@ -27,11 +27,13 @@
 //
 // SOFT LOCK (IT-13):
 //   When isThinking == true:
-//   - "+" (add project) button is disabled — shake animation on tap instead of dimming.
+//   - "+" (add project) button is locked — shake animation on tap instead of dimming.
 //   - "×" (remove project) button is hidden entirely.
-//   - Thread settings gear is disabled — shake animation on tap instead of dimming.
-//   - Project chips are disabled — shake animation on tap instead of dimming.
+//   - Thread settings gear is locked — shake animation on tap instead of dimming.
+//   - Project chips are locked — shake animation on tap instead of dimming.
 //   All elements stay fully visible (no opacity reduction).
+//   Uses shakeOnTap (allowsHitTesting) instead of .disabled() to avoid
+//   SwiftUI's automatic opacity(0.5) side effect.
 
 import SwiftUI
 import ChappieCore
@@ -54,7 +56,7 @@ struct ProjectChipsView: View {
     /// Active thread name — used in tooltip for the gear chip.
     let threadName: String?
 
-    /// When true — add/remove project and thread settings gear are disabled (IT-13).
+    /// When true — add/remove project and thread settings gear are locked (IT-13).
     let isThinking: Bool
 
     // MARK: - Callbacks
@@ -113,7 +115,8 @@ struct ProjectChipsView: View {
             Spacer()
 
             // Right: gear chip — opens thread settings.
-            // Disabled while AI is thinking — shake animation on tap (IT-13).
+            // Locked while AI is thinking — shake animation on tap (IT-13).
+            // Uses shakeOnTap instead of .disabled() to keep full opacity.
             Button(action: onOpenThreadSettings) {
                 HStack(spacing: 5) {
                     Image(systemName: "gear")
@@ -138,8 +141,7 @@ struct ProjectChipsView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
             .buttonStyle(.plain)
-            .disabled(isThinking)
-            // Shake on tap when locked — replaces old opacity(0.5) dimming
+            // Soft lock: shake on tap when locked — replaces old opacity(0.5) + .disabled()
             .shakeOnTap(isLocked: isThinking)
         }
     }
@@ -203,7 +205,7 @@ struct ProjectChipsView: View {
                 onOpenSettings(project.id)
             }
         }
-        // Shake on tap when locked — replaces old opacity(0.5) dimming
+        // Soft lock: shake on tap when locked — replaces old opacity(0.5) + .disabled()
         .shakeOnTap(isLocked: isThinking)
         .help("Проект: \(project.displayName) (\(project.settings.agentRole.displayName))\nТап — настройки\(isThinking ? "" : ", × — убрать из треда")")
     }
@@ -230,7 +232,8 @@ struct ProjectChipsView: View {
     // MARK: - Add button
 
     /// "+" button to attach a new project folder to the thread.
-    /// Disabled while AI is thinking — shake animation on tap (IT-13).
+    /// Locked while AI is thinking — shake animation on tap (IT-13).
+    /// Uses shakeOnTap instead of .disabled() to keep full opacity.
     private var addButton: some View {
         Button {
             openFolderPicker()
@@ -254,8 +257,7 @@ struct ProjectChipsView: View {
                 )
         }
         .buttonStyle(.plain)
-        .disabled(isThinking)
-        // Shake on tap when locked — replaces old opacity(0.5) dimming
+        // Soft lock: shake on tap when locked — replaces old opacity(0.5) + .disabled()
         .shakeOnTap(isLocked: isThinking)
         .help(isThinking ? "Нельзя добавить проект пока Чаппи думает" : "Добавить папку проекта к этому треду")
     }

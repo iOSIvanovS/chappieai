@@ -20,9 +20,11 @@
 //   the row shows a warning style. User can pick a new provider+model inline.
 //
 // SOFT LOCK (IT-13):
-//   When isThinking == true the model picker button is disabled.
+//   When isThinking == true the model picker button is locked via shakeOnTap().
 //   Tapping it triggers a spring-shake animation ("I don't want to be pressed!")
 //   instead of the old opacity(0.5) dimming — element stays fully visible.
+//   Uses shakeOnTap (allowsHitTesting) instead of .disabled() to avoid
+//   SwiftUI's automatic opacity(0.5) side effect.
 
 import SwiftUI
 import ChappieCore
@@ -40,7 +42,7 @@ struct ModelPickerRow: View {
     let isOrphaned: Bool
     /// Current account balance in RUB — nil until first response received.
     let balance: Double?
-    /// When true — picker button is disabled (AI is responding).
+    /// When true — picker button is locked (AI is responding).
     let isThinking: Bool
     let onSelectProvider: (UUID, String) -> Void
 
@@ -82,8 +84,9 @@ struct ModelPickerRow: View {
                         .fill(Color(NSColor.controlBackgroundColor))
                 )
 
-            // Provider + model selector button — disabled while AI is thinking.
+            // Provider + model selector button — locked while AI is thinking.
             // Shake animation fires on tap when locked (IT-13).
+            // Uses shakeOnTap instead of .disabled() to keep full opacity.
             Button {
                 showPopover.toggle()
             } label: {
@@ -118,9 +121,7 @@ struct ModelPickerRow: View {
             .buttonStyle(.plain)
             // Keep the button from wrapping — it clips gracefully instead of growing taller
             .fixedSize()
-            // Soft lock: disable picker while AI is responding
-            .disabled(isThinking)
-            // Shake on tap when locked — replaces old opacity(0.5) dimming
+            // Soft lock: shake on tap when locked — replaces old opacity(0.5) + .disabled()
             .shakeOnTap(isLocked: isThinking)
             .help(isThinking ? "Нельзя менять модель пока Чаппи думает" : "")
             .popover(isPresented: $showPopover, arrowEdge: .top) {
