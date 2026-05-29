@@ -36,6 +36,13 @@
 // - Each chip shows a thumbnail (images) or icon (other types) + filename + ✕ button.
 // - onSend now receives ([AttachedFile]) → caller is responsible for consuming them.
 // - No pre-filtering by model capability: we send everything and handle API errors gracefully.
+//
+// LAYOUT NOTE (ATTACHMENT CHIPS):
+// - Chips row lives INSIDE the VStack above the editor row.
+// - The outer ZStack does NOT have a fixed frame height — it grows naturally with content.
+// - Only the thinkingView uses collapsedHeight (via its own fixed frame).
+// - editorHeight controls only ChappieTextEditorView's height, not the whole panel.
+// - This prevents the "chips overflow above panel" bug when the editor grows tall.
 
 import SwiftUI
 import AppKit
@@ -475,19 +482,18 @@ struct InputMorphView: View {
             && !isThinking
     }
 
-    private var contentHeight: CGFloat {
-        // While thinking: always collapsed. Otherwise: use real editor height.
-        isThinking ? Layout.collapsedHeight : editorHeight
-    }
-
     // MARK: - Body
 
     var body: some View {
         ZStack(alignment: .bottom) {
+            // IDLE: VStack grows naturally — no fixed frame height on the ZStack.
+            // editorHeight controls only ChappieTextEditorView, not the whole panel.
+            // This is the fix for the "chips overflow above panel" bug.
             idleView
                 .opacity(isThinking ? 0 : 1)
                 .scaleEffect(isThinking ? 0.96 : 1, anchor: .bottom)
 
+            // THINKING: fixed collapsedHeight, centered in the capsule
             thinkingView
                 .padding(.horizontal, 12)
                 .padding(.vertical, 4)
@@ -496,8 +502,9 @@ struct InputMorphView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .opacity(isThinking ? 1 : 0)
                 .scaleEffect(isThinking ? 1 : 0.96, anchor: .bottom)
+                // Thinking view always occupies collapsedHeight — no layout influence when hidden
+                .frame(height: isThinking ? Layout.collapsedHeight : 0)
         }
-        .frame(height: contentHeight)
         .padding(12)
         // ultraThinMaterial gives the frosted-glass look matching the toolbar above
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
@@ -505,6 +512,7 @@ struct InputMorphView: View {
         .padding(.bottom, 16)
         .animation(.spring(response: 0.38, dampingFraction: 0.82), value: isThinking)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: editorHeight)
+        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: attachments.isEmpty)
         // Report total rendered height via GeometryReader so ChatScrollView can pad correctly.
         // background(GeometryReader) is a standard SwiftUI pattern — doesn't affect layout.
         .background(
@@ -539,7 +547,9 @@ struct InputMorphView: View {
 
     private var idleView: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // Attachment chips row — only visible when files are attached
+            // Attachment chips row — only visible when files are attached.
+            // Rendered INSIDE the VStack so it contributes to natural panel height growth.
+            // No fixed frame on the outer ZStack means chips + editor stack cleanly.
             if !attachments.isEmpty {
                 AttachmentChipsRow(attachments: attachments) { id in
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
