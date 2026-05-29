@@ -42,9 +42,12 @@
 //
 // HEADER HEIGHT:
 //   headerHeight = topPanelHeight + safeAreaTop.
-//   safeAreaTop is read from GeometryReader inside mainChatArea — it equals
-//   the toolbar height as reported by SwiftUI layout system.
-//   This ensures the first message is fully readable below both toolbar AND top panel.
+//   safeAreaTop is read via .background(GeometryReader) on ChatScrollView.
+//   WHY .background: GeometryReader in .background does NOT participate in layout —
+//   it is measured AFTER the parent has already determined its own size.
+//   A GeometryReader placed directly in the layout tree (even with .frame(height:0))
+//   is still greedy in the horizontal axis and prevents the window from being resized
+//   narrower than its initial width. Using .background avoids this entirely.
 //
 // BALANCE PILL:
 //   Lives inside ModelPickerRow (right side). Receives viewModel.currentBalance.
@@ -145,8 +148,11 @@ struct ContentView: View {
     @State private var topPanelHeight: CGFloat = 0
     @State private var bottomPanelHeight: CGFloat = 0
 
-    // Safe area top inset (= toolbar height) — read from GeometryReader inside mainChatArea.
-    // Added to topPanelHeight to form the total headerHeight for ChatScrollView.
+    // Safe area top inset (= toolbar height).
+    // Read via .background(GeometryReader) on ChatScrollView — NOT from a GeometryReader
+    // placed in the layout tree. A layout-tree GeometryReader is greedy in the horizontal
+    // axis even with .frame(height: 0), which prevents the window from being resized
+    // narrower than its initial width.
     @State private var safeAreaTop: CGFloat = 0
 
     @Environment(\.modelContext) private var modelContext
@@ -354,18 +360,13 @@ struct ContentView: View {
             // BACK: full-screen scroll view.
             // headerHeight = topPanelHeight + safeAreaTop so the first message
             // is readable below BOTH the toolbar and the top floating panel.
-            GeometryReader { geo in
-                Color.clear
-                    .onAppear { safeAreaTop = geo.safeAreaInsets.top }
-                    .onChange(of: geo.safeAreaInsets.top) { _, v in safeAreaTop = v }
-            }
-            .frame(height: 0) // Zero-height probe — does not affect layout
-
-            // SCROLL TRIGGER FIX (UX-SCROLL-TRIGGER):
-            // scrollToBottomTrigger replaces threadId — ensures scrollTo fires only after
-            // displayedMessages is fully populated (incremented at end of resetPagination).
-            // UX-LOADING: isLoadingHistory forwarded so ChatScrollView shows a spinner
-            // instead of the welcome screen while SwiftData is fetching thread history.
+            //
+            // SAFE AREA PROBE: GeometryReader is placed in .background on ChatScrollView,
+            // NOT in the layout tree. A GeometryReader in the layout tree is greedy
+            // horizontally — even .frame(height: 0) only constrains height, not width.
+            // This was preventing the window from being resized narrower than its initial
+            // width. .background GeometryReader is measured after layout and has zero
+            // influence on the parent's size.
             ChatScrollView(
                 scrollToBottomTrigger: viewModel.scrollToBottomTrigger,
                 messages: viewModel.displayedMessages,
@@ -379,6 +380,14 @@ struct ContentView: View {
                 footerHeight: bottomPanelHeight
             )
             .ignoresSafeArea(edges: .top)
+            // Read safeAreaInsets via background — does NOT affect layout or window min-width.
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { safeAreaTop = geo.safeAreaInsets.top }
+                        .onChange(of: geo.safeAreaInsets.top) { _, v in safeAreaTop = v }
+                }
+            )
 
             // FRONT: floating panels — transparent container, each pill floats independently
             VStack(spacing: 0) {
