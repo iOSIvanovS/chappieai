@@ -12,46 +12,29 @@
 //   Project chips use FlowLayout — a custom Layout that packs items
 //   left-to-right and wraps to the next line when width is exceeded.
 //
-//   LAYOUT STRATEGY — HStack with layoutPriority:
-//   - Right pill (gear + thread name): .fixedSize() — takes exactly its intrinsic width.
-//   - Spacer(minLength: 8) — fixed gap between the two pills.
-//   - Left pill (projects): .layoutPriority(1) — gets the remaining width.
-//     FlowLayout inside sees a finite maxWidth and wraps correctly.
+//   LAYOUT STRATEGY — explicit frame(maxWidth):
+//   The outer HStack is measured via a ZStack with a full-width Color.clear
+//   probe (background GeometryReader). The right pill declares .fixedSize()
+//   and its width is captured by another GeometryReader.
+//   Left pill receives frame(maxWidth: totalWidth - rightPillWidth - spacing)
+//   so FlowLayout always gets a finite proposal and wraps correctly.
+//
+//   WHY NOT layoutPriority:
+//     layoutPriority(1) does NOT cap the child's desired width — it only
+//     controls allocation order. FlowLayout.sizeThatFits with an unconstrained
+//     proposal returns single-row intrinsic width; SwiftUI uses that as the
+//     "desired" size, so the pill still fills all available space.
 //
 //   WHY NOT ChipsRowLayout (custom Layout):
-//     sizeThatFits(.unspecified) for the left pill passes width=nil to FlowLayout,
-//     which treats it as infinity — intrinsic size is always huge, min(intrinsic, available)
-//     collapses to available, and the pill always fills all remaining space.
-//
-//   WHY NOT HStack + Spacer without layoutPriority:
-//     HStack offers each child its full available width independently,
-//     so FlowLayout sees ∞ and never wraps.
+//     sizeThatFits(.unspecified) passes width=nil → FlowLayout sees ∞ → same
+//     single-row intrinsic result → same stretching.
 //
 // THREAD SETTINGS CHIP (IT-12):
 //   Right-side pill shows gear icon + thread name.
 //   Tap → onOpenThreadSettings() → ContentView shows ThreadSettingsSheet.
 //
 // IT-09: Tap on chip opens ProjectSettingsSheet.
-// onOpenSettings(UUID) callback passes project ID to ViewModel.
-//
-// ARCHITECTURE (IT-01 + IT-06):
-// Chips show ProjectMetadata from ProjectStore.
-// On add — ProjectEntity is created in ProjectStore, UUID added to ThreadEntity.projectBindingsJSON.
-// On remove — UUID removed from projectBindingsJSON (ProjectEntity is NOT deleted).
-//
-// DUMB COMPONENT PRINCIPLE:
-// ProjectChipsView has no direct knowledge of SwiftData, ProjectStore or ThreadStore.
-// All data via parameters, all actions via callbacks. Logic lives in ChappieViewModel.
-//
-// SOFT LOCK (IT-13):
-//   When isThinking == true:
-//   - "+" (add project) button is locked — shake animation on tap instead of dimming.
-//   - "×" (remove project) button is hidden entirely.
-//   - Thread settings gear is locked — shake animation on tap instead of dimming.
-//   - Project chips are locked — shake animation on tap instead of dimming.
-//   All elements stay fully visible (no opacity reduction).
-//   Uses shakeOnTap (allowsHitTesting) instead of .disabled() to avoid
-//   SwiftUI's automatic opacity(0.5) side effect.
+// IT-13: Soft lock — shake animation instead of opacity dimming.
 
 import SwiftUI
 import ChappieCore
@@ -65,117 +48,126 @@ struct ProjectChipsView: View {
     // MARK: - Input
 
     let projects: [ProjectMetadata]
-
-    /// Active thread name — used as label in the gear chip.
     let threadName: String?
-
-    /// When true — add/remove project and thread settings gear are locked (IT-13).
     let isThinking: Bool
 
     // MARK: - Callbacks
 
-    /// Called when the user taps "+" and selects a folder.
     let onAddProject: (URL) -> Void
-
-    /// Called when the user taps "×" on a chip.
     let onRemoveProject: (UUID) -> Void
-
-    /// Called when the user taps a chip to open project settings (IT-09).
     let onOpenSettings: (UUID) -> Void
-
-    /// Called when the user taps the thread settings gear to open thread settings.
     let onOpenThreadSettings: () -> Void
 
-    // MARK: - Local state
+    // MARK: - Measurement state
 
-    /// Hover state per chip — key is project UUID.
     @State private var hoveredProjectId: UUID? = nil
+    /// Full available width of the row — measured via background probe.
+    @State private var totalWidth: CGFloat = 0
+    /// Intrinsic width of the right (gear) pill — measured via background probe.
+    @State private var rightPillWidth: CGFloat = 0
+
+    private let pillSpacing: CGFloat = 8
+
+    /// Max width for the left pill so FlowLayout receives a finite proposal.
+    private var leftMaxWidth: CGFloat {
+        guard totalWidth > 0, rightPillWidth > 0 else { return .infinity }
+        return max(60, totalWidth - rightPillWidth - pillSpacing)
+    }
 
     // MARK: - Body
 
     var body: some View {
-        // HStack with layoutPriority layout strategy (IT-14):
-        //   Right pill gets fixedSize (intrinsic width).
-        //   Left pill gets layoutPriority(1) — SwiftUI gives it the remaining width.
-        //   FlowLayout inside left pill sees a finite maxWidth and wraps correctly.
-        HStack(alignment: .top, spacing: 8) {
+        // ZStack: bottom layer is an invisible full-width probe that measures totalWidth.
+        // Top layer is the real content — it does NOT affect the probe's sizing.
+        ZStack(alignment: .topLeading) {
 
-            // Left: projects pill — wraps chips via FlowLayout
-            // layoutPriority(1) ensures SwiftUI resolves right pill's size first,
-            // then gives left pill the remaining finite width.
-            FlowLayout(spacing: 6) {
-
-                // "Проекты" static label
-                Text("Проекты")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule()
-                            .fill(Color(NSColor.controlBackgroundColor))
-                    )
-
-                // Project chips — one per project
-                ForEach(projects) { project in
-                    projectChip(for: project)
-                }
-
-                // "+" add button
-                addButton
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(.ultraThinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            // layoutPriority(1): left pill gets remaining width after right pill is sized.
-            // This is the key that makes FlowLayout see a finite maxWidth.
-            .layoutPriority(1)
-
-            // Right: gear chip — opens thread settings.
-            // fixedSize() ensures it takes only its intrinsic width,
-            // leaving the rest for the left pill.
-            // Locked while AI is thinking — shake animation on tap (IT-13).
-            Button(action: onOpenThreadSettings) {
-                HStack(spacing: 5) {
-                    Image(systemName: "gear")
-                        .font(.system(size: 10, weight: .medium))
-
-                    if let threadName {
-                        Text(threadName)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                            .fixedSize()
+            // Invisible width probe — stretches to fill available width
+            Color.clear
+                .frame(maxWidth: .infinity, maxHeight: 1)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear
+                            .onAppear { totalWidth = geo.size.width }
+                            .onChange(of: geo.size.width) { _, w in totalWidth = w }
                     }
+                )
+
+            // Real content row
+            HStack(alignment: .top, spacing: pillSpacing) {
+
+                // LEFT pill: projects + FlowLayout wrapping
+                // frame(maxWidth:) gives FlowLayout a finite proposal → wraps correctly.
+                FlowLayout(spacing: 6) {
+                    projectsLabel
+                    ForEach(projects) { project in
+                        projectChip(for: project)
+                    }
+                    addButton
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .background(.ultraThinMaterial)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .frame(maxWidth: leftMaxWidth, alignment: .leading)
+
+                Spacer(minLength: 0)
+
+                // RIGHT pill: gear + thread name — intrinsic size only
+                threadSettingsButton
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear
+                                .onAppear { rightPillWidth = geo.size.width }
+                                .onChange(of: geo.size.width) { _, w in rightPillWidth = w }
+                        }
+                    )
             }
-            .buttonStyle(.plain)
-            // fixedSize: right pill takes exactly its intrinsic width — no stretching.
-            .fixedSize()
-            // Soft lock: shake on tap when locked (IT-13)
-            .shakeOnTap(isLocked: isThinking)
         }
+    }
+
+    // MARK: - "Проекты" label
+
+    private var projectsLabel: some View {
+        Text("Проекты")
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
+    }
+
+    // MARK: - Thread settings button (right pill)
+
+    private var threadSettingsButton: some View {
+        Button(action: onOpenThreadSettings) {
+            HStack(spacing: 5) {
+                Image(systemName: "gear")
+                    .font(.system(size: 10, weight: .medium))
+
+                if let threadName {
+                    Text(threadName)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .shakeOnTap(isLocked: isThinking)
     }
 
     // MARK: - Project chip
 
-    /// Individual chip for one project.
-    ///
-    /// HOVER BEHAVIOUR:
-    /// On hover — the "×" button appears to the right of the name (only when NOT thinking).
-    ///
-    /// TAP BEHAVIOUR (IT-09):
-    /// Tap → onOpenSettings(project.id) → parent shows ProjectSettingsSheet.
-    /// "×" on hover — removes project from thread (does not open settings).
     private func projectChip(for project: ProjectMetadata) -> some View {
         HStack(spacing: 4) {
             Image(systemName: "folder.fill")
@@ -187,10 +179,8 @@ struct ProjectChipsView: View {
                 .lineLimit(1)
                 .foregroundStyle(.primary)
 
-            // Role indicator (IT-09) — small icon shows current agent role
             roleIndicator(for: project.settings.agentRole)
 
-            // "×" remove button — hidden while AI is thinking (IT-13)
             if hoveredProjectId == project.id && !isThinking {
                 Button {
                     onRemoveProject(project.id)
@@ -205,30 +195,20 @@ struct ProjectChipsView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(
-            Capsule()
-                .fill(Color(NSColor.controlBackgroundColor))
-        )
-        .overlay(
-            Capsule()
-                .stroke(Color.accentColor.opacity(0.2), lineWidth: 0.5)
-        )
+        .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
+        .overlay(Capsule().stroke(Color.accentColor.opacity(0.2), lineWidth: 0.5))
         .onHover { isHovered in
             withAnimation(.easeInOut(duration: 0.15)) {
                 hoveredProjectId = isHovered ? project.id : nil
             }
         }
         .onTapGesture {
-            if !isThinking {
-                onOpenSettings(project.id)
-            }
+            if !isThinking { onOpenSettings(project.id) }
         }
-        // Soft lock: shake on tap when locked (IT-13)
         .shakeOnTap(isLocked: isThinking)
         .help("Проект: \(project.displayName) (\(project.settings.agentRole.displayName))\nТап — настройки\(isThinking ? "" : ", × — убрать из треда")")
     }
 
-    /// Small agent role indicator next to the project name.
     @ViewBuilder
     private func roleIndicator(for role: AgentRole) -> some View {
         switch role {
@@ -245,7 +225,6 @@ struct ProjectChipsView: View {
 
     // MARK: - Add button
 
-    /// "+" button to attach a new project folder to the thread.
     private var addButton: some View {
         Button {
             openFolderPicker()
@@ -258,10 +237,7 @@ struct ProjectChipsView: View {
                 .background(
                     Capsule()
                         .fill(Color(NSColor.controlBackgroundColor))
-                        .overlay(
-                            Capsule()
-                                .stroke(Color.accentColor.opacity(0.35), lineWidth: 1)
-                        )
+                        .overlay(Capsule().stroke(Color.accentColor.opacity(0.35), lineWidth: 1))
                 )
         }
         .buttonStyle(.plain)
@@ -278,7 +254,6 @@ struct ProjectChipsView: View {
         panel.allowsMultipleSelection = false
         panel.message = "Выберите папку проекта для добавления в тред"
         panel.prompt = "Добавить"
-
         if panel.runModal() == .OK, let url = panel.url {
             onAddProject(url)
         }
@@ -290,21 +265,12 @@ struct ProjectChipsView: View {
 #Preview("С проектами") {
     ProjectChipsView(
         projects: [
-            ProjectMetadata(
-                id: UUID(),
-                displayName: "Chappie",
-                settings: ProjectSettings(agentRole: .executor, isProgrammingProject: true)
-            ),
-            ProjectMetadata(
-                id: UUID(),
-                displayName: "MyApp",
-                settings: ProjectSettings(agentRole: .advisor)
-            ),
-            ProjectMetadata(
-                id: UUID(),
-                displayName: "Backend API",
-                settings: ProjectSettings(agentRole: .executor, isProgrammingProject: true)
-            )
+            ProjectMetadata(id: UUID(), displayName: "Chappie",
+                            settings: ProjectSettings(agentRole: .executor, isProgrammingProject: true)),
+            ProjectMetadata(id: UUID(), displayName: "MyApp",
+                            settings: ProjectSettings(agentRole: .advisor)),
+            ProjectMetadata(id: UUID(), displayName: "Backend API",
+                            settings: ProjectSettings(agentRole: .executor, isProgrammingProject: true))
         ],
         threadName: "Разработка Chappie",
         isThinking: false,
@@ -314,18 +280,15 @@ struct ProjectChipsView: View {
         onOpenThreadSettings: {}
     )
     .padding()
-    .frame(width: 300) // narrow window to test wrapping
+    .frame(width: 300)
     .background(Color(NSColor.windowBackgroundColor))
 }
 
-#Preview("Заблокировано (isThinking)") {
+#Preview("Заблокировано") {
     ProjectChipsView(
         projects: [
-            ProjectMetadata(
-                id: UUID(),
-                displayName: "Chappie",
-                settings: ProjectSettings(agentRole: .executor, isProgrammingProject: true)
-            )
+            ProjectMetadata(id: UUID(), displayName: "Chappie",
+                            settings: ProjectSettings(agentRole: .executor, isProgrammingProject: true))
         ],
         threadName: "Разработка Chappie",
         isThinking: true,
