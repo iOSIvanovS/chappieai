@@ -49,6 +49,12 @@
 // User: accent color (blue), white text — "our" messages
 // Chappie: clean background with thin border, like macOS 26 cards — neutral
 // Both bubbles: cornerRadius 12, shadow 0.1 opacity — light, not aggressive
+//
+// IMAGE ATTACHMENT WIDTH FIX:
+// LazyVGrid with fixed-width columns was expanding the bubble to fit the grid width.
+// Fix: images are now rendered as a plain HStack with fixed 80×80 thumbnails,
+// wrapped in .fixedSize(horizontal: false, vertical: true) so the grid never
+// forces the bubble wider than its natural text content.
 
 import SwiftUI
 import QuickLook
@@ -95,9 +101,12 @@ struct MessageBubbleView: View {
             if isUser {
                 // USER BUBBLE
                 VStack(alignment: .trailing, spacing: 6) {
-                    // Attachments above the text
+                    // Attachments above the text.
+                    // fixedSize(horizontal: false) prevents the attachment grid from
+                    // expanding the bubble beyond its natural text width.
                     if !attachments.isEmpty {
                         AttachmentsView(attachments: attachments, isUser: true)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     if !text.isEmpty {
                         Text(text)
@@ -125,6 +134,7 @@ struct MessageBubbleView: View {
                         // Attachments above the text
                         if !attachments.isEmpty {
                             AttachmentsView(attachments: attachments, isUser: false)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                         if !text.isEmpty {
                             MarkdownTextView(text: text, fontSize: 14)
@@ -174,6 +184,11 @@ struct MessageBubbleView: View {
 ///
 /// Images are shown as a wrapping row of thumbnails (tap → full preview).
 /// Non-image files are shown as compact chips with icon + filename.
+///
+/// WHY NO LazyVGrid HERE:
+/// LazyVGrid with fixed columns forces itself to its declared width regardless of content.
+/// This was causing the user bubble to expand to fit the grid even when the text was short.
+/// Plain HStack wrapping is used instead — the bubble stays as wide as its content.
 private struct AttachmentsView: View {
 
     let attachments: [AttachedFile]
@@ -188,20 +203,16 @@ private struct AttachmentsView: View {
     var body: some View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
             // IMAGE THUMBNAILS
+            // Rendered as a plain HStack — no LazyVGrid.
+            // Each thumbnail is 80×80; HStack wraps naturally without forcing bubble width.
             if !images.isEmpty {
-                // Wrapping flow: up to 3 per row, each 80×80
-                LazyVGrid(
-                    columns: Array(repeating: GridItem(.fixed(80), spacing: 6), count: min(images.count, 3)),
-                    spacing: 6
-                ) {
+                HStack(spacing: 6) {
                     ForEach(images) { file in
                         ImageThumbnailView(file: file) {
-                            // Write temp file and open QuickLook
                             previewURL = writeTempFile(file)
                         }
                     }
                 }
-                // QuickLook preview sheet triggered by tapping a thumbnail
                 .quickLookPreview($previewURL)
             }
 
