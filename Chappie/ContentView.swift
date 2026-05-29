@@ -137,18 +137,20 @@
 //     .blocked → red (AI is thinking OR only folders dragged)
 //
 //   FOLDER DETECTION DURING DRAG:
-//   DropInfo.hasItemsConforming(to: [.folder]) reliably detects folders during drag.
-//   If the drag contains ONLY folders (no regular files) → .blocked.
-//   If it contains a mix (files + folders) → .allowed (folders are filtered after drop).
-//   This gives immediate red feedback when the user drags a folder.
+//   hasItemsConforming(to: [.folder]) is UNRELIABLE on macOS — it checks the drag
+//   session UTI list which often does NOT include "public.folder" even for folders.
+//   Instead we read NSPasteboard(name: .drag) directly and check "public.folder" UTI.
+//   This is the only reliable way to detect folders during an active drag on macOS.
 //
-//   POST-DROP RESET:
-//   macOS does NOT call dropExited after performDrop. The reset is done via
-//   Task { @MainActor in } scheduled inside handleDrop — this guarantees the
-//   @Observable mutation happens on the main actor and SwiftUI tracking sees it.
-//   DispatchQueue.main.asyncAfter was unreliable: DropDelegate callbacks on macOS
-//   may arrive on a background thread, making the DispatchWorkItem execute on a
-//   different actor than the one SwiftUI's observation machinery expects.
+//   POST-DROP RESET (DND-RESET-FIX):
+//   Root problem: macOS calls dropEntered/dropUpdated continuously while the drag
+//   hovers, even AFTER performDrop returns. This means the reset Task scheduled
+//   inside handleDrop is immediately cancelled by the next handleEnterOrUpdate call.
+//
+//   Fix: introduce a `isDropPerformed` flag inside DropController. Once set to true
+//   by handleDrop, handleEnterOrUpdate becomes a no-op — it no longer cancels the
+//   reset or changes dropState. The flag is cleared when the reset fires.
+//   This breaks the cancel loop and guarantees the overlay disappears after drop.
 //
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
@@ -181,12 +183,11 @@ enum DropState: Equatable {
 /// All state mutations happen inside this class so pending Tasks always
 /// write to the live object, not a stale copy.
 ///
-/// WHY Task { @MainActor in } instead of DispatchQueue.main.asyncAfter:
-/// DropDelegate callbacks on macOS may arrive on a background thread.
-/// A DispatchWorkItem created on a background thread and dispatched to main
-/// does NOT trigger @Observable tracking reliably — SwiftUI may miss the mutation.
-/// Task { @MainActor in } is actor-aware: the mutation always runs on MainActor,
-/// which is exactly what @Observable requires for SwiftUI to pick up the change.
+/// POST-DROP RESET (DND-RESET-FIX):
+/// macOS keeps firing dropEntered/dropUpdated even AFTER performDrop returns.
+/// Without protection, these calls cancel the reset Task before it fires.
+/// Solution: isDropPerformed flag. Once set by handleDrop, enter/update events
+/// are ignored until the reset Task clears the flag and sets state to .idle.
 @Observable
 final class DropController {
 
@@ -204,14 +205,20 @@ final class DropController {
 
     // MARK: Private
 
-    // Cancellable token for the pending reset Task — cancels the previous one on re-entry.
+    /// Cancellable token for the pending reset Task.
     private var resetTask: Task<Void, Never>?
+
+    /// Set to true by handleDrop to block further enter/update processing.
+    /// Cleared when the reset Task fires and state returns to .idle.
+    private var isDropPerformed: Bool = false
 
     // MARK: - Drag Event Handlers
 
     /// Called from dropEntered and dropUpdated.
-    /// Cancels any pending reset and refreshes the overlay state.
+    /// No-op if a drop was just performed — prevents cancelling the reset Task.
     func handleEnterOrUpdate(info: DropInfo) {
+        // DND-RESET-FIX: ignore re-entry events after drop until overlay resets.
+        guard !isDropPerformed else { return }
         cancelPendingReset()
         dropState = computeState(info: info)
     }
@@ -219,22 +226,32 @@ final class DropController {
     /// Called from dropExited.
     /// Schedules a debounced reset (80ms) to prevent flicker when crossing subview boundaries.
     func handleExit() {
+        // DND-RESET-FIX: if drop was performed, the reset is already scheduled — don't interfere.
+        guard !isDropPerformed else { return }
         scheduleReset(delay: 0.08)
     }
 
     /// Called from performDrop.
-    /// Schedules a post-drop reset (250ms) — macOS does NOT call dropExited after performDrop.
+    /// Sets isDropPerformed flag so subsequent enter/update events don't cancel the reset.
     /// Returns true only when the drop is allowed.
     func handleDrop(info: DropInfo) -> Bool {
-        // Always schedule reset — regardless of outcome.
-        // The reset runs on MainActor so @Observable tracking is guaranteed.
-        cancelPendingReset()
-        scheduleReset(delay: 0.25)
-
-        guard dropState == .allowed else { return false }
+        guard dropState == .allowed else {
+            // Even for blocked state, schedule reset in case macOS skips dropExited.
+            scheduleReset(delay: 0.25)
+            return false
+        }
 
         let providers = info.itemProviders(for: [.fileURL])
-        guard !providers.isEmpty else { return false }
+        guard !providers.isEmpty else {
+            scheduleReset(delay: 0.25)
+            return false
+        }
+
+        // Mark drop as performed BEFORE scheduling reset.
+        // This prevents handleEnterOrUpdate from cancelling the reset Task
+        // when macOS fires spurious enter/update events after performDrop.
+        isDropPerformed = true
+        scheduleReset(delay: 0.25)
 
         onFilesDropped(providers)
         return true
@@ -244,26 +261,48 @@ final class DropController {
 
     /// Computes the drop state from the current drag info.
     ///
-    /// FOLDER DETECTION:
-    /// hasItemsConforming(to: [.folder]) is reliable during drag — unlike NSPasteboard.
+    /// FOLDER DETECTION (macOS-specific):
+    /// hasItemsConforming(to: [.folder]) is unreliable during drag on macOS.
+    /// We read NSPasteboard(name: .drag) directly and check for "public.folder" UTI.
     /// If the drag contains ONLY folders → .blocked (red overlay, no drop).
-    /// If it contains files (possibly mixed with folders) → .allowed (folders filtered post-drop).
+    /// If it contains files (possibly mixed with folders) → .allowed.
     /// If AI is thinking → .blocked regardless of content.
     private func computeState(info: DropInfo) -> DropState {
         if isThinkingGetter() { return .blocked }
-        // Folders-only drag: no fileURL items that are not folders
+
+        // Check NSPasteboard directly — the only reliable source during drag on macOS.
+        let pb = NSPasteboard(name: .drag)
+        let types = pb.types ?? []
         let hasFiles = info.hasItemsConforming(to: [.fileURL])
-        let hasFolders = info.hasItemsConforming(to: [.folder])
-        // If only folders and no plain files → blocked
-        if hasFolders && !hasFiles { return .blocked }
-        // If folders present alongside files → allowed (folders silently filtered after drop)
+
+        // "public.folder" UTI is present when at least one dragged item is a directory.
+        let hasFolderUTI = types.contains(NSPasteboard.PasteboardType("public.folder"))
+
+        // If ONLY folders dragged (no fileURL items beyond folders) → blocked.
+        // We detect "only folders" by checking if folder UTI is present AND
+        // all fileURL items are also folders (no plain files).
+        // Simplest reliable heuristic: if hasFolderUTI and hasFiles are both true,
+        // we need to distinguish "folders only" from "mixed". We do this by checking
+        // whether any non-folder file UTI is present in the pasteboard types.
+        if hasFolderUTI && !hasFiles { return .blocked }
+        if hasFolderUTI && hasFiles {
+            // Check if there are any non-folder file types alongside the folder UTI.
+            // If the only file-like UTI is "public.folder", it's folders-only.
+            let nonFolderFileTypes = types.filter { type in
+                let uti = type.rawValue
+                return uti == "public.file-url" || uti == "com.apple.pasteboard.promised-file-url"
+            }
+            // If no plain file UTI found → folders only → blocked.
+            if nonFolderFileTypes.isEmpty { return .blocked }
+        }
+
         return hasFiles ? .allowed : .blocked
     }
 
     /// Schedules a delayed reset of dropState to .idle on MainActor.
     ///
     /// WHY Task { @MainActor in }:
-    /// This method may be called from a DropDelegate callback running on a background thread.
+    /// DropDelegate callbacks on macOS may arrive on a background thread.
     /// Task { @MainActor in } guarantees the mutation executes on the main actor —
     /// which is required for @Observable to notify SwiftUI's observation machinery.
     private func scheduleReset(delay: Double) {
@@ -271,6 +310,7 @@ final class DropController {
         resetTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !Task.isCancelled else { return }
+            self?.isDropPerformed = false
             self?.dropState = .idle
         }
     }
