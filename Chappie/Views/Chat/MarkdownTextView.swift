@@ -59,6 +59,17 @@
 // Languages: swift, python, javascript/js, typescript/ts, bash/sh/shell,
 //            json, sql, kotlin, rust, go, c/cpp/c++/java (C-family).
 // Unknown languages: plain text with theme color — always readable.
+//
+// PER-LANGUAGE COLOR THEMES:
+// Each language family gets its own color identity — not just different keywords
+// but different color roles. SyntaxNSTheme.forLanguage() picks the right palette.
+// Swift/Kotlin/Go/Rust: Xcode-style (pink keywords, blue types, red strings).
+// Python: VSCode Python style (orange keywords, green builtins, yellow strings).
+// JS/TS: VSCode JS style (blue keywords, yellow functions, green strings).
+// SQL: blue keywords, teal functions, no type coloring.
+// Bash: green keywords, yellow variables, orange strings.
+// JSON: blue keys, orange string values, purple numbers.
+// C/C++/Java: classic IDE style (blue keywords, no PascalCase type coloring).
 
 import SwiftUI
 import AppKit
@@ -87,6 +98,7 @@ private let uniF_upper:     unichar = 70   // F
 private let uniDot:         unichar = 46   // .
 private let uniX_lower:     unichar = 120  // x
 private let uniB_lower:     unichar = 98   // b
+private let uniColon:       unichar = 58   // :
 
 // MARK: - Syntax color themes (NSColor-based)
 
@@ -96,37 +108,253 @@ private let uniB_lower:     unichar = 98   // b
 /// NSAttributedString used by NSTextView requires NSColor for .foregroundColor attribute.
 /// SwiftUI Color in AttributedString is unreliable inside ScrollView on macOS —
 /// the color gets silently dropped. NSColor + NSTextView = always correct rendering.
+///
+/// PER-LANGUAGE THEMES:
+/// Each language family has its own color identity. SyntaxNSTheme.forLanguage()
+/// selects the right theme. This gives each language its native IDE feel:
+/// - Swift/Kotlin/Rust/Go: Xcode-style
+/// - Python: VSCode Python-style
+/// - JS/TS: VSCode JS-style
+/// - Bash: terminal green style
+/// - SQL: classic SQL blue style
+/// - JSON: data-viewer style (keys vs values distinguished)
+/// - C/C++/Java: classic blue-keyword style
 struct SyntaxNSTheme {
 
     let background: NSColor
-    let plainText: NSColor
-    let keyword: NSColor
-    let type_: NSColor
-    let string: NSColor
-    let number: NSColor
-    let comment: NSColor
+    let plainText:  NSColor
+    let keyword:    NSColor   // language keywords (if, for, func, def...)
+    let type_:      NSColor   // PascalCase types — only for languages with explicit types
+    let string:     NSColor   // string literals
+    let number:     NSColor   // numeric literals
+    let comment:    NSColor   // comments
+    let builtin:    NSColor   // built-in functions / special identifiers
+    let variable:   NSColor   // variables, parameters, $vars (bash)
+    let jsonKey:    NSColor   // JSON object keys (separate from string values)
 
-    // MARK: Xcode Default Dark
-    static let dark = SyntaxNSTheme(
+    // MARK: - Swift / Kotlin / Rust / Go — Xcode Default Dark
+    static let xcodeDefaultDark = SyntaxNSTheme(
         background: NSColor(red: 0.118, green: 0.118, blue: 0.118, alpha: 1), // #1E1E1E
         plainText:  NSColor(red: 0.970, green: 0.970, blue: 0.950, alpha: 1), // #F7F7F2
-        keyword:    NSColor(red: 0.988, green: 0.373, blue: 0.639, alpha: 1), // #FC5FA3
-        type_:      NSColor(red: 0.365, green: 0.847, blue: 1.000, alpha: 1), // #5DD8FF
-        string:     NSColor(red: 0.988, green: 0.416, blue: 0.365, alpha: 1), // #FC6A5D
-        number:     NSColor(red: 0.816, green: 0.749, blue: 0.412, alpha: 1), // #D0BF69
-        comment:    NSColor(red: 0.424, green: 0.475, blue: 0.525, alpha: 1)  // #6C7986
+        keyword:    NSColor(red: 0.988, green: 0.373, blue: 0.639, alpha: 1), // #FC5FA3 pink
+        type_:      NSColor(red: 0.365, green: 0.847, blue: 1.000, alpha: 1), // #5DD8FF light blue
+        string:     NSColor(red: 0.988, green: 0.416, blue: 0.365, alpha: 1), // #FC6A5D red-orange
+        number:     NSColor(red: 0.816, green: 0.749, blue: 0.412, alpha: 1), // #D0BF69 gold
+        comment:    NSColor(red: 0.424, green: 0.475, blue: 0.525, alpha: 1), // #6C7986 gray
+        builtin:    NSColor(red: 0.365, green: 0.847, blue: 1.000, alpha: 1), // same as type_ for Swift
+        variable:   NSColor(red: 0.970, green: 0.970, blue: 0.950, alpha: 1), // plain
+        jsonKey:    NSColor(red: 0.365, green: 0.847, blue: 1.000, alpha: 1)  // unused here
     )
 
-    // MARK: Xcode Default Light
-    static let light = SyntaxNSTheme(
+    // MARK: - Swift / Kotlin / Rust / Go — Xcode Default Light
+    static let xcodeDefaultLight = SyntaxNSTheme(
         background: NSColor(red: 1.000, green: 1.000, blue: 1.000, alpha: 1), // #FFFFFF
         plainText:  NSColor(red: 0.000, green: 0.000, blue: 0.000, alpha: 1), // #000000
-        keyword:    NSColor(red: 0.659, green: 0.055, blue: 0.565, alpha: 1), // #A80E90 — purple
-        type_:      NSColor(red: 0.110, green: 0.384, blue: 0.655, alpha: 1), // #1C6278 — dark blue
-        string:     NSColor(red: 0.773, green: 0.102, blue: 0.086, alpha: 1), // #C51A16 — dark red
-        number:     NSColor(red: 0.118, green: 0.400, blue: 0.188, alpha: 1), // #1E6630 — dark green
-        comment:    NSColor(red: 0.408, green: 0.435, blue: 0.459, alpha: 1)  // #686F75 — gray
+        keyword:    NSColor(red: 0.659, green: 0.055, blue: 0.565, alpha: 1), // #A80E90 purple
+        type_:      NSColor(red: 0.110, green: 0.384, blue: 0.655, alpha: 1), // #1C6278 dark blue
+        string:     NSColor(red: 0.773, green: 0.102, blue: 0.086, alpha: 1), // #C51A16 dark red
+        number:     NSColor(red: 0.118, green: 0.400, blue: 0.188, alpha: 1), // #1E6630 dark green
+        comment:    NSColor(red: 0.408, green: 0.435, blue: 0.459, alpha: 1), // #686F75 gray
+        builtin:    NSColor(red: 0.110, green: 0.384, blue: 0.655, alpha: 1), // same as type_
+        variable:   NSColor(red: 0.000, green: 0.000, blue: 0.000, alpha: 1), // plain
+        jsonKey:    NSColor(red: 0.110, green: 0.384, blue: 0.655, alpha: 1)  // unused here
     )
+
+    // MARK: - Python — VSCode Python Dark
+    // Keywords: orange, builtins (print/len/range): yellow-green, strings: yellow, types: none
+    static let pythonDark = SyntaxNSTheme(
+        background: NSColor(red: 0.118, green: 0.118, blue: 0.118, alpha: 1),
+        plainText:  NSColor(red: 0.970, green: 0.970, blue: 0.950, alpha: 1),
+        keyword:    NSColor(red: 0.863, green: 0.502, blue: 0.188, alpha: 1), // #DC8130 orange
+        type_:      NSColor(red: 0.970, green: 0.970, blue: 0.950, alpha: 1), // plain (no PascalCase coloring)
+        string:     NSColor(red: 0.878, green: 0.820, blue: 0.494, alpha: 1), // #E0D17E yellow
+        number:     NSColor(red: 0.682, green: 0.855, blue: 0.620, alpha: 1), // #AEDB9E light green
+        comment:    NSColor(red: 0.424, green: 0.475, blue: 0.525, alpha: 1), // gray
+        builtin:    NSColor(red: 0.365, green: 0.847, blue: 1.000, alpha: 1), // #5DD8FF cyan (print, len, range...)
+        variable:   NSColor(red: 0.970, green: 0.970, blue: 0.950, alpha: 1), // plain
+        jsonKey:    NSColor(red: 0.365, green: 0.847, blue: 1.000, alpha: 1)
+    )
+
+    // MARK: - Python — VSCode Python Light
+    static let pythonLight = SyntaxNSTheme(
+        background: NSColor(red: 1.000, green: 1.000, blue: 1.000, alpha: 1),
+        plainText:  NSColor(red: 0.000, green: 0.000, blue: 0.000, alpha: 1),
+        keyword:    NSColor(red: 0.000, green: 0.000, blue: 0.800, alpha: 1), // #0000CC blue
+        type_:      NSColor(red: 0.000, green: 0.000, blue: 0.000, alpha: 1), // plain
+        string:     NSColor(red: 0.647, green: 0.161, blue: 0.161, alpha: 1), // #A52929 dark red
+        number:     NSColor(red: 0.063, green: 0.502, blue: 0.063, alpha: 1), // #108010 dark green
+        comment:    NSColor(red: 0.408, green: 0.435, blue: 0.459, alpha: 1),
+        builtin:    NSColor(red: 0.502, green: 0.000, blue: 0.502, alpha: 1), // #800080 purple
+        variable:   NSColor(red: 0.000, green: 0.000, blue: 0.000, alpha: 1),
+        jsonKey:    NSColor(red: 0.502, green: 0.000, blue: 0.502, alpha: 1)
+    )
+
+    // MARK: - JavaScript / TypeScript — VSCode Dark
+    // Keywords: blue, functions/builtins: yellow, strings: green, numbers: light green
+    static let jsDark = SyntaxNSTheme(
+        background: NSColor(red: 0.118, green: 0.118, blue: 0.118, alpha: 1),
+        plainText:  NSColor(red: 0.970, green: 0.970, blue: 0.950, alpha: 1),
+        keyword:    NSColor(red: 0.337, green: 0.612, blue: 0.878, alpha: 1), // #569CD6 blue
+        type_:      NSColor(red: 0.267, green: 0.788, blue: 0.733, alpha: 1), // #44C9BB teal (TS types)
+        string:     NSColor(red: 0.565, green: 0.773, blue: 0.502, alpha: 1), // #90C580 green
+        number:     NSColor(red: 0.682, green: 0.855, blue: 0.620, alpha: 1), // #AEDB9E light green
+        comment:    NSColor(red: 0.424, green: 0.475, blue: 0.525, alpha: 1),
+        builtin:    NSColor(red: 0.867, green: 0.812, blue: 0.247, alpha: 1), // #DDCF3F yellow (console, Promise...)
+        variable:   NSColor(red: 0.608, green: 0.827, blue: 0.969, alpha: 1), // #9BD3F7 light blue
+        jsonKey:    NSColor(red: 0.337, green: 0.612, blue: 0.878, alpha: 1)
+    )
+
+    // MARK: - JavaScript / TypeScript — VSCode Light
+    static let jsLight = SyntaxNSTheme(
+        background: NSColor(red: 1.000, green: 1.000, blue: 1.000, alpha: 1),
+        plainText:  NSColor(red: 0.000, green: 0.000, blue: 0.000, alpha: 1),
+        keyword:    NSColor(red: 0.000, green: 0.000, blue: 0.800, alpha: 1), // #0000CC blue
+        type_:      NSColor(red: 0.063, green: 0.502, blue: 0.502, alpha: 1), // #107F7F teal
+        string:     NSColor(red: 0.647, green: 0.161, blue: 0.161, alpha: 1), // #A52929 dark red
+        number:     NSColor(red: 0.063, green: 0.502, blue: 0.063, alpha: 1), // #108010 dark green
+        comment:    NSColor(red: 0.408, green: 0.435, blue: 0.459, alpha: 1),
+        builtin:    NSColor(red: 0.502, green: 0.251, blue: 0.000, alpha: 1), // #804000 dark orange
+        variable:   NSColor(red: 0.063, green: 0.251, blue: 0.502, alpha: 1), // #104080 dark blue
+        jsonKey:    NSColor(red: 0.000, green: 0.000, blue: 0.800, alpha: 1)
+    )
+
+    // MARK: - Bash — terminal green Dark
+    static let bashDark = SyntaxNSTheme(
+        background: NSColor(red: 0.118, green: 0.118, blue: 0.118, alpha: 1),
+        plainText:  NSColor(red: 0.970, green: 0.970, blue: 0.950, alpha: 1),
+        keyword:    NSColor(red: 0.365, green: 0.847, blue: 1.000, alpha: 1), // #5DD8FF cyan (echo, cd, if...)
+        type_:      NSColor(red: 0.970, green: 0.970, blue: 0.950, alpha: 1), // plain
+        string:     NSColor(red: 0.878, green: 0.820, blue: 0.494, alpha: 1), // #E0D17E yellow
+        number:     NSColor(red: 0.682, green: 0.855, blue: 0.620, alpha: 1), // light green
+        comment:    NSColor(red: 0.424, green: 0.475, blue: 0.525, alpha: 1),
+        builtin:    NSColor(red: 0.365, green: 0.847, blue: 1.000, alpha: 1), // same as keyword
+        variable:   NSColor(red: 0.682, green: 0.855, blue: 0.620, alpha: 1), // #AEDB9E green ($VAR)
+        jsonKey:    NSColor(red: 0.365, green: 0.847, blue: 1.000, alpha: 1)
+    )
+
+    // MARK: - Bash — terminal Light
+    static let bashLight = SyntaxNSTheme(
+        background: NSColor(red: 1.000, green: 1.000, blue: 1.000, alpha: 1),
+        plainText:  NSColor(red: 0.000, green: 0.000, blue: 0.000, alpha: 1),
+        keyword:    NSColor(red: 0.000, green: 0.000, blue: 0.800, alpha: 1), // blue
+        type_:      NSColor(red: 0.000, green: 0.000, blue: 0.000, alpha: 1),
+        string:     NSColor(red: 0.647, green: 0.161, blue: 0.161, alpha: 1), // dark red
+        number:     NSColor(red: 0.063, green: 0.502, blue: 0.063, alpha: 1),
+        comment:    NSColor(red: 0.408, green: 0.435, blue: 0.459, alpha: 1),
+        builtin:    NSColor(red: 0.000, green: 0.000, blue: 0.800, alpha: 1),
+        variable:   NSColor(red: 0.063, green: 0.502, blue: 0.063, alpha: 1), // dark green ($VAR)
+        jsonKey:    NSColor(red: 0.000, green: 0.000, blue: 0.800, alpha: 1)
+    )
+
+    // MARK: - SQL Dark
+    static let sqlDark = SyntaxNSTheme(
+        background: NSColor(red: 0.118, green: 0.118, blue: 0.118, alpha: 1),
+        plainText:  NSColor(red: 0.970, green: 0.970, blue: 0.950, alpha: 1),
+        keyword:    NSColor(red: 0.337, green: 0.612, blue: 0.878, alpha: 1), // #569CD6 blue
+        type_:      NSColor(red: 0.970, green: 0.970, blue: 0.950, alpha: 1), // plain
+        string:     NSColor(red: 0.988, green: 0.416, blue: 0.365, alpha: 1), // red-orange
+        number:     NSColor(red: 0.682, green: 0.855, blue: 0.620, alpha: 1), // light green
+        comment:    NSColor(red: 0.424, green: 0.475, blue: 0.525, alpha: 1),
+        builtin:    NSColor(red: 0.267, green: 0.788, blue: 0.733, alpha: 1), // teal (COUNT, SUM...)
+        variable:   NSColor(red: 0.970, green: 0.970, blue: 0.950, alpha: 1),
+        jsonKey:    NSColor(red: 0.337, green: 0.612, blue: 0.878, alpha: 1)
+    )
+
+    // MARK: - SQL Light
+    static let sqlLight = SyntaxNSTheme(
+        background: NSColor(red: 1.000, green: 1.000, blue: 1.000, alpha: 1),
+        plainText:  NSColor(red: 0.000, green: 0.000, blue: 0.000, alpha: 1),
+        keyword:    NSColor(red: 0.000, green: 0.000, blue: 0.800, alpha: 1), // blue
+        type_:      NSColor(red: 0.000, green: 0.000, blue: 0.000, alpha: 1),
+        string:     NSColor(red: 0.647, green: 0.161, blue: 0.161, alpha: 1), // dark red
+        number:     NSColor(red: 0.063, green: 0.502, blue: 0.063, alpha: 1),
+        comment:    NSColor(red: 0.408, green: 0.435, blue: 0.459, alpha: 1),
+        builtin:    NSColor(red: 0.063, green: 0.502, blue: 0.502, alpha: 1), // teal
+        variable:   NSColor(red: 0.000, green: 0.000, blue: 0.000, alpha: 1),
+        jsonKey:    NSColor(red: 0.000, green: 0.000, blue: 0.800, alpha: 1)
+    )
+
+    // MARK: - JSON Dark
+    // Keys: light blue, string values: orange, numbers: light green, booleans/null: pink
+    static let jsonDark = SyntaxNSTheme(
+        background: NSColor(red: 0.118, green: 0.118, blue: 0.118, alpha: 1),
+        plainText:  NSColor(red: 0.970, green: 0.970, blue: 0.950, alpha: 1),
+        keyword:    NSColor(red: 0.988, green: 0.373, blue: 0.639, alpha: 1), // pink (true/false/null)
+        type_:      NSColor(red: 0.970, green: 0.970, blue: 0.950, alpha: 1),
+        string:     NSColor(red: 0.878, green: 0.580, blue: 0.318, alpha: 1), // #E09451 orange (string values)
+        number:     NSColor(red: 0.682, green: 0.855, blue: 0.620, alpha: 1), // light green
+        comment:    NSColor(red: 0.424, green: 0.475, blue: 0.525, alpha: 1),
+        builtin:    NSColor(red: 0.970, green: 0.970, blue: 0.950, alpha: 1),
+        variable:   NSColor(red: 0.970, green: 0.970, blue: 0.950, alpha: 1),
+        jsonKey:    NSColor(red: 0.365, green: 0.847, blue: 1.000, alpha: 1)  // #5DD8FF light blue (keys)
+    )
+
+    // MARK: - JSON Light
+    static let jsonLight = SyntaxNSTheme(
+        background: NSColor(red: 1.000, green: 1.000, blue: 1.000, alpha: 1),
+        plainText:  NSColor(red: 0.000, green: 0.000, blue: 0.000, alpha: 1),
+        keyword:    NSColor(red: 0.659, green: 0.055, blue: 0.565, alpha: 1), // purple (true/false/null)
+        type_:      NSColor(red: 0.000, green: 0.000, blue: 0.000, alpha: 1),
+        string:     NSColor(red: 0.773, green: 0.357, blue: 0.031, alpha: 1), // #C55C08 dark orange (string values)
+        number:     NSColor(red: 0.063, green: 0.502, blue: 0.063, alpha: 1), // dark green
+        comment:    NSColor(red: 0.408, green: 0.435, blue: 0.459, alpha: 1),
+        builtin:    NSColor(red: 0.000, green: 0.000, blue: 0.000, alpha: 1),
+        variable:   NSColor(red: 0.000, green: 0.000, blue: 0.000, alpha: 1),
+        jsonKey:    NSColor(red: 0.110, green: 0.384, blue: 0.655, alpha: 1)  // dark blue (keys)
+    )
+
+    // MARK: - C / C++ / Java Dark — classic blue-keyword IDE style
+    static let cFamilyDark = SyntaxNSTheme(
+        background: NSColor(red: 0.118, green: 0.118, blue: 0.118, alpha: 1),
+        plainText:  NSColor(red: 0.970, green: 0.970, blue: 0.950, alpha: 1),
+        keyword:    NSColor(red: 0.337, green: 0.612, blue: 0.878, alpha: 1), // #569CD6 blue
+        type_:      NSColor(red: 0.267, green: 0.788, blue: 0.733, alpha: 1), // teal (PascalCase types)
+        string:     NSColor(red: 0.565, green: 0.773, blue: 0.502, alpha: 1), // green
+        number:     NSColor(red: 0.682, green: 0.855, blue: 0.620, alpha: 1), // light green
+        comment:    NSColor(red: 0.424, green: 0.475, blue: 0.525, alpha: 1),
+        builtin:    NSColor(red: 0.267, green: 0.788, blue: 0.733, alpha: 1), // teal
+        variable:   NSColor(red: 0.970, green: 0.970, blue: 0.950, alpha: 1),
+        jsonKey:    NSColor(red: 0.337, green: 0.612, blue: 0.878, alpha: 1)
+    )
+
+    // MARK: - C / C++ / Java Light
+    static let cFamilyLight = SyntaxNSTheme(
+        background: NSColor(red: 1.000, green: 1.000, blue: 1.000, alpha: 1),
+        plainText:  NSColor(red: 0.000, green: 0.000, blue: 0.000, alpha: 1),
+        keyword:    NSColor(red: 0.000, green: 0.000, blue: 0.800, alpha: 1), // blue
+        type_:      NSColor(red: 0.063, green: 0.502, blue: 0.502, alpha: 1), // teal
+        string:     NSColor(red: 0.647, green: 0.161, blue: 0.161, alpha: 1), // dark red
+        number:     NSColor(red: 0.063, green: 0.502, blue: 0.063, alpha: 1), // dark green
+        comment:    NSColor(red: 0.408, green: 0.435, blue: 0.459, alpha: 1),
+        builtin:    NSColor(red: 0.063, green: 0.502, blue: 0.502, alpha: 1),
+        variable:   NSColor(red: 0.000, green: 0.000, blue: 0.000, alpha: 1),
+        jsonKey:    NSColor(red: 0.000, green: 0.000, blue: 0.800, alpha: 1)
+    )
+
+    // MARK: - Theme selector
+
+    /// Returns the correct theme for the given normalized language and color scheme.
+    static func forLanguage(_ lang: String, dark: Bool) -> SyntaxNSTheme {
+        switch lang {
+        case "swift", "kotlin", "rust", "go":
+            return dark ? .xcodeDefaultDark : .xcodeDefaultLight
+        case "python":
+            return dark ? .pythonDark : .pythonLight
+        case "javascript", "typescript":
+            return dark ? .jsDark : .jsLight
+        case "bash":
+            return dark ? .bashDark : .bashLight
+        case "sql":
+            return dark ? .sqlDark : .sqlLight
+        case "json":
+            return dark ? .jsonDark : .jsonLight
+        case "c", "cpp", "java":
+            return dark ? .cFamilyDark : .cFamilyLight
+        default:
+            // Unknown language — use Xcode default as a safe fallback
+            return dark ? .xcodeDefaultDark : .xcodeDefaultLight
+        }
+    }
 }
 
 // MARK: - SwiftUI Color theme (for CodeBlockView chrome)
@@ -482,7 +710,11 @@ struct CodeBlockView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     private var theme: SyntaxTheme     { colorScheme == .dark ? .dark : .light }
-    private var nsTheme: SyntaxNSTheme { colorScheme == .dark ? .dark : .light }
+    // Per-language theme — each language gets its own color identity.
+    private var nsTheme: SyntaxNSTheme {
+        let lang = SyntaxEngine.normalizePublic(language)
+        return SyntaxNSTheme.forLanguage(lang, dark: colorScheme == .dark)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -594,36 +826,54 @@ private struct SyntaxHighlightedText: NSViewRepresentable {
 ///
 /// All coloring uses NSColor via NSRange — reliable in NSTextView,
 /// no SwiftUI attribute scope issues, no unicode index mismatches.
-private enum SyntaxEngine {
+///
+/// PER-LANGUAGE RULES:
+/// - colorTypes (PascalCase) only for: swift, kotlin, rust, go, java, cpp/c
+/// - colorBuiltins only for: python, javascript, typescript, sql, bash
+/// - colorJsonKeys only for: json
+/// - colorBashVars only for: bash
+enum SyntaxEngine {
+
+    // Exposed so CodeBlockView can resolve the theme before highlighting.
+    static func normalizePublic(_ language: String?) -> String { normalize(language) }
 
     static func highlight(code: String, language: String?, theme: SyntaxNSTheme) -> NSAttributedString {
         let lang = normalize(language)
         switch lang {
         case "swift":
-            return kw(code, keywords: swiftKeywords, types: true, comment: .slashSlash, theme: theme)
+            return kw(code, keywords: swiftKeywords, types: true, builtins: [],
+                      comment: .slashSlash, theme: theme)
         case "python":
-            return kw(code, keywords: pythonKeywords, types: false, comment: .hash, theme: theme)
+            return kw(code, keywords: pythonKeywords, types: false, builtins: pythonBuiltins,
+                      comment: .hash, theme: theme)
         case "javascript":
-            return kw(code, keywords: jsKeywords, types: false, comment: .slashSlash, theme: theme)
+            return kw(code, keywords: jsKeywords, types: false, builtins: jsBuiltins,
+                      comment: .slashSlash, theme: theme)
         case "typescript":
-            return kw(code, keywords: tsKeywords, types: false, comment: .slashSlash, theme: theme)
+            return kw(code, keywords: tsKeywords, types: true, builtins: jsBuiltins,
+                      comment: .slashSlash, theme: theme)
         case "kotlin":
-            return kw(code, keywords: kotlinKeywords, types: true, comment: .slashSlash, theme: theme)
+            return kw(code, keywords: kotlinKeywords, types: true, builtins: [],
+                      comment: .slashSlash, theme: theme)
         case "rust":
-            return kw(code, keywords: rustKeywords, types: true, comment: .slashSlash, theme: theme)
+            return kw(code, keywords: rustKeywords, types: true, builtins: [],
+                      comment: .slashSlash, theme: theme)
         case "go":
-            return kw(code, keywords: goKeywords, types: true, comment: .slashSlash, theme: theme)
+            return kw(code, keywords: goKeywords, types: true, builtins: goBuiltins,
+                      comment: .slashSlash, theme: theme)
         case "java":
-            return kw(code, keywords: javaKeywords, types: true, comment: .slashSlash, theme: theme)
+            return kw(code, keywords: javaKeywords, types: true, builtins: [],
+                      comment: .slashSlash, theme: theme)
         case "c", "cpp":
-            return kw(code, keywords: cKeywords, types: false, comment: .slashSlash, theme: theme)
+            return kw(code, keywords: cKeywords, types: false, builtins: [],
+                      comment: .slashSlash, theme: theme)
         case "bash":
             return bash(code, theme: theme)
         case "json":
             return json(code, theme: theme)
         case "sql":
-            return kw(code, keywords: sqlKeywords, types: false, comment: .doubleDash,
-                      theme: theme, caseInsensitive: true)
+            return kw(code, keywords: sqlKeywords, types: false, builtins: sqlBuiltins,
+                      comment: .doubleDash, theme: theme, caseInsensitive: true)
         default:
             return plain(code, theme: theme)
         }
@@ -670,6 +920,7 @@ private enum SyntaxEngine {
         _ code: String,
         keywords: [String],
         types: Bool,
+        builtins: [String],
         comment: CommentStyle,
         theme: SyntaxNSTheme,
         caseInsensitive: Bool = false
@@ -679,8 +930,12 @@ private enum SyntaxEngine {
         let full = NSRange(location: 0, length: result.length)
         result.addAttribute(.foregroundColor, value: theme.plainText, range: full)
         result.addAttribute(.font, value: font, range: full)
+
+        // Order matters: keywords first, then types (PascalCase), then builtins on top.
+        // Strings and numbers go after — they override everything inside string literals.
         for kw in keywords { colorWord(theme.keyword, word: kw, in: result, ci: caseInsensitive) }
         if types { colorTypes(theme.type_, in: result) }
+        for b in builtins { colorWord(theme.builtin, word: b, in: result) }
         colorStrings(theme.string, in: result)
         colorNumbers(theme.number, in: result)
         switch comment {
@@ -700,7 +955,7 @@ private enum SyntaxEngine {
         result.addAttribute(.foregroundColor, value: theme.plainText, range: full)
         result.addAttribute(.font, value: font, range: full)
         for kw in bashKeywords { colorWord(theme.keyword, word: kw, in: result) }
-        colorBashVars(theme.type_, in: result)
+        colorBashVars(theme.variable, in: result)  // $VAR in variable color (green)
         colorStrings(theme.string, in: result)
         colorNumbers(theme.number, in: result)
         colorComments("#", color: theme.comment, in: result)
@@ -709,15 +964,24 @@ private enum SyntaxEngine {
 
     // MARK: - JSON
 
+    /// JSON gets special treatment: keys and string values are colored differently.
+    /// Keys (before ':') get jsonKey color (blue), values get string color (orange).
     private static func json(_ code: String, theme: SyntaxNSTheme) -> NSAttributedString {
         let font = NSFont.monospacedSystemFont(ofSize: 12.5, weight: .regular)
         let result = NSMutableAttributedString(string: code)
         let full = NSRange(location: 0, length: result.length)
         result.addAttribute(.foregroundColor, value: theme.plainText, range: full)
         result.addAttribute(.font, value: font, range: full)
+
+        // true / false / null — keyword color (pink/purple)
         for kw in ["true", "false", "null"] { colorWord(theme.keyword, word: kw, in: result) }
-        colorStrings(theme.string, in: result)
+
+        // Numbers
         colorNumbers(theme.number, in: result)
+
+        // Strings: distinguish keys (before ':') from values (after ':' or in arrays)
+        colorJsonStrings(keyColor: theme.jsonKey, valueColor: theme.string, in: result)
+
         return result
     }
 
@@ -740,7 +1004,17 @@ private enum SyntaxEngine {
         "for", "while", "try", "except", "finally", "raise", "with", "pass",
         "break", "continue", "lambda", "yield", "global", "nonlocal", "del",
         "assert", "and", "or", "not", "in", "is", "None", "True", "False",
-        "async", "await", "self", "cls", "__init__", "__name__", "__main__"
+        "async", "await", "self", "cls"
+    ]
+    // Python built-in functions — colored separately from keywords
+    private static let pythonBuiltins: [String] = [
+        "print", "len", "range", "type", "isinstance", "int", "str", "float",
+        "bool", "list", "dict", "set", "tuple", "enumerate", "zip", "map",
+        "filter", "sorted", "reversed", "sum", "min", "max", "abs", "round",
+        "open", "input", "super", "property", "staticmethod", "classmethod",
+        "hasattr", "getattr", "setattr", "delattr", "vars", "dir", "repr",
+        "format", "chr", "ord", "hex", "bin", "oct", "id", "hash",
+        "__init__", "__name__", "__main__", "__str__", "__repr__"
     ]
     private static let jsKeywords: [String] = [
         "function", "const", "let", "var", "class", "extends", "import", "export",
@@ -750,11 +1024,21 @@ private enum SyntaxEngine {
         "await", "null", "undefined", "true", "false", "static", "get", "set",
         "delete", "void", "yield"
     ]
+    // JS/TS built-in globals — colored in builtin color (yellow)
+    private static let jsBuiltins: [String] = [
+        "console", "Promise", "Array", "Object", "String", "Number", "Boolean",
+        "Math", "Date", "JSON", "Error", "Map", "Set", "WeakMap", "WeakSet",
+        "Symbol", "Proxy", "Reflect", "fetch", "setTimeout", "setInterval",
+        "clearTimeout", "clearInterval", "parseInt", "parseFloat", "isNaN",
+        "isFinite", "encodeURIComponent", "decodeURIComponent",
+        "document", "window", "navigator", "location", "history",
+        "localStorage", "sessionStorage", "XMLHttpRequest", "WebSocket",
+        "process", "Buffer", "require", "module", "exports", "__dirname"
+    ]
     private static let tsKeywords: [String] = jsKeywords + [
         "interface", "type", "enum", "namespace", "declare", "abstract",
-        "readonly", "private", "public", "protected", "implements", "as",
-        "keyof", "typeof", "never", "unknown", "any", "string", "number",
-        "boolean", "object", "symbol", "bigint", "void", "infer"
+        "readonly", "private", "public", "protected", "implements",
+        "keyof", "never", "unknown", "any", "infer"
     ]
     private static let kotlinKeywords: [String] = [
         "fun", "val", "var", "class", "object", "interface", "enum", "sealed",
@@ -777,12 +1061,16 @@ private enum SyntaxEngine {
         "func", "var", "const", "type", "struct", "interface", "map", "chan",
         "package", "import", "return", "if", "else", "for", "range", "switch",
         "case", "default", "break", "continue", "goto", "fallthrough",
-        "go", "select", "defer", "make", "new", "len", "cap", "append",
-        "copy", "delete", "close", "panic", "recover", "nil", "true", "false",
+        "go", "select", "defer", "nil", "true", "false",
         "int", "int8", "int16", "int32", "int64",
         "uint", "uint8", "uint16", "uint32", "uint64",
         "float32", "float64", "complex64", "complex128",
         "string", "bool", "byte", "rune", "error", "any"
+    ]
+    // Go built-in functions
+    private static let goBuiltins: [String] = [
+        "make", "new", "len", "cap", "append", "copy", "delete",
+        "close", "panic", "recover", "print", "println"
     ]
     private static let javaKeywords: [String] = [
         "public", "private", "protected", "static", "final", "abstract",
@@ -825,6 +1113,14 @@ private enum SyntaxEngine {
         "BEGIN", "COMMIT", "ROLLBACK", "TRANSACTION",
         "INT", "INTEGER", "VARCHAR", "TEXT", "BOOLEAN", "DATE", "TIMESTAMP", "FLOAT", "NUMERIC"
     ]
+    // SQL aggregate and scalar functions — builtin color (teal)
+    private static let sqlBuiltins: [String] = [
+        "COUNT", "SUM", "AVG", "MIN", "MAX", "COALESCE", "NULLIF", "CAST",
+        "UPPER", "LOWER", "TRIM", "LENGTH", "SUBSTRING", "REPLACE",
+        "NOW", "CURRENT_DATE", "CURRENT_TIMESTAMP", "EXTRACT",
+        "ROW_NUMBER", "RANK", "DENSE_RANK", "OVER", "PARTITION",
+        "CONCAT", "ROUND", "FLOOR", "CEIL", "ABS", "MOD", "POWER"
+    ]
 
     // MARK: - Coloring primitives (NSRange + unichar — no unicode index issues)
 
@@ -860,6 +1156,7 @@ private enum SyntaxEngine {
     }
 
     /// Highlights PascalCase words as type names.
+    /// Only called for languages where PascalCase = type convention (Swift, Kotlin, etc.)
     private static func colorTypes(_ color: NSColor, in str: NSMutableAttributedString) {
         let ns = str.string as NSString
         var i = 0
@@ -947,6 +1244,35 @@ private enum SyntaxEngine {
                 while i < ns.length && isWord(ns.character(at: i)) { i += 1 }
                 if i > start + 1 { str.addAttribute(.foregroundColor, value: color, range: NSRange(location: start, length: i - start)) }
             }
+        }
+    }
+
+    /// Highlights JSON strings, distinguishing keys (before ':') from values.
+    ///
+    /// JSON key: a quoted string immediately followed (after optional whitespace) by ':'.
+    /// JSON value: any other quoted string.
+    /// This gives keys a distinct color (blue) vs string values (orange).
+    private static func colorJsonStrings(
+        keyColor: NSColor, valueColor: NSColor, in str: NSMutableAttributedString
+    ) {
+        let ns = str.string as NSString
+        var i = 0
+        while i < ns.length {
+            guard ns.character(at: i) == uniDoubleQuote else { i += 1; continue }
+            let start = i; i += 1
+            // Scan to closing quote, respecting backslash escapes
+            while i < ns.length {
+                let c = ns.character(at: i)
+                if c == uniBackslash { i += 2; continue }
+                if c == uniDoubleQuote { i += 1; break }
+                i += 1
+            }
+            let strRange = NSRange(location: start, length: i - start)
+            // Look ahead for ':' to determine if this is a key
+            var j = i
+            while j < ns.length && (ns.character(at: j) == 32 || ns.character(at: j) == 9) { j += 1 } // skip spaces/tabs
+            let isKey = j < ns.length && ns.character(at: j) == uniColon
+            str.addAttribute(.foregroundColor, value: isKey ? keyColor : valueColor, range: strRange)
         }
     }
 }
