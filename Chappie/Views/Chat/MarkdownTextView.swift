@@ -79,6 +79,13 @@
 // The `+` operator for Text is deprecated in macOS 26 — use
 // Text("\(Text(...).bold())") string interpolation instead.
 // buildInlineText() uses this approach.
+//
+// MULTI-LANGUAGE SYNTAX HIGHLIGHTING:
+// SyntaxHighlighter supports 11 languages without any external dependencies.
+// Architecture: shared engine (strings, numbers, comments) + per-language keyword sets.
+// Languages: swift, python, javascript/js, typescript/ts, bash/sh/shell,
+//            json, sql, kotlin, rust, go, c/cpp/c++/java (C-family).
+// Unknown languages: plain text with theme color — always readable.
 
 import SwiftUI
 
@@ -840,87 +847,339 @@ struct CodeBlockView: View {
     }
 }
 
-// MARK: - Swift syntax highlighting
+// MARK: - Multi-language syntax highlighter
 
-/// Renders code with basic Swift syntax highlighting.
+/// Renders code with syntax highlighting for 11 languages.
 ///
-/// THEME ADAPTATION:
-/// Reads colorScheme from environment and selects the SyntaxTheme palette.
-/// Light = Xcode Default Light, Dark = Xcode Default Dark.
+/// SUPPORTED LANGUAGES:
+///   swift, python, javascript (js), typescript (ts),
+///   bash / sh / shell, json, sql, kotlin, rust, go,
+///   c / cpp / c++ / java  (C-family shared keywords)
+///
+/// ARCHITECTURE:
+///   Shared engine handles strings, numbers, and comments for all languages.
+///   Per-language keyword tables drive keyword coloring.
+///   Type highlighting (uppercase-starting words) is used for Swift, Kotlin, Java, Rust, Go.
+///   Unknown languages fall back to plain themed text — always readable.
 ///
 /// TEXTKIT-RANGE FIX (unicode index safety):
-/// All applyXxx methods previously used String.Index ↔ AttributedString.Index
-/// conversion without guarding against unicode boundary mismatches.
-/// Cyrillic, emoji, and other multi-byte characters cause String.Index positions
-/// to not align with AttributedString.Index — direct force-application crashes TextKit.
-/// Fix: every Range(range, in: attrStr) conversion is guarded with optional binding.
-/// If the conversion fails (unicode mismatch), the coloring is simply skipped — safe.
+///   All applyXxx methods guard Range(range, in: attrStr) with optional binding.
+///   String.Index ↔ AttributedString.Index diverge on Cyrillic / emoji / multi-byte chars.
+///   If conversion fails — coloring is skipped, no crash, no "bad range" warning.
 private struct SyntaxHighlightedText: View {
 
     let code: String
     let language: String?
 
-    // Read theme from environment — passed automatically from parent CodeBlockView
     @Environment(\.colorScheme) private var colorScheme
 
     private var theme: SyntaxTheme {
         colorScheme == .dark ? .dark : .light
     }
 
-    var body: some View {
-        if language?.lowercased() == "swift" {
-            Text(highlightSwift(code))
-        } else {
-            // Unknown language — use plain text color from theme
-            Text(code)
-                .foregroundStyle(theme.plainText)
+    // Normalize the language tag to a canonical form for switch matching.
+    private var normalizedLang: String {
+        switch language?.lowercased() ?? "" {
+        case "js", "javascript":            return "javascript"
+        case "ts", "typescript":            return "typescript"
+        case "sh", "shell", "bash":         return "bash"
+        case "cpp", "c++":                  return "cpp"
+        case "swift":                       return "swift"
+        case "python", "py":                return "python"
+        case "kotlin", "kt":                return "kotlin"
+        case "rust", "rs":                  return "rust"
+        case "go", "golang":                return "go"
+        case "java":                        return "java"
+        case "json":                        return "json"
+        case "sql":                         return "sql"
+        case "c":                           return "c"
+        default:                            return language?.lowercased() ?? ""
         }
     }
 
-    private func highlightSwift(_ code: String) -> AttributedString {
+    var body: some View {
+        let highlighted = highlight(code, lang: normalizedLang)
+        Text(highlighted)
+    }
+
+    // MARK: - Dispatch
+
+    /// Selects the highlighting strategy for the given normalized language.
+    private func highlight(_ code: String, lang: String) -> AttributedString {
+        switch lang {
+        case "swift":
+            return highlightWithKeywords(code, keywords: Self.swiftKeywords, useTypeHighlight: true, commentStyle: .slashSlash)
+        case "python":
+            return highlightWithKeywords(code, keywords: Self.pythonKeywords, useTypeHighlight: false, commentStyle: .hash)
+        case "javascript":
+            return highlightWithKeywords(code, keywords: Self.jsKeywords, useTypeHighlight: false, commentStyle: .slashSlash)
+        case "typescript":
+            return highlightWithKeywords(code, keywords: Self.tsKeywords, useTypeHighlight: false, commentStyle: .slashSlash)
+        case "kotlin":
+            return highlightWithKeywords(code, keywords: Self.kotlinKeywords, useTypeHighlight: true, commentStyle: .slashSlash)
+        case "rust":
+            return highlightWithKeywords(code, keywords: Self.rustKeywords, useTypeHighlight: true, commentStyle: .slashSlash)
+        case "go":
+            return highlightWithKeywords(code, keywords: Self.goKeywords, useTypeHighlight: true, commentStyle: .slashSlash)
+        case "java":
+            return highlightWithKeywords(code, keywords: Self.javaKeywords, useTypeHighlight: true, commentStyle: .slashSlash)
+        case "c", "cpp":
+            return highlightWithKeywords(code, keywords: Self.cKeywords, useTypeHighlight: false, commentStyle: .slashSlash)
+        case "bash":
+            return highlightBash(code)
+        case "json":
+            return highlightJSON(code)
+        case "sql":
+            return highlightWithKeywords(code, keywords: Self.sqlKeywords, useTypeHighlight: false, commentStyle: .doubleDash, caseInsensitiveKeywords: true)
+        default:
+            // Unknown language — plain text with theme color, always readable.
+            var result = AttributedString(code)
+            result.foregroundColor = theme.plainText
+            return result
+        }
+    }
+
+    // MARK: - Comment style
+
+    private enum CommentStyle {
+        case slashSlash   // // comment  (Swift, JS, TS, Kotlin, Rust, Go, Java, C)
+        case hash         // # comment   (Python, Bash)
+        case doubleDash   // -- comment  (SQL)
+    }
+
+    // MARK: - Generic keyword highlighter
+
+    /// Shared highlighting engine: keywords → strings → numbers → comments.
+    ///
+    /// Order matters: comments applied last so they override everything inside them.
+    private func highlightWithKeywords(
+        _ code: String,
+        keywords: [String],
+        useTypeHighlight: Bool,
+        commentStyle: CommentStyle,
+        caseInsensitiveKeywords: Bool = false
+    ) -> AttributedString {
         var result = AttributedString(code)
-        // Base color — plain text from current theme
         result.foregroundColor = theme.plainText
 
-        let keywords = [
-            "func", "var", "let", "class", "struct", "enum", "protocol",
-            "extension", "import", "return", "if", "else", "guard", "switch",
-            "case", "default", "for", "while", "do", "try", "catch", "throw",
-            "throws", "async", "await", "actor", "nonisolated", "isolated",
-            "public", "private", "internal", "fileprivate", "open",
-            "static", "final", "override", "mutating", "nonmutating",
-            "init", "deinit", "self", "super", "nil", "true", "false",
-            "in", "is", "as", "where", "some", "any", "typealias",
-            "@MainActor", "@Observable", "@State", "@Binding", "@Environment",
-            "@Published", "@StateObject", "@ObservedObject", "Task", "MainActor"
-        ]
-
-        for keyword in keywords {
-            applyColor(theme.keyword, toWord: keyword, in: &result)
+        // Keywords — language-specific reserved words
+        for kw in keywords {
+            applyColor(theme.keyword, toWord: kw, in: &result, caseInsensitive: caseInsensitiveKeywords)
         }
 
-        applyTypeHighlighting(color: theme.type_, in: &result)
+        // Types — words starting with uppercase (Swift, Kotlin, Java, Rust, Go)
+        if useTypeHighlight {
+            applyTypeHighlighting(color: theme.type_, in: &result)
+        }
+
+        // String literals — double and single quotes
         applyStringHighlighting(color: theme.string, in: &result)
+
+        // Numeric literals
         applyNumberHighlighting(color: theme.number, in: &result)
-        // Comments last — override everything inside them
-        applyCommentHighlighting(color: theme.comment, in: &result)
+
+        // Comments — applied last to override keyword/type color inside comments
+        switch commentStyle {
+        case .slashSlash:
+            applyLineCommentHighlighting(prefix: "//", color: theme.comment, in: &result)
+        case .hash:
+            applyLineCommentHighlighting(prefix: "#", color: theme.comment, in: &result)
+        case .doubleDash:
+            applyLineCommentHighlighting(prefix: "--", color: theme.comment, in: &result)
+        }
 
         return result
     }
 
-    /// Applies color to exact word occurrences respecting word boundaries.
+    // MARK: - Bash highlighter
+
+    /// Bash-specific highlighting: builtins, flags, variables ($VAR), shebang.
+    private func highlightBash(_ code: String) -> AttributedString {
+        var result = AttributedString(code)
+        result.foregroundColor = theme.plainText
+
+        // Built-in commands and keywords
+        for kw in Self.bashKeywords {
+            applyColor(theme.keyword, toWord: kw, in: &result)
+        }
+
+        // $VARIABLE and ${VARIABLE} — highlight as type color
+        applyBashVariables(color: theme.type_, in: &result)
+
+        // String literals (double-quoted)
+        applyStringHighlighting(color: theme.string, in: &result)
+
+        // Numbers
+        applyNumberHighlighting(color: theme.number, in: &result)
+
+        // # comments (but NOT shebang #! on line 1 — keep it as comment too, it's fine)
+        applyLineCommentHighlighting(prefix: "#", color: theme.comment, in: &result)
+
+        return result
+    }
+
+    // MARK: - JSON highlighter
+
+    /// JSON-specific highlighting: keys (strings before colon) vs value strings,
+    /// booleans/null as keywords, numbers.
+    private func highlightJSON(_ code: String) -> AttributedString {
+        var result = AttributedString(code)
+        result.foregroundColor = theme.plainText
+
+        // true, false, null — JSON keywords
+        for kw in ["true", "false", "null"] {
+            applyColor(theme.keyword, toWord: kw, in: &result)
+        }
+
+        // All strings — keys and values both get string color.
+        // We can't easily distinguish key vs value without a full JSON parser,
+        // and string color for both is the standard approach (VS Code does the same).
+        applyStringHighlighting(color: theme.string, in: &result)
+
+        // Numbers
+        applyNumberHighlighting(color: theme.number, in: &result)
+
+        return result
+    }
+
+    // MARK: - Keyword tables
+
+    private static let swiftKeywords: [String] = [
+        "func", "var", "let", "class", "struct", "enum", "protocol",
+        "extension", "import", "return", "if", "else", "guard", "switch",
+        "case", "default", "for", "while", "do", "try", "catch", "throw",
+        "throws", "async", "await", "actor", "nonisolated", "isolated",
+        "public", "private", "internal", "fileprivate", "open",
+        "static", "final", "override", "mutating", "nonmutating",
+        "init", "deinit", "self", "super", "nil", "true", "false",
+        "in", "is", "as", "where", "some", "any", "typealias",
+        "@MainActor", "@Observable", "@State", "@Binding", "@Environment",
+        "@Published", "@StateObject", "@ObservedObject", "Task", "MainActor"
+    ]
+
+    private static let pythonKeywords: [String] = [
+        "def", "class", "import", "from", "as", "return", "if", "elif", "else",
+        "for", "while", "try", "except", "finally", "raise", "with", "pass",
+        "break", "continue", "lambda", "yield", "global", "nonlocal", "del",
+        "assert", "and", "or", "not", "in", "is", "None", "True", "False",
+        "async", "await", "self", "cls", "__init__", "__name__", "__main__"
+    ]
+
+    private static let jsKeywords: [String] = [
+        "function", "const", "let", "var", "class", "extends", "import", "export",
+        "default", "return", "if", "else", "for", "while", "do", "try", "catch",
+        "finally", "throw", "new", "this", "super", "typeof", "instanceof",
+        "switch", "case", "break", "continue", "of", "in", "from", "async",
+        "await", "null", "undefined", "true", "false", "static", "get", "set",
+        "=>", "delete", "void", "yield"
+    ]
+
+    private static let tsKeywords: [String] = jsKeywords + [
+        "interface", "type", "enum", "namespace", "declare", "abstract",
+        "readonly", "private", "public", "protected", "implements", "as",
+        "keyof", "typeof", "never", "unknown", "any", "string", "number",
+        "boolean", "object", "symbol", "bigint", "void", "infer"
+    ]
+
+    private static let kotlinKeywords: [String] = [
+        "fun", "val", "var", "class", "object", "interface", "enum", "sealed",
+        "data", "abstract", "open", "final", "override", "private", "public",
+        "protected", "internal", "companion", "import", "package", "return",
+        "if", "else", "when", "for", "while", "do", "try", "catch", "finally",
+        "throw", "throws", "is", "as", "in", "out", "by", "init", "constructor",
+        "this", "super", "null", "true", "false", "suspend", "inline", "reified",
+        "typealias", "lateinit", "lazy", "it", "apply", "let", "run", "also", "with"
+    ]
+
+    private static let rustKeywords: [String] = [
+        "fn", "let", "mut", "const", "static", "struct", "enum", "trait",
+        "impl", "use", "mod", "pub", "crate", "self", "super", "type",
+        "where", "for", "while", "loop", "if", "else", "match", "return",
+        "break", "continue", "in", "as", "ref", "move", "box", "dyn",
+        "async", "await", "unsafe", "extern", "true", "false", "None", "Some",
+        "Ok", "Err", "Vec", "String", "Option", "Result", "Box", "Rc", "Arc"
+    ]
+
+    private static let goKeywords: [String] = [
+        "func", "var", "const", "type", "struct", "interface", "map", "chan",
+        "package", "import", "return", "if", "else", "for", "range", "switch",
+        "case", "default", "break", "continue", "goto", "fallthrough",
+        "go", "select", "defer", "make", "new", "len", "cap", "append",
+        "copy", "delete", "close", "panic", "recover", "nil", "true", "false",
+        "int", "int8", "int16", "int32", "int64",
+        "uint", "uint8", "uint16", "uint32", "uint64",
+        "float32", "float64", "complex64", "complex128",
+        "string", "bool", "byte", "rune", "error", "any"
+    ]
+
+    private static let javaKeywords: [String] = [
+        "public", "private", "protected", "static", "final", "abstract",
+        "class", "interface", "enum", "extends", "implements", "import",
+        "package", "return", "if", "else", "for", "while", "do", "try",
+        "catch", "finally", "throw", "throws", "new", "this", "super",
+        "instanceof", "switch", "case", "default", "break", "continue",
+        "void", "int", "long", "double", "float", "boolean", "char",
+        "byte", "short", "null", "true", "false", "synchronized",
+        "volatile", "transient", "native", "strictfp", "assert"
+    ]
+
+    private static let cKeywords: [String] = [
+        "int", "long", "short", "char", "float", "double", "void",
+        "unsigned", "signed", "const", "static", "extern", "register",
+        "volatile", "auto", "inline", "restrict",
+        "if", "else", "for", "while", "do", "switch", "case", "default",
+        "break", "continue", "return", "goto",
+        "struct", "union", "enum", "typedef",
+        "sizeof", "NULL", "true", "false",
+        "#include", "#define", "#ifdef", "#ifndef", "#endif", "#pragma"
+    ]
+
+    private static let bashKeywords: [String] = [
+        "echo", "export", "source", "cd", "ls", "mkdir", "rm", "mv", "cp",
+        "cat", "grep", "sed", "awk", "find", "chmod", "chown", "sudo",
+        "if", "then", "else", "elif", "fi", "for", "while", "do", "done",
+        "case", "esac", "in", "function", "return", "exit", "local",
+        "read", "set", "unset", "shift", "trap", "exec", "eval",
+        "true", "false", "test", "kill", "sleep", "printf", "pwd"
+    ]
+
+    private static let sqlKeywords: [String] = [
+        "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "EXISTS",
+        "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE",
+        "CREATE", "TABLE", "ALTER", "DROP", "INDEX", "VIEW",
+        "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "OUTER", "ON",
+        "GROUP", "BY", "ORDER", "HAVING", "LIMIT", "OFFSET",
+        "AS", "DISTINCT", "ALL", "UNION", "INTERSECT", "EXCEPT",
+        "NULL", "IS", "LIKE", "BETWEEN", "CASE", "WHEN", "THEN", "ELSE", "END",
+        "PRIMARY", "KEY", "FOREIGN", "REFERENCES", "UNIQUE", "DEFAULT",
+        "NOT NULL", "AUTO_INCREMENT", "SERIAL", "RETURNING",
+        "BEGIN", "COMMIT", "ROLLBACK", "TRANSACTION",
+        "INT", "INTEGER", "VARCHAR", "TEXT", "BOOLEAN", "DATE", "TIMESTAMP", "FLOAT", "NUMERIC"
+    ]
+
+    // MARK: - Shared coloring primitives
+
+    /// Applies a color to all word-boundary-matched occurrences of `word`.
     ///
-    /// TEXTKIT-RANGE FIX: Range(range, in: attrStr) is guarded with optional binding.
-    /// String.Index and AttributedString.Index diverge on unicode (Cyrillic, emoji).
-    /// If conversion fails, coloring is skipped — no crash, no "bad range" warning.
-    private func applyColor(_ color: Color, toWord word: String, in attrStr: inout AttributedString) {
+    /// TEXTKIT-RANGE FIX: Range conversion guarded — skips on unicode mismatch.
+    private func applyColor(
+        _ color: Color,
+        toWord word: String,
+        in attrStr: inout AttributedString,
+        caseInsensitive: Bool = false
+    ) {
         let str = String(attrStr.characters)
         var searchRange = str.startIndex..<str.endIndex
+        let options: String.CompareOptions = caseInsensitive ? [.literal, .caseInsensitive] : [.literal]
 
-        while let range = str.range(of: word, options: .literal, range: searchRange) {
+        while let range = str.range(of: word, options: options, range: searchRange) {
+            // Word-boundary check: char before must not be letter/digit/underscore
             let isBoundedLeft = range.lowerBound == str.startIndex
                 || (!str[str.index(before: range.lowerBound)].isLetter
-                    && str[str.index(before: range.lowerBound)] != "_")
+                    && str[str.index(before: range.lowerBound)] != "_"
+                    && str[str.index(before: range.lowerBound)] != "@"
+                    && str[str.index(before: range.lowerBound)] != "#")
+            // Char after must not be letter/digit/underscore
             let isBoundedRight = range.upperBound == str.endIndex
                 || (!str[range.upperBound].isLetter
                     && str[range.upperBound] != "_"
@@ -928,16 +1187,16 @@ private struct SyntaxHighlightedText: View {
 
             if isBoundedLeft && isBoundedRight,
                let attrRange = Range(range, in: attrStr) {
-                // Guard: only apply if index conversion succeeded (unicode-safe)
                 attrStr[attrRange].foregroundColor = color
             }
             searchRange = range.upperBound..<str.endIndex
         }
     }
 
-    /// Highlights types (words starting with uppercase).
+    /// Highlights words starting with an uppercase letter as type names.
     ///
-    /// TEXTKIT-RANGE FIX: Range conversion guarded with optional binding.
+    /// Used for Swift, Kotlin, Java, Rust, Go — where types are PascalCase.
+    /// TEXTKIT-RANGE FIX: Range conversion guarded.
     private func applyTypeHighlighting(color: Color, in attrStr: inout AttributedString) {
         let str = String(attrStr.characters)
         var i = str.startIndex
@@ -952,44 +1211,52 @@ private struct SyntaxHighlightedText: View {
             }
             if str.distance(from: i, to: j) > 1,
                let attrRange = Range(i..<j, in: attrStr) {
-                // Guard: only apply if index conversion succeeded (unicode-safe)
                 attrStr[attrRange].foregroundColor = color
             }
             i = j < str.endIndex ? j : str.endIndex
         }
     }
 
-    /// Highlights string literals (in double quotes).
+    /// Highlights string literals in double quotes (and single quotes for JS/Python).
     ///
-    /// TEXTKIT-RANGE FIX: Range conversion guarded with optional binding.
+    /// Handles escape sequences (\") so a quote inside a string doesn't close it.
+    /// TEXTKIT-RANGE FIX: Range conversion guarded.
     private func applyStringHighlighting(color: Color, in attrStr: inout AttributedString) {
         let str = String(attrStr.characters)
-        var i = str.startIndex
-        var inString = false
-        var stringStart = str.startIndex
 
-        while i < str.endIndex {
-            if str[i] == "\"" && !inString {
-                inString = true
-                stringStart = i
-            } else if str[i] == "\"" && inString {
-                inString = false
-                let end = str.index(after: i)
-                if let attrRange = Range(stringStart..<end, in: attrStr) {
-                    // Guard: only apply if index conversion succeeded (unicode-safe)
-                    attrStr[attrRange].foregroundColor = color
+        // Highlight both double-quoted and single-quoted strings.
+        // Single-quote pass is needed for Python, JS, SQL.
+        for quote: Character in ["\"", "'"] {
+            var i = str.startIndex
+            var inString = false
+            var stringStart = str.startIndex
+
+            while i < str.endIndex {
+                if str[i] == quote && !inString {
+                    inString = true
+                    stringStart = i
+                } else if str[i] == quote && inString {
+                    inString = false
+                    let end = str.index(after: i)
+                    if let attrRange = Range(stringStart..<end, in: attrStr) {
+                        attrStr[attrRange].foregroundColor = color
+                    }
+                } else if str[i] == "\\" && inString {
+                    // Skip escaped character — don't let \" close the string
+                    i = str.index(after: i)
+                    if i >= str.endIndex { break }
+                } else if str[i] == "\n" && inString {
+                    // Unterminated string — reset on newline (safe fallback)
+                    inString = false
                 }
-            } else if str[i] == "\\" && inString {
                 i = str.index(after: i)
-                if i >= str.endIndex { break }
             }
-            i = str.index(after: i)
         }
     }
 
-    /// Highlights numeric literals.
+    /// Highlights numeric literals (integers, floats, hex 0x..., binary 0b...).
     ///
-    /// TEXTKIT-RANGE FIX: Range conversion guarded with optional binding.
+    /// TEXTKIT-RANGE FIX: Range conversion guarded.
     private func applyNumberHighlighting(color: Color, in attrStr: inout AttributedString) {
         let str = String(attrStr.characters)
         var i = str.startIndex
@@ -999,47 +1266,96 @@ private struct SyntaxHighlightedText: View {
                 i = str.index(after: i)
                 continue
             }
+            // Must not be preceded by a letter or underscore (e.g. "var1" → not a number)
             let isBoundedLeft = i == str.startIndex
                 || (!str[str.index(before: i)].isLetter && str[str.index(before: i)] != "_")
-            if !isBoundedLeft {
+            guard isBoundedLeft else {
                 i = str.index(after: i)
                 continue
             }
             var j = i
-            while j < str.endIndex && (str[j].isNumber || str[j] == "." || str[j] == "_") {
+            // Consume digits, dots, underscores, hex chars, x/b prefix chars
+            while j < str.endIndex
+                && (str[j].isNumber || str[j] == "." || str[j] == "_"
+                    || str[j] == "x" || str[j] == "b"
+                    || ("a"..."f").contains(str[j]) || ("A"..."F").contains(str[j])) {
                 j = str.index(after: j)
             }
             if let attrRange = Range(i..<j, in: attrStr) {
-                // Guard: only apply if index conversion succeeded (unicode-safe)
                 attrStr[attrRange].foregroundColor = color
             }
             i = j < str.endIndex ? j : str.endIndex
         }
     }
 
-    /// Highlights single-line comments (// ...).
+    /// Highlights single-line comments from `prefix` to end of line.
     ///
-    /// TEXTKIT-RANGE FIX: Range conversion guarded with optional binding.
-    private func applyCommentHighlighting(color: Color, in attrStr: inout AttributedString) {
+    /// Works for //, #, and -- comment styles.
+    /// TEXTKIT-RANGE FIX: Range conversion guarded.
+    private func applyLineCommentHighlighting(prefix: String, color: Color, in attrStr: inout AttributedString) {
         let str = String(attrStr.characters)
         var i = str.startIndex
 
         while i < str.endIndex {
-            guard i < str.index(before: str.endIndex) else { break }
-            let next = str.index(after: i)
-            if str[i] == "/" && str[next] == "/" {
-                var j = next
-                while j < str.endIndex && str[j] != "\n" {
-                    j = str.index(after: j)
+            // Check if current position starts with the comment prefix
+            guard str[i...].hasPrefix(prefix) else {
+                i = str.index(after: i)
+                continue
+            }
+            // Find end of line (or end of string)
+            var j = i
+            while j < str.endIndex && str[j] != "\n" {
+                j = str.index(after: j)
+            }
+            if let attrRange = Range(i..<j, in: attrStr) {
+                attrStr[attrRange].foregroundColor = color
+            }
+            // Continue after the newline
+            i = j < str.endIndex ? str.index(after: j) : str.endIndex
+        }
+    }
+
+    /// Highlights $VAR and ${VAR} bash variable references.
+    ///
+    /// TEXTKIT-RANGE FIX: Range conversion guarded.
+    private func applyBashVariables(color: Color, in attrStr: inout AttributedString) {
+        let str = String(attrStr.characters)
+        var i = str.startIndex
+
+        while i < str.endIndex {
+            guard str[i] == "$" else {
+                i = str.index(after: i)
+                continue
+            }
+            let dollarIdx = i
+            i = str.index(after: i)
+            guard i < str.endIndex else { break }
+
+            if str[i] == "{" {
+                // ${VARIABLE} — find closing }
+                i = str.index(after: i)
+                let start = dollarIdx
+                while i < str.endIndex && str[i] != "}" {
+                    i = str.index(after: i)
                 }
-                if let attrRange = Range(i..<j, in: attrStr) {
-                    // Guard: only apply if index conversion succeeded (unicode-safe)
+                if i < str.endIndex {
+                    let end = str.index(after: i)
+                    if let attrRange = Range(start..<end, in: attrStr) {
+                        attrStr[attrRange].foregroundColor = color
+                    }
+                    i = end
+                }
+            } else if str[i].isLetter || str[i] == "_" {
+                // $VARIABLE — consume letters, digits, underscores
+                let start = dollarIdx
+                while i < str.endIndex && (str[i].isLetter || str[i].isNumber || str[i] == "_") {
+                    i = str.index(after: i)
+                }
+                if let attrRange = Range(start..<i, in: attrStr) {
                     attrStr[attrRange].foregroundColor = color
                 }
-                i = j < str.endIndex ? str.index(after: j) : str.endIndex
-            } else {
-                i = str.index(after: i)
             }
+            // $0, $1, etc. (positional params) — treat as numbers, already handled
         }
     }
 }
@@ -1074,6 +1390,65 @@ private struct SyntaxHighlightedText: View {
         .padding()
     }
     .frame(width: 600, height: 600)
+    .background(Color(NSColor.windowBackgroundColor))
+    .preferredColorScheme(.dark)
+}
+
+#Preview("Multi-language highlighting — Dark") {
+    ScrollView {
+        VStack(alignment: .leading, spacing: 16) {
+            CodeBlockView(code: """
+            def greet(name: str) -> str:
+                # Say hello
+                return f"Hello, {name}!"
+
+            for i in range(10):
+                print(greet("World"))
+            """, language: "python")
+
+            CodeBlockView(code: """
+            const fetchUser = async (id: number): Promise<User> => {
+                // Load user from API
+                const res = await fetch(`/api/users/${id}`)
+                return res.json()
+            }
+            """, language: "typescript")
+
+            CodeBlockView(code: """
+            fn main() {
+                let mut v: Vec<i32> = Vec::new();
+                // Push some values
+                for i in 0..10 {
+                    v.push(i * 2);
+                }
+                println!("{:?}", v);
+            }
+            """, language: "rust")
+
+            CodeBlockView(code: """
+            #!/bin/bash
+            # Deploy script
+            export ENV=production
+            if [ "$1" == "--dry-run" ]; then
+                echo "Dry run mode"
+                exit 0
+            fi
+            cd /app && ./deploy.sh
+            """, language: "bash")
+
+            CodeBlockView(code: """
+            SELECT u.name, COUNT(o.id) AS orders
+            FROM users u
+            LEFT JOIN orders o ON o.user_id = u.id
+            WHERE u.active = true
+            GROUP BY u.name
+            ORDER BY orders DESC
+            LIMIT 10;
+            """, language: "sql")
+        }
+        .padding()
+    }
+    .frame(width: 650, height: 900)
     .background(Color(NSColor.windowBackgroundColor))
     .preferredColorScheme(.dark)
 }
