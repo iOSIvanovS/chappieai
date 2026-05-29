@@ -47,7 +47,8 @@ ChappieCore/
         ├── MigrationService.swift      # One-time migration: JSON files → SwiftData
         ├── ProjectStore.swift          # CRUD for ProjectEntity in SwiftData
         ├── ThreadStore.swift           # CRUD for ThreadEntity in SwiftData
-        └── ToolExecutionService.swift  # Dispatches tool calls from AIOrchestrator
+        ├── ToolExecutionService.swift  # Dispatches tool calls from AIOrchestrator
+        └── WebFetchService.swift       # Fetches web pages and extracts clean text
 ```
 
 ---
@@ -77,6 +78,7 @@ graph TD
         MemM["MemoryManager\nSemantic memory"]
         FSM["FileSystemManager\nSecure FS access"]
         MCP["MCPToolBridge\nUnix Socket client"]
+        WFS["WebFetchService\nHTTP page fetch + HTML strip"]
         Mig["MigrationService\nOne-time JSON→SwiftData"]
         CHM["ChatHistoryManager\nLegacy JSON (deprecated)"]
     end
@@ -98,6 +100,7 @@ graph TD
     TES --> MCP
     TES --> TS
     TES --> PS
+    TES --> WFS
 
     MemM --> MS
     MS --> SD
@@ -289,6 +292,7 @@ Dispatches tool calls from AIOrchestrator to concrete implementations.
 
 **Tool categories:**
 - File system: `read_file`, `write_file`, `delete_file`, `list_files`
+- Web: `web_fetch` — fetches a URL and returns clean stripped text (via WebFetchService)
 - Memory: `memorize`, `recall`, `search_memory`, `delete_memory`
 - Git (via MCP): `git_status`, `git_add`, `git_commit`, `git_log`, `git_reset`
 - Build (via MCP): `build_project`, `run_tests`, `read_build_log`
@@ -300,9 +304,36 @@ Dispatches tool calls from AIOrchestrator to concrete implementations.
 **Cyrillic barrier:** `containsCyrillic()` blocks Cyrillic in memory writes —
 all memory must be in English (global rule: memory_language_barrier).
 
+**WebFetchService injection:**
+`WebFetchService` is passed via `init(webFetch:)` — optional, defaults to `nil`.
+When `nil`, `web_fetch` tool returns a clear error. This keeps backward compatibility
+for test initializers that don't need web fetch.
+
 ---
 
-## 11. MigrationService (IT-04)
+## 11. WebFetchService (actor)
+
+Fetches public web pages and extracts meaningful plain text for the AI agent.
+
+```swift
+public actor WebFetchService {
+    public init(maxOutputLength: Int = 100_000, timeoutSeconds: TimeInterval = 30)
+    public func fetch(urlString: String, selector: String? = nil) async -> String
+}
+```
+
+**Design decisions:**
+- Foundation only — no external dependencies
+- Smart HTML stripping: removes nav/header/footer/aside/script/style, keeps main/article/p/headings
+- Optional CSS-like selector: filter by tag (`article`), `.class`, or `#id` before stripping
+- Size limit: 100,000 chars after strip; truncated from end with `[content truncated: N chars removed]`
+- Timeout: 30 seconds (configurable)
+- Encoding detection: Content-Type header → UTF-8 → ISO-8859-1 → lossy UTF-8
+- All errors return strings starting with `❌` — no throws, consistent with other tools
+
+---
+
+## 12. MigrationService (IT-04)
 
 One-time migration from JSON files to SwiftData.
 Flag stored in UserDefaults: `"migrationIT04Completed"`.
@@ -318,6 +349,7 @@ Flag stored in UserDefaults: `"migrationIT04Completed"`.
 
 | Date | Change |
 |------|--------|
+| 2026-05-29 | Web Fetch Tool ✅: WebFetchService added; registered in ToolExecutionService as web_fetch tool; injected via DI from ChappieViewModel |
 | 2026-07-XX | Added Mermaid architecture diagram (section 3) per new architecture file rules |
 | 2026-05-28 | IT-11 ✅: ThreadMetadata.settings field added; ThreadMetadata moved to ThreadModels.swift; ThreadStore.loadThreads() deserializes settingsJSON into metadata |
 | 2026-05-XX | IT-10 ✅: AIProviderStore, AIProviderEntity, AIProvider, per-thread provider/model selection |
