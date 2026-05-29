@@ -104,7 +104,7 @@ public enum GitAccessLevel: String, Codable, Sendable, CaseIterable {
     case none       // Git инструменты недоступны
     case statusOnly // Только git_status и git_log (чтение)
     case write      // status, log, add, commit, reset (без diff)
-    case full       // Все git инструменты (включая git_log, git_reset)
+    case full       // Все git инструменты включая revert и checkout
 
     public var displayName: String {
         switch self {
@@ -126,7 +126,9 @@ public enum GitAccessLevel: String, Codable, Sendable, CaseIterable {
         case .write:
             return ["git_status", "git_log", "git_add", "git_commit", "git_reset"]
         case .full:
-            return ["git_status", "git_log", "git_add", "git_commit", "git_reset"]
+            // git_revert and git_checkout — destructive rollback tools, require full access level.
+            return ["git_status", "git_log", "git_add", "git_commit", "git_reset",
+                    "git_revert", "git_checkout"]
         }
     }
 }
@@ -291,7 +293,7 @@ extension ProjectSettings {
     /// ## Project Settings: Chappie
     /// - Role: EXECUTOR
     /// - Programming project: yes
-    /// - Git access: write (add, commit, status, log, reset) [git_diff: FORBIDDEN]
+    /// - Git: full [git_add, git_commit, git_checkout, git_log, git_reset, git_revert, git_status] [git_diff: ALWAYS FORBIDDEN]
     /// - Tests: run + write
     /// - Architecture files: enabled (English)
     /// - Code comments: enabled (English)
