@@ -49,13 +49,19 @@ import ChappieCore
 // MARK: - ChipsRowLayout
 
 /// Two-column layout: right pill is measured first (intrinsic size),
-/// left pill gets the remaining width. This ensures FlowLayout inside
-/// the left pill always receives a finite maxWidth and can wrap correctly.
+/// left pill gets min(its intrinsic width, remaining width).
+///
+/// This makes the left pill compact when there is plenty of space
+/// (just like the "Модель" pill in ModelPickerRow), and only starts
+/// wrapping its chips when the window is narrow enough that the
+/// intrinsic width no longer fits.
 ///
 /// WHY NOT HStack + Spacer:
 ///   HStack offers each child its full available width independently,
 ///   so FlowLayout sees ∞ and never wraps.
-///   This custom Layout measures right child first, then constrains left.
+///   WHY NOT leftWidth = totalWidth - rightWidth - spacing:
+///   That forces the left pill to always fill all remaining space,
+///   stretching its background to the right pill — wrong.
 private struct ChipsRowLayout: Layout {
 
     var spacing: CGFloat = 8
@@ -67,16 +73,22 @@ private struct ChipsRowLayout: Layout {
     ) -> CGSize {
         guard subviews.count == 2 else { return .zero }
         let totalWidth = proposal.width ?? 0
-        let height = proposal.height
 
-        // Right pill: measure at its natural (unspecified) width
+        // Right pill: natural width
         let rightSize = subviews[1].sizeThatFits(.unspecified)
         let rightWidth = min(rightSize.width, totalWidth)
 
-        // Left pill: gets what's left after spacing and right pill
+        // Left pill: available space after right pill
         let leftAvailable = max(0, totalWidth - rightWidth - spacing)
+
+        // Measure left pill intrinsic width first (no constraint)
+        let leftIntrinsic = subviews[0].sizeThatFits(.unspecified)
+
+        // Left pill gets min(intrinsic, available) — compact when space allows,
+        // constrained (and wrapping) when window is narrow
+        let leftWidth = min(leftIntrinsic.width, leftAvailable)
         let leftSize = subviews[0].sizeThatFits(
-            ProposedViewSize(width: leftAvailable, height: height)
+            ProposedViewSize(width: leftWidth, height: nil)
         )
 
         let totalHeight = max(leftSize.height, rightSize.height)
@@ -104,8 +116,11 @@ private struct ChipsRowLayout: Layout {
             proposal: ProposedViewSize(width: rightWidth, height: nil)
         )
 
-        // Left pill: remaining width
-        let leftWidth = max(0, totalWidth - rightWidth - spacing)
+        // Left pill: min(intrinsic, available), placed at left edge
+        let leftAvailable = max(0, totalWidth - rightWidth - spacing)
+        let leftIntrinsic = subviews[0].sizeThatFits(.unspecified)
+        let leftWidth = min(leftIntrinsic.width, leftAvailable)
+
         subviews[0].place(
             at: CGPoint(x: bounds.minX, y: bounds.minY),
             anchor: .topLeading,
@@ -152,9 +167,8 @@ struct ProjectChipsView: View {
     // MARK: - Body
 
     var body: some View {
-        // ChipsRowLayout: left pill gets remaining width after right pill is placed.
-        // This is the key fix — FlowLayout inside the left pill now always receives
-        // a finite maxWidth and wraps correctly when the window is narrowed.
+        // ChipsRowLayout: left pill is compact (intrinsic size) when space allows,
+        // wraps chips only when the window is too narrow to fit them all.
         ChipsRowLayout(spacing: 8) {
 
             // Left: projects pill — wraps chips via FlowLayout
