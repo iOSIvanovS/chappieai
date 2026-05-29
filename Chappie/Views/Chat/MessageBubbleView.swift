@@ -50,11 +50,13 @@
 // Chappie: clean background with thin border, like macOS 26 cards — neutral
 // Both bubbles: cornerRadius 12, shadow 0.1 opacity — light, not aggressive
 //
-// IMAGE ATTACHMENT WIDTH FIX:
-// LazyVGrid with fixed-width columns was expanding the bubble to fit the grid width.
-// Fix: images are now rendered as a plain HStack with fixed 80×80 thumbnails,
-// wrapped in .fixedSize(horizontal: false, vertical: true) so the grid never
-// forces the bubble wider than its natural text content.
+// IMAGE WRAPPING FIX:
+// Images were in a plain HStack — no wrapping, forcing the bubble (and window) wide.
+// Fix: images now use FlowLayout just like file chips. The bubble itself gets
+// frame(maxWidth: bubbleMaxWidth) so FlowLayout receives a finite proposal width
+// and wraps thumbnails onto new rows when the window is narrow.
+// .fixedSize(horizontal: false) was the culprit — it fed width=nil to FlowLayout,
+// making it think it had infinite space and never wrap.
 //
 // FLOW LAYOUT (IT-14):
 // FlowLayout for file chips moved to Shared/FlowLayout.swift — shared with ProjectChipsView.
@@ -62,6 +64,10 @@
 
 import SwiftUI
 import QuickLook
+
+// Maximum bubble width as a fraction of available space.
+// 0.75 matches Telegram/iMessage: wide enough for long text, never full-width.
+private let bubbleMaxWidthFraction: CGFloat = 0.75
 
 /// Visual representation of a text message in the chat history.
 ///
@@ -77,15 +83,29 @@ struct MessageBubbleView: View {
         // IMPORTANT: pattern destructures ALL 6 fields of the .message case:
         //   id, isUser, text, cost, summary, attachments
         if case .message(_, let isUser, let text, let cost, _, let attachments) = msg {
-            messageBubble(isUser: isUser, text: text, cost: cost, attachments: attachments)
-                // APPEARANCE ANIMATION:
-                // .asymmetric: insertion — slide from bottom + fade, removal — fade only.
-                .transition(
-                    .asymmetric(
-                        insertion: .move(edge: .bottom).combined(with: .opacity),
-                        removal: .opacity
-                    )
+            // GeometryReader gives us the real available width so we can cap the bubble.
+            // Without this, FlowLayout inside AttachmentsView gets width=nil (infinite)
+            // and never wraps — the bubble stretches to fit all thumbnails in one row.
+            GeometryReader { geo in
+                messageBubble(
+                    isUser: isUser,
+                    text: text,
+                    cost: cost,
+                    attachments: attachments,
+                    maxBubbleWidth: geo.size.width * bubbleMaxWidthFraction
                 )
+            }
+            // GeometryReader is greedy — it takes all space. fixedSize(vertical) lets
+            // the row collapse to the bubble's natural height.
+            .fixedSize(horizontal: false, vertical: true)
+            // APPEARANCE ANIMATION:
+            // .asymmetric: insertion — slide from bottom + fade, removal — fade only.
+            .transition(
+                .asymmetric(
+                    insertion: .move(edge: .bottom).combined(with: .opacity),
+                    removal: .opacity
+                )
+            )
         }
     }
 
@@ -97,20 +117,19 @@ struct MessageBubbleView: View {
         isUser: Bool,
         text: String,
         cost: Double?,
-        attachments: [AttachedFile]
+        attachments: [AttachedFile],
+        maxBubbleWidth: CGFloat
     ) -> some View {
         HStack(alignment: .bottom, spacing: 8) {
             if isUser { Spacer(minLength: 40) }
 
             if isUser {
                 // USER BUBBLE
+                // frame(maxWidth:) caps the bubble AND gives FlowLayout a finite width
+                // so image thumbnails wrap correctly when the window is narrow.
                 VStack(alignment: .trailing, spacing: 6) {
-                    // Attachments above the text.
-                    // fixedSize(horizontal: false) prevents the attachment grid from
-                    // expanding the bubble beyond its natural text width.
                     if !attachments.isEmpty {
                         AttachmentsView(attachments: attachments, isUser: true)
-                            .fixedSize(horizontal: false, vertical: true)
                     }
                     if !text.isEmpty {
                         Text(text)
@@ -122,6 +141,7 @@ struct MessageBubbleView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
+                .frame(maxWidth: maxBubbleWidth, alignment: .trailing)
                 .background(Color.accentColor)
                 .clipShape(
                     UnevenRoundedRectangle(
@@ -135,10 +155,8 @@ struct MessageBubbleView: View {
                 // CHAPPIE BUBBLE
                 ZStack(alignment: .bottomTrailing) {
                     VStack(alignment: .leading, spacing: 6) {
-                        // Attachments above the text
                         if !attachments.isEmpty {
                             AttachmentsView(attachments: attachments, isUser: false)
-                                .fixedSize(horizontal: false, vertical: true)
                         }
                         if !text.isEmpty {
                             MarkdownTextView(text: text, fontSize: 14)
@@ -156,6 +174,7 @@ struct MessageBubbleView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
+                .frame(maxWidth: maxBubbleWidth, alignment: .leading)
                 .background(Color(NSColor.textBackgroundColor))
                 .clipShape(
                     UnevenRoundedRectangle(
@@ -186,13 +205,14 @@ struct MessageBubbleView: View {
 
 /// Renders a list of attachments: image thumbnails + file chips.
 ///
-/// Images are shown as a wrapping row of thumbnails (tap → full preview).
+/// Images are shown as a wrapping FlowLayout of thumbnails (tap → full preview).
 /// Non-image files are shown as compact chips with icon + filename.
 ///
-/// WHY NO LazyVGrid HERE:
-/// LazyVGrid with fixed columns forces itself to its declared width regardless of content.
-/// This was causing the user bubble to expand to fit the grid even when the text was short.
-/// Plain HStack wrapping is used instead — the bubble stays as wide as its content.
+/// WHY FlowLayout FOR IMAGES:
+/// Previously HStack was used — it never wraps, so 7 images = 7×80+6×6 = 596px minimum.
+/// FlowLayout wraps thumbnails onto new rows when the available width is exceeded.
+/// The parent bubble passes a finite maxWidth via frame(maxWidth:), so FlowLayout
+/// always receives a real proposal width and wraps correctly.
 private struct AttachmentsView: View {
 
     let attachments: [AttachedFile]
@@ -206,11 +226,10 @@ private struct AttachmentsView: View {
 
     var body: some View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
-            // IMAGE THUMBNAILS
-            // Rendered as a plain HStack — no LazyVGrid.
-            // Each thumbnail is 80×80; HStack wraps naturally without forcing bubble width.
+            // IMAGE THUMBNAILS — FlowLayout wraps onto new rows when width is exceeded.
+            // quickLookPreview must be on a container that holds all thumbnails.
             if !images.isEmpty {
-                HStack(spacing: 6) {
+                FlowLayout(spacing: 6) {
                     ForEach(images) { file in
                         ImageThumbnailView(file: file) {
                             previewURL = writeTempFile(file)
@@ -220,7 +239,7 @@ private struct AttachmentsView: View {
                 .quickLookPreview($previewURL)
             }
 
-            // FILE CHIPS — use shared FlowLayout from Shared/FlowLayout.swift
+            // FILE CHIPS — shared FlowLayout from Shared/FlowLayout.swift
             if !files.isEmpty {
                 FlowLayout(spacing: 6) {
                     ForEach(files) { file in
