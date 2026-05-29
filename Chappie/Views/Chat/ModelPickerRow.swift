@@ -20,8 +20,9 @@
 //   the row shows a warning style. User can pick a new provider+model inline.
 //
 // SOFT LOCK (IT-13):
-//   When isThinking == true the model picker button is disabled + dimmed (opacity 0.5).
-//   Prevents provider/model switching while AI is responding.
+//   When isThinking == true the model picker button is disabled.
+//   Tapping it triggers a spring-shake animation ("I don't want to be pressed!")
+//   instead of the old opacity(0.5) dimming — element stays fully visible.
 
 import SwiftUI
 import ChappieCore
@@ -81,7 +82,8 @@ struct ModelPickerRow: View {
                         .fill(Color(NSColor.controlBackgroundColor))
                 )
 
-            // Provider + model selector button — disabled while AI is thinking
+            // Provider + model selector button — disabled while AI is thinking.
+            // Shake animation fires on tap when locked (IT-13).
             Button {
                 showPopover.toggle()
             } label: {
@@ -118,8 +120,8 @@ struct ModelPickerRow: View {
             .fixedSize()
             // Soft lock: disable picker while AI is responding
             .disabled(isThinking)
-            .opacity(isThinking ? 0.5 : 1.0)
-            .animation(.easeInOut(duration: 0.2), value: isThinking)
+            // Shake on tap when locked — replaces old opacity(0.5) dimming
+            .shakeOnTap(isLocked: isThinking)
             .help(isThinking ? "Нельзя менять модель пока Чаппи думает" : "")
             .popover(isPresented: $showPopover, arrowEdge: .top) {
                 ModelPickerPopover(
