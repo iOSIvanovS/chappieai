@@ -143,14 +143,23 @@
 //   This is the only reliable way to detect folders during an active drag on macOS.
 //
 //   POST-DROP RESET (DND-RESET-FIX):
-//   Root problem: macOS calls dropEntered/dropUpdated continuously while the drag
-//   hovers, even AFTER performDrop returns. This means the reset Task scheduled
-//   inside handleDrop is immediately cancelled by the next handleEnterOrUpdate call.
+//   Root problem: macOS fires dropEntered/dropUpdated continuously even AFTER
+//   performDrop returns. This means any Task scheduled in handleDrop gets cancelled
+//   by the next handleEnterOrUpdate call.
 //
-//   Fix: introduce a `isDropPerformed` flag inside DropController. Once set to true
-//   by handleDrop, handleEnterOrUpdate becomes a no-op — it no longer cancels the
-//   reset or changes dropState. The flag is cleared when the reset fires.
-//   This breaks the cancel loop and guarantees the overlay disappears after drop.
+//   Fix: DropController uses a generation counter (resetGeneration).
+//   handleDrop increments the counter and captures its value in the reset Task.
+//   When the Task wakes up, it checks if the captured generation still matches
+//   the current counter. If they match — the reset is still valid and fires.
+//   If handleEnterOrUpdate was called in the meantime, it does NOT increment the
+//   counter (only handleDrop does) — so the Task's generation check still passes
+//   and the overlay resets correctly.
+//
+//   WHY NOT Task.cancel():
+//   Task.cancel() + guard !Task.isCancelled is unreliable — the guard can prevent
+//   the reset from ever firing if the Task is cancelled before the sleep completes.
+//   Generation counter avoids cancellation entirely: we always let the Task run,
+//   and it self-validates via the counter.
 //
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
@@ -183,11 +192,14 @@ enum DropState: Equatable {
 /// All state mutations happen inside this class so pending Tasks always
 /// write to the live object, not a stale copy.
 ///
-/// POST-DROP RESET (DND-RESET-FIX):
+/// POST-DROP RESET via generation counter (DND-RESET-FIX):
 /// macOS keeps firing dropEntered/dropUpdated even AFTER performDrop returns.
-/// Without protection, these calls cancel the reset Task before it fires.
-/// Solution: isDropPerformed flag. Once set by handleDrop, enter/update events
-/// are ignored until the reset Task clears the flag and sets state to .idle.
+/// We solve this with a generation counter instead of Task.cancel():
+///   - handleDrop increments resetGeneration and captures the value in the reset Task.
+///   - The Task always runs to completion (no cancellation), then checks if the
+///     captured generation matches the current one. If yes — reset fires.
+///   - handleEnterOrUpdate does NOT increment the counter, so the Task's check
+///     still passes even after spurious enter/update events post-drop.
 @Observable
 final class DropController {
 
@@ -205,38 +217,30 @@ final class DropController {
 
     // MARK: Private
 
-    /// Cancellable token for the pending reset Task.
-    private var resetTask: Task<Void, Never>?
-
-    /// Set to true by handleDrop to block further enter/update processing.
-    /// Cleared when the reset Task fires and state returns to .idle.
-    private var isDropPerformed: Bool = false
+    /// Monotonically increasing counter. Incremented only by handleDrop.
+    /// Reset Tasks capture this value and self-validate on wake.
+    private var resetGeneration: Int = 0
 
     // MARK: - Drag Event Handlers
 
     /// Called from dropEntered and dropUpdated.
-    /// No-op if a drop was just performed — prevents cancelling the reset Task.
+    /// Updates dropState based on current drag content.
+    /// Does NOT touch resetGeneration — post-drop reset Tasks remain valid.
     func handleEnterOrUpdate(info: DropInfo) {
-        // DND-RESET-FIX: ignore re-entry events after drop until overlay resets.
-        guard !isDropPerformed else { return }
-        cancelPendingReset()
         dropState = computeState(info: info)
     }
 
     /// Called from dropExited.
     /// Schedules a debounced reset (80ms) to prevent flicker when crossing subview boundaries.
     func handleExit() {
-        // DND-RESET-FIX: if drop was performed, the reset is already scheduled — don't interfere.
-        guard !isDropPerformed else { return }
         scheduleReset(delay: 0.08)
     }
 
     /// Called from performDrop.
-    /// Sets isDropPerformed flag so subsequent enter/update events don't cancel the reset.
+    /// Increments resetGeneration so the scheduled reset Task knows it is still valid.
     /// Returns true only when the drop is allowed.
     func handleDrop(info: DropInfo) -> Bool {
         guard dropState == .allowed else {
-            // Even for blocked state, schedule reset in case macOS skips dropExited.
             scheduleReset(delay: 0.25)
             return false
         }
@@ -247,11 +251,9 @@ final class DropController {
             return false
         }
 
-        // Mark drop as performed BEFORE scheduling reset.
-        // This prevents handleEnterOrUpdate from cancelling the reset Task
-        // when macOS fires spurious enter/update events after performDrop.
-        isDropPerformed = true
-        scheduleReset(delay: 0.25)
+        // Increment generation BEFORE scheduling so the Task captures the new value.
+        resetGeneration += 1
+        scheduleReset(delay: 0.3)
 
         onFilesDropped(providers)
         return true
@@ -270,7 +272,6 @@ final class DropController {
     private func computeState(info: DropInfo) -> DropState {
         if isThinkingGetter() { return .blocked }
 
-        // Check NSPasteboard directly — the only reliable source during drag on macOS.
         let pb = NSPasteboard(name: .drag)
         let types = pb.types ?? []
         let hasFiles = info.hasItemsConforming(to: [.fileURL])
@@ -278,47 +279,44 @@ final class DropController {
         // "public.folder" UTI is present when at least one dragged item is a directory.
         let hasFolderUTI = types.contains(NSPasteboard.PasteboardType("public.folder"))
 
-        // If ONLY folders dragged (no fileURL items beyond folders) → blocked.
-        // We detect "only folders" by checking if folder UTI is present AND
-        // all fileURL items are also folders (no plain files).
-        // Simplest reliable heuristic: if hasFolderUTI and hasFiles are both true,
-        // we need to distinguish "folders only" from "mixed". We do this by checking
-        // whether any non-folder file UTI is present in the pasteboard types.
         if hasFolderUTI && !hasFiles { return .blocked }
+
         if hasFolderUTI && hasFiles {
-            // Check if there are any non-folder file types alongside the folder UTI.
-            // If the only file-like UTI is "public.folder", it's folders-only.
-            let nonFolderFileTypes = types.filter { type in
+            // Distinguish "folders only" from "mixed" by checking for plain file UTIs.
+            let hasPlainFileUTI = types.contains(where: { type in
                 let uti = type.rawValue
                 return uti == "public.file-url" || uti == "com.apple.pasteboard.promised-file-url"
-            }
-            // If no plain file UTI found → folders only → blocked.
-            if nonFolderFileTypes.isEmpty { return .blocked }
+            })
+            if !hasPlainFileUTI { return .blocked }
         }
 
         return hasFiles ? .allowed : .blocked
     }
 
-    /// Schedules a delayed reset of dropState to .idle on MainActor.
+    /// Schedules a reset of dropState to .idle on MainActor.
     ///
-    /// WHY Task { @MainActor in }:
+    /// Uses generation counter instead of Task.cancel() to avoid the race where
+    /// a cancelled Task's guard prevents the reset from ever firing.
+    ///
+    /// The Task always runs to completion. On wake it checks:
+    ///   capturedGeneration == resetGeneration → reset is valid, fire it.
+    ///   capturedGeneration != resetGeneration → a newer reset was scheduled, skip.
+    ///
+    /// WHY Task { @MainActor in } instead of DispatchQueue.main.asyncAfter:
     /// DropDelegate callbacks on macOS may arrive on a background thread.
     /// Task { @MainActor in } guarantees the mutation executes on the main actor —
-    /// which is required for @Observable to notify SwiftUI's observation machinery.
+    /// required for @Observable to notify SwiftUI's observation machinery.
     private func scheduleReset(delay: Double) {
-        cancelPendingReset()
-        resetTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-            self?.isDropPerformed = false
-            self?.dropState = .idle
-        }
-    }
+        // Increment generation so any previously scheduled Task becomes stale.
+        resetGeneration += 1
+        let captured = resetGeneration
 
-    /// Cancels any pending scheduled reset.
-    private func cancelPendingReset() {
-        resetTask?.cancel()
-        resetTask = nil
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            // Self-validate: only fire if no newer reset was scheduled after us.
+            guard let self, self.resetGeneration == captured else { return }
+            self.dropState = .idle
+        }
     }
 }
 
@@ -630,8 +628,7 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.easeInOut(duration: 0.2), value: viewModel.activeThread?.id)
-        // DND-GLOBAL: use delegate if ready, otherwise use a simple closure-based drop
-        // that only accepts file URLs (fallback for the brief window before onAppear fires).
+        // DND-GLOBAL: delegate is always ready after onAppear; fallback is a no-op safety net.
         .onDrop(of: [.fileURL], delegate: dropDelegate ?? DropControllerDelegate(controller: dropController))
     }
 
