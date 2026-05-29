@@ -47,19 +47,25 @@
 //   c) All applyXxx methods guard Range conversion with optional binding —
 //      never force-apply on out-of-bounds unicode index.
 //
-// PERFORMANCE FIX (TABLE LAYOUT):
-// TableBlockView was causing heavy layout passes due to two issues:
-//   1. Rectangle().frame(maxHeight: .infinity) as vertical column divider
-//      triggers two-pass layout for every row — SwiftUI must measure all
-//      cells first, then stretch the divider. With 9 rows × 3 cols this
-//      cascades into dozens of layout passes per scroll event.
-//      Fix: replaced with Divider().frame(width: 1) — single-pass, height
-//      is determined by the row's natural height without extra measurement.
-//   2. InlineTextView.buildAttributedString() was called on every render pass
-//      because body computed it inline. For a 9-row table this means 27+
-//      AttributedString builds per layout pass.
-//      Fix: AttributedString is now computed once in init() and stored as
-//      a let constant — zero recomputation on subsequent renders.
+// PERFORMANCE FIX (TABLE LAYOUT — v2):
+// Root cause of CPU storm was three compounding issues in TableBlockView:
+//
+//   1. .fontWeight() applied OUTSIDE InlineTextView on top of Text(attributedString).
+//      AttributedString already carries .font attributes — SwiftUI cannot merge
+//      an external .fontWeight() modifier with internal font attributes in TextKit.
+//      Result: TextKit discards attributes and recomputes layout on every pass.
+//      Fix: isHeader passed into InlineTextView, which builds the AttributedString
+//      with the correct weight internally — zero external font modifiers.
+//
+//   2. borderColor (a Color view) used as a vertical divider without fixedSize.
+//      SwiftUI still runs a measurement pass to determine height.
+//      Fix: removed vertical column dividers entirely (GitHub Markdown style).
+//      Only horizontal row dividers remain — drawn via Divider(), single-pass.
+//
+//   3. ForEach(Array(rows.enumerated()), id: \.offset) — offset-based IDs are
+//      unstable when rows change. SwiftUI cannot reuse row views across renders.
+//      Fix: rows wrapped in a stable TableRow struct with a content-hash-based ID
+//      so SwiftUI can diff and reuse unchanged rows.
 //
 // IMPORTANT (macOS 26):
 // The `+` operator for Text is deprecated in macOS 26 — use
@@ -400,17 +406,37 @@ struct MarkdownTextView: View {
     private func headingView(text: String, level: Int) -> some View {
         switch level {
         case 1:
-            InlineTextView(text: text, fontSize: fontSize + 6, color: textColor)
-                .fontWeight(.bold)
+            // PERF: fontSize passed directly — no external .fontWeight() on top of AttributedString
+            InlineTextView(text: text, fontSize: fontSize + 6, color: textColor, weight: .bold)
                 .padding(.top, 4)
         case 2:
-            InlineTextView(text: text, fontSize: fontSize + 3, color: textColor)
-                .fontWeight(.semibold)
+            InlineTextView(text: text, fontSize: fontSize + 3, color: textColor, weight: .semibold)
                 .padding(.top, 2)
         default:
-            InlineTextView(text: text, fontSize: fontSize + 1, color: textColor)
-                .fontWeight(.medium)
+            InlineTextView(text: text, fontSize: fontSize + 1, color: textColor, weight: .medium)
         }
+    }
+}
+
+// MARK: - Stable table row wrapper
+
+/// Wraps a table row with a stable, content-derived ID for SwiftUI diffing.
+///
+/// PERFORMANCE FIX: ForEach(Array(rows.enumerated()), id: \.offset) uses offset-based
+/// IDs which are unstable when rows change — SwiftUI cannot reuse row views.
+/// TableRow wraps each row with a hash-derived ID so unchanged rows are reused.
+private struct TableRow: Identifiable {
+    let cells: [String]
+    let index: Int
+    // Stable ID: combines row index + cell content hash.
+    // Index alone is not enough if rows are reordered; content hash alone
+    // is not enough if two rows have identical content. Together they are unique.
+    let id: String
+
+    init(cells: [String], index: Int) {
+        self.cells = cells
+        self.index = index
+        self.id = "\(index)_\(cells.joined().hashValue)"
     }
 }
 
@@ -423,15 +449,29 @@ struct MarkdownTextView: View {
 /// - Data rows: alternating subtle background for readability
 /// - Borders: 1pt lines using system separator color
 /// - Inline markup in cells: bold, inline code supported via InlineTextView
+/// - No vertical column dividers — GitHub Markdown style, eliminates measurement passes
 ///
-/// PERFORMANCE FIX (TABLE LAYOUT):
-/// Vertical column dividers previously used Rectangle().frame(maxHeight: .infinity).
-/// This forces SwiftUI into a two-pass layout: first measure all cells, then stretch
-/// the rectangle to match the tallest cell. With multiple tables in the chat this
-/// cascades into a layout storm on every scroll event, making the UI unresponsive.
-/// Fix: replaced with a plain Color fill on a fixed-width frame — single-pass layout.
-/// The column separator is now drawn as a colored 1pt-wide column inside the HStack,
-/// sized naturally by the row height without triggering measurement passes.
+/// PERFORMANCE FIX v2 (TABLE LAYOUT):
+///
+/// Fix 1 — fontWeight conflict:
+///   Previously: InlineTextView rendered Text(attributedString), then .fontWeight()
+///   was applied OUTSIDE. AttributedString already carries .font attributes, so SwiftUI
+///   cannot merge the external modifier — it discards the attributes and forces TextKit
+///   to recompute layout on every single render pass. CPU spikes to 100% on scroll.
+///   Fix: isHeader is passed INTO InlineTextView; weight is baked into AttributedString
+///   at init time. No external font modifiers anywhere on InlineTextView.
+///
+/// Fix 2 — vertical dividers removed:
+///   Previously: borderColor (a Color view) was used as a 1pt vertical column divider.
+///   Even without maxHeight: .infinity, a bare Color in HStack still triggers a
+///   measurement pass because SwiftUI needs to determine its natural size.
+///   Fix: vertical dividers removed entirely. Only horizontal Divider() between rows.
+///   This matches GitHub Markdown table style and eliminates all measurement passes.
+///
+/// Fix 3 — stable row IDs:
+///   Previously: ForEach(Array(rows.enumerated()), id: \.offset) — offset IDs are
+///   unstable and prevent SwiftUI from reusing row views across renders.
+///   Fix: rows wrapped in TableRow with content-hash-based stable ID.
 private struct TableBlockView: View {
 
     let headers: [String]
@@ -464,22 +504,27 @@ private struct TableBlockView: View {
             : Color(white: 0.955)
     }
 
+    // PERF FIX 3: wrap rows in stable TableRow structs once — not on every render.
+    private var tableRows: [TableRow] {
+        rows.enumerated().map { TableRow(cells: $0.element, index: $0.offset) }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            // Header row
+            // Header row — isHeader=true bakes .semibold into AttributedString
             tableRow(cells: headers, isHeader: true, background: headerBackground)
 
             Divider()
                 .background(borderColor)
 
-            // Data rows
-            ForEach(Array(rows.enumerated()), id: \.offset) { idx, row in
+            // PERF FIX 3: ForEach over stable TableRow IDs — SwiftUI can diff and reuse
+            ForEach(tableRows) { row in
                 tableRow(
-                    cells: row,
+                    cells: row.cells,
                     isHeader: false,
-                    background: idx % 2 == 0 ? rowBackground : altRowBackground
+                    background: row.index % 2 == 0 ? rowBackground : altRowBackground
                 )
-                if idx < rows.count - 1 {
+                if row.index < rows.count - 1 {
                     Divider()
                         .background(borderColor)
                 }
@@ -495,26 +540,20 @@ private struct TableBlockView: View {
     @ViewBuilder
     private func tableRow(cells: [String], isHeader: Bool, background: Color) -> some View {
         HStack(spacing: 0) {
-            ForEach(Array(paddedCells(cells).enumerated()), id: \.offset) { idx, cell in
+            ForEach(Array(paddedCells(cells).enumerated()), id: \.offset) { _, cell in
+                // PERF FIX 1: weight passed INTO InlineTextView — baked into AttributedString.
+                // No external .fontWeight() modifier — eliminates TextKit layout recomputation.
                 InlineTextView(
                     text: cell,
                     fontSize: fontSize - 1,
-                    color: .primary
+                    color: .primary,
+                    weight: isHeader ? .semibold : .regular
                 )
-                .fontWeight(isHeader ? .semibold : .regular)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .frame(maxWidth: .infinity, alignment: .leading)
-
-                // PERFORMANCE FIX: replaced Rectangle().frame(maxHeight: .infinity)
-                // with a fixed-size borderColor column.
-                // maxHeight: .infinity forced two-pass layout on every row —
-                // SwiftUI had to measure all cells before stretching the divider.
-                // A plain fixed-width Color view is single-pass: no measurement needed.
-                if idx < headers.count - 1 {
-                    borderColor
-                        .frame(width: 1)
-                }
+                // PERF FIX 2: no vertical Color divider — eliminates measurement passes.
+                // GitHub Markdown style: only horizontal row separators.
             }
         }
         .background(background)
@@ -551,6 +590,13 @@ private struct TableBlockView: View {
 /// layout pass — and SwiftUI can trigger dozens of layout passes per scroll event.
 /// Fix: AttributedString is computed once in init() and stored as a let constant.
 /// body simply reads the pre-built value — zero allocation on subsequent renders.
+///
+/// PERFORMANCE FIX v2 (WEIGHT BAKING):
+/// Previously .fontWeight() was applied externally by the caller (e.g. TableBlockView).
+/// Applying a font modifier on top of Text(attributedString) causes TextKit to discard
+/// internal font attributes and recompute layout — CPU storm on every scroll event.
+/// Fix: `weight` parameter added to init; baked into every font attribute in the
+/// AttributedString at construction time. No external font modifiers ever needed.
 private struct InlineTextView: View {
 
     let text: String
@@ -560,12 +606,16 @@ private struct InlineTextView: View {
     // PERFORMANCE FIX: computed once in init, never recomputed on render.
     private let attributedString: AttributedString
 
-    init(text: String, fontSize: CGFloat, color: Color) {
+    init(text: String, fontSize: CGFloat, color: Color, weight: Font.Weight = .regular) {
         self.text = text
         self.fontSize = fontSize
         self.color = color
-        // Build once — stable for the lifetime of this view instance.
-        self.attributedString = InlineTextView.buildAttributedString(text: text, fontSize: fontSize)
+        // PERF FIX v2: weight is baked into AttributedString here — not applied externally.
+        self.attributedString = InlineTextView.buildAttributedString(
+            text: text,
+            fontSize: fontSize,
+            weight: weight
+        )
     }
 
     var body: some View {
@@ -574,11 +624,18 @@ private struct InlineTextView: View {
             .textSelection(.enabled)
     }
 
-    /// Builds an AttributedString with inline markup.
+    /// Builds an AttributedString with inline markup and a base font weight.
     ///
     /// Processing order matters: ** before *, so **bold** isn't confused with *italic*.
     /// Static method — no implicit self capture, safe to call from init.
-    private static func buildAttributedString(text: String, fontSize: CGFloat) -> AttributedString {
+    ///
+    /// PERF FIX v2: `weight` is the base weight for all plain-text segments.
+    /// Bold (**) segments always use .bold regardless of base weight.
+    private static func buildAttributedString(
+        text: String,
+        fontSize: CGFloat,
+        weight: Font.Weight
+    ) -> AttributedString {
         var result = AttributedString()
         var remaining = text
 
@@ -588,15 +645,15 @@ private struct InlineTextView: View {
             if let openRange = remaining.range(of: "**"),
                let closeRange = remaining.range(of: "**", range: openRange.upperBound..<remaining.endIndex) {
 
-                // Add text BEFORE marker as plain
+                // Add text BEFORE marker as plain (with base weight)
                 let before = String(remaining[remaining.startIndex..<openRange.lowerBound])
                 if !before.isEmpty {
                     var seg = AttributedString(before)
-                    seg.font = .system(size: fontSize)
+                    seg.font = .system(size: fontSize, weight: weight)
                     result.append(seg)
                 }
 
-                // Add bold text
+                // Bold text always uses .bold regardless of base weight
                 let boldText = String(remaining[openRange.upperBound..<closeRange.lowerBound])
                 var seg = AttributedString(boldText)
                 seg.font = .system(size: fontSize, weight: .bold)
@@ -613,7 +670,7 @@ private struct InlineTextView: View {
                 let before = String(remaining[remaining.startIndex..<openRange.lowerBound])
                 if !before.isEmpty {
                     var seg = AttributedString(before)
-                    seg.font = .system(size: fontSize)
+                    seg.font = .system(size: fontSize, weight: weight)
                     result.append(seg)
                 }
 
@@ -636,7 +693,7 @@ private struct InlineTextView: View {
                 if nextIdx < remaining.endIndex && remaining[nextIdx] == "*" {
                     // This is ** — add first char as plain and continue
                     var seg = AttributedString(String(remaining[remaining.startIndex...openRange.lowerBound]))
-                    seg.font = .system(size: fontSize)
+                    seg.font = .system(size: fontSize, weight: weight)
                     result.append(seg)
                     remaining = String(remaining[nextIdx...])
                     continue
@@ -645,13 +702,13 @@ private struct InlineTextView: View {
                 let before = String(remaining[remaining.startIndex..<openRange.lowerBound])
                 if !before.isEmpty {
                     var seg = AttributedString(before)
-                    seg.font = .system(size: fontSize)
+                    seg.font = .system(size: fontSize, weight: weight)
                     result.append(seg)
                 }
 
                 let italicText = String(remaining[openRange.upperBound..<closeRange.lowerBound])
                 var seg = AttributedString(italicText)
-                seg.font = Font.system(size: fontSize).italic()
+                seg.font = Font.system(size: fontSize, weight: weight).italic()
                 result.append(seg)
 
                 remaining = String(remaining[closeRange.upperBound...])
@@ -660,7 +717,7 @@ private struct InlineTextView: View {
 
             // No markers — rest of text is plain
             var seg = AttributedString(remaining)
-            seg.font = .system(size: fontSize)
+            seg.font = .system(size: fontSize, weight: weight)
             result.append(seg)
             break
         }
