@@ -119,26 +119,22 @@
 //
 // DRAG & DROP (DND-GLOBAL):
 //   attachments state lives in ContentView and is passed to InputMorphView via @Binding.
-//   The drop target is mainChatArea (the full app content area), NOT InputMorphView.
+//   The drop target covers mainChatArea (the full app content area).
 //   This lets the user drop files anywhere in the window — not just on the input panel.
 //
-//   WHY DropController (@Observable class) instead of ChappieDropDelegate (value type):
-//   ChappieDropDelegate was a struct (value type). Every time dropState changed, SwiftUI
-//   re-rendered ContentView and created a NEW delegate instance with fresh closures.
-//   Any DispatchWorkItem or @Binding captured by the old delegate became stale —
-//   writes from pending async blocks went to dead copies, so the overlay never cleared.
-//   DropController is a reference type (@Observable). It lives as @State in ContentView
-//   and is never recreated on re-renders. Its dropState property drives the overlay.
-//   The delegate is stored inside DropController as a regular property — not recreated.
+//   WHY DropController (@Observable class):
+//   DropDelegate is a value type. When it was a struct inside ContentView, every
+//   dropState change triggered a SwiftUI re-render which recreated the delegate —
+//   making all pending DispatchWorkItems and @Binding writes go to stale copies.
 //
-//   KEY DESIGN: DropController owns:
-//     - dropState: DropState  (read by ContentView overlay)
-//     - delegate: DropControllerDelegate  (passed to .onDrop once, stable reference)
-//     - pendingWork: DispatchWorkItem?  (debounce / post-drop reset)
-//   All state mutations happen inside DropController methods — no closures, no captures.
+//   DropController is a reference type (@Observable). Stored in ContentView @State,
+//   it is created ONCE and never recreated on re-renders.
+//   DropControllerDelegate is created with a direct reference to the controller.
+//   All state mutations happen inside the controller — no closures, no captures.
 //
-//   resolveDroppedFiles() runs URL resolution on a background Task, appends on @MainActor.
-//   Folders are silently skipped (isDirectory check inside resolveDroppedFiles).
+//   OVERLAY COLOR:
+//     .allowed → accent blue (valid files hovering)
+//     .blocked → red (AI is thinking OR only folders dropped)
 //
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
@@ -167,111 +163,80 @@ enum DropState: Equatable {
 
 /// Reference-type controller for global drag & drop.
 ///
-/// WHY A CLASS:
-/// DropDelegate is a value type. When it was a struct inside ContentView, every
-/// dropState change triggered a SwiftUI re-render which recreated the delegate —
-/// making all pending DispatchWorkItems and @Binding writes go to stale copies.
-///
-/// As an @Observable class stored in ContentView @State:
-///   - It is created ONCE and never recreated on re-renders.
-///   - dropState is a stored property — mutations are always live.
-///   - pendingWork is a stored property — cancel/schedule always hits the real item.
-///   - The inner DropControllerDelegate holds an unowned ref to the controller.
+/// Stored as @State in ContentView — created once, never recreated on re-renders.
+/// All state mutations happen inside this class so DispatchWorkItems always
+/// write to the live object, not a stale copy.
 @Observable
 final class DropController {
 
-    // MARK: - Public State (read by ContentView overlay)
+    // MARK: Public State (read by ContentView overlay via @Observable tracking)
 
     var dropState: DropState = .idle
 
-    // MARK: - Internal Delegate
+    // MARK: Callbacks (set once from ContentView.onAppear)
 
-    /// Stored as a regular property (not lazy) — @Observable does not support lazy var.
-    /// Created in init() after self is fully initialized.
-    let delegate: DropControllerDelegate
+    /// Returns true when AI is currently processing a request.
+    var isThinkingGetter: () -> Bool = { false }
 
-    // MARK: - Private
+    /// Called with resolved providers when a valid drop is performed.
+    var onFilesDropped: ([NSItemProvider]) -> Void = { _ in }
+
+    // MARK: Private
 
     private var pendingWork: DispatchWorkItem?
 
-    /// isThinking getter — set by ContentView so we always read the current value.
-    var isThinkingGetter: () -> Bool = { false }
-    /// Called when a valid drop is performed with the resolved providers.
-    var onDrop: ([NSItemProvider]) -> Void = { _ in }
+    // MARK: - Drag Event Handlers
 
-    // MARK: - Init
-
-    init() {
-        // Temporary placeholder — replaced immediately below.
-        // Swift requires all stored properties to be initialized before self can be used.
-        let placeholder = DropControllerDelegate.__placeholder
-        delegate = placeholder
-        // Now self is fully initialized — wire the real delegate.
-        delegate.controller = self
-    }
-
-    // MARK: - State Mutations
-
-    /// Called from dropEntered / dropUpdated: cancel pending reset and update state.
+    /// Called from dropEntered and dropUpdated.
+    /// Cancels any pending exit-reset and refreshes the overlay state.
     func handleEnterOrUpdate(info: DropInfo) {
         cancelPending()
-        updateState(info: info)
+        dropState = computeState(info: info)
     }
 
-    /// Called from dropExited: schedule debounced reset (80ms).
-    /// macOS fires dropExited + dropEntered on every subview boundary crossing.
-    /// The debounce prevents flickering — if dropEntered arrives within 80ms, the reset is cancelled.
+    /// Called from dropExited.
+    /// Schedules a debounced reset (80ms) to prevent flicker when crossing subview boundaries.
     func handleExit() {
-        schedulePending(delay: 0.08)
+        schedule(delay: 0.08)
     }
 
-    /// Called from performDrop: cancel pending exit, schedule post-drop reset (150ms).
-    /// macOS does NOT call dropExited after performDrop — we must reset manually.
-    /// 150ms safely outlasts the drag session teardown animation.
+    /// Called from performDrop.
+    /// Schedules a post-drop reset (200ms) — macOS does NOT call dropExited after performDrop.
+    /// Returns true only when the drop is allowed.
     func handleDrop(info: DropInfo) -> Bool {
+        // Always schedule reset — regardless of outcome
         cancelPending()
-        schedulePending(delay: 0.15)
+        schedule(delay: 0.20)
 
         guard dropState == .allowed else { return false }
+
         let providers = info.itemProviders(for: [.fileURL])
-        onDrop(providers)
+        guard !providers.isEmpty else { return false }
+
+        onFilesDropped(providers)
         return true
     }
 
     // MARK: - Private Helpers
 
-    /// Updates dropState based on current drag payload and isThinking.
-    private func updateState(info: DropInfo) {
-        guard !isThinkingGetter() else {
-            dropState = .blocked
-            return
-        }
-
-        // Read URLs from pasteboard synchronously — DropInfo has no sync URL API.
-        // We need to distinguish real files from directories before showing the overlay.
-        let pasteboard = NSPasteboard(name: .drag)
-        guard let items = pasteboard.pasteboardItems, !items.isEmpty else {
-            dropState = .blocked
-            return
-        }
-
-        let hasRegularFile = items.contains { item in
-            guard
-                let urlString = item.string(forType: .fileURL),
-                let url = URL(string: urlString)
-            else { return false }
-
-            var isDir: ObjCBool = false
-            let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
-            return exists && !isDir.boolValue
-        }
-
-        dropState = hasRegularFile ? .allowed : .blocked
+    /// Computes the drop state from the current drag info.
+    /// Uses DropInfo.hasItemsConforming — the only reliable sync API available during drag.
+    /// NSPasteboard(name: .drag) is intentionally avoided: it is unreliable during dropEntered
+    /// on macOS 13+ and may return stale or empty data before the drag session stabilises.
+    ///
+    /// Folder detection happens in resolveDroppedFiles() after the drop — not here.
+    /// WHY: there is no reliable sync way to check isDirectory during drag without
+    /// reading the pasteboard (which is broken). We show .allowed for all file URLs
+    /// and silently filter folders after the drop. The only .blocked case during drag
+    /// is when AI is thinking — that is the UX goal anyway.
+    private func computeState(info: DropInfo) -> DropState {
+        if isThinkingGetter() { return .blocked }
+        return info.hasItemsConforming(to: [.fileURL]) ? .allowed : .blocked
     }
 
     /// Schedules a delayed reset of dropState to .idle.
-    /// Any previously pending work is cancelled first (single slot).
-    private func schedulePending(delay: Double) {
+    /// Cancels any previously pending work first (single-slot pattern).
+    private func schedule(delay: Double) {
         cancelPending()
         let work = DispatchWorkItem { [weak self] in
             self?.dropState = .idle
@@ -290,20 +255,16 @@ final class DropController {
 // MARK: - DropControllerDelegate
 
 /// DropDelegate that forwards all calls to DropController.
-/// Holds a strong reference to the controller — lifetime is tied to ContentView @State.
 ///
-/// validateDrop always returns true — on macOS validateDrop fires BEFORE dropEntered.
-/// Returning false here would prevent dropEntered from ever being called.
+/// Created once inside ContentView.onAppear and passed to .onDrop — never recreated.
+/// Holds a strong reference to DropController (both live in ContentView @State).
 final class DropControllerDelegate: DropDelegate {
 
-    // Strong ref — controller owns delegate, delegate refs controller back.
-    // Both live inside ContentView @State so there is no retain cycle with the view.
-    var controller: DropController!
+    private let controller: DropController
 
-    // Placeholder instance used during DropController.init() two-phase setup.
-    static let __placeholder = DropControllerDelegate()
-
-    init() {}
+    init(controller: DropController) {
+        self.controller = controller
+    }
 
     func dropEntered(info: DropInfo) {
         controller.handleEnterOrUpdate(info: info)
@@ -311,6 +272,7 @@ final class DropControllerDelegate: DropDelegate {
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
         controller.handleEnterOrUpdate(info: info)
+        // Show forbidden cursor for blocked state — visual hint to user
         return controller.dropState == .blocked
             ? DropProposal(operation: .forbidden)
             : DropProposal(operation: .copy)
@@ -321,8 +283,9 @@ final class DropControllerDelegate: DropDelegate {
     }
 
     func validateDrop(info: DropInfo) -> Bool {
-        // Must always return true — validateDrop fires before dropEntered on macOS.
-        // Returning false here prevents the overlay from ever appearing.
+        // Always return true — on macOS validateDrop fires BEFORE dropEntered.
+        // Returning false here would prevent dropEntered from ever being called,
+        // so the overlay would never appear.
         return true
     }
 
@@ -345,13 +308,14 @@ struct ContentView: View {
     @State private var attachments: [AttachedFile] = []
 
     // DND-GLOBAL: DropController is a reference type — created once, never recreated on re-renders.
-    // This is the fix for the "overlay stuck" bug: value-type delegates captured stale @Binding
-    // copies on every re-render. DropController owns its state and is always the same object.
     @State private var dropController = DropController()
+
+    // DND-GLOBAL: delegate is created once in onAppear and stored here — never recreated.
+    // Stored as optional because we need dropController to be fully initialized first.
+    @State private var dropDelegate: DropControllerDelegate? = nil
 
     @State private var selectedProjectForSettings: ProjectMetadata? = nil
     /// Thread whose settings sheet is currently open.
-    /// Opened from sidebar context menu or ProjectChipsView gear chip.
     @State private var selectedThreadForSettings: ThreadMetadata? = nil
 
     // Heights reported by floating panels — used as transparent spacers in ChatScrollView.
@@ -360,9 +324,7 @@ struct ContentView: View {
 
     // Safe area top inset (= toolbar height).
     // Read via .background(GeometryReader) on ChatScrollView — NOT from a GeometryReader
-    // placed in the layout tree. A layout-tree GeometryReader is greedy in the horizontal
-    // axis even with .frame(height: 0), which prevents the window from being resized
-    // narrower than its initial width.
+    // placed in the layout tree to avoid horizontal greediness that prevents narrow windows.
     @State private var safeAreaTop: CGFloat = 0
 
     @Environment(\.modelContext) private var modelContext
@@ -386,13 +348,17 @@ struct ContentView: View {
         }
         .onAppear {
             viewModel.setModelContainer(modelContext.container)
-            // Wire DropController callbacks — done once here, not on every render.
-            dropController.isThinkingGetter = { viewModel.isThinking }
-            dropController.onDrop = resolveDroppedFiles
+
+            // Wire DropController callbacks — done once, not on every render.
+            dropController.isThinkingGetter = { [self] in viewModel.isThinking }
+            dropController.onFilesDropped = { [self] providers in
+                resolveDroppedFiles(providers)
+            }
+
+            // Create delegate once — it holds a stable reference to the controller.
+            dropDelegate = DropControllerDelegate(controller: dropController)
         }
-        .onChange(of: viewModel.providers.count) { _, newCount in
-            _ = newCount
-        }
+        .onChange(of: viewModel.providers.count) { _, _ in }
     }
 
     // MARK: - Main App Content
@@ -594,8 +560,9 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.easeInOut(duration: 0.2), value: viewModel.activeThread?.id)
-        // DND-GLOBAL: delegate is stored inside DropController — not recreated on re-renders.
-        .onDrop(of: [.fileURL], delegate: dropController.delegate)
+        // DND-GLOBAL: use delegate if ready, otherwise use a simple closure-based drop
+        // that only accepts file URLs (fallback for the brief window before onAppear fires).
+        .onDrop(of: [.fileURL], delegate: dropDelegate ?? DropControllerDelegate(controller: dropController))
     }
 
     // MARK: - Drop Overlay
@@ -744,7 +711,6 @@ struct ContentView: View {
     /// Directories are explicitly skipped — only regular files are accepted.
     private func resolveDroppedFiles(_ providers: [NSItemProvider]) {
         Task {
-            // Collect raw URLs from all providers first (background-safe)
             var urls: [URL] = []
             for provider in providers {
                 guard provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) else {
@@ -776,7 +742,7 @@ struct ContentView: View {
                 return exists && !isDir.boolValue
             }
 
-            // AttachedFile.load() is @MainActor — run on main actor with deduplication
+            // Load and append files on main actor with deduplication
             await MainActor.run {
                 let existingNames = Set(attachments.map(\.filename))
                 let newFiles = fileURLs
