@@ -2,50 +2,46 @@
 //  StatusBarView.swift
 //  Chappie
 //
-//  ПОЧЕМУ ЭТОТ ФАЙЛ СУЩЕСТВУЕТ:
-//  Раньше каждый вызов инструмента (read_file, write_file, memorize и т.д.)
-//  добавлял запись .toolCall в ленту чата. За один сложный запрос Чаппи может
-//  вызвать 20-50 инструментов — это засоряло ленту и создавало огромный список
-//  для рендера, что вызывало тормоза при ресайзе окна и поедало 200 МБ памяти.
+//  WHY THIS FILE EXISTS:
+//  Previously each tool call (read_file, write_file, memorize, etc.)
+//  added a .toolCall entry to the chat feed. One complex request may trigger
+//  20-50 tool calls — this polluted the feed and created a huge list to render,
+//  causing lag on window resize and eating 200 MB of memory.
 //
-//  РЕШЕНИЕ:
-//  Вместо записей в ленте — одна строка состояния между чатом и полем ввода.
-//  Она показывает ТЕКУЩИЙ вызов инструмента (один элемент, а не тысячи).
-//  Когда Чаппи заканчивает работу — строка плавно скрывается.
+//  SOLUTION:
+//  Instead of feed entries — a single status bar between the chat and input field.
+//  It shows the CURRENT tool call (one element, not thousands).
+//  When Chappie finishes — the bar smoothly hides.
 //
-//  ДИЗАЙН:
-//  Строка намеренно скромная: маленький шрифт, приглушённый цвет, иконка + текст.
-//  Она не должна отвлекать от диалога — это "подсказка о процессе", а не контент.
+//  DESIGN:
+//  The bar is intentionally subtle: small font, muted color, icon + text.
+//  It should not distract from the conversation — it's a "process hint", not content.
 
 import SwiftUI
 
-/// Строка состояния — показывает текущий вызов инструмента Чаппи.
+/// Status bar — shows the current Chappie tool call.
 ///
-/// Отображается только когда `toolCall != nil`, то есть пока Чаппи
-/// активно вызывает инструменты. Плавно появляется и исчезает через анимацию.
+/// Visible only when `toolCall != nil`, i.e. while Chappie is actively
+/// calling tools. Smoothly appears and disappears via animation.
 struct StatusBarView: View {
 
-    /// Текущая строка состояния вида "read_file → ContentView.swift"
-    /// nil = строка скрыта (Чаппи не работает или уже завершил)
+    /// Current status string like "read_file → ContentView.swift"
+    /// nil = bar is hidden (Chappie is idle or finished)
     let toolCall: String?
 
     var body: some View {
-        // Используем if let с анимацией через .transition — строка плавно
-        // появляется снизу и исчезает, не вызывая резкого сдвига layout-а.
+        // Using if let with animation via .transition — the bar smoothly
+        // slides in from the bottom and fades out without abrupt layout shifts.
         if let toolCall = toolCall {
             HStack(spacing: 6) {
-                // Иконка "шестерёнка в движении" — универсальный символ "работает"
-                Image(systemName: "gearshape.arrow.triangle.2.circlepath")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    // Вращение иконки — визуально подчёркивает что процесс идёт
-                    .symbolEffect(.rotate, options: .repeating)
+                // Spinning gear icon — universal "working" symbol
+                GearIconView()
 
-                // Текст вида "read_file → ContentView.swift"
+                // Text like "read_file → ContentView.swift"
                 Text(toolCall)
                     .font(.system(size: 11, weight: .regular, design: .monospaced))
                     .foregroundStyle(.secondary)
-                    // Если строка длинная — обрезаем в середине: сохраняем начало и конец
+                    // Long strings are truncated in the middle: preserves start and end
                     .lineLimit(1)
                     .truncationMode(.middle)
 
@@ -54,24 +50,51 @@ struct StatusBarView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 6)
             .background(
-                // Тонкая полупрозрачная полоска — не перекрывает фон,
-                // но визуально отделяет строку от чата и поля ввода
+                // Thin translucent strip — does not cover the background,
+                // but visually separates the bar from chat and input field
                 Color(NSColor.windowBackgroundColor).opacity(0.85)
             )
             .overlay(alignment: .top) {
-                // Тонкая разделительная линия сверху — отделяет от чата
+                // Thin separator line on top — separates from chat
                 Divider()
             }
-            // Плавное появление снизу — менее агрессивно чем .opacity,
-            // не вызывает layout-скачков у соседних компонентов
+            // Smooth slide-in from the bottom — less aggressive than .opacity,
+            // does not cause layout jumps in adjacent components
             .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+}
+
+// MARK: - Gear Icon
+
+/// Gear icon with rotation animation.
+/// Uses .rotate symbolEffect on macOS 15+, falls back to a simple opacity pulse on macOS 14.
+private struct GearIconView: View {
+    // Fallback animation state for macOS 14
+    @State private var pulsing = false
+
+    var body: some View {
+        if #available(macOS 15.0, *) {
+            Image(systemName: "gearshape.arrow.triangle.2.circlepath")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                // Rotation effect signals ongoing work — available macOS 15+
+                .symbolEffect(.rotate, options: .repeating)
+        } else {
+            // macOS 14 fallback: gentle opacity pulse instead of rotation
+            Image(systemName: "gearshape.arrow.triangle.2.circlepath")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .opacity(pulsing ? 0.4 : 1.0)
+                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulsing)
+                .onAppear { pulsing = true }
         }
     }
 }
 
 // MARK: - Preview
 
-#Preview("Активный вызов") {
+#Preview("Active call") {
     VStack {
         Spacer()
         StatusBarView(toolCall: "write_file → Chappie/Views/Chat/StatusBarView.swift")
@@ -79,7 +102,7 @@ struct StatusBarView: View {
     .frame(width: 600, height: 100)
 }
 
-#Preview("Длинный путь (обрезка)") {
+#Preview("Long path (truncation)") {
     VStack {
         Spacer()
         StatusBarView(toolCall: "read_file → ChappieCore/Sources/ChappieCore/Services/AIOrchestrator.swift")
@@ -87,7 +110,7 @@ struct StatusBarView: View {
     .frame(width: 400, height: 100)
 }
 
-#Preview("Скрытая (нет активности)") {
+#Preview("Hidden (no activity)") {
     VStack {
         Spacer()
         StatusBarView(toolCall: nil)

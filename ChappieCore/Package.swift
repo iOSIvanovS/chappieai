@@ -1,46 +1,47 @@
-// swift-tools-version: 6.3
-// Манифест Swift Package Manager для ChappieCore.
+// swift-tools-version: 6.0
+// Package manifest for ChappieCore.
 //
-// СТРУКТУРА ПАКЕТА:
-// - ChappieCore (library target) — основная бизнес-логика ИИ-ассистента
+// PACKAGE STRUCTURE:
+// - ChappieCore (library target) — core AI assistant business logic
 //
-// ПОЧЕМУ ОТДЕЛЬНЫЙ ПАКЕТ:
-// Разделение UI (Chappie.app) и бизнес-логики (ChappieCore) позволяет:
-// 1. Тестировать логику независимо от UI
-// 2. Переиспользовать ядро в других приложениях
-// 3. Чётко разграничить ответственность слоёв
+// WHY A SEPARATE PACKAGE:
+// Splitting UI (Chappie.app) and business logic (ChappieCore) allows:
+// 1. Testing logic independently of UI
+// 2. Reusing the core in other applications
+// 3. Clear separation of layer responsibilities
 //
-// ПОЧЕМУ ЗДЕСЬ НЕТ ТЕСТ-ТАРГЕТА:
-// Тесты ChappieCore живут в корневом таргете ChappieCoreTests/ проекта Chappie.xcodeproj
-// и запускаются через ChappieCoreTests.xctestplan (Xcode Test Plan).
-// Это единственный источник истины для тестов — дублирование в Package.swift
-// приводило к двум несинхронизированным наборам тестов, что создавало путаницу.
-// Правило: тесты пишутся в ChappieCoreTests/, запускаются через Xcode.
+// WHY NO TEST TARGET HERE:
+// ChappieCore tests live in the root ChappieCoreTests/ target of Chappie.xcodeproj
+// and are run via ChappieCoreTests.xctestplan (Xcode Test Plan).
+// This is the single source of truth for tests — duplicating in Package.swift
+// led to two unsynchronized test sets, causing confusion.
+// Rule: tests are written in ChappieCoreTests/, run through Xcode.
 
 import PackageDescription
 
 let package = Package(
     name: "ChappieCore",
     platforms: [
-        // macOS 26 — минимальная версия для поддержки Swift 6 Concurrency
-        // и новейших SwiftUI API, которые использует Chappie.app
-        .macOS(.v26)
+        // macOS 14 — minimum version to cover last 3 major macOS releases.
+        // SwiftData and @Observable are both available since macOS 14.
+        // swift-tools-version 6.0 supports macOS 14 as deployment target.
+        .macOS(.v14)
     ],
     products: [
-        // Библиотека экспортируется как dynamic/static (Xcode выбирает сам)
+        // Library exported as dynamic/static (Xcode decides)
         .library(
             name: "ChappieCore",
             targets: ["ChappieCore"]
         ),
     ],
     targets: [
-        // Основной таргет с исходным кодом
+        // Main target with source code
         .target(
             name: "ChappieCore"
         ),
-        // ТЕСТ-ТАРГЕТ УДАЛЁН НАМЕРЕННО.
-        // Все тесты живут в ChappieCoreTests/ и управляются через Xcode Test Plan.
-        // См. ChappieCoreTests.xctestplan в корне проекта.
+        // TEST TARGET INTENTIONALLY REMOVED.
+        // All tests live in ChappieCoreTests/ and are managed via Xcode Test Plan.
+        // See ChappieCoreTests.xctestplan in the project root.
     ],
     swiftLanguageModes: [.v6]
 )

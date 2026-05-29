@@ -413,6 +413,30 @@ struct ChappieTextEditorView: NSViewRepresentable {
     }
 }
 
+// MARK: - Thinking Gear Icon
+
+/// Spinning gear icon for the thinking state.
+/// Uses .rotate symbolEffect on macOS 15+, falls back to opacity pulse on macOS 14.
+private struct ThinkingGearIcon: View {
+    @State private var pulsing = false
+
+    var body: some View {
+        if #available(macOS 15.0, *) {
+            Image(systemName: "gearshape.arrow.triangle.2.circlepath")
+                .font(.system(size: 13))
+                // Rotation signals active processing — available macOS 15+
+                .symbolEffect(.rotate, options: .repeating)
+        } else {
+            // macOS 14 fallback: gentle opacity pulse
+            Image(systemName: "gearshape.arrow.triangle.2.circlepath")
+                .font(.system(size: 13))
+                .opacity(pulsing ? 0.4 : 1.0)
+                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulsing)
+                .onAppear { pulsing = true }
+        }
+    }
+}
+
 // MARK: - InputMorphView
 
 struct InputMorphView: View {
@@ -620,9 +644,8 @@ struct InputMorphView: View {
 
     private var thinkingView: some View {
         HStack(spacing: 12) {
-            Image(systemName: "gearshape.arrow.triangle.2.circlepath")
-                .font(.system(size: 13))
-                .symbolEffect(.rotate, options: .repeating)
+            // Animated gear icon — macOS 15+ uses .rotate, macOS 14 uses opacity pulse
+            ThinkingGearIcon()
 
             Text(currentToolCall ?? "Думаю…")
                 .font(.system(size: 12, weight: .regular, design: .monospaced))
