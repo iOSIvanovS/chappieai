@@ -24,6 +24,10 @@
 // currentRequestTask holds the active Task from send().
 // cancelCurrentRequest() cancels it — triggers CancellationError inside process().
 // AIOrchestrator propagates Swift structured concurrency cancellation automatically.
+// CANCEL STATE FIX: catch blocks for CancellationError/ChappieError.cancelled wrap
+// state resets in Task { @MainActor in } to guarantee UI updates on the main thread.
+// Without this, withAnimation{} called from a background thread is silently ignored
+// by SwiftUI — isThinking stays true and the input panel never morphs back to idle.
 //
 // LIVE BALANCE (UX-BALANCE-LIVE):
 // onBalanceUpdate callback passed to orchestrator.process() — fires after each streaming
@@ -1248,29 +1252,40 @@ final class ChappieViewModel {
                 }
 
             } catch is CancellationError {
+                // CANCEL STATE FIX: must dispatch to MainActor explicitly.
+                // currentRequestTask runs in an unstructured Task (no @MainActor isolation),
+                // so catch blocks execute on a background thread. withAnimation{} called
+                // from a background thread is silently ignored by SwiftUI — isThinking
+                // stays true and InputMorphView never morphs back to the idle state.
                 print("[ChappieViewModel] Request cancelled by user (CancellationError)")
-                withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
-                    self.streamingText = ""
-                    self.currentToolCall = nil
-                    self.isThinking = false
+                Task { @MainActor in
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+                        self.streamingText = ""
+                        self.currentToolCall = nil
+                        self.isThinking = false
+                    }
                 }
 
             } catch ChappieError.cancelled {
                 print("[ChappieViewModel] Request cancelled (URLError.cancelled)")
-                withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
-                    self.streamingText = ""
-                    self.currentToolCall = nil
-                    self.isThinking = false
+                Task { @MainActor in
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+                        self.streamingText = ""
+                        self.currentToolCall = nil
+                        self.isThinking = false
+                    }
                 }
 
             } catch {
-                withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
-                    self.streamingText = ""
-                    self.currentToolCall = nil
-                    self.isThinking = false
-                    let errMessage = ChatMessage.message(isUser: false, text: "Упс, ошибка: \(error.localizedDescription)")
-                    self.messages.append(errMessage)
-                    self.appendToDisplayed(errMessage)
+                Task { @MainActor in
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+                        self.streamingText = ""
+                        self.currentToolCall = nil
+                        self.isThinking = false
+                        let errMessage = ChatMessage.message(isUser: false, text: "Упс, ошибка: \(error.localizedDescription)")
+                        self.messages.append(errMessage)
+                        self.appendToDisplayed(errMessage)
+                    }
                 }
             }
 
