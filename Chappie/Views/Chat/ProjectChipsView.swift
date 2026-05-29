@@ -4,30 +4,25 @@
 // Floating pill row showing project chips for the current thread.
 // Chips wrap to new lines when the window is narrowed (FlowLayout).
 //
-// CHIP STYLE:
-//   Only the inner content gets ultraThinMaterial pill background.
-//   Consistent with ModelPickerRow and the bottom InputMorphView panel.
+// LAYOUT STRATEGY:
+//   Simple HStack mirroring ModelPickerRow:
+//     - Left pill: FlowLayout chips, NO frame(maxWidth: .infinity).
+//       fixedSize(horizontal: false, vertical: true) lets it shrink horizontally
+//       while still allowing FlowLayout to wrap vertically.
+//     - Spacer: pushes the two pills apart.
+//     - Right pill: fixedSize() — takes intrinsic width only.
 //
-// FLOW WRAPPING (IT-14):
-//   Project chips use FlowLayout — a custom Layout that packs items
-//   left-to-right and wraps to the next line when width is exceeded.
+//   WHY THIS WORKS:
+//     SwiftUI HStack first measures fixedSize children (right pill, Spacer min),
+//     then offers the remainder to the left pill. The left pill's FlowLayout
+//     receives a finite proposal and wraps correctly.
 //
-//   LAYOUT STRATEGY — explicit frame(maxWidth):
-//   The outer HStack is measured via a ZStack with a full-width Color.clear
-//   probe (background GeometryReader). The right pill declares .fixedSize()
-//   and its width is captured by another GeometryReader.
-//   Left pill receives frame(maxWidth: totalWidth - rightPillWidth - spacing)
-//   so FlowLayout always gets a finite proposal and wraps correctly.
-//
-//   WHY NOT layoutPriority:
-//     layoutPriority(1) does NOT cap the child's desired width — it only
-//     controls allocation order. FlowLayout.sizeThatFits with an unconstrained
-//     proposal returns single-row intrinsic width; SwiftUI uses that as the
-//     "desired" size, so the pill still fills all available space.
-//
-//   WHY NOT ChipsRowLayout (custom Layout):
-//     sizeThatFits(.unspecified) passes width=nil → FlowLayout sees ∞ → same
-//     single-row intrinsic result → same stretching.
+//   WHY GEOMETRY PROBES FAILED:
+//     ZStack + Color.clear GeometryReader on macOS does not reliably constrain
+//     the ZStack's own width — the ZStack has no external width constraint and
+//     collapses to content width, so the probe returns the content width, not
+//     the available width. This caused the left pill to always receive its
+//     intrinsic (single-row) width as the maxWidth cap.
 //
 // THREAD SETTINGS CHIP (IT-12):
 //   Right-side pill shows gear icon + thread name.
@@ -58,71 +53,43 @@ struct ProjectChipsView: View {
     let onOpenSettings: (UUID) -> Void
     let onOpenThreadSettings: () -> Void
 
-    // MARK: - Measurement state
+    // MARK: - State
 
     @State private var hoveredProjectId: UUID? = nil
-    /// Full available width of the row — measured via background probe.
-    @State private var totalWidth: CGFloat = 0
-    /// Intrinsic width of the right (gear) pill — measured via background probe.
-    @State private var rightPillWidth: CGFloat = 0
-
-    private let pillSpacing: CGFloat = 8
-
-    /// Max width for the left pill so FlowLayout receives a finite proposal.
-    private var leftMaxWidth: CGFloat {
-        guard totalWidth > 0, rightPillWidth > 0 else { return .infinity }
-        return max(60, totalWidth - rightPillWidth - pillSpacing)
-    }
 
     // MARK: - Body
 
     var body: some View {
-        // ZStack: bottom layer is an invisible full-width probe that measures totalWidth.
-        // Top layer is the real content — it does NOT affect the probe's sizing.
-        ZStack(alignment: .topLeading) {
+        HStack(alignment: .top, spacing: 8) {
 
-            // Invisible width probe — stretches to fill available width
-            Color.clear
-                .frame(maxWidth: .infinity, maxHeight: 1)
-                .background(
-                    GeometryReader { geo in
-                        Color.clear
-                            .onAppear { totalWidth = geo.size.width }
-                            .onChange(of: geo.size.width) { _, w in totalWidth = w }
-                    }
-                )
+            // LEFT pill: FlowLayout wrapping chips.
+            // fixedSize(horizontal: false, vertical: true) is key:
+            //   - horizontal: false → HStack is allowed to shrink this child
+            //   - vertical: true   → pill grows taller as chips wrap, never clips
+            leftPill
+                .fixedSize(horizontal: false, vertical: true)
 
-            // Real content row
-            HStack(alignment: .top, spacing: pillSpacing) {
+            Spacer(minLength: 0)
 
-                // LEFT pill: projects + FlowLayout wrapping
-                // frame(maxWidth:) gives FlowLayout a finite proposal → wraps correctly.
-                FlowLayout(spacing: 6) {
-                    projectsLabel
-                    ForEach(projects) { project in
-                        projectChip(for: project)
-                    }
-                    addButton
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(.ultraThinMaterial)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .frame(maxWidth: leftMaxWidth, alignment: .leading)
-
-                Spacer(minLength: 0)
-
-                // RIGHT pill: gear + thread name — intrinsic size only
-                threadSettingsButton
-                    .background(
-                        GeometryReader { geo in
-                            Color.clear
-                                .onAppear { rightPillWidth = geo.size.width }
-                                .onChange(of: geo.size.width) { _, w in rightPillWidth = w }
-                        }
-                    )
-            }
+            // RIGHT pill: gear + thread name — intrinsic width only.
+            threadSettingsButton
         }
+    }
+
+    // MARK: - Left Pill
+
+    private var leftPill: some View {
+        FlowLayout(spacing: 6) {
+            projectsLabel
+            ForEach(projects) { project in
+                projectChip(for: project)
+            }
+            addButton
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     // MARK: - "Проекты" label
