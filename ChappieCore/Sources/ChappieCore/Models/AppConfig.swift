@@ -27,6 +27,10 @@
 //
 // - Range extended: 10...100 → 10...1000
 //   isUnlimitedContext flag added: when true, all limits are set to Int.max.
+//
+// - stallTimeoutSeconds added (STALL-WATCHDOG):
+//   60-second silence detector for streaming. If no tokens arrive for 60s mid-stream,
+//   the stream is cancelled and AIOrchestrator retries with a continuation prompt.
 
 import Foundation
 
@@ -124,6 +128,27 @@ public struct AppConfig: Codable, Equatable, Sendable {
     /// If connection is not established in 30 seconds — clear network issue.
     public let connectionTimeoutSeconds: TimeInterval
 
+    /// Stall timeout for streaming in seconds (STALL-WATCHDOG).
+    ///
+    /// WHY 60 SECONDS:
+    /// AI models can "think" for 10-20 seconds between tokens during complex reasoning.
+    /// 60 seconds of complete silence is a reliable signal that the stream has stalled —
+    /// not that the model is thinking. This threshold is safe for even the slowest models.
+    ///
+    /// When stall is detected:
+    /// 1. The stream is cancelled via Task cancellation.
+    /// 2. AIOrchestrator retries with a continuation prompt (up to maxStallRetries times).
+    /// 3. The partial response is preserved and the model is asked to continue from there.
+    public let stallTimeoutSeconds: TimeInterval
+
+    /// Maximum number of stall-triggered retries per orchestrator step (STALL-WATCHDOG).
+    ///
+    /// WHY 2:
+    /// One retry is usually enough. Two retries handle transient network hiccups.
+    /// After 2 retries we give up and throw an error — infinite retry loops are worse
+    /// than a clear error message.
+    public let maxStallRetries: Int
+
     // MARK: - Initialization
 
     /// Creates the default config (20 messages, 10,000 tokens).
@@ -138,6 +163,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
         self.summaryThreshold        = 200
         self.requestTimeoutSeconds   = 300
         self.connectionTimeoutSeconds = 30
+        self.stallTimeoutSeconds     = 60
+        self.maxStallRetries         = 2
     }
 
     /// Creates a config from thread settings.
@@ -159,6 +186,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
         self.summaryThreshold        = 200
         self.requestTimeoutSeconds   = 300
         self.connectionTimeoutSeconds = 30
+        self.stallTimeoutSeconds     = 60
+        self.maxStallRetries         = 2
 
         if settings.isUnlimitedContext {
             // No trimming — send everything to the model
@@ -187,5 +216,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         self.summaryThreshold        = 200
         self.requestTimeoutSeconds   = 300
         self.connectionTimeoutSeconds = 30
+        self.stallTimeoutSeconds     = 60
+        self.maxStallRetries         = 2
     }
 }

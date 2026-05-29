@@ -110,6 +110,16 @@
 //     AIMessage(role: "user", content: prompt). This allows multimodal content
 //     (images, files) to be passed correctly as OpenAI vision array format.
 //     buildContextWindow() deduplication updated to handle multimodal messages.
+//
+// 25. STALL-WATCHDOG (STALL-WATCHDOG):
+//     streamRequestWithTools() in AIClient detects 60-second silence mid-stream
+//     and throws StallError(partialText:) instead of hanging for 5 minutes.
+//     AIOrchestrator catches StallError and performs a continuation retry:
+//     - Partial assistant text is added to sessionHistory as a partial message.
+//     - A continuation prompt is injected: "Continue from where you left off."
+//     - The step retries up to config.maxStallRetries times (default: 2).
+//     - If all retries are exhausted, ChappieError.networkError is thrown.
+//     This ensures long-running tasks survive transient network hiccups seamlessly.
 
 import Foundation
 
@@ -345,11 +355,14 @@ public actor AIOrchestrator {
     /// When provided, it replaces the default AIMessage(role: "user", content: prompt).
     /// The `prompt` string is still used for context window deduplication and token estimation.
     ///
+    /// STALL-WATCHDOG:
+    /// Each call to streamRequestWithTools() is wrapped in a stall retry loop.
+    /// On StallError: partial text is preserved in sessionHistory as a partial assistant message,
+    /// a continuation prompt is appended, and the step retries (up to maxStallRetries times).
+    ///
     /// - Parameters:
     ///   - prompt: Text of the user's message (used for deduplication and token budget).
     ///   - currentMessage: Optional pre-built AIMessage for the current turn.
-    ///     Pass this when the message contains multimodal content (images, files).
-    ///     When nil — AIMessage(role: "user", content: prompt) is used.
     ///   - onCostUpdate: Called after each step with cumulative cost in RUB.
     ///   - onBalanceUpdate: Called after each step that returns a balance from the provider.
     public func process(
@@ -388,10 +401,13 @@ public actor AIOrchestrator {
 
             let tools = await toolService.availableTools
 
-            let streamResult = try await aiClient.streamRequestWithTools(
+            // STALL-WATCHDOG: wrap each step in a stall retry loop.
+            // On StallError: inject partial text + continuation prompt, then retry.
+            let streamResult = try await streamWithStallRetry(
                 systemPrompt: systemPrompt,
-                chatHistory: sessionHistory,
+                sessionHistory: sessionHistory,
                 tools: tools,
+                config: config,
                 onToken: onToken
             )
 
@@ -439,6 +455,96 @@ public actor AIOrchestrator {
             "Orchestrator step limit exceeded (maxOrchestratorSteps = \(maxSteps)). " +
             "Loop artificially stopped. Increase AppConfig.maxOrchestratorSteps if needed."
         )
+    }
+
+    // MARK: - Private: Stall Retry Wrapper
+
+    /// Wraps a single streamRequestWithTools() call with stall detection and continuation retry.
+    ///
+    /// STALL RECOVERY FLOW:
+    /// 1. AIClient throws StallError(partialText:) after stallTimeout seconds of silence.
+    /// 2. We append the partial assistant message to a LOCAL copy of sessionHistory.
+    /// 3. We append a user continuation message: "Continue from where you left off."
+    /// 4. We retry the stream with this extended history (model sees its own partial output).
+    /// 5. The model continues seamlessly from the interruption point.
+    /// 6. After maxStallRetries exhausted — throw a clear network error.
+    ///
+    /// WHY LOCAL HISTORY COPY:
+    /// We don't mutate the caller's sessionHistory here — the caller appends the FINAL
+    /// assembled message after this function returns. This keeps the control flow clean.
+    private func streamWithStallRetry(
+        systemPrompt: String,
+        sessionHistory: [AIMessage],
+        tools: [AITool],
+        config: AppConfig,
+        onToken: (@Sendable (String) -> Void)?
+    ) async throws -> AIStreamResult {
+
+        var retryHistory = sessionHistory
+        var stallRetryCount = 0
+        var accumulatedPartialText = ""
+
+        while true {
+            do {
+                let result = try await aiClient.streamRequestWithTools(
+                    systemPrompt: systemPrompt,
+                    chatHistory: retryHistory,
+                    tools: tools,
+                    stallTimeout: config.stallTimeoutSeconds,
+                    onToken: onToken
+                )
+
+                // Success — if we had partial text from previous stall attempts,
+                // prepend it to the result so the caller gets the full assembled response.
+                if accumulatedPartialText.isEmpty {
+                    return result
+                } else {
+                    let fullText = accumulatedPartialText + result.text
+                    return AIStreamResult(
+                        text: fullText,
+                        toolCalls: result.toolCalls,
+                        cost: result.cost,
+                        balance: result.balance
+                    )
+                }
+
+            } catch let stallError as StallError {
+                stallRetryCount += 1
+
+                print("[AIOrchestrator] Stall retry \(stallRetryCount)/\(config.maxStallRetries). Partial: \(stallError.partialText.count) chars.")
+
+                if stallRetryCount > config.maxStallRetries {
+                    throw ChappieError.networkError(
+                        "Stream stalled \(config.maxStallRetries) times in a row. " +
+                        "The provider may be overloaded. Please try again."
+                    )
+                }
+
+                // Preserve partial text from this stall attempt
+                accumulatedPartialText += stallError.partialText
+
+                // Inject partial assistant message + continuation prompt into local history.
+                // The model will see its own partial output and continue from there.
+                if !stallError.partialText.isEmpty {
+                    let partialAssistant = AIMessage(
+                        role: "assistant",
+                        content: stallError.partialText
+                    )
+                    retryHistory.append(partialAssistant)
+                }
+
+                let continuationPrompt = AIMessage(
+                    role: "user",
+                    content: "[SYSTEM: Your previous response was interrupted by a network stall. " +
+                             "Continue EXACTLY from where you left off. " +
+                             "Do NOT repeat what you already wrote. " +
+                             "Do NOT add any preamble. Just continue the response.]"
+                )
+                retryHistory.append(continuationPrompt)
+
+                print("[AIOrchestrator] Retrying with continuation prompt. History: \(retryHistory.count) msgs.")
+            }
+        }
     }
 
     // MARK: - Smart Context Window

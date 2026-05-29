@@ -16,8 +16,35 @@
 // BACKWARD COMPATIBILITY:
 // AIOrchestrator now takes AIClient instead of AITunnelClient.
 // ChappieViewModel creates AIClient from the active AIProvider + selected model.
+//
+// STALL-WATCHDOG (STALL-WATCHDOG):
+// streamRequestWithTools() launches a child Task for the stream loop.
+// A StallWatchdog actor monitors token arrival. If no token arrives within
+// stallTimeout seconds — it cancels the child Task.
+// The outer function distinguishes stall from user-cancel via StallWatchdog.isStalled
+// and throws StallError so AIOrchestrator can perform a continuation retry.
 
 import Foundation
+
+// MARK: - StallError
+
+/// Thrown by streamRequestWithTools() when no tokens arrive within stallTimeout seconds.
+///
+/// Distinct from CancellationError (user cancel) and URLError (network failure).
+/// AIOrchestrator catches this specifically to perform a continuation retry.
+public struct StallError: Error, Sendable {
+    /// How many seconds of silence triggered the stall.
+    public let stallSeconds: TimeInterval
+    /// Partial text accumulated before the stall.
+    public let partialText: String
+
+    public init(stallSeconds: TimeInterval, partialText: String) {
+        self.stallSeconds = stallSeconds
+        self.partialText = partialText
+    }
+}
+
+// MARK: - AIClient
 
 /// Universal streaming AI client for OpenAI-compatible endpoints.
 ///
@@ -203,11 +230,24 @@ public struct AIClient: Sendable {
     // MARK: - Public API: Streaming request with tools (primary method)
 
     /// Sends a streaming request with tool call support.
+    ///
     /// Returns AIStreamResult with accumulated text + tool calls + cost info.
+    ///
+    /// STALL-WATCHDOG:
+    /// The stream loop runs in a child Task. A StallWatchdog actor tracks token arrival.
+    /// On each received token, reset() is called. If no token arrives within stallTimeout
+    /// seconds, the watchdog cancels the child Task and sets isStalled = true.
+    /// The outer function checks isStalled to distinguish stall from user cancellation,
+    /// then throws StallError(partialText:) so AIOrchestrator can do a continuation retry.
+    ///
+    /// - Parameters:
+    ///   - stallTimeout: Seconds of silence before declaring a stall.
+    ///     Default: AppConfig.shared.stallTimeoutSeconds (60s).
     public func streamRequestWithTools(
         systemPrompt: String,
         chatHistory: [AIMessage],
         tools: [AITool],
+        stallTimeout: TimeInterval = AppConfig.shared.stallTimeoutSeconds,
         onToken: (@Sendable (String) -> Void)? = nil
     ) async throws -> AIStreamResult {
 
@@ -235,13 +275,27 @@ public struct AIClient: Sendable {
 
         try validateHTTPResponse(response, data: nil)
 
-        var accumulatedText = ""
-        var toolCallBuffers: [Int: (id: String, name: String, arguments: String)] = [:]
-        var finalCost: Double? = nil
-        var finalBalance: Double? = nil
+        // Shared mutable state for the stream loop — wrapped in a class for reference semantics.
+        // This is safe: only the stream child Task writes to it, the outer scope reads after await.
+        final class StreamState: @unchecked Sendable {
+            var accumulatedText = ""
+            var toolCallBuffers: [Int: (id: String, name: String, arguments: String)] = [:]
+            var finalCost: Double? = nil
+            var finalBalance: Double? = nil
+        }
+        let state = StreamState()
 
-        do {
+        // STALL-WATCHDOG: actor tracks silence; cancels the child Task on timeout.
+        let watchdog = StallWatchdog(timeout: stallTimeout)
+
+        // Run the stream loop in a child Task so the watchdog can cancel it externally.
+        let streamTask = Task {
+            await watchdog.start()
+
             for try await line in asyncBytes.lines {
+                // Each received line resets the stall timer.
+                await watchdog.reset()
+
                 guard !line.isEmpty, line.hasPrefix("data: ") else { continue }
 
                 let jsonString = String(line.dropFirst(6))
@@ -253,8 +307,8 @@ public struct AIClient: Sendable {
                 }
 
                 if let usage = chunk.usage {
-                    finalCost = usage.cost_rub
-                    finalBalance = usage.balance
+                    state.finalCost = usage.cost_rub
+                    state.finalBalance = usage.balance
                     logCacheStats(usage: usage)
                 }
 
@@ -262,7 +316,7 @@ public struct AIClient: Sendable {
                 let delta = choice.delta
 
                 if let token = delta.content, !token.isEmpty {
-                    accumulatedText += token
+                    state.accumulatedText += token
                     onToken?(token)
                 }
 
@@ -270,28 +324,48 @@ public struct AIClient: Sendable {
                     for streamToolCall in streamToolCalls {
                         let idx = streamToolCall.index
 
-                        if var existing = toolCallBuffers[idx] {
+                        if var existing = state.toolCallBuffers[idx] {
                             if let argChunk = streamToolCall.function?.arguments {
                                 existing.arguments += argChunk
-                                toolCallBuffers[idx] = existing
+                                state.toolCallBuffers[idx] = existing
                             }
                         } else {
                             let id = streamToolCall.id ?? "call_\(idx)"
                             let name = streamToolCall.function?.name ?? ""
                             let args = streamToolCall.function?.arguments ?? ""
-                            toolCallBuffers[idx] = (id: id, name: name, arguments: args)
+                            state.toolCallBuffers[idx] = (id: id, name: name, arguments: args)
                         }
                     }
                 }
             }
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch let urlError as URLError where urlError.code == .cancelled {
-            throw ChappieError.cancelled
+
+            // Stream finished normally — disarm the watchdog.
+            await watchdog.stop()
         }
 
-        let assembledToolCalls: [AIToolCall]? = toolCallBuffers.isEmpty ? nil :
-            toolCallBuffers.sorted(by: { $0.key < $1.key }).compactMap { (_, buffer) in
+        // Wait for the stream Task to finish (success or cancellation).
+        do {
+            try await streamTask.value
+        } catch is CancellationError {
+            // Check whether the cancellation came from the watchdog (stall) or from outside (user).
+            if await watchdog.isStalled {
+                print("[AIClient] Stall detected after \(stallTimeout)s. Partial: \(state.accumulatedText.count) chars.")
+                throw StallError(stallSeconds: stallTimeout, partialText: state.accumulatedText)
+            }
+            throw CancellationError()
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            if await watchdog.isStalled {
+                print("[AIClient] Stall detected (URLError.cancelled). Partial: \(state.accumulatedText.count) chars.")
+                throw StallError(stallSeconds: stallTimeout, partialText: state.accumulatedText)
+            }
+            throw ChappieError.cancelled
+        } catch {
+            // Any other error from the stream loop — propagate as-is.
+            throw error
+        }
+
+        let assembledToolCalls: [AIToolCall]? = state.toolCallBuffers.isEmpty ? nil :
+            state.toolCallBuffers.sorted(by: { $0.key < $1.key }).compactMap { (_, buffer) in
                 guard !buffer.name.isEmpty else { return nil }
                 return AIToolCall(
                     id: buffer.id,
@@ -301,10 +375,10 @@ public struct AIClient: Sendable {
             }
 
         return AIStreamResult(
-            text: accumulatedText,
+            text: state.accumulatedText,
             toolCalls: assembledToolCalls,
-            cost: finalCost,
-            balance: finalBalance
+            cost: state.finalCost,
+            balance: state.finalBalance
         )
     }
 
@@ -486,6 +560,77 @@ public struct AIClient: Sendable {
             return try JSONDecoder().decode(AITunnelResponse.self, from: data)
         } catch {
             throw ChappieError.parsingError("Failed to decode model response: \(error.localizedDescription)")
+        }
+    }
+}
+
+// MARK: - StallWatchdog
+
+/// Actor that monitors streaming silence and cancels a provided Task after a timeout.
+///
+/// DESIGN:
+/// - start() launches a background sleep Task.
+/// - reset() cancels the current sleep and starts a new one — called on each received token.
+/// - stop() cancels the watchdog without marking as stalled (normal stream completion).
+/// - isStalled is set to true only when the watchdog fires (not when stopped normally).
+///
+/// WHY ACTOR:
+/// The watchdog task and the stream child Task run concurrently. Actor isolation prevents
+/// data races on currentTask and isStalled.
+///
+/// CANCELLATION FLOW:
+/// 1. Watchdog timer fires → isStalled = true → cancels the provided streamTask.
+/// 2. Stream loop receives CancellationError.
+/// 3. streamRequestWithTools() checks watchdog.isStalled → throws StallError.
+/// 4. AIOrchestrator catches StallError → performs continuation retry.
+private actor StallWatchdog {
+    private let timeout: TimeInterval
+    private var timerTask: Task<Void, Never>?
+    private var streamTask: Task<Void, any Error>?
+
+    /// True only when the watchdog fired due to silence (not stopped normally).
+    private(set) var isStalled: Bool = false
+
+    init(timeout: TimeInterval) {
+        self.timeout = timeout
+    }
+
+    /// Registers the stream Task to cancel on stall, then starts the timer.
+    func start(cancelling task: Task<Void, any Error>) {
+        self.streamTask = task
+        scheduleTimer()
+    }
+
+    /// Convenience start without pre-registering a task (task set separately via start(cancelling:)).
+    func start() {
+        scheduleTimer()
+    }
+
+    /// Resets the stall timer. Call this on every received streaming token.
+    func reset() {
+        timerTask?.cancel()
+        scheduleTimer()
+    }
+
+    /// Stops the watchdog without triggering a stall (normal stream completion).
+    func stop() {
+        timerTask?.cancel()
+        timerTask = nil
+    }
+
+    // MARK: - Private
+
+    private func scheduleTimer() {
+        timerTask = Task { [timeout] in
+            do {
+                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                // Timer fired without being reset — stream has stalled.
+                isStalled = true
+                streamTask?.cancel()
+                print("[StallWatchdog] Stall detected after \(timeout)s of silence.")
+            } catch {
+                // Timer was cancelled via reset() or stop() — normal operation.
+            }
         }
     }
 }
