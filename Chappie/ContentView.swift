@@ -152,6 +152,15 @@
 //   from folders we read NSPasteboard directly and check isDirectory on each URL.
 //   If ALL resolved URLs are directories → state becomes .blocked (red overlay).
 //
+//   KEY BUG FIX — overlay flickers when cursor crosses child view boundaries:
+//   macOS fires dropExited + dropEntered every time the cursor crosses a subview boundary
+//   inside the drop zone. Without debouncing, this causes a brief .idle flash between
+//   .allowed states — visible as a flicker. Solution: dropExited schedules a delayed
+//   reset (exitDebounceWork) via a DispatchWorkItem stored in ContentView @State.
+//   dropEntered and dropUpdated cancel the pending reset immediately, so the overlay
+//   stays visible during normal in-window movement. The reset only fires if the cursor
+//   truly leaves the window (no new enter/update within 80ms).
+//
 //   resolveDroppedFiles() runs URL resolution on a background Task, appends on @MainActor.
 //   Folders are silently skipped (isDirectory check inside resolveDroppedFiles).
 //
@@ -189,6 +198,10 @@ private enum DropState: Equatable {
 ///
 /// isThinking is read via a closure (not captured by value) so it always reflects
 /// the current ViewModel state even if the delegate was created before it changed.
+///
+/// exitDebounce is a closure that schedules/cancels the delayed .idle reset.
+/// It lives in ContentView @State (not here) because ChappieDropDelegate is a value type
+/// and cannot own a DispatchWorkItem across re-renders.
 private struct ChappieDropDelegate: DropDelegate {
 
     /// Written by this delegate, read by the overlay to pick its color.
@@ -197,14 +210,22 @@ private struct ChappieDropDelegate: DropDelegate {
     let isThinkingGetter: () -> Bool
     /// Called when a valid drop is performed.
     let onDrop: ([NSItemProvider]) -> Void
+    /// Schedule a debounced .idle reset — called from dropExited.
+    let scheduleExit: () -> Void
+    /// Cancel any pending .idle reset — called from dropEntered / dropUpdated.
+    let cancelExit: () -> Void
 
     // MARK: - DropDelegate
 
     func dropEntered(info: DropInfo) {
+        // Cancel any pending exit reset — cursor is still inside the window
+        cancelExit()
         updateState(info: info)
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
+        // Cancel any pending exit reset — cursor moved but is still inside
+        cancelExit()
         updateState(info: info)
         // Show forbidden cursor when blocked — purely cosmetic, does not gate performDrop
         return dropState == .blocked
@@ -213,8 +234,11 @@ private struct ChappieDropDelegate: DropDelegate {
     }
 
     func dropExited(info: DropInfo) {
-        // User dragged out of the window without dropping — reset immediately
-        dropState = .idle
+        // Schedule a delayed reset instead of resetting immediately.
+        // macOS fires dropExited + dropEntered when cursor crosses a subview boundary,
+        // which without debouncing causes a brief .idle flash (visible flicker).
+        // If a new dropEntered arrives within 80ms, cancelExit() will abort this reset.
+        scheduleExit()
     }
 
     func validateDrop(info: DropInfo) -> Bool {
@@ -226,6 +250,9 @@ private struct ChappieDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
+        // Cancel any pending debounced exit — we handle the reset ourselves here
+        cancelExit()
+
         // BUG FIX: macOS does NOT call dropExited after a successful performDrop.
         // defer {} fires synchronously before return, but SwiftUI batches updates.
         // Using async ensures the overlay disappears in the next runloop pass,
@@ -293,6 +320,10 @@ struct ContentView: View {
     @State private var attachments: [AttachedFile] = []
     // Current drag state — drives overlay color (idle / allowed / blocked).
     @State private var dropState: DropState = .idle
+    // Debounce work item for dropExited — prevents flicker when cursor crosses subview boundaries.
+    // Stored here (not in ChappieDropDelegate) because the delegate is a value type and cannot
+    // own a DispatchWorkItem across re-renders.
+    @State private var exitDebounceWork: DispatchWorkItem? = nil
 
     @State private var selectedProjectForSettings: ProjectMetadata? = nil
     /// Thread whose settings sheet is currently open.
@@ -538,14 +569,39 @@ struct ContentView: View {
         .animation(.easeInOut(duration: 0.2), value: viewModel.activeThread?.id)
         // DND-GLOBAL: ChappieDropDelegate handles validation and color signaling.
         // isThinking is passed as a closure so the delegate always reads the live value.
+        // scheduleExit / cancelExit manage debounced .idle reset to prevent flicker.
         .onDrop(
             of: [.fileURL],
             delegate: ChappieDropDelegate(
                 dropState: $dropState,
                 isThinkingGetter: { viewModel.isThinking },
-                onDrop: resolveDroppedFiles
+                onDrop: resolveDroppedFiles,
+                scheduleExit: scheduleDropExit,
+                cancelExit: cancelDropExit
             )
         )
+    }
+
+    // MARK: - Drop Exit Debounce
+
+    /// Schedules a delayed reset of dropState to .idle.
+    /// Called from dropExited — gives 80ms for a new dropEntered to cancel it.
+    /// 80ms is imperceptible to the user but long enough to survive subview-boundary
+    /// crossing, which typically fires exit+enter within a single frame (~16ms).
+    private func scheduleDropExit() {
+        let work = DispatchWorkItem {
+            dropState = .idle
+        }
+        exitDebounceWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: work)
+    }
+
+    /// Cancels any pending debounced exit reset.
+    /// Called from dropEntered and dropUpdated so the overlay stays visible
+    /// while the cursor is still inside the window.
+    private func cancelDropExit() {
+        exitDebounceWork?.cancel()
+        exitDebounceWork = nil
     }
 
     // MARK: - Drop Overlay
