@@ -31,6 +31,11 @@
 // - stallTimeoutSeconds added (STALL-WATCHDOG):
 //   60-second silence detector for streaming. If no tokens arrive for 60s mid-stream,
 //   the stream is cancelled and AIOrchestrator retries with a continuation prompt.
+//
+// - stallTimeoutSeconds: 60 → 180 (3 minutes)
+//   Reason: claude-sonnet-4.6 with large context (40+ messages) can silently "think"
+//   for 60+ seconds before emitting the first token. 60s was too aggressive and caused
+//   false stall detections. 180s is safe even for the slowest reasoning passes.
 
 import Foundation
 
@@ -130,10 +135,11 @@ public struct AppConfig: Codable, Equatable, Sendable {
 
     /// Stall timeout for streaming in seconds (STALL-WATCHDOG).
     ///
-    /// WHY 60 SECONDS:
-    /// AI models can "think" for 10-20 seconds between tokens during complex reasoning.
-    /// 60 seconds of complete silence is a reliable signal that the stream has stalled —
-    /// not that the model is thinking. This threshold is safe for even the slowest models.
+    /// WHY 180 SECONDS (3 minutes):
+    /// AI models can "think" for 60+ seconds between tokens during complex reasoning,
+    /// especially claude-sonnet-4.6 with large context (40+ messages).
+    /// 60s was too aggressive — caused false stall detections on legitimate slow responses.
+    /// 180s is safe even for the slowest reasoning passes while still catching real stalls.
     ///
     /// When stall is detected:
     /// 1. The stream is cancelled via Task cancellation.
@@ -163,7 +169,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         self.summaryThreshold        = 200
         self.requestTimeoutSeconds   = 300
         self.connectionTimeoutSeconds = 30
-        self.stallTimeoutSeconds     = 60
+        self.stallTimeoutSeconds     = 180
         self.maxStallRetries         = 2
     }
 
@@ -186,7 +192,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         self.summaryThreshold        = 200
         self.requestTimeoutSeconds   = 300
         self.connectionTimeoutSeconds = 30
-        self.stallTimeoutSeconds     = 60
+        self.stallTimeoutSeconds     = 180
         self.maxStallRetries         = 2
 
         if settings.isUnlimitedContext {
@@ -216,7 +222,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         self.summaryThreshold        = 200
         self.requestTimeoutSeconds   = 300
         self.connectionTimeoutSeconds = 30
-        self.stallTimeoutSeconds     = 60
+        self.stallTimeoutSeconds     = 180
         self.maxStallRetries         = 2
     }
 }

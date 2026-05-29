@@ -1,102 +1,102 @@
 // ToolExecutionService.swift
 // ChappieCore
 //
-// ЗАЧЕМ ЭТОТ ФАЙЛ:
-// Сервис выполнения инструментов ИИ-агента. Принимает вызов функции от модели,
-// парсит аргументы и выполняет действие: файловая система, память или MCP-сервер.
+// WHY THIS FILE:
+// AI agent tool execution service. Receives a function call from the model,
+// parses arguments and executes the action: file system, memory or MCP server.
 //
-// АРХИТЕКТУРА MCP-СОЕДИНЕНИЯ:
-// MCPToolBridge создаётся с явным socketPath, который передаётся через init().
+// MCP CONNECTION ARCHITECTURE:
+// MCPToolBridge is created with an explicit socketPath passed through init().
 //
-// ПОЧЕМУ socketPath ПРИХОДИТ СНАРУЖИ, А НЕ ХАРДКОДИТСЯ:
-// Путь к Unix Domain Socket вычисляется MCPHelperLauncher в Chappie.app через
-// FileManager.default.temporaryDirectory — это путь ВНУТРИ sandbox-контейнера.
-// ChappieCore — отдельный Swift Package, он не имеет доступа к MCPHelperLauncher.
-// Поэтому путь передаётся через DI: Chappie.app знает путь → передаёт в ToolExecutionService.
+// WHY socketPath COMES FROM OUTSIDE, NOT HARDCODED:
+// The Unix Domain Socket path is computed by MCPHelperLauncher in Chappie.app via
+// FileManager.default.temporaryDirectory — a path INSIDE the sandbox container.
+// ChappieCore is a separate Swift Package with no access to MCPHelperLauncher.
+// So the path is injected via DI: Chappie.app knows the path → passes it to ToolExecutionService.
 //
-// АРХИТЕКТУРНОЕ РЕШЕНИЕ — МОНОФИЗИТНАЯ АРХИТЕКТУРА:
-// После перехода к монофизитной архитектуре (один агент — Чаппи)
-// инструмент `delegate_task` был полностью удалён. apiKey тоже не нужен —
-// никаких саб-агентов нет.
+// ARCHITECTURAL DECISION — MONOPHYSITE ARCHITECTURE:
+// After switching to monophysite architecture (one agent — Chappie)
+// the `delegate_task` tool was fully removed. apiKey is also not needed —
+// there are no sub-agents.
 //
-// АРХИТЕКТУРНОЕ РЕШЕНИЕ — ИНСТРУМЕНТЫ УПРАВЛЕНИЯ ПРОЕКТАМИ (IT-07):
-// Инструменты add_project_to_thread и remove_project_from_thread позволяют Чаппи
-// самостоятельно управлять проектами в активном треде в процессе разговора.
+// ARCHITECTURAL DECISION — PROJECT MANAGEMENT TOOLS (IT-07):
+// Tools add_project_to_thread and remove_project_from_thread allow Chappie
+// to manage projects in the active thread during conversation.
 //
-// АРХИТЕКТУРНОЕ РЕШЕНИЕ — ТРЁХУРОВНЕВАЯ ПАМЯТЬ (IT-08):
-// Инструменты memorize/recall/search_memory/delete_memory работают с UUID-based scope:
-//   - scope="global"       → глобальная память (всегда доступна)
-//   - scope="thread"       → память активного треда (UUID из ActiveMemoryContext.threadId)
-//   - targetName="Chappie" → память проекта "Chappie" (UUID из ActiveMemoryContext.projects)
+// ARCHITECTURAL DECISION — THREE-LEVEL MEMORY (IT-08):
+// Tools memorize/recall/search_memory/delete_memory work with UUID-based scope:
+//   - scope="global"       → global memory (always available)
+//   - scope="thread"       → active thread memory (UUID from ActiveMemoryContext.threadId)
+//   - targetName="Chappie" → project memory "Chappie" (UUID from ActiveMemoryContext.projects)
 //
-// МАППИНГ SCOPE (IT-08):
-// resolveScope() преобразует (scope, targetName) → строку scope для MemoryManager:
+// SCOPE MAPPING (IT-08):
+// resolveScope() maps (scope, targetName) → scope string for MemoryManager:
 //   - ("global", _)          → "global"
-//   - ("thread", _)          → UUID активного треда
-//   - (_, "Chappie")         → UUID проекта "Chappie" среди прикреплённых
-//   - неизвестный scope      → "global" (безопасный дефолт)
+//   - ("thread", _)          → active thread UUID
+//   - (_, "Chappie")         → UUID of project "Chappie" among attached ones
+//   - unknown scope          → "global" (safe default)
 //
-// РАЗРЕШЕНИЕ КОНФЛИКТОВ (IT-08):
-// Если targetName указан, но такого проекта нет в треде — возвращаем ошибку.
-// Чаппи должен сначала добавить проект через add_project_to_thread.
+// CONFLICT RESOLUTION (IT-08):
+// If targetName is specified but no such project is in the thread — return error.
+// Chappie must first add the project via add_project_to_thread.
 //
-// АРХИТЕКТУРНОЕ РЕШЕНИЕ — ПРОВЕРКА ПРАВ (IT-09):
-// execute() проверяет права агента из ProjectSettings ПЕРЕД выполнением инструментов.
-// Логика проверки:
-//   1. PROJECT GUARD: файловые/git/build инструменты требуют привязанного проекта.
-//   2. ADVISOR GUARD: инструменты записи заблокированы для роли .advisor.
-//   3. GIT GUARD: git инструменты проверяются против GitAccessLevel.allowedTools.
-//      git_diff ВСЕГДА заблокирован — железный запрет независимо от настроек.
-//   4. TESTS GUARD: run_tests/build_project проверяются против TestsAccessLevel.
-//   5. ARCHITECTURE GUARD: write_file для architecture.md проверяется architectureEnabled.
+// ARCHITECTURAL DECISION — ACCESS CONTROL (IT-09):
+// execute() checks agent rights from ProjectSettings BEFORE executing tools.
+// Check logic:
+//   1. PROJECT GUARD: file/git/build tools require an attached project.
+//   2. ADVISOR GUARD: write tools are blocked for .advisor role.
+//   3. GIT GUARD: git tools are checked against GitAccessLevel.allowedTools.
+//      git_diff is ALWAYS blocked — iron prohibition regardless of settings.
+//   4. TESTS GUARD: run_tests/build_project are checked against TestsAccessLevel.
+//   5. ARCHITECTURE GUARD: write_file for architecture.md checks architectureEnabled.
 //
-// ОПРЕДЕЛЕНИЕ НАСТРОЕК ПРОЕКТА (IT-09):
-// Настройки берутся из activeMemoryContext.projects — первого проекта в треде.
-// Если проектов несколько — используем настройки первого (самого "главного").
-// Это упрощение для MVP; в будущем можно добавить per-project routing.
+// PROJECT SETTINGS RESOLUTION (IT-09):
+// Settings are taken from activeMemoryContext.projects — first project in thread.
+// If multiple projects — use settings of first (the "main" one).
+// Simplification for MVP; per-project routing can be added later.
 //
-// ПРОБЛЕМА ЗАВИСИМОСТЕЙ:
-// ToolExecutionService живёт в ChappieCore, а ProjectStore/ThreadStore тоже в ChappieCore,
-// но создаются и управляются из Chappie.app (ChappieViewModel).
-// Прямая ссылка ToolExecutionService → ThreadStore/ProjectStore создала бы циклическую
-// зависимость через ViewModel и нарушила бы принцип инверсии зависимостей.
+// DEPENDENCY PROBLEM:
+// ToolExecutionService lives in ChappieCore, and ProjectStore/ThreadStore are also in ChappieCore,
+// but created and managed from Chappie.app (ChappieViewModel).
+// Direct reference ToolExecutionService → ThreadStore/ProjectStore would create circular
+// dependency through ViewModel and violate the dependency inversion principle.
 //
-// РЕШЕНИЕ — ПАТТЕРН CALLBACK/CLOSURE:
-// ViewModel регистрирует async-замыкания в ToolExecutionService через registerProjectHandlers().
-// Когда Чаппи вызывает инструмент → ToolExecutionService вызывает замыкание →
-// ViewModel выполняет операцию с ProjectStore/ThreadStore → возвращает строковый результат.
-// Это сохраняет чистоту зависимостей: ChappieCore не знает о Chappie.app типах.
+// SOLUTION — CALLBACK/CLOSURE PATTERN:
+// ViewModel registers async closures in ToolExecutionService via registerProjectHandlers().
+// When Chappie calls a tool → ToolExecutionService calls the closure →
+// ViewModel performs the operation with ProjectStore/ThreadStore → returns string result.
+// This keeps dependencies clean: ChappieCore doesn't know about Chappie.app types.
 //
-// SENDABLE-ЗАМЫКАНИЯ:
-// Замыкания помечены @Sendable — обязательно для Swift 6 при передаче через actor-границы.
-// ViewModel захватывает только Sendable-типы (UUID, String) в этих замыканиях.
+// SENDABLE CLOSURES:
+// Closures are marked @Sendable — required for Swift 6 when passing across actor boundaries.
+// ViewModel captures only Sendable types (UUID, String) in these closures.
 //
-// АРХИТЕКТУРНОЕ РЕШЕНИЕ — ЗАЩИТА ФАЙЛОВЫХ ИНСТРУМЕНТОВ (PROJECT GUARD):
-// Файловые инструменты (list_files, read_file, write_file, delete_file, git_*, build_*)
-// должны быть доступны ТОЛЬКО когда к треду привязан хотя бы один проект.
-// Это защищает от случайного использования инструментов в "свободном чате" без контекста.
+// ARCHITECTURAL DECISION — FILE TOOL PROTECTION (PROJECT GUARD):
+// File tools (list_files, read_file, write_file, delete_file, git_*, build_*)
+// must be available ONLY when at least one project is attached to the thread.
+// This protects against accidental use of tools in "free chat" without context.
 //
-// КАК РАБОТАЕТ PROJECT GUARD:
-// ViewModel вызывает setActiveMemoryContext() при каждой смене треда или изменении проектов.
-// execute() проверяет activeMemoryContext.hasProjects перед выполнением файловых инструментов.
-// Инструменты памяти и управления проектами — работают всегда.
+// HOW PROJECT GUARD WORKS:
+// ViewModel calls setActiveMemoryContext() on every thread switch or project change.
+// execute() checks activeMemoryContext.hasProjects before executing file tools.
+// Memory and project management tools — always work.
 //
-// АРХИТЕКТУРНОЕ РЕШЕНИЕ — ЖЕЛЕЗНЫЙ БАРЬЕР АНГЛИЙСКОГО ЯЗЫКА В ПАМЯТИ (MEMORY-ENGLISH):
-// Инструмент memorize проверяет все входящие строки (key, type, jsonString) на наличие
-// символов кириллицы. Если найдены — возвращает жёсткую ошибку с требованием переписать
-// на английском. Это КОДОВЫЙ барьер — не зависит от системного промпта и памяти.
-// ПОЧЕМУ ИМЕННО КОД, А НЕ ПРОМПТ:
-//   - Промпт можно "забыть" при сжатии истории.
-//   - Правило в памяти исчезнет при смене пользователя/сессии.
-//   - Только код — абсолютно надёжен и не зависит от контекста.
-// ДЕТЕКТОР: Unicode scalar range U+0400–U+04FF (основная кириллица).
-// Проверяются: key, type, jsonString — все три обязательных поля.
+// ARCHITECTURAL DECISION — IRON ENGLISH BARRIER IN MEMORY (MEMORY-ENGLISH):
+// The memorize tool checks all incoming strings (key, type, jsonString) for Cyrillic
+// characters. If found — returns a hard error requiring rewrite in English.
+// This is a CODE barrier — does not depend on system prompt or memory.
+// WHY CODE, NOT PROMPT:
+//   - Prompt can be "forgotten" during history compression.
+//   - A rule in memory disappears when user/session changes.
+//   - Only code — is absolutely reliable and context-independent.
+// DETECTOR: Unicode scalar range U+0400–U+04FF (basic Cyrillic).
+// Checked: key, type, jsonString — all three required fields.
 
 import Foundation
 
 // MARK: - ScopeResolution (IT-08)
 
-/// Результат маппинга scope из параметров инструмента в строку для MemoryStore.
+/// Result of mapping scope from tool parameters to a string for MemoryStore.
 private enum ScopeResolution {
     case resolved(String)
     case failed(String)
@@ -104,22 +104,22 @@ private enum ScopeResolution {
 
 // MARK: - ToolAccessResult (IT-09)
 
-/// Результат проверки прав доступа к инструменту.
+/// Result of access check for a tool.
 private enum ToolAccessResult {
     case allowed
     case denied(String)
 }
 
-/// Сервис выполнения инструментов ИИ-агента.
+/// AI agent tool execution service.
 ///
-/// Зачем actor: async операции с файловой системой и сетью требуют
-/// правильной изоляции в Swift 6. Actor гарантирует отсутствие гонок данных.
+/// Why actor: async operations with file system and network require
+/// proper isolation in Swift 6. Actor guarantees no data races.
 public actor ToolExecutionService {
     private let fileSystem: FileSystemManager
     private let memoryManager: MemoryManager
     private let mcpBridge: MCPToolBridge
 
-    // MARK: - Активный контекст памяти (IT-08)
+    // MARK: - Active memory context (IT-08)
 
     private var activeMemoryContext: ActiveMemoryContext = .empty
 
@@ -127,21 +127,21 @@ public actor ToolExecutionService {
         activeMemoryContext.hasProjects
     }
 
-    // MARK: - Обработчики проектов (IT-07)
+    // MARK: - Project handlers (IT-07)
 
     private var addProjectHandler: (@Sendable (String) async -> String)?
     private var removeProjectHandler: (@Sendable (String) async -> String)?
     private var listProjectsHandler: (@Sendable () async -> String)?
 
-    // MARK: - IT-09: Кэш настроек проектов
+    // MARK: - IT-09: Project settings cache
 
-    /// Настройки проектов по UUID — заполняется из activeMemoryContext через setProjectSettings().
+    /// Project settings by UUID — populated from activeMemoryContext via setProjectSettings().
     ///
-    /// ЗАЧЕМ КЭШИРОВАТЬ:
-    /// ActiveMemoryContext содержит только UUID и имена проектов (для маппинга памяти).
-    /// Настройки (ProjectSettings) хранятся в SwiftData и не могут быть в ActiveMemoryContext
-    /// напрямую (циклическая зависимость через Sendable).
-    /// ViewModel передаёт настройки отдельно через setProjectSettings().
+    /// WHY CACHE:
+    /// ActiveMemoryContext contains only UUID and project names (for memory mapping).
+    /// Settings (ProjectSettings) are stored in SwiftData and cannot be in ActiveMemoryContext
+    /// directly (circular dependency through Sendable).
+    /// ViewModel passes settings separately via setProjectSettings().
     private var projectSettingsCache: [UUID: ProjectSettings] = [:]
 
     public init(
@@ -154,28 +154,28 @@ public actor ToolExecutionService {
         self.mcpBridge = MCPToolBridge(socketPath: socketPath)
     }
 
-    // MARK: - Обновление активного контекста памяти (IT-08)
+    // MARK: - Active memory context update (IT-08)
 
     public func setActiveMemoryContext(_ context: ActiveMemoryContext) {
         self.activeMemoryContext = context
         if context.projects.isEmpty {
-            print("[ToolExecutionService] 🔒 Файловые инструменты заблокированы (нет проектов в треде)")
+            print("[ToolExecutionService] 🔒 File tools blocked (no projects in thread)")
         } else {
             let names = context.projectNames.joined(separator: ", ")
-            print("[ToolExecutionService] 🔓 Файловые инструменты разблокированы: \(names)")
+            print("[ToolExecutionService] 🔓 File tools unlocked: \(names)")
         }
     }
 
-    /// IT-09: Обновляет кэш настроек проектов.
+    /// IT-09: Updates project settings cache.
     ///
-    /// Вызывается из ChappieViewModel после загрузки/обновления проектов.
-    /// Передаёт ProjectSettings для каждого проекта в треде.
+    /// Called from ChappieViewModel after loading/updating projects.
+    /// Passes ProjectSettings for each project in the thread.
     public func setProjectSettings(_ settings: [UUID: ProjectSettings]) {
         self.projectSettingsCache = settings
-        print("[ToolExecutionService] ⚙️ Настройки проектов обновлены (\(settings.count) проектов)")
+        print("[ToolExecutionService] ⚙️ Project settings updated (\(settings.count) projects)")
     }
 
-    /// Обратная совместимость — старый метод setActiveProjectNames (IT-07).
+    /// Backward compatibility — old setActiveProjectNames method (IT-07).
     public func setActiveProjectNames(_ names: [String]) {
         let projects = names.map { name in
             ActiveMemoryContext.ProjectInfo(id: UUID(), name: name)
@@ -185,13 +185,13 @@ public actor ToolExecutionService {
             projects: projects
         )
         if names.isEmpty {
-            print("[ToolExecutionService] 🔒 Файловые инструменты заблокированы (нет проектов в треде)")
+            print("[ToolExecutionService] 🔒 File tools blocked (no projects in thread)")
         } else {
-            print("[ToolExecutionService] 🔓 Файловые инструменты разблокированы: \(names.joined(separator: ", "))")
+            print("[ToolExecutionService] 🔓 File tools unlocked: \(names.joined(separator: ", "))")
         }
     }
 
-    // MARK: - Регистрация обработчиков проектов (IT-07)
+    // MARK: - Project handler registration (IT-07)
 
     public func registerProjectHandlers(
         addProject: @escaping @Sendable (String) async -> String,
@@ -201,38 +201,38 @@ public actor ToolExecutionService {
         self.addProjectHandler = addProject
         self.removeProjectHandler = removeProject
         self.listProjectsHandler = listProjects
-        print("[ToolExecutionService] ✅ Обработчики проектов зарегистрированы")
+        print("[ToolExecutionService] ✅ Project handlers registered")
     }
 
-    // MARK: - IT-09: Проверка прав доступа к инструментам
+    // MARK: - IT-09: Tool access check
 
-    /// Возвращает настройки первого проекта в активном треде.
+    /// Returns settings of the first project in the active thread.
     ///
-    /// ЛОГИКА ВЫБОРА:
-    /// Если проектов несколько — используем настройки первого.
-    /// Если настройки не найдены в кэше — возвращаем дефолтные (advisor, всё закрыто).
+    /// SELECTION LOGIC:
+    /// If multiple projects — use settings of the first one.
+    /// If settings not found in cache — return defaults (advisor, everything closed).
     private var activeProjectSettings: ProjectSettings {
         guard let firstProject = activeMemoryContext.projects.first else {
-            return ProjectSettings() // дефолт: advisor, всё закрыто
+            return ProjectSettings() // default: advisor, everything closed
         }
         return projectSettingsCache[firstProject.id] ?? ProjectSettings()
     }
 
-    /// Проверяет право на выполнение инструмента согласно настройкам проекта (IT-09).
+    /// Checks permission to execute a tool according to project settings (IT-09).
     ///
-    /// ПОРЯДОК ПРОВЕРОК:
-    /// 1. Роль .advisor — блокирует все инструменты записи/git/build.
-    /// 2. git_diff — железный запрет независимо от настроек.
-    /// 3. Git инструменты — проверяем против GitAccessLevel.allowedTools.
-    /// 4. Build/tests инструменты — проверяем против TestsAccessLevel.
-    /// 5. write_file/delete_file — разрешены для executor (файловая система не ограничена).
+    /// CHECK ORDER:
+    /// 1. Role .advisor — blocks all write/git/build tools.
+    /// 2. git_diff — iron prohibition regardless of settings.
+    /// 3. Git tools — checked against GitAccessLevel.allowedTools.
+    /// 4. Build/tests tools — checked against TestsAccessLevel.
+    /// 5. write_file/delete_file — allowed for executor (file system not restricted).
     ///
-    /// - Parameter toolName: Имя инструмента для проверки.
-    /// - Returns: .allowed или .denied(сообщение с подсказкой).
+    /// - Parameter toolName: Tool name to check.
+    /// - Returns: .allowed or .denied(message with hint).
     private func checkToolAccess(toolName: String) -> ToolAccessResult {
         let settings = activeProjectSettings
 
-        // ЖЕЛЕЗНЫЙ ЗАПРЕТ: git_diff всегда заблокирован
+        // IRON PROHIBITION: git_diff is always blocked
         if toolName == "git_diff" {
             return .denied("""
             ❌ git_diff is permanently FORBIDDEN — it loads the entire project into AI context and costs real money.
@@ -241,7 +241,7 @@ public actor ToolExecutionService {
             """)
         }
 
-        // Роль ADVISOR — только чтение
+        // ADVISOR role — read only
         if settings.agentRole == .advisor {
             let readOnlyTools: Set<String> = ["list_files", "read_file", "read_build_log"]
             if !readOnlyTools.contains(toolName) {
@@ -254,8 +254,9 @@ public actor ToolExecutionService {
             return .allowed
         }
 
-        // Роль EXECUTOR — проверяем детальные права
-        let gitTools: Set<String> = ["git_status", "git_log", "git_add", "git_commit", "git_reset"]
+        // EXECUTOR role — check detailed permissions
+        let gitTools: Set<String> = ["git_status", "git_log", "git_add", "git_commit", "git_reset",
+                                     "git_revert", "git_checkout"]
         if gitTools.contains(toolName) {
             if !settings.isProgrammingProject {
                 return .denied("""
@@ -297,7 +298,7 @@ public actor ToolExecutionService {
             return .allowed
         }
 
-        // read_build_log — доступен если тесты хотя бы на уровне readOnly
+        // read_build_log — available if tests at least at readOnly level
         if toolName == "read_build_log" {
             if settings.isProgrammingProject && !settings.testsAccess.canReadLog {
                 return .denied("""
@@ -308,11 +309,11 @@ public actor ToolExecutionService {
             return .allowed
         }
 
-        // Все остальные инструменты (list_files, read_file, write_file, delete_file) — разрешены для executor
+        // All other tools (list_files, read_file, write_file, delete_file) — allowed for executor
         return .allowed
     }
 
-    // MARK: - Маппинг scope для памяти (IT-08)
+    // MARK: - Scope mapping for memory (IT-08)
 
     private func resolveScope(scopeParam: String?, targetName: String?) -> ScopeResolution {
         if let name = targetName, !name.isEmpty {
@@ -350,7 +351,7 @@ public actor ToolExecutionService {
         return .resolved("global")
     }
 
-    // MARK: - Детектор кириллицы (MEMORY-ENGLISH барьер)
+    // MARK: - Cyrillic detector (MEMORY-ENGLISH barrier)
 
     private func containsCyrillic(_ string: String) -> Bool {
         return string.unicodeScalars.contains { scalar in
@@ -374,7 +375,7 @@ public actor ToolExecutionService {
         """
     }
 
-    // MARK: - Доступные инструменты
+    // MARK: - Available tools
 
     public var availableTools: [AITool] {
         return [
@@ -555,6 +556,38 @@ public actor ToolExecutionService {
             )),
 
             AITool(function: AIFunctionDefinition(
+                name: "git_revert",
+                description: """
+                Откатить один или несколько коммитов через git revert.
+                Все изменения собираются в один чистый коммит с заданным сообщением.
+                Используй когда нужно отменить конкретные коммиты не удаляя их из истории.
+                """,
+                parameters: AIToolParameters(
+                    properties: [
+                        "hashes": AIToolProperty(type: "string", description: "Хэши коммитов через пробел, которые нужно откатить (например: 'abc123 def456')"),
+                        "message": AIToolProperty(type: "string", description: "Сообщение для результирующего коммита отката")
+                    ],
+                    required: ["hashes", "message"]
+                )
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "git_checkout",
+                description: """
+                Восстановить конкретные файлы из заданного коммита или ветки.
+                Используй для хирургического отката отдельных файлов без затрагивания остального кода.
+                Примеры ref: HEAD~1, abc123, main
+                """,
+                parameters: AIToolParameters(
+                    properties: [
+                        "ref": AIToolProperty(type: "string", description: "Коммит, ветка или относительная ссылка (например: HEAD~1, abc123, main)"),
+                        "paths": AIToolProperty(type: "string", description: "Пути к файлам через пробел для восстановления")
+                    ],
+                    required: ["ref", "paths"]
+                )
+            )),
+
+            AITool(function: AIFunctionDefinition(
                 name: "build_project",
                 description: "Собрать проект Chappie.xcodeproj через xcodebuild. Возвращает успех или список ошибок компиляции.",
                 parameters: AIToolParameters(properties: [:], required: [])
@@ -613,14 +646,14 @@ public actor ToolExecutionService {
         ]
     }
 
-    // MARK: - Выполнение инструментов
+    // MARK: - Tool execution
 
-    /// Выполняет указанный инструмент и возвращает строковый результат.
+    /// Executes the specified tool and returns a string result.
     ///
-    /// ПОРЯДОК ПРОВЕРОК (IT-09):
-    /// 1. PROJECT GUARD — требуем привязанного проекта для файловых/git/build инструментов.
-    /// 2. TOOL ACCESS CHECK — проверяем права из ProjectSettings (роль, git, тесты).
-    /// 3. Выполняем инструмент.
+    /// CHECK ORDER (IT-09):
+    /// 1. PROJECT GUARD — require attached project for file/git/build tools.
+    /// 2. TOOL ACCESS CHECK — check rights from ProjectSettings (role, git, tests).
+    /// 3. Execute the tool.
     public func execute(call: AIToolCall) async -> String {
         let name = call.function.name
         let argsData = call.function.arguments.data(using: .utf8) ?? Data()
@@ -628,11 +661,11 @@ public actor ToolExecutionService {
         let projectRequiredTools: Set<String> = [
             "list_files", "read_file", "write_file", "delete_file",
             "git_status", "git_diff", "git_add", "git_commit",
-            "git_log", "git_reset",
+            "git_log", "git_reset", "git_revert", "git_checkout",
             "build_project", "run_tests", "read_build_log"
         ]
 
-        // PROJECT GUARD: блокируем файловые/git/build инструменты без проекта в треде.
+        // PROJECT GUARD: block file/git/build tools without project in thread.
         if projectRequiredTools.contains(name) && !hasActiveProjects {
             return """
             ❌ Инструмент '\(name)' недоступен: к текущему треду не привязан ни один проект.
@@ -643,8 +676,8 @@ public actor ToolExecutionService {
             """
         }
 
-        // IT-09: TOOL ACCESS CHECK — проверяем права из ProjectSettings.
-        // Выполняется только если есть проект (после PROJECT GUARD).
+        // IT-09: TOOL ACCESS CHECK — check rights from ProjectSettings.
+        // Executed only if project exists (after PROJECT GUARD).
         if projectRequiredTools.contains(name) {
             let accessResult = checkToolAccess(toolName: name)
             if case .denied(let message) = accessResult {
@@ -656,7 +689,7 @@ public actor ToolExecutionService {
         do {
             switch name {
 
-            // MARK: - Файловая система
+            // MARK: - File system
 
             case "list_files":
                 let files = try await fileSystem.listFiles()
@@ -689,7 +722,7 @@ public actor ToolExecutionService {
                 try await fileSystem.deleteFile(at: path)
                 return "Успешно: Файл \(path) удален."
 
-            // MARK: - Долгосрочная память (IT-08)
+            // MARK: - Long-term memory (IT-08)
 
             case "memorize":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
@@ -775,14 +808,14 @@ public actor ToolExecutionService {
                     return "✅ Entry '\(key)' deleted from scope '\(scopeString)'."
                 }
 
-            // MARK: - MCP: Git инструменты
+            // MARK: - MCP: Git tools
 
             case "git_status":
                 return await mcpBridge.execute(tool: "git_status")
 
             case "git_diff":
-                // Этот кейс не должен достигаться — git_diff блокируется в checkToolAccess().
-                // Но на всякий случай дублируем блокировку здесь.
+                // This case should never be reached — git_diff is blocked in checkToolAccess().
+                // Duplicating the block here as a safety net.
                 return "❌ git_diff is permanently FORBIDDEN — it loads the entire project into AI context and costs real money."
 
             case "git_add":
@@ -804,7 +837,27 @@ public actor ToolExecutionService {
             case "git_reset":
                 return await mcpBridge.execute(tool: "git_reset")
 
-            // MARK: - MCP: Build инструменты
+            case "git_revert":
+                guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
+                      let hashes = args["hashes"], !hashes.isEmpty else {
+                    return "Ошибка: Аргумент 'hashes' обязателен для git_revert (хэши через пробел)"
+                }
+                guard let message = args["message"], !message.isEmpty else {
+                    return "Ошибка: Аргумент 'message' обязателен для git_revert"
+                }
+                return await mcpBridge.execute(tool: "git_revert", args: ["hashes": hashes, "message": message])
+
+            case "git_checkout":
+                guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
+                      let ref = args["ref"], !ref.isEmpty else {
+                    return "Ошибка: Аргумент 'ref' обязателен для git_checkout (например: HEAD~1, abc123, main)"
+                }
+                guard let paths = args["paths"], !paths.isEmpty else {
+                    return "Ошибка: Аргумент 'paths' обязателен для git_checkout (пути через пробел)"
+                }
+                return await mcpBridge.execute(tool: "git_checkout", args: ["ref": ref, "paths": paths])
+
+            // MARK: - MCP: Build tools
 
             case "build_project":
                 return await mcpBridge.execute(tool: "build_project")
@@ -816,7 +869,7 @@ public actor ToolExecutionService {
             case "read_build_log":
                 return await mcpBridge.execute(tool: "read_build_log")
 
-            // MARK: - Управление проектами в треде (IT-07)
+            // MARK: - Project management in thread (IT-07)
 
             case "add_project_to_thread":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
