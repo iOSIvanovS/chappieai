@@ -1,3 +1,0 @@
-Chappie git tools test file.
-Created to verify: git_add, git_commit, git_revert, git_checkout.
-This file should not exist after rollback test is complete.
