@@ -65,6 +65,9 @@ struct ModelPickerRow: View {
             modelPill
                 .layoutPriority(1)
 
+            // Spacer pushes the two pills to opposite edges
+            Spacer(minLength: 8)
+
             // RIGHT PILL: balance — shown only when a value is available, always fixed size
             if let balance = balance {
                 balancePill(balance: balance)
