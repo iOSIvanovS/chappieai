@@ -25,6 +25,12 @@
 //   instead of the old opacity(0.5) dimming — element stays fully visible.
 //   Uses shakeOnTap (allowsHitTesting) instead of .disabled() to avoid
 //   SwiftUI's automatic opacity(0.5) side effect.
+//
+// TRUNCATION:
+//   The provider·model label uses .truncationMode(.middle) so that when the
+//   window is narrow the text clips in the middle: "api.ai… · claude-…4.6"
+//   Both pills compress gracefully — right pill is fixedSize, left pill gets
+//   the remaining space via layoutPriority(1).
 
 import SwiftUI
 import ChappieCore
@@ -55,14 +61,14 @@ struct ModelPickerRow: View {
     var body: some View {
         HStack(spacing: 8) {
 
-            // LEFT PILL: model selector
+            // LEFT PILL: model selector — gets all remaining space after right pill is placed
             modelPill
+                .layoutPriority(1)
 
-            Spacer()
-
-            // RIGHT PILL: balance — shown only when a value is available
+            // RIGHT PILL: balance — shown only when a value is available, always fixed size
             if let balance = balance {
                 balancePill(balance: balance)
+                    .fixedSize()
             }
         }
     }
@@ -71,7 +77,7 @@ struct ModelPickerRow: View {
 
     private var modelPill: some View {
         HStack(spacing: 6) {
-            // "Модель" static label — adaptive color responds correctly to dark/light theme
+            // "Модель" static label — never truncates
             Text("Модель")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
@@ -84,9 +90,8 @@ struct ModelPickerRow: View {
                         .fill(Color(NSColor.controlBackgroundColor))
                 )
 
-            // Provider + model selector button — locked while AI is thinking.
-            // Shake animation fires on tap when locked (IT-13).
-            // Uses shakeOnTap instead of .disabled() to keep full opacity.
+            // Provider + model selector button — shrinks and truncates in the middle.
+            // No .fixedSize() here — button must compress when window narrows.
             Button {
                 showPopover.toggle()
             } label: {
@@ -94,12 +99,14 @@ struct ModelPickerRow: View {
                     Image(systemName: isOrphaned ? "exclamationmark.triangle.fill" : "cpu")
                         .font(.system(size: 10))
                         .foregroundStyle(isOrphaned ? Color.orange : Color.accentColor.opacity(0.8))
+                        .fixedSize()
 
                     chipLabel
 
                     Image(systemName: "chevron.down")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(.secondary)
+                        .fixedSize()
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
@@ -119,8 +126,6 @@ struct ModelPickerRow: View {
                 )
             }
             .buttonStyle(.plain)
-            // Keep the button from wrapping — it clips gracefully instead of growing taller
-            .fixedSize()
             // Soft lock: shake on tap when locked — replaces old opacity(0.5) + .disabled()
             .shakeOnTap(isLocked: isThinking)
             .help(isThinking ? "Нельзя менять модель пока Чаппи думает" : "")
@@ -138,10 +143,10 @@ struct ModelPickerRow: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        // Prevent the pill from ever growing taller due to text wrap
-        .fixedSize(horizontal: false, vertical: true)
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        // Prevent vertical growth but allow horizontal compression
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: - Right Pill (Balance)
@@ -184,16 +189,20 @@ struct ModelPickerRow: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.orange)
                 .lineLimit(1)
+                .truncationMode(.middle)
         } else if let provider = activeProvider, let model = activeModelName {
             Text("\(provider.displayName) · \(model)")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
+                // Middle truncation keeps both provider host and model suffix visible
+                .truncationMode(.middle)
         } else if let provider = activeProvider {
             Text(provider.displayName)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
+                .truncationMode(.middle)
         } else {
             Text("Не выбрана")
                 .font(.system(size: 12, weight: .medium))
