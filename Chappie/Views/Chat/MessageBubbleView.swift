@@ -2,118 +2,37 @@
 // Chappie
 //
 // WHY THIS FILE EXISTS:
-// Formerly MessageBubble was a private struct inside ContentView.swift.
-// Extracted to a separate file to keep ContentView clean and allow reuse.
+// Renders individual chat message bubbles in the conversation scroll view.
 //
-// BUBBLE WIDTH STRATEGY — background probe pattern:
+// BUBBLE WIDTH STRATEGY:
+// frame(maxWidth: .infinity) on the HStack row, then frame(maxWidth: bubbleMaxWidth)
+// on the bubble itself. bubbleMaxWidth is a fixed point value (500 pt) — no GeometryReader,
+// no containerRelativeFrame, no background probes. Simple and correct.
 //
-// PROBLEM: We need the row's available width to:
-//   1. Cap bubble width at 75% (frame(maxWidth:) — shrinks to content, not fixed)
-//   2. Give FlowLayout a finite maxWidth so thumbnails wrap to 2nd/3rd rows
-//
-// WHY NOT containerRelativeFrame:
-//   containerRelativeFrame(.horizontal) sets EXACT width (like frame(width:)), not maxWidth.
-//   Short user messages were always stretched to 75% of the window — looked wrong.
-//
-// WHY NOT GeometryReader directly in body:
-//   GeometryReader takes ALL proposed space. Inside ScrollView's VStack, vertical space
-//   is infinite (scroll container). GeometryReader expands to fill the screen →
-//   bubbles overlap like playing cards.
-//
-// SOLUTION — background width probe:
-//   MessageBubbleRowView is the public entry point.
-//   It renders the bubble normally (natural height) and puts a Color.clear
-//   GeometryReader in the .background. Backgrounds are sized AFTER layout —
-//   they cannot inflate the parent's size. The measured width is stored in
-//   @State and passed into the bubble for FlowLayout calculations.
-//   Default value 600 is used on first render (before measurement) — safe fallback.
-//
-// CHANGE (Stage 6 — ТД-6):
-// MessageBubbleView now takes a typed enum ChatMessage instead of a struct.
-//
-// CHANGE (ТД-UX-PERF — UI performance optimization):
-// .toolCall is completely removed from this component's render.
-// MessageBubbleView now renders ONLY .message (text messages).
-//
-// CHANGE (UX-ANIMATION — Smooth bubble appearance):
-// Added .transition on the bubble: new messages smoothly slide in from the bottom.
-//
-// CHANGE (UX-TYPOGRAPHY — Typography and Markdown):
-// Chappie's bubble uses MarkdownTextView for code and formatting support.
-//
-// CHANGE (UX-COST-IN-BUBBLE — Cost inside bubble):
-// Cost badge in bottom-trailing corner (WhatsApp/Telegram pattern).
-//
-// CHANGE (MULTIMODAL — Step 4):
-// Attachments rendered inside the bubble above the text.
-// Images: FlowLayout thumbnails (wraps to multiple rows).
-// Files: compact chips with icon + filename.
-//
-// FLOW LAYOUT (IT-14):
-// FlowLayout shared with ProjectChipsView via Shared/FlowLayout.swift.
+// ATTACHMENTS STRATEGY (simplified, IT-14 rev2):
+// Replaced FlowLayout thumbnails with a plain vertical list (AttachmentRowView).
+// Each attachment is one row: icon + filename + file size.
+// Images open via QuickLook on click. Other files open via NSWorkspace.
+// Benefits: no layout complexity, no GeometryReader, window can resize freely.
 
 import SwiftUI
 import QuickLook
 
-// Maximum bubble width as a fraction of the row width.
-// Applied as frame(maxWidth:) — bubble shrinks to content, never wider than this cap.
-// 0.75 matches Telegram/iMessage proportions.
-private let bubbleMaxWidthFraction: CGFloat = 0.75
+// Fixed maximum bubble width in points.
+// Works well for typical macOS window sizes (800–1400 pt wide).
+private let bubbleMaxWidth: CGFloat = 500
 
-// MARK: - MessageBubbleRowView (public entry point)
+// MARK: - MessageBubbleView (public entry point)
 
-/// Public entry point for rendering a chat message bubble.
-///
-/// Uses a background Color.clear GeometryReader to measure the row width
-/// without affecting layout height. The width is passed into the bubble
-/// so FlowLayout can wrap image thumbnails correctly.
-struct MessageBubbleRowView: View {
-
-    let msg: ChatMessage
-
-    // Row width measured by the background probe.
-    // Default 600: safe fallback for first render before measurement fires.
-    @State private var rowWidth: CGFloat = 600
-
-    var body: some View {
-        MessageBubbleView(msg: msg, rowWidth: rowWidth)
-            .background(
-                // WIDTH PROBE: Color.clear in background is sized by the parent AFTER layout.
-                // It cannot inflate the parent's size — purely passive measurement.
-                // onAppear + onChange cover both initial render and window resize.
-                GeometryReader { geo in
-                    Color.clear
-                        .onAppear { rowWidth = geo.size.width }
-                        .onChange(of: geo.size.width) { _, w in rowWidth = w }
-                }
-            )
-            // Smooth slide-in from bottom on insertion, fade on removal.
-            .transition(
-                .asymmetric(
-                    insertion: .move(edge: .bottom).combined(with: .opacity),
-                    removal: .opacity
-                )
-            )
-    }
-}
-
-// MARK: - MessageBubbleView (internal render)
-
-/// Internal bubble renderer. Receives pre-measured rowWidth from MessageBubbleRowView.
+/// Renders a single chat message bubble.
+/// No GeometryReader, no background probes — just HStack + Spacer.
 struct MessageBubbleView: View {
 
     let msg: ChatMessage
-    // Available row width — used to cap bubble and size FlowLayout.
-    let rowWidth: CGFloat
 
     var body: some View {
         if case .message(_, let isUser, let text, let cost, _, let attachments) = msg {
-            messageBubble(
-                isUser: isUser,
-                text: text,
-                cost: cost,
-                attachments: attachments
-            )
+            messageBubble(isUser: isUser, text: text, cost: cost, attachments: attachments)
         }
     }
 
@@ -126,141 +45,135 @@ struct MessageBubbleView: View {
         cost: Double?,
         attachments: [AttachedFile]
     ) -> some View {
-        // Cap: bubble never wider than 75% of the row.
-        // frame(maxWidth:) — shrinks to content, unlike containerRelativeFrame which sets exact width.
-        let maxBubbleWidth = rowWidth * bubbleMaxWidthFraction
-        // Inner content width: bubble width minus horizontal padding (14×2 = 28).
-        let innerWidth = maxBubbleWidth - 28
-
-        HStack(alignment: .bottom, spacing: 8) {
-            if isUser { Spacer(minLength: 0) }
+        HStack(alignment: .bottom, spacing: 0) {
+            if isUser { Spacer(minLength: 24) }
 
             if isUser {
-                // USER BUBBLE — accent color, white text
-                VStack(alignment: .trailing, spacing: 6) {
-                    if !attachments.isEmpty {
-                        AttachmentsView(
-                            attachments: attachments,
-                            isUser: true,
-                            maxWidth: innerWidth
-                        )
-                    }
-                    if !text.isEmpty {
-                        Text(text)
-                            .font(.system(size: 14))
-                            .lineSpacing(4)
-                            .foregroundStyle(.white)
-                            .textSelection(.enabled)
-                    }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(Color.accentColor)
-                .clipShape(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 12,
-                        bottomLeadingRadius: 12,
-                        bottomTrailingRadius: 4,
-                        topTrailingRadius: 12
-                    )
-                )
-                // frame(maxWidth:) — shrinks to content, hard cap at 75%
-                .frame(maxWidth: maxBubbleWidth)
-
+                userBubble(text: text, attachments: attachments)
             } else {
-                // CHAPPIE BUBBLE — neutral background, markdown text
-                ZStack(alignment: .bottomTrailing) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        if !attachments.isEmpty {
-                            AttachmentsView(
-                                attachments: attachments,
-                                isUser: false,
-                                maxWidth: innerWidth
-                            )
-                        }
-                        if !text.isEmpty {
-                            MarkdownTextView(text: text, fontSize: 14)
-                                .padding(.bottom, cost != nil ? 18 : 0)
-                        }
-                    }
-
-                    if let cost = cost {
-                        Text(String(format: "🪙 %.2f ₽", cost))
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(Color(NSColor.textBackgroundColor))
-                .clipShape(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 12,
-                        bottomLeadingRadius: 4,
-                        bottomTrailingRadius: 12,
-                        topTrailingRadius: 12
-                    )
-                )
-                .overlay(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 12,
-                        bottomLeadingRadius: 4,
-                        bottomTrailingRadius: 12,
-                        topTrailingRadius: 12
-                    )
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                )
-                .frame(maxWidth: maxBubbleWidth)
+                chappieBubble(text: text, cost: cost, attachments: attachments)
             }
 
-            if !isUser { Spacer(minLength: 0) }
+            if !isUser { Spacer(minLength: 24) }
         }
+        // Smooth slide-in from bottom on insertion, fade on removal.
+        .transition(
+            .asymmetric(
+                insertion: .move(edge: .bottom).combined(with: .opacity),
+                removal: .opacity
+            )
+        )
         .id(msg.id)
+    }
+
+    // MARK: - User Bubble
+
+    @ViewBuilder
+    private func userBubble(text: String, attachments: [AttachedFile]) -> some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            if !attachments.isEmpty {
+                AttachmentListView(attachments: attachments, isUser: true)
+            }
+            if !text.isEmpty {
+                Text(text)
+                    .font(.system(size: 14))
+                    .lineSpacing(4)
+                    .foregroundStyle(.white)
+                    .textSelection(.enabled)
+                    // Allow text to wrap naturally — no fixed width needed.
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color.accentColor)
+        .clipShape(
+            UnevenRoundedRectangle(
+                topLeadingRadius: 12,
+                bottomLeadingRadius: 12,
+                bottomTrailingRadius: 4,
+                topTrailingRadius: 12
+            )
+        )
+        // Shrinks to content, hard cap at bubbleMaxWidth.
+        .frame(maxWidth: bubbleMaxWidth, alignment: .trailing)
+    }
+
+    // MARK: - Chappie Bubble
+
+    @ViewBuilder
+    private func chappieBubble(text: String, cost: Double?, attachments: [AttachedFile]) -> some View {
+        ZStack(alignment: .bottomTrailing) {
+            VStack(alignment: .leading, spacing: 6) {
+                if !attachments.isEmpty {
+                    AttachmentListView(attachments: attachments, isUser: false)
+                }
+                if !text.isEmpty {
+                    MarkdownTextView(text: text, fontSize: 14)
+                        .padding(.bottom, cost != nil ? 18 : 0)
+                }
+            }
+
+            if let cost = cost {
+                Text(String(format: "🪙 %.2f ₽", cost))
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color(NSColor.textBackgroundColor))
+        .clipShape(
+            UnevenRoundedRectangle(
+                topLeadingRadius: 12,
+                bottomLeadingRadius: 4,
+                bottomTrailingRadius: 12,
+                topTrailingRadius: 12
+            )
+        )
+        .overlay(
+            UnevenRoundedRectangle(
+                topLeadingRadius: 12,
+                bottomLeadingRadius: 4,
+                bottomTrailingRadius: 12,
+                topTrailingRadius: 12
+            )
+            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+        .frame(maxWidth: bubbleMaxWidth, alignment: .leading)
     }
 }
 
-// MARK: - AttachmentsView
+// MARK: - AttachmentListView
 
-/// Renders image thumbnails (FlowLayout) and file chips (FlowLayout).
-///
-/// maxWidth is passed explicitly so FlowLayout receives a finite proposal
-/// and wraps thumbnails onto 2nd, 3rd rows when the bubble is narrow.
-private struct AttachmentsView: View {
+/// Vertical list of attachment rows.
+/// Each row: file icon + filename + file size.
+/// Images open via QuickLook. Other files open via NSWorkspace.
+/// No FlowLayout, no GeometryReader, no fixed widths — pure VStack.
+private struct AttachmentListView: View {
 
     let attachments: [AttachedFile]
     let isUser: Bool
-    // Bubble inner width (bubble maxWidth minus horizontal padding).
-    let maxWidth: CGFloat
 
     @State private var previewURL: URL? = nil
 
-    private var images: [AttachedFile] { attachments.filter { $0.mimeType.isImage } }
-    private var files:  [AttachedFile] { attachments.filter { !$0.mimeType.isImage } }
-
     var body: some View {
-        VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
-            if !images.isEmpty {
-                FlowLayout(spacing: 6) {
-                    ForEach(images) { file in
-                        ImageThumbnailView(file: file) {
-                            previewURL = writeTempFile(file)
+        VStack(alignment: isUser ? .trailing : .leading, spacing: 4) {
+            ForEach(attachments) { file in
+                AttachmentRowView(file: file, isUser: isUser) {
+                    if file.mimeType.isImage {
+                        // Write to temp dir and open QuickLook.
+                        previewURL = writeTempFile(file)
+                    } else {
+                        // Open with default app.
+                        if let url = writeTempFile(file) {
+                            NSWorkspace.shared.open(url)
                         }
                     }
                 }
-                // Explicit width gives FlowLayout a finite proposal → wraps correctly.
-                .frame(width: maxWidth, alignment: isUser ? .trailing : .leading)
-                .quickLookPreview($previewURL)
-            }
-
-            if !files.isEmpty {
-                FlowLayout(spacing: 6) {
-                    ForEach(files) { file in
-                        FileChipView(file: file, isUser: isUser)
-                    }
-                }
-                .frame(width: maxWidth, alignment: isUser ? .trailing : .leading)
             }
         }
+        .quickLookPreview($previewURL)
     }
 
     private func writeTempFile(_ file: AttachedFile) -> URL? {
@@ -271,68 +184,58 @@ private struct AttachmentsView: View {
     }
 }
 
-// MARK: - ImageThumbnailView
+// MARK: - AttachmentRowView
 
-/// 80×80 rounded image thumbnail. Tapping opens QuickLook via parent's previewURL.
-private struct ImageThumbnailView: View {
-
-    let file: AttachedFile
-    let onTap: () -> Void
-
-    var body: some View {
-        Group {
-            if let image = file.nsImage {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 80, height: 80)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.primary.opacity(0.12), lineWidth: 1)
-                    )
-            } else {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.secondary.opacity(0.15))
-                    .frame(width: 80, height: 80)
-                    .overlay(
-                        Image(systemName: "photo")
-                            .foregroundStyle(.secondary)
-                    )
-            }
-        }
-        .onTapGesture { onTap() }
-        .help(file.filename)
-    }
-}
-
-// MARK: - FileChipView
-
-/// Compact chip: icon + filename for non-image attachments.
-private struct FileChipView: View {
+/// Single attachment row: icon + filename + size.
+/// Tapping triggers the onTap action (QuickLook or NSWorkspace).
+private struct AttachmentRowView: View {
 
     let file: AttachedFile
     let isUser: Bool
+    let onTap: () -> Void
 
     var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: file.mimeType.systemIcon)
-                .font(.system(size: 11, weight: .medium))
-            Text(file.filename)
-                .font(.system(size: 12))
-                .lineLimit(1)
-                .truncationMode(.middle)
+        Button(action: onTap) {
+            HStack(spacing: 7) {
+                // File type icon — image files get a photo icon.
+                Image(systemName: file.mimeType.isImage ? "photo" : file.mimeType.systemIcon)
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 18)
+
+                // Filename — truncates in the middle to preserve extension.
+                Text(file.filename)
+                    .font(.system(size: 13))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                // File size — compact human-readable format.
+                Text(fileSizeString(file.data.count))
+                    .font(.system(size: 11))
+                    .opacity(0.65)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                isUser
+                    ? Color.white.opacity(0.18)
+                    : Color.primary.opacity(0.06)
+            )
+            .foregroundStyle(isUser ? Color.white : Color.primary)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-            isUser
-                ? Color.white.opacity(0.20)
-                : Color.primary.opacity(0.06)
-        )
-        .foregroundStyle(isUser ? Color.white : Color.primary)
-        .clipShape(Capsule())
-        .help(file.filename)
+        .buttonStyle(.plain)
+        .help("Open \(file.filename)")
+    }
+
+    /// Human-readable file size: "42 B", "1.2 KB", "3.4 MB".
+    private func fileSizeString(_ bytes: Int) -> String {
+        if bytes < 1024 {
+            return "\(bytes) B"
+        } else if bytes < 1024 * 1024 {
+            return String(format: "%.1f KB", Double(bytes) / 1024)
+        } else {
+            return String(format: "%.1f MB", Double(bytes) / (1024 * 1024))
+        }
     }
 }
 
@@ -344,32 +247,32 @@ private struct FileChipView: View {
         mimeType: .imagePng,
         data: Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwADhQGAWjR9awAAAABJRU5ErkJggg==")!
     )
-    let samplePDF = AttachedFile(filename: "requirements.pdf", mimeType: .pdf, data: Data())
-    let sampleTxt = AttachedFile(filename: "notes.txt", mimeType: .plainText, data: Data())
+    let samplePDF  = AttachedFile(filename: "requirements.pdf", mimeType: .pdf, data: Data(count: 204800))
+    let sampleTxt  = AttachedFile(filename: "very_long_filename_that_should_truncate_in_the_middle.txt", mimeType: .plainText, data: Data(count: 1536))
 
     return ScrollView {
         VStack(spacing: 16) {
-            MessageBubbleRowView(msg: .message(
+            MessageBubbleView(msg: .message(
                 isUser: true,
                 text: "Here's the screenshot and the spec",
                 attachments: [sampleImage, samplePDF]
             ))
-            MessageBubbleRowView(msg: .message(
+            MessageBubbleView(msg: .message(
                 isUser: false,
                 text: "Got it! I'll analyze both files.",
                 cost: 0.45
             ))
-            MessageBubbleRowView(msg: .message(
+            MessageBubbleView(msg: .message(
                 isUser: true,
                 text: "",
-                attachments: [sampleImage, sampleImage, sampleImage, sampleImage, sampleImage, sampleImage, sampleImage]
+                attachments: [sampleImage, sampleImage, sampleImage, sampleImage, sampleImage]
             ))
-            MessageBubbleRowView(msg: .message(
+            MessageBubbleView(msg: .message(
                 isUser: true,
-                text: "Check these out",
-                attachments: [samplePDF, sampleTxt]
+                text: "Check these notes",
+                attachments: [sampleTxt]
             ))
-            MessageBubbleRowView(msg: .message(
+            MessageBubbleView(msg: .message(
                 isUser: false,
                 text: "## Analysis\n\nThe spec looks **solid**.\n\n```swift\nlet x = 42\n```",
                 cost: 1.23

@@ -60,11 +60,10 @@
 // While true: a centered ProgressView is shown instead of messages or welcome screen.
 // This prevents the "flash of welcome message" on app launch while SwiftData loads.
 //
-// MESSAGE RENDERING (background-probe pattern):
-// ForEach uses MessageBubbleRowView — NOT MessageBubbleView directly.
-// MessageBubbleRowView measures row width via a background Color.clear GeometryReader
-// and passes it into MessageBubbleView for correct FlowLayout wrapping.
-// See MessageBubbleView.swift for full explanation of the background-probe pattern.
+// MESSAGE RENDERING:
+// ForEach uses MessageBubbleView directly — no GeometryReader, no background probe.
+// Bubble width is capped at a fixed 500 pt constant via frame(maxWidth:).
+// Window can resize freely without any layout side effects.
 
 import SwiftUI
 
@@ -131,10 +130,7 @@ struct ChatScrollView: View {
                                 .transition(.opacity)
                         } else {
                             ForEach(messages) { msg in
-                                // MessageBubbleRowView measures row width via background probe
-                                // and passes it into MessageBubbleView for FlowLayout wrapping.
-                                // DO NOT use MessageBubbleView directly here — it requires rowWidth.
-                                MessageBubbleRowView(msg: msg)
+                                MessageBubbleView(msg: msg)
                                     .id(msg.id)
                             }
                         }
