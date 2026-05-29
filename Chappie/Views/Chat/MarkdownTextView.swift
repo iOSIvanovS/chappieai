@@ -23,7 +23,8 @@
 //   2. Headings: # ## ###
 //   3. Bold: **text**
 //   4. Inline code: `code`
-//   5. Plain text with correct typography
+//   5. Tables: | col | col |
+//   6. Plain text with correct typography
 //
 // THEME ADAPTABILITY:
 // All colors in CodeBlockView and SyntaxHighlightedText are read via
@@ -40,7 +41,9 @@
 //      50 simultaneous parses when switching a thread with 50 messages.
 // Fixes applied:
 //   a) MarkdownTextView stores blocks in init (let), not computed var.
-//   b) MarkdownBlock.id for divider uses stable positional hash.
+//   b) MarkdownBlock.id uses position index for ALL block types — not just
+//      dividers. Content-prefix IDs caused SwiftUI to reuse views across
+//      different table sections when row text started identically.
 //   c) All applyXxx methods guard Range conversion with optional binding —
 //      never force-apply on out-of-bounds unicode index.
 //
@@ -112,25 +115,35 @@ private struct SyntaxTheme {
 /// IDs must be stable across render passes — SwiftUI uses them to decide
 /// whether to reuse or recreate TextKit storage. Non-stable IDs (e.g. UUID())
 /// cause TextKit to reconstruct storage on every render, triggering "bad range".
-/// Solution: IDs are built from content + position index, never from UUID().
+///
+/// CRITICAL BUG FIX (TABLE BLEED):
+/// Previously IDs used content prefix: "p_\(text.prefix(40))".
+/// When multiple table sections had rows starting with the same text
+/// (e.g. "| 1 | **Multi-language..."), their IDs collided — SwiftUI reused
+/// the same view instance across sections, causing row content to "bleed"
+/// from one table into another.
+/// Fix: ALL block types now use positional index in their ID, making every
+/// block unique regardless of content similarity.
 private enum MarkdownBlock: Identifiable {
     /// Plain text with inline markup (bold, italic, inline code)
-    case paragraph(String)
+    case paragraph(String, index: Int)
     /// Heading level 1–3
-    case heading(String, level: Int)
+    case heading(String, level: Int, index: Int)
     /// Code block with optional language
-    case codeBlock(code: String, language: String?)
+    case codeBlock(code: String, language: String?, index: Int)
     /// Horizontal divider ---
     case divider(index: Int)
+    /// Markdown table: header row + separator + data rows
+    case table(headers: [String], rows: [[String]], index: Int)
 
     var id: String {
         switch self {
-        case .paragraph(let t):       return "p_\(t.prefix(40))"
-        case .heading(let t, let l):  return "h\(l)_\(t.prefix(40))"
-        case .codeBlock(let c, _):    return "code_\(c.prefix(40))"
-        // TEXTKIT-RANGE FIX: stable positional ID instead of UUID()
-        // UUID() here caused SwiftUI to recreate TextKit storage on every render.
-        case .divider(let i):         return "div_\(i)"
+        // Position index guarantees uniqueness even when content prefix matches.
+        case .paragraph(_, let i):        return "p_\(i)"
+        case .heading(_, _, let i):       return "h_\(i)"
+        case .codeBlock(_, _, let i):     return "code_\(i)"
+        case .divider(let i):             return "div_\(i)"
+        case .table(_, _, let i):         return "table_\(i)"
         }
     }
 }
@@ -146,13 +159,14 @@ private struct MarkdownParser {
 
     /// Parses a markdown string into an array of blocks.
     ///
-    /// TEXTKIT-RANGE FIX: divider blocks receive a stable positional index
-    /// so their IDs don't change between render passes.
+    /// TEXTKIT-RANGE FIX: ALL blocks receive a stable positional index
+    /// so their IDs don't change between render passes and never collide.
     static func parse(_ text: String) -> [MarkdownBlock] {
         var blocks: [MarkdownBlock] = []
         let lines = text.components(separatedBy: "\n")
         var i = 0
-        var dividerIndex = 0
+        // Global block counter — ensures every block has a unique positional ID.
+        var blockIndex = 0
 
         while i < lines.count {
             let line = lines[i]
@@ -173,36 +187,68 @@ private struct MarkdownParser {
 
                 let code = codeLines.joined(separator: "\n")
                     .trimmingCharacters(in: .newlines)
-                blocks.append(.codeBlock(
-                    code: code,
-                    language: lang.isEmpty ? nil : lang
-                ))
+                blocks.append(.codeBlock(code: code, language: lang.isEmpty ? nil : lang, index: blockIndex))
+                blockIndex += 1
                 continue
             }
 
             // --- Horizontal divider
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed == "---" || trimmed == "***" {
-                blocks.append(.divider(index: dividerIndex))
-                dividerIndex += 1
+                blocks.append(.divider(index: blockIndex))
+                blockIndex += 1
                 i += 1
                 continue
             }
 
             // --- Headings # ## ###
             if line.hasPrefix("### ") {
-                blocks.append(.heading(String(line.dropFirst(4)), level: 3))
+                blocks.append(.heading(String(line.dropFirst(4)), level: 3, index: blockIndex))
+                blockIndex += 1
                 i += 1
                 continue
             }
             if line.hasPrefix("## ") {
-                blocks.append(.heading(String(line.dropFirst(3)), level: 2))
+                blocks.append(.heading(String(line.dropFirst(3)), level: 2, index: blockIndex))
+                blockIndex += 1
                 i += 1
                 continue
             }
             if line.hasPrefix("# ") {
-                blocks.append(.heading(String(line.dropFirst(2)), level: 1))
+                blocks.append(.heading(String(line.dropFirst(2)), level: 1, index: blockIndex))
+                blockIndex += 1
                 i += 1
+                continue
+            }
+
+            // --- Table: line starts with |
+            // A markdown table is: header row | separator row (|---|) | data rows
+            if trimmed.hasPrefix("|") {
+                var tableLines: [String] = [line]
+                i += 1
+                while i < lines.count {
+                    let nextTrimmed = lines[i].trimmingCharacters(in: .whitespaces)
+                    if nextTrimmed.hasPrefix("|") {
+                        tableLines.append(lines[i])
+                        i += 1
+                    } else {
+                        break
+                    }
+                }
+
+                if let tableBlock = parseTable(tableLines, index: blockIndex) {
+                    blocks.append(tableBlock)
+                    blockIndex += 1
+                } else {
+                    // Not a valid table — fall through as paragraphs
+                    for tl in tableLines {
+                        let tlt = tl.trimmingCharacters(in: .whitespaces)
+                        if !tlt.isEmpty {
+                            blocks.append(.paragraph(tl, index: blockIndex))
+                            blockIndex += 1
+                        }
+                    }
+                }
                 continue
             }
 
@@ -224,22 +270,57 @@ private struct MarkdownParser {
                     || next.hasPrefix("# ")
                     || next.hasPrefix("## ")
                     || next.hasPrefix("### ")
-                    || nextTrimmed == "---" {
+                    || nextTrimmed == "---"
+                    || nextTrimmed.hasPrefix("|") {
                     break
                 }
                 paragraphLines.append(next)
                 i += 1
             }
-            blocks.append(.paragraph(paragraphLines.joined(separator: "\n")))
+            blocks.append(.paragraph(paragraphLines.joined(separator: "\n"), index: blockIndex))
+            blockIndex += 1
         }
 
         return blocks
+    }
+
+    /// Parses collected pipe-delimited lines into a table block.
+    ///
+    /// Returns nil if the lines don't form a valid table (need at least header + separator).
+    private static func parseTable(_ lines: [String], index: Int) -> MarkdownBlock? {
+        guard lines.count >= 2 else { return nil }
+
+        // Parse a single pipe-delimited row into cells
+        func parseCells(_ line: String) -> [String] {
+            var cells = line.components(separatedBy: "|")
+            // Remove leading/trailing empty strings from outer pipes
+            if cells.first?.trimmingCharacters(in: .whitespaces).isEmpty == true {
+                cells.removeFirst()
+            }
+            if cells.last?.trimmingCharacters(in: .whitespaces).isEmpty == true {
+                cells.removeLast()
+            }
+            return cells.map { $0.trimmingCharacters(in: .whitespaces) }
+        }
+
+        // Check second line is a separator (contains only |, -, :, spaces)
+        let separatorLine = lines[1].trimmingCharacters(in: .whitespaces)
+        let isSeparator = separatorLine.allSatisfy { $0 == "|" || $0 == "-" || $0 == ":" || $0 == " " }
+        guard isSeparator else { return nil }
+
+        let headers = parseCells(lines[0])
+        guard !headers.isEmpty else { return nil }
+
+        // Data rows: skip header (0) and separator (1)
+        let rows = lines.dropFirst(2).map { parseCells($0) }
+
+        return .table(headers: headers, rows: rows, index: index)
     }
 }
 
 // MARK: - Main component
 
-/// Renders markdown text with support for code blocks, headings, and inline markup.
+/// Renders markdown text with support for code blocks, headings, tables, and inline markup.
 ///
 /// Used instead of plain `Text()` in Chappie message bubbles.
 ///
@@ -279,20 +360,23 @@ struct MarkdownTextView: View {
     @ViewBuilder
     private func blockView(_ block: MarkdownBlock) -> some View {
         switch block {
-        case .paragraph(let rawText):
+        case .paragraph(let rawText, _):
             InlineTextView(text: rawText, fontSize: fontSize, color: textColor)
                 .lineSpacing(5)
                 .fixedSize(horizontal: false, vertical: true)
 
-        case .heading(let rawText, let level):
+        case .heading(let rawText, let level, _):
             headingView(text: rawText, level: level)
 
-        case .codeBlock(let code, let language):
+        case .codeBlock(let code, let language, _):
             CodeBlockView(code: code, language: language)
 
         case .divider:
             Divider()
                 .padding(.vertical, 4)
+
+        case .table(let headers, let rows, _):
+            TableBlockView(headers: headers, rows: rows, fontSize: fontSize)
         }
     }
 
@@ -313,6 +397,113 @@ struct MarkdownTextView: View {
             InlineTextView(text: text, fontSize: fontSize + 1, color: textColor)
                 .fontWeight(.medium)
         }
+    }
+}
+
+// MARK: - Table block
+
+/// Renders a markdown table with header row and data rows.
+///
+/// DESIGN:
+/// - Header row: bold, slightly darker background
+/// - Data rows: alternating subtle background for readability
+/// - Borders: 1pt lines using system separator color
+/// - Inline markup in cells: bold, inline code supported via InlineTextView
+private struct TableBlockView: View {
+
+    let headers: [String]
+    let rows: [[String]]
+    let fontSize: CGFloat
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var borderColor: Color {
+        colorScheme == .dark
+            ? Color(white: 0.3)
+            : Color(white: 0.75)
+    }
+
+    private var headerBackground: Color {
+        colorScheme == .dark
+            ? Color(white: 0.18)
+            : Color(white: 0.93)
+    }
+
+    private var rowBackground: Color {
+        colorScheme == .dark
+            ? Color(white: 0.13)
+            : Color(white: 0.98)
+    }
+
+    private var altRowBackground: Color {
+        colorScheme == .dark
+            ? Color(white: 0.16)
+            : Color(white: 0.955)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header row
+            tableRow(cells: headers, isHeader: true, background: headerBackground)
+
+            Divider()
+                .background(borderColor)
+
+            // Data rows
+            ForEach(Array(rows.enumerated()), id: \.offset) { idx, row in
+                tableRow(
+                    cells: row,
+                    isHeader: false,
+                    background: idx % 2 == 0 ? rowBackground : altRowBackground
+                )
+                if idx < rows.count - 1 {
+                    Divider()
+                        .background(borderColor)
+                }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(borderColor, lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private func tableRow(cells: [String], isHeader: Bool, background: Color) -> some View {
+        HStack(spacing: 0) {
+            ForEach(Array(paddedCells(cells).enumerated()), id: \.offset) { idx, cell in
+                InlineTextView(
+                    text: cell,
+                    fontSize: fontSize - 1,
+                    color: .primary
+                )
+                .fontWeight(isHeader ? .semibold : .regular)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                // Vertical divider between columns (not after last)
+                if idx < headers.count - 1 {
+                    Rectangle()
+                        .fill(borderColor)
+                        .frame(width: 1)
+                        .frame(maxHeight: .infinity)
+                }
+            }
+        }
+        .background(background)
+    }
+
+    /// Pads or trims a row to match the header column count.
+    ///
+    /// Handles malformed tables where rows have fewer or more cells than headers.
+    private func paddedCells(_ cells: [String]) -> [String] {
+        let count = headers.count
+        if cells.count >= count {
+            return Array(cells.prefix(count))
+        }
+        return cells + Array(repeating: "", count: count - cells.count)
     }
 }
 
@@ -736,43 +927,34 @@ private struct SyntaxHighlightedText: View {
 
 // MARK: - Preview
 
-#Preview("Markdown with code — Dark") {
+#Preview("Markdown with tables — Dark") {
     ScrollView {
         MarkdownTextView(text: """
-        Here's how it works:
+        ## 🔴 Высокий приоритет
 
-        ## Architecture
+        | # | Задача | Effort |
+        |---|--------|--------|
+        | 1 | **Multi-language syntax highlighting** — Highlightr, 185 языков | small |
+        | 2 | **Web Fetch Tool** — `fetch_url`, HTML→Markdown | medium |
+        | 3 | **Переименование в ChappieAI** — bundle ID, display name | medium |
 
-        Using the **MVVM** pattern with the `@Observable` macro.
+        ## 🟡 Средний приоритет
 
-        ```swift
-        // Main ViewModel
-        @Observable
-        @MainActor
-        final class ChappieViewModel {
-            var messages: [ChatMessage] = []
-            var isThinking: Bool = false
+        | # | Задача | Effort |
+        |---|--------|--------|
+        | 1 | **Universal balance & cost** — топ-10 провайдеров | medium |
+        | 2 | **Фоновая картинка** — нейтральная + выбор из ФС | small |
+        | 3 | **Office форматы** — .docx, .xlsx, .pdf | large |
 
-            func send(prompt: String) async {
-                isThinking = true
-                defer { isThinking = false }
-                let result = try await orchestrator.process(prompt)
-                messages.append(.message(isUser: false, text: result))
-            }
-        }
-        ```
+        ## 🟢 Низкий приоритет
 
-        Also configure **settings** in `AppConfig.swift`.
-
-        ---
-
-        ### Important
-
-        Don't forget to add the *API key* in settings.
+        | # | Задача | Effort |
+        |---|--------|--------|
+        | 1 | **Spell check** — нативный spellcheck в поле ввода | small |
         """)
         .padding()
     }
-    .frame(width: 600, height: 500)
+    .frame(width: 600, height: 600)
     .background(Color(NSColor.windowBackgroundColor))
     .preferredColorScheme(.dark)
 }
@@ -793,21 +975,12 @@ private struct SyntaxHighlightedText: View {
         final class ChappieViewModel {
             var messages: [ChatMessage] = []
             var isThinking: Bool = false
-
-            func send(prompt: String) async {
-                isThinking = true
-                defer { isThinking = false }
-                let result = try await orchestrator.process(prompt)
-                messages.append(.message(isUser: false, text: result))
-            }
         }
         ```
-
-        Also configure **settings** in `AppConfig.swift`.
         """)
         .padding()
     }
-    .frame(width: 600, height: 500)
+    .frame(width: 600, height: 400)
     .background(Color(NSColor.windowBackgroundColor))
     .preferredColorScheme(.light)
 }
