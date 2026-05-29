@@ -134,7 +134,21 @@
 //
 //   OVERLAY COLOR:
 //     .allowed → accent blue (valid files hovering)
-//     .blocked → red (AI is thinking OR only folders dropped)
+//     .blocked → red (AI is thinking OR only folders dragged)
+//
+//   FOLDER DETECTION DURING DRAG:
+//   DropInfo.hasItemsConforming(to: [.folder]) reliably detects folders during drag.
+//   If the drag contains ONLY folders (no regular files) → .blocked.
+//   If it contains a mix (files + folders) → .allowed (folders are filtered after drop).
+//   This gives immediate red feedback when the user drags a folder.
+//
+//   POST-DROP RESET:
+//   macOS does NOT call dropExited after performDrop. The reset is done via
+//   Task { @MainActor in } scheduled inside handleDrop — this guarantees the
+//   @Observable mutation happens on the main actor and SwiftUI tracking sees it.
+//   DispatchQueue.main.asyncAfter was unreliable: DropDelegate callbacks on macOS
+//   may arrive on a background thread, making the DispatchWorkItem execute on a
+//   different actor than the one SwiftUI's observation machinery expects.
 //
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
@@ -156,7 +170,7 @@ import ChappieCore
 enum DropState: Equatable {
     case idle        // No drag in progress
     case allowed     // Valid files hovering, drop will succeed
-    case blocked     // AI is thinking OR only incompatible items (folders, etc.)
+    case blocked     // AI is thinking OR only folders dragged
 }
 
 // MARK: - DropController
@@ -164,8 +178,15 @@ enum DropState: Equatable {
 /// Reference-type controller for global drag & drop.
 ///
 /// Stored as @State in ContentView — created once, never recreated on re-renders.
-/// All state mutations happen inside this class so DispatchWorkItems always
+/// All state mutations happen inside this class so pending Tasks always
 /// write to the live object, not a stale copy.
+///
+/// WHY Task { @MainActor in } instead of DispatchQueue.main.asyncAfter:
+/// DropDelegate callbacks on macOS may arrive on a background thread.
+/// A DispatchWorkItem created on a background thread and dispatched to main
+/// does NOT trigger @Observable tracking reliably — SwiftUI may miss the mutation.
+/// Task { @MainActor in } is actor-aware: the mutation always runs on MainActor,
+/// which is exactly what @Observable requires for SwiftUI to pick up the change.
 @Observable
 final class DropController {
 
@@ -183,30 +204,32 @@ final class DropController {
 
     // MARK: Private
 
-    private var pendingWork: DispatchWorkItem?
+    // Cancellable token for the pending reset Task — cancels the previous one on re-entry.
+    private var resetTask: Task<Void, Never>?
 
     // MARK: - Drag Event Handlers
 
     /// Called from dropEntered and dropUpdated.
-    /// Cancels any pending exit-reset and refreshes the overlay state.
+    /// Cancels any pending reset and refreshes the overlay state.
     func handleEnterOrUpdate(info: DropInfo) {
-        cancelPending()
+        cancelPendingReset()
         dropState = computeState(info: info)
     }
 
     /// Called from dropExited.
     /// Schedules a debounced reset (80ms) to prevent flicker when crossing subview boundaries.
     func handleExit() {
-        schedule(delay: 0.08)
+        scheduleReset(delay: 0.08)
     }
 
     /// Called from performDrop.
-    /// Schedules a post-drop reset (200ms) — macOS does NOT call dropExited after performDrop.
+    /// Schedules a post-drop reset (250ms) — macOS does NOT call dropExited after performDrop.
     /// Returns true only when the drop is allowed.
     func handleDrop(info: DropInfo) -> Bool {
-        // Always schedule reset — regardless of outcome
-        cancelPending()
-        schedule(delay: 0.20)
+        // Always schedule reset — regardless of outcome.
+        // The reset runs on MainActor so @Observable tracking is guaranteed.
+        cancelPendingReset()
+        scheduleReset(delay: 0.25)
 
         guard dropState == .allowed else { return false }
 
@@ -220,35 +243,42 @@ final class DropController {
     // MARK: - Private Helpers
 
     /// Computes the drop state from the current drag info.
-    /// Uses DropInfo.hasItemsConforming — the only reliable sync API available during drag.
-    /// NSPasteboard(name: .drag) is intentionally avoided: it is unreliable during dropEntered
-    /// on macOS 13+ and may return stale or empty data before the drag session stabilises.
     ///
-    /// Folder detection happens in resolveDroppedFiles() after the drop — not here.
-    /// WHY: there is no reliable sync way to check isDirectory during drag without
-    /// reading the pasteboard (which is broken). We show .allowed for all file URLs
-    /// and silently filter folders after the drop. The only .blocked case during drag
-    /// is when AI is thinking — that is the UX goal anyway.
+    /// FOLDER DETECTION:
+    /// hasItemsConforming(to: [.folder]) is reliable during drag — unlike NSPasteboard.
+    /// If the drag contains ONLY folders → .blocked (red overlay, no drop).
+    /// If it contains files (possibly mixed with folders) → .allowed (folders filtered post-drop).
+    /// If AI is thinking → .blocked regardless of content.
     private func computeState(info: DropInfo) -> DropState {
         if isThinkingGetter() { return .blocked }
-        return info.hasItemsConforming(to: [.fileURL]) ? .allowed : .blocked
+        // Folders-only drag: no fileURL items that are not folders
+        let hasFiles = info.hasItemsConforming(to: [.fileURL])
+        let hasFolders = info.hasItemsConforming(to: [.folder])
+        // If only folders and no plain files → blocked
+        if hasFolders && !hasFiles { return .blocked }
+        // If folders present alongside files → allowed (folders silently filtered after drop)
+        return hasFiles ? .allowed : .blocked
     }
 
-    /// Schedules a delayed reset of dropState to .idle.
-    /// Cancels any previously pending work first (single-slot pattern).
-    private func schedule(delay: Double) {
-        cancelPending()
-        let work = DispatchWorkItem { [weak self] in
+    /// Schedules a delayed reset of dropState to .idle on MainActor.
+    ///
+    /// WHY Task { @MainActor in }:
+    /// This method may be called from a DropDelegate callback running on a background thread.
+    /// Task { @MainActor in } guarantees the mutation executes on the main actor —
+    /// which is required for @Observable to notify SwiftUI's observation machinery.
+    private func scheduleReset(delay: Double) {
+        cancelPendingReset()
+        resetTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
             self?.dropState = .idle
         }
-        pendingWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     /// Cancels any pending scheduled reset.
-    private func cancelPending() {
-        pendingWork?.cancel()
-        pendingWork = nil
+    private func cancelPendingReset() {
+        resetTask?.cancel()
+        resetTask = nil
     }
 }
 
