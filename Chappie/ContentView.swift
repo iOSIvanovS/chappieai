@@ -148,9 +148,9 @@
 //
 //   KEY BUG FIX — folders show blue overlay:
 //   info.hasItemsConforming(to: [.fileURL]) returns true for folders too, because
-//   directories also conform to .fileURL UTType. To synchronously distinguish files
-//   from folders we read NSPasteboard directly and check isDirectory on each URL.
-//   If ALL resolved URLs are directories → state becomes .blocked (red overlay).
+//   directories also conform to .fileURL UTType. To distinguish them synchronously
+//   (DropInfo has no async API), we read NSPasteboard directly and check isDirectory
+//   on each URL. If ALL resolved URLs are directories → state becomes .blocked (red).
 //
 //   KEY BUG FIX — overlay flickers when cursor crosses child view boundaries:
 //   macOS fires dropExited + dropEntered every time the cursor crosses a subview boundary
@@ -160,6 +160,17 @@
 //   dropEntered and dropUpdated cancel the pending reset immediately, so the overlay
 //   stays visible during normal in-window movement. The reset only fires if the cursor
 //   truly leaves the window (no new enter/update within 80ms).
+//
+//   KEY BUG FIX — overlay stuck after drop (root cause):
+//   macOS does NOT call dropExited after performDrop. The overlay must be reset manually.
+//   Previous attempts used DispatchQueue.main.async { resetState() } — but on macOS,
+//   after performDrop the drag session is still "live" for a brief moment. During that
+//   window SwiftUI re-renders the delegate with a fresh copy, and the async block from
+//   the old delegate may write to a stale @Binding.
+//   FINAL FIX: use scheduleReset() — same DispatchWorkItem mechanism as scheduleExit(),
+//   stored in ContentView @State. This guarantees the write goes to the live @State.
+//   Delay is 150ms — long enough for macOS to fully tear down the drag session before
+//   we clear the overlay, short enough to be imperceptible to the user.
 //
 //   resolveDroppedFiles() runs URL resolution on a background Task, appends on @MainActor.
 //   Folders are silently skipped (isDirectory check inside resolveDroppedFiles).
@@ -196,7 +207,7 @@ private enum DropState: Equatable {
 /// drop before we ever get a chance to show the overlay. The real allow/block
 /// decision is made in performDrop() after the user releases.
 ///
-/// All state mutations go through closures (isThinkingGetter, resetState,
+/// All state mutations go through closures (isThinkingGetter, scheduleReset,
 /// scheduleExit, cancelExit) rather than captured values or @Binding writes.
 /// This is required because ChappieDropDelegate is a value type: SwiftUI recreates
 /// it on every render pass, so any @Binding captured by value becomes stale.
@@ -209,8 +220,10 @@ private struct ChappieDropDelegate: DropDelegate {
     let isThinkingGetter: () -> Bool
     /// Called when a valid drop is performed.
     let onDrop: ([NSItemProvider]) -> Void
-    /// Resets dropState to .idle — called from performDrop via async to survive re-render.
-    let resetState: () -> Void
+    /// Schedule a delayed reset of dropState to .idle — called from performDrop.
+    /// Uses the same DispatchWorkItem mechanism as scheduleExit so the write always
+    /// goes to the live ContentView @State, not a stale delegate copy.
+    let scheduleReset: () -> Void
     /// Schedule a debounced .idle reset — called from dropExited.
     let scheduleExit: () -> Void
     /// Cancel any pending .idle reset — called from dropEntered / dropUpdated.
@@ -219,13 +232,13 @@ private struct ChappieDropDelegate: DropDelegate {
     // MARK: - DropDelegate
 
     func dropEntered(info: DropInfo) {
-        // Cancel any pending exit reset — cursor is still inside the window
+        // Cancel any pending exit/reset — cursor is back inside the window
         cancelExit()
         updateState(info: info)
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        // Cancel any pending exit reset — cursor moved but is still inside
+        // Cancel any pending exit/reset — cursor moved but is still inside
         cancelExit()
         updateState(info: info)
         // Show forbidden cursor when blocked — purely cosmetic, does not gate performDrop
@@ -251,24 +264,25 @@ private struct ChappieDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        // Cancel any pending debounced exit — we handle the reset ourselves here
+        // Cancel any pending debounced exit — we schedule our own reset below
         cancelExit()
 
-        // BUG FIX — value type @Binding:
-        // ChappieDropDelegate is a value type. Writing dropState = .idle directly here
-        // would update the local copy, not the live @State in ContentView.
-        // DispatchQueue.main.async { dropState = .idle } has the same problem —
-        // the @Binding wrapper is captured by value and may be stale by the time
-        // the async block executes (SwiftUI recreates the delegate on every render).
-        // Solution: resetState() is a closure that closes over ContentView's @State
-        // reference directly — it always writes to the live source of truth.
+        // KEY FIX — overlay stuck after drop:
+        // macOS does NOT call dropExited after performDrop. We must reset the overlay
+        // manually. We use scheduleReset() — a DispatchWorkItem stored in ContentView
+        // @State — instead of DispatchQueue.main.async { resetState() }.
         //
-        // macOS does NOT call dropExited after a successful performDrop, so we must
-        // reset manually. The async dispatch gives SwiftUI one runloop pass to process
-        // the drop result before we clear the overlay.
-        DispatchQueue.main.async { resetState() }
+        // WHY scheduleReset and not plain async:
+        // After performDrop, macOS keeps the drag session alive briefly while it
+        // animates the drop. During this window SwiftUI may re-render, creating a
+        // fresh delegate copy. A plain async block captured from the old delegate
+        // holds a stale @Binding wrapper and its write becomes a no-op.
+        // scheduleReset() is a closure that always closes over the live @State in
+        // ContentView — it survives re-renders and writes to the correct location.
+        // The 150ms delay is imperceptible but safely outlasts the drag teardown.
+        scheduleReset()
 
-        // Block the actual drop if AI is thinking or no valid files were present
+        // Read current state via @Binding — block if AI is thinking or only folders
         guard dropState == .allowed else { return false }
         let providers = info.itemProviders(for: [.fileURL])
         onDrop(providers)
@@ -329,10 +343,10 @@ struct ContentView: View {
     @State private var attachments: [AttachedFile] = []
     // Current drag state — drives overlay color (idle / allowed / blocked).
     @State private var dropState: DropState = .idle
-    // Debounce work item for dropExited — prevents flicker when cursor crosses subview boundaries.
-    // Stored here (not in ChappieDropDelegate) because the delegate is a value type and cannot
-    // own a DispatchWorkItem across re-renders.
-    @State private var exitDebounceWork: DispatchWorkItem? = nil
+    // Shared debounce work item used by both scheduleExit (dropExited debounce) and
+    // scheduleReset (post-drop cleanup). Stored in ContentView @State — NOT in the delegate —
+    // because ChappieDropDelegate is a value type and cannot own mutable state across re-renders.
+    @State private var pendingResetWork: DispatchWorkItem? = nil
 
     @State private var selectedProjectForSettings: ProjectMetadata? = nil
     /// Thread whose settings sheet is currently open.
@@ -585,33 +599,40 @@ struct ContentView: View {
                 dropState: $dropState,
                 isThinkingGetter: { viewModel.isThinking },
                 onDrop: resolveDroppedFiles,
-                resetState: { dropState = .idle },
+                scheduleReset: scheduleDropReset,
                 scheduleExit: scheduleDropExit,
-                cancelExit: cancelDropExit
+                cancelExit: cancelPendingReset
             )
         )
     }
 
-    // MARK: - Drop Exit Debounce
+    // MARK: - Drop Reset / Exit Debounce
 
-    /// Schedules a delayed reset of dropState to .idle.
-    /// Called from dropExited — gives 80ms for a new dropEntered to cancel it.
-    /// 80ms is imperceptible to the user but long enough to survive subview-boundary
-    /// crossing, which typically fires exit+enter within a single frame (~16ms).
+    /// Schedules a delayed reset of dropState to .idle after a successful drop.
+    /// 150ms gives macOS time to fully tear down the drag session before we clear
+    /// the overlay — prevents a stale @Binding write racing with drag teardown.
+    private func scheduleDropReset() {
+        cancelPendingReset()
+        let work = DispatchWorkItem { dropState = .idle }
+        pendingResetWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+    }
+
+    /// Schedules a delayed reset of dropState to .idle when the cursor leaves the window.
+    /// 80ms debounce prevents flicker when cursor crosses subview boundaries inside the window —
+    /// macOS fires dropExited + dropEntered for each boundary crossing (~16ms apart).
     private func scheduleDropExit() {
-        let work = DispatchWorkItem {
-            dropState = .idle
-        }
-        exitDebounceWork = work
+        cancelPendingReset()
+        let work = DispatchWorkItem { dropState = .idle }
+        pendingResetWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: work)
     }
 
-    /// Cancels any pending debounced exit reset.
-    /// Called from dropEntered and dropUpdated so the overlay stays visible
-    /// while the cursor is still inside the window.
-    private func cancelDropExit() {
-        exitDebounceWork?.cancel()
-        exitDebounceWork = nil
+    /// Cancels any pending scheduled reset (both post-drop and exit debounce share one slot).
+    /// Called from dropEntered and dropUpdated — cursor is still inside, keep overlay visible.
+    private func cancelPendingReset() {
+        pendingResetWork?.cancel()
+        pendingResetWork = nil
     }
 
     // MARK: - Drop Overlay
