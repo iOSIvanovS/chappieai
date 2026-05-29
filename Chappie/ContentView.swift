@@ -121,10 +121,24 @@
 //   attachments state lives in ContentView and is passed to InputMorphView via @Binding.
 //   The drop target is mainChatArea (the full app content area), NOT InputMorphView.
 //   This lets the user drop files anywhere in the window — not just on the input panel.
-//   ChappieDropDelegate inspects the dragged items BEFORE the drop:
-//     - If AI is thinking → red overlay (drop blocked).
-//     - If dragged items contain no valid file URLs (e.g. folders only) → red overlay.
-//     - Otherwise → blue/accent overlay (drop allowed).
+//
+//   WHY ChappieDropDelegate instead of .onDrop(isTargeted:):
+//   The standard isTargeted goes true for ANY dragged item including folders and blocked
+//   states. We need to distinguish valid vs. invalid drops for different overlay colors.
+//
+//   KEY BUG FIX — validateDrop ordering:
+//   On macOS, validateDrop() is called BEFORE dropEntered(). If validateDrop returns false
+//   on the very first call (when dropState is still .idle), the system decides the view
+//   doesn't accept drops at all and never calls dropEntered — so the overlay never appears.
+//   Solution: validateDrop always returns true. The actual block/allow decision happens
+//   in performDrop (after the user releases). Visual feedback is purely from dropState
+//   driven by dropEntered/dropUpdated.
+//
+//   KEY BUG FIX — isThinking capture:
+//   DropDelegate is a value type created once per render. If isThinking changes after
+//   the delegate is created, the captured value is stale. Solution: pass isThinking via
+//   a closure (getter) so each call reads the current value from the parent's state.
+//
 //   resolveDroppedFiles() runs URL resolution on a background Task, appends on @MainActor.
 //   Folders are silently skipped (isDirectory check inside resolveDroppedFiles).
 //
@@ -155,19 +169,19 @@ private enum DropState: Equatable {
 
 /// Custom DropDelegate for the global file-drop zone.
 ///
-/// WHY a custom delegate instead of .onDrop(isTargeted:):
-/// The standard isTargeted binding goes true for ANY dragged item — including folders
-/// and items dragged while AI is thinking. We need to distinguish valid vs. invalid
-/// drops and show different overlay colors (blue vs. red) before the user releases.
+/// CRITICAL: validateDrop() is called BEFORE dropEntered() on macOS.
+/// Therefore validateDrop always returns true — otherwise the system rejects the
+/// drop before we ever get a chance to show the overlay. The real allow/block
+/// decision is made in performDrop() after the user releases.
 ///
-/// validateDrop() is called continuously while the drag hovers — it updates dropState
-/// which drives the overlay color in real time.
+/// isThinking is read via a closure (not captured by value) so it always reflects
+/// the current ViewModel state even if the delegate was created before it changed.
 private struct ChappieDropDelegate: DropDelegate {
 
     /// Written by this delegate, read by the overlay to pick its color.
     @Binding var dropState: DropState
-    /// Whether AI is currently processing — blocks all drops.
-    let isThinking: Bool
+    /// Closure returning the current isThinking value — avoids stale capture.
+    let isThinkingGetter: () -> Bool
     /// Called when a valid drop is performed.
     let onDrop: ([NSItemProvider]) -> Void
 
@@ -179,7 +193,7 @@ private struct ChappieDropDelegate: DropDelegate {
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
         updateState(info: info)
-        // Return .forbidden proposal when blocked so the cursor shows the "no" icon
+        // Show forbidden cursor when blocked — purely cosmetic, does not gate performDrop
         return dropState == .blocked
             ? DropProposal(operation: .forbidden)
             : DropProposal(operation: .copy)
@@ -190,18 +204,19 @@ private struct ChappieDropDelegate: DropDelegate {
     }
 
     func validateDrop(info: DropInfo) -> Bool {
-        // Allow the drop only when state is .allowed — this gates performDrop
-        return dropState == .allowed
+        // MUST return true unconditionally — validateDrop fires before dropEntered,
+        // so dropState is still .idle on the first call. Returning false here would
+        // prevent dropEntered from ever being called and the overlay would never show.
+        // Real blocking happens in performDrop().
+        return true
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        guard dropState == .allowed else {
-            dropState = .idle
-            return false
-        }
+        defer { dropState = .idle }
+        // Block the actual drop if AI is thinking or no valid files were present
+        guard dropState == .allowed else { return false }
         let providers = info.itemProviders(for: [.fileURL])
         onDrop(providers)
-        dropState = .idle
         return true
     }
 
@@ -209,14 +224,13 @@ private struct ChappieDropDelegate: DropDelegate {
 
     /// Determines whether the current drag payload is droppable and updates dropState.
     private func updateState(info: DropInfo) {
-        // Thinking → always blocked
-        guard !isThinking else {
+        // Read current isThinking via closure — avoids stale value from delegate creation
+        guard !isThinkingGetter() else {
             dropState = .blocked
             return
         }
-        // At least one file URL must be present (folders also conform to .fileURL,
-        // but we can't inspect directory-ness here synchronously — that check happens
-        // in resolveDroppedFiles. If the provider has .fileURL we optimistically allow.)
+        // Optimistically allow if there are any file URLs present.
+        // Folder-vs-file distinction happens later in resolveDroppedFiles (async).
         let hasFiles = info.hasItemsConforming(to: [.fileURL])
         dropState = hasFiles ? .allowed : .blocked
     }
@@ -480,11 +494,12 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.easeInOut(duration: 0.2), value: viewModel.activeThread?.id)
         // DND-GLOBAL: ChappieDropDelegate handles validation and color signaling.
+        // isThinking is passed as a closure so the delegate always reads the live value.
         .onDrop(
             of: [.fileURL],
             delegate: ChappieDropDelegate(
                 dropState: $dropState,
-                isThinking: viewModel.isThinking,
+                isThinkingGetter: { viewModel.isThinking },
                 onDrop: resolveDroppedFiles
             )
         )
