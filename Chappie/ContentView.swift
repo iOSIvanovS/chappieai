@@ -139,12 +139,12 @@
 //   the delegate is created, the captured value is stale. Solution: pass isThinking via
 //   a closure (getter) so each call reads the current value from the parent's state.
 //
-//   KEY BUG FIX — overlay stuck after drop:
-//   performDrop on macOS does NOT trigger dropExited after a successful drop.
-//   Setting dropState = .idle via defer inside performDrop fires synchronously before
-//   the function returns, but SwiftUI may batch the update. We use DispatchQueue.main.async
-//   to ensure the state reset happens in the next runloop pass after SwiftUI processes
-//   the drop result — this guarantees the overlay disappears.
+//   KEY BUG FIX — overlay stuck after drop (value type @Binding):
+//   ChappieDropDelegate is a value type. DispatchQueue.main.async inside performDrop
+//   captures a COPY of the @Binding wrapper — by the time the async block runs, SwiftUI
+//   may have already recreated the delegate with a fresh copy, making the write a no-op.
+//   Solution: pass resetState as a closure (like scheduleExit/cancelExit), so the block
+//   always writes through the live ContentView @State reference, not a stale copy.
 //
 //   KEY BUG FIX — folders show blue overlay:
 //   info.hasItemsConforming(to: [.fileURL]) returns true for folders too, because
@@ -196,12 +196,11 @@ private enum DropState: Equatable {
 /// drop before we ever get a chance to show the overlay. The real allow/block
 /// decision is made in performDrop() after the user releases.
 ///
-/// isThinking is read via a closure (not captured by value) so it always reflects
-/// the current ViewModel state even if the delegate was created before it changed.
-///
-/// exitDebounce is a closure that schedules/cancels the delayed .idle reset.
-/// It lives in ContentView @State (not here) because ChappieDropDelegate is a value type
-/// and cannot own a DispatchWorkItem across re-renders.
+/// All state mutations go through closures (isThinkingGetter, resetState,
+/// scheduleExit, cancelExit) rather than captured values or @Binding writes.
+/// This is required because ChappieDropDelegate is a value type: SwiftUI recreates
+/// it on every render pass, so any @Binding captured by value becomes stale.
+/// Closures always close over the live ContentView @State reference.
 private struct ChappieDropDelegate: DropDelegate {
 
     /// Written by this delegate, read by the overlay to pick its color.
@@ -210,6 +209,8 @@ private struct ChappieDropDelegate: DropDelegate {
     let isThinkingGetter: () -> Bool
     /// Called when a valid drop is performed.
     let onDrop: ([NSItemProvider]) -> Void
+    /// Resets dropState to .idle — called from performDrop via async to survive re-render.
+    let resetState: () -> Void
     /// Schedule a debounced .idle reset — called from dropExited.
     let scheduleExit: () -> Void
     /// Cancel any pending .idle reset — called from dropEntered / dropUpdated.
@@ -253,11 +254,19 @@ private struct ChappieDropDelegate: DropDelegate {
         // Cancel any pending debounced exit — we handle the reset ourselves here
         cancelExit()
 
-        // BUG FIX: macOS does NOT call dropExited after a successful performDrop.
-        // defer {} fires synchronously before return, but SwiftUI batches updates.
-        // Using async ensures the overlay disappears in the next runloop pass,
-        // after SwiftUI has already processed the drop result.
-        DispatchQueue.main.async { dropState = .idle }
+        // BUG FIX — value type @Binding:
+        // ChappieDropDelegate is a value type. Writing dropState = .idle directly here
+        // would update the local copy, not the live @State in ContentView.
+        // DispatchQueue.main.async { dropState = .idle } has the same problem —
+        // the @Binding wrapper is captured by value and may be stale by the time
+        // the async block executes (SwiftUI recreates the delegate on every render).
+        // Solution: resetState() is a closure that closes over ContentView's @State
+        // reference directly — it always writes to the live source of truth.
+        //
+        // macOS does NOT call dropExited after a successful performDrop, so we must
+        // reset manually. The async dispatch gives SwiftUI one runloop pass to process
+        // the drop result before we clear the overlay.
+        DispatchQueue.main.async { resetState() }
 
         // Block the actual drop if AI is thinking or no valid files were present
         guard dropState == .allowed else { return false }
@@ -568,14 +577,15 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.easeInOut(duration: 0.2), value: viewModel.activeThread?.id)
         // DND-GLOBAL: ChappieDropDelegate handles validation and color signaling.
-        // isThinking is passed as a closure so the delegate always reads the live value.
-        // scheduleExit / cancelExit manage debounced .idle reset to prevent flicker.
+        // All mutable state goes through closures — never captured by value — because
+        // ChappieDropDelegate is a value type and @Binding captures go stale on re-render.
         .onDrop(
             of: [.fileURL],
             delegate: ChappieDropDelegate(
                 dropState: $dropState,
                 isThinkingGetter: { viewModel.isThinking },
                 onDrop: resolveDroppedFiles,
+                resetState: { dropState = .idle },
                 scheduleExit: scheduleDropExit,
                 cancelExit: cancelDropExit
             )
