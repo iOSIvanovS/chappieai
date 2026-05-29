@@ -34,11 +34,13 @@
 // These are hints — the system may override them if the user has resized/moved.
 //
 // BACKGROUND IMAGE:
-// Image("Chappie") is placed at the WindowGroup level as a ZStack back layer.
-// This puts it BELOW everything — below safe area, below toolbar, below all panels.
-// GeometryReader fills the entire window including toolbar and bottom insets.
-// This is the highest possible level in the SwiftUI hierarchy, so no white strips
-// can appear — the image truly covers the full NSWindow frame.
+// Image("Chappie") is applied as .background() on ContentView.
+// WHY NOT GeometryReader:
+//   GeometryReader at WindowGroup level is greedy — it reports the measured window size
+//   back through frame(width:height:), which SwiftUI treats as the view's ideal size.
+//   macOS then enforces this as the minimum resizable width, preventing the user from
+//   making the window narrower. Using .background() avoids layout participation entirely:
+//   the image fills whatever space ContentView occupies without influencing it.
 
 import SwiftUI
 import AppKit
@@ -102,22 +104,17 @@ struct ChappieApp: App {
 
     var body: some Scene {
         WindowGroup {
-            // Background image lives at the TOP of the hierarchy — below everything.
-            // GeometryReader + ignoresSafeArea ensures it covers the full NSWindow frame,
-            // including the toolbar area and bottom insets, with no white strips.
-            ZStack {
-                GeometryReader { geometry in
+            ContentView()
+                // Background image via .background() — does NOT participate in layout,
+                // so it never creates a minimum-width floor that blocks window resizing.
+                // .ignoresSafeArea() ensures it bleeds under the toolbar and window chrome.
+                .background(
                     Image("Chappie")
                         .resizable()
                         .scaledToFill()
-                        .frame(width: geometry.size.width, height: geometry.size.height)
-                        .clipped()
                         .opacity(0.5)
-                }
-                .ignoresSafeArea()
-
-                ContentView()
-            }
+                        .ignoresSafeArea()
+                )
         }
         .modelContainer(modelContainer)
         // Initial window size — reasonable default for the split-view layout
