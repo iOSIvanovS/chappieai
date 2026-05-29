@@ -117,6 +117,14 @@
 //   sendMessage(attachments:) forwards them to viewModel.send(prompt:attachments:).
 //   Attachments are cleared inside InputMorphView after triggerSend fires.
 //
+// DRAG & DROP (DND-GLOBAL):
+//   attachments state lives in ContentView and is passed to InputMorphView via @Binding.
+//   The drop target is mainChatArea (the full app content area), NOT InputMorphView.
+//   This lets the user drop files anywhere in the window — not just on the input panel.
+//   isDragTargeted drives a full-window overlay: dashed accent border + icon + label.
+//   Drop is disabled while viewModel.isThinking — prevents accidental drops during AI response.
+//   resolveDroppedFiles() runs URL resolution on a background Task, appends on @MainActor.
+//
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
 // IT-11: Thread settings sheet, last-thread restore.
@@ -138,6 +146,12 @@ struct ContentView: View {
     @State private var prompt: String = ""
     @State private var showSettings: Bool = false
     @State private var isSidebarVisible: Bool = false
+
+    // DND-GLOBAL: attachments owned here so the whole-window drop target can write to them.
+    // Passed to InputMorphView via @Binding — InputMorphView reads and clears them on send.
+    @State private var attachments: [AttachedFile] = []
+    // True while a drag is hovering over the window — drives the drop overlay.
+    @State private var isDragTargeted: Bool = false
 
     @State private var selectedProjectForSettings: ProjectMetadata? = nil
     /// Thread whose settings sheet is currently open.
@@ -166,8 +180,6 @@ struct ContentView: View {
         Group {
             if !viewModel.isAppReady {
                 // UX-APP-READY: show a spinner until the first selectThread() completes.
-                // This prevents any flash of the welcome screen or empty chat state
-                // during the async SwiftData load on app launch.
                 ProgressView("Загрузка...")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if viewModel.providers.isEmpty {
@@ -180,8 +192,6 @@ struct ContentView: View {
             viewModel.setModelContainer(modelContext.container)
         }
         .onChange(of: viewModel.providers.count) { _, newCount in
-            // If onboarding just completed (provider added) — switch to main content.
-            // isAppReady will already be true at this point since selectThread() ran.
             _ = newCount
         }
     }
@@ -223,7 +233,7 @@ struct ContentView: View {
                 )
             }
             .sheet(isPresented: $viewModel.showNewThreadProviderPicker) {
-                // IT-12: extended sheet — now also returns thread title and ThreadSettings
+                // IT-12: extended sheet — also returns thread title and ThreadSettings
                 NewThreadProviderSheet(
                     providers: viewModel.providers,
                     currentProvider: viewModel.activeProvider,
@@ -287,14 +297,12 @@ struct ContentView: View {
                         isSidebarVisible = false
                     },
                     onSelectThread: { thread in
-                        // Save current draft before switching threads
                         if let currentId = viewModel.activeThread?.id {
                             viewModel.setDraft(prompt, for: currentId)
                         }
                         Task { await viewModel.selectThread(thread) }
                     },
                     onCreateThread: {
-                        // Save current draft before creating a new thread
                         if let currentId = viewModel.activeThread?.id {
                             viewModel.setDraft(prompt, for: currentId)
                         }
@@ -307,7 +315,6 @@ struct ContentView: View {
                         viewModel.renameThread(thread, newTitle: newTitle)
                     },
                     onOpenThreadSettings: { thread in
-                        // IT-12: open thread settings sheet — sidebar stays visible
                         selectedThreadForSettings = thread
                     },
                     onDismiss: {
@@ -317,17 +324,14 @@ struct ContentView: View {
                     }
                 )
                 .frame(width: sidebarWidth)
-                // Vertical insets: top — below toolbar, bottom — above window edge
                 .padding(.top, 52)
                 .padding(.bottom, 16)
                 .padding(.leading, 12)
                 .transition(.move(edge: .leading).combined(with: .opacity))
             }
         }
-        // ultraThinMaterial gives the title bar a frosted-glass look
         .toolbarBackground(.ultraThinMaterial, for: .windowToolbar)
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: isSidebarVisible)
-        // Restore draft when active thread changes (e.g. after selectThread completes)
         .onChange(of: viewModel.activeThread?.id) { _, newThreadId in
             if let id = newThreadId {
                 prompt = viewModel.getDraft(for: id)
@@ -335,17 +339,14 @@ struct ContentView: View {
                 prompt = ""
             }
         }
-        // Keep draft in sync as user types — written on every keystroke
         .onChange(of: prompt) { _, newValue in
             if let threadId = viewModel.activeThread?.id {
                 viewModel.setDraft(newValue, for: threadId)
             }
         }
         // TASK-5 (IT-13): auto-close SettingsView when AI starts responding.
-        // If the user had Settings open and a request begins — dismiss the sheet
-        // to prevent interaction with settings during an active AI response.
-        .onChange(of: viewModel.isThinking) { _, isThinking in
-            if isThinking && showSettings {
+        .onChange(of: viewModel.isThinking) { _, thinking in
+            if thinking && showSettings {
                 showSettings = false
             }
         }
@@ -353,20 +354,15 @@ struct ContentView: View {
 
     // MARK: - Main Chat Area
 
-    /// Chat content: scroll view + floating top and bottom panels.
+    /// Chat content: scroll view + floating top and bottom panels + global drop target.
     private var mainChatArea: some View {
-        ZStack(alignment: .top) {
+        // Capture isThinking for use inside the onDrop closure (closures can't reference
+        // computed properties of self directly in all Swift versions — capture explicitly).
+        let thinking = viewModel.isThinking
+
+        return ZStack(alignment: .top) {
 
             // BACK: full-screen scroll view.
-            // headerHeight = topPanelHeight + safeAreaTop so the first message
-            // is readable below BOTH the toolbar and the top floating panel.
-            //
-            // SAFE AREA PROBE: GeometryReader is placed in .background on ChatScrollView,
-            // NOT in the layout tree. A GeometryReader in the layout tree is greedy
-            // horizontally — even .frame(height: 0) only constrains height, not width.
-            // This was preventing the window from being resized narrower than its initial
-            // width. .background GeometryReader is measured after layout and has zero
-            // influence on the parent's size.
             ChatScrollView(
                 scrollToBottomTrigger: viewModel.scrollToBottomTrigger,
                 messages: viewModel.displayedMessages,
@@ -380,7 +376,6 @@ struct ContentView: View {
                 footerHeight: bottomPanelHeight
             )
             .ignoresSafeArea(edges: .top)
-            // Read safeAreaInsets via background — does NOT affect layout or window min-width.
             .background(
                 GeometryReader { geo in
                     Color.clear
@@ -395,16 +390,62 @@ struct ContentView: View {
                 Spacer()
                 bottomPanel
             }
+
+            // DND-GLOBAL: full-window drop overlay — shown only while drag is hovering.
+            // Sits on top of everything so the visual feedback is always visible.
+            if isDragTargeted {
+                dropOverlay
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.easeInOut(duration: 0.2), value: viewModel.activeThread?.id)
+        // DND-GLOBAL: the entire chat area is the drop target.
+        // Drop is disabled while AI is thinking — prevents accidental attachment mid-response.
+        .onDrop(of: [.fileURL], isTargeted: $isDragTargeted) { providers in
+            guard !thinking else { return false }
+            resolveDroppedFiles(providers)
+            return true
+        }
+    }
+
+    // MARK: - Drop Overlay
+
+    /// Full-window overlay shown while a drag hovers over the app.
+    /// Dashed accent border + centered icon + label — clear affordance for the user.
+    private var dropOverlay: some View {
+        ZStack {
+            // Semi-transparent tint so the chat content is still vaguely visible
+            Color.accentColor.opacity(0.08)
+                .ignoresSafeArea()
+
+            // Dashed border around the whole window
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(
+                    Color.accentColor.opacity(0.7),
+                    style: StrokeStyle(lineWidth: 2.5, dash: [10, 6])
+                )
+                .padding(12)
+
+            // Central hint
+            VStack(spacing: 12) {
+                Image(systemName: "arrow.down.doc.fill")
+                    .font(.system(size: 40))
+                    .foregroundStyle(Color.accentColor)
+                Text("Отпусти для прикрепления")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(Color.accentColor)
+            }
+            .padding(24)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        }
+        .allowsHitTesting(false) // Overlay is visual-only — drop events pass through
+        .transition(.opacity.combined(with: .scale(scale: 0.97)))
+        .animation(.easeInOut(duration: 0.15), value: isDragTargeted)
     }
 
     // MARK: - Top Floating Panel
 
     /// Top panel: transparent container holding floating pill rows.
-    /// ModelPickerRow contains both the model selector (left) and balance pill (right).
-    /// ProjectChipsView shows attached projects + thread name + gear chip (right).
     private var topPanel: some View {
         VStack(spacing: 6) {
             if viewModel.activeThread != nil && !viewModel.providers.isEmpty {
@@ -413,9 +454,7 @@ struct ContentView: View {
                     activeModelName: viewModel.activeModelName,
                     providers: viewModel.providers,
                     isOrphaned: viewModel.isThreadOrphaned,
-                    // Balance from active provider — updates live during streaming
                     balance: viewModel.currentBalance,
-                    // IT-13: disable picker while AI is responding
                     isThinking: viewModel.isThinking,
                     onSelectProvider: { providerId, modelName in
                         if let provider = viewModel.providers.first(where: { $0.id == providerId }),
@@ -432,9 +471,7 @@ struct ContentView: View {
             if viewModel.activeThread != nil {
                 ProjectChipsView(
                     projects: viewModel.activeProjects,
-                    // IT-12: thread name shown in the gear chip on the right
                     threadName: viewModel.activeThread?.title,
-                    // IT-13: disable project attach/detach and thread settings while AI responds
                     isThinking: viewModel.isThinking,
                     onAddProject: { url in viewModel.addProject(url: url) },
                     onRemoveProject: { projectId in viewModel.removeProject(id: projectId) },
@@ -443,10 +480,8 @@ struct ContentView: View {
                             selectedProjectForSettings = project
                         }
                     },
-                    // IT-12: gear chip on the right opens thread settings sheet
                     onOpenThreadSettings: {
                         if let thread = viewModel.activeThread {
-                            // Reload thread from list to get the freshest settings
                             let fresh = viewModel.threads.first(where: { $0.id == thread.id }) ?? thread
                             selectedThreadForSettings = fresh
                         }
@@ -455,10 +490,8 @@ struct ContentView: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        // Horizontal padding so pills don't touch the window edges
         .padding(.horizontal, 12)
         .padding(.top, 8)
-        // Report height for ChatScrollView headerHeight
         .background(
             GeometryReader { geo in
                 Color.clear
@@ -471,19 +504,20 @@ struct ContentView: View {
     // MARK: - Bottom Floating Panel
 
     /// Bottom panel: InputMorphView — ultraThinMaterial frosted glass.
+    /// attachments are owned by ContentView and shared via @Binding so the
+    /// whole-window drop target (mainChatArea) can append files directly.
     private var bottomPanel: some View {
-        // MULTIMODAL-STEP2: onSend now carries [AttachedFile] from InputMorphView.
         InputMorphView(
             prompt: $prompt,
+            attachments: $attachments,
             isWorkspaceSelected: viewModel.workspaceURL != nil,
             isThinking: viewModel.isThinking,
             currentToolCall: viewModel.currentToolCall,
-            onSend: { attachments in
-                sendMessage(attachments: attachments)
+            onSend: { attachedFiles in
+                sendMessage(attachments: attachedFiles)
             },
             onCancel: { viewModel.cancelCurrentRequest() }
         )
-        // Report height for ChatScrollView footerHeight
         .background(
             GeometryReader { geo in
                 Color.clear
@@ -493,19 +527,62 @@ struct ContentView: View {
         )
     }
 
-    // MARK: - Private
+    // MARK: - Private Helpers
 
     /// Sends the current prompt + attachments to the ViewModel.
     /// Clears the prompt and draft immediately on send.
     private func sendMessage(attachments: [AttachedFile]) {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || !attachments.isEmpty else { return }
-        // Clear draft for this thread before sending
         if let threadId = viewModel.activeThread?.id {
             viewModel.clearDraft(for: threadId)
         }
         viewModel.send(prompt: prompt, attachments: attachments)
         prompt = ""
+    }
+
+    /// Resolves NSItemProvider array from a drop event into AttachedFile objects.
+    ///
+    /// URL resolution runs inside a Task (background). AttachedFile.load() is @MainActor,
+    /// so the actual file loading and appending happen on the main actor via MainActor.run.
+    private func resolveDroppedFiles(_ providers: [NSItemProvider]) {
+        Task {
+            // Collect raw URLs from all providers first (background-safe)
+            var urls: [URL] = []
+            for provider in providers {
+                guard provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) else {
+                    continue
+                }
+                // loadItem callback is not async — bridge via withCheckedContinuation
+                let url: URL? = await withCheckedContinuation { continuation in
+                    provider.loadItem(
+                        forTypeIdentifier: UTType.fileURL.identifier,
+                        options: nil
+                    ) { item, _ in
+                        if let data = item as? Data,
+                           let resolved = URL(dataRepresentation: data, relativeTo: nil) {
+                            continuation.resume(returning: resolved)
+                        } else if let resolved = item as? URL {
+                            continuation.resume(returning: resolved)
+                        } else {
+                            continuation.resume(returning: nil)
+                        }
+                    }
+                }
+                if let url { urls.append(url) }
+            }
+
+            // AttachedFile.load() is @MainActor — run on main actor with deduplication
+            await MainActor.run {
+                let existingNames = Set(attachments.map(\.filename))
+                let newFiles = urls
+                    .compactMap { AttachedFile.load(from: $0) }
+                    .filter { !existingNames.contains($0.filename) }
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                    attachments.append(contentsOf: newFiles)
+                }
+            }
+        }
     }
 }
 

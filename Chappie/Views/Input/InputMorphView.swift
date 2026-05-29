@@ -19,7 +19,7 @@
 // - On finish/cancel: height restores from editorHeight; editor auto-focuses via coordinator.
 //
 // SCROLL INTEGRATION:
-// - onHeightChange callback fires whenever the panel's rendered height changes.
+// - onHeightChange callback fires whenever the panel's total rendered height changes.
 // - ContentView uses this to set bottomPadding on ChatScrollView, so the last message
 //   is never hidden under the panel — on launch, on grow, or on collapse.
 //
@@ -31,7 +31,7 @@
 //
 // MULTIMODAL (MULTIMODAL-STEP2):
 // - Paperclip button opens NSOpenPanel (images, PDF, text, any file).
-// - Picked files are stored in @State attachments: [AttachedFile].
+// - attachments: [AttachedFile] is a @Binding from ContentView — NOT local @State.
 // - AttachmentChipsView renders above the text editor when attachments are non-empty.
 // - Each chip shows a thumbnail (images) or icon (other types) + filename + ✕ button.
 // - onSend now receives ([AttachedFile]) → caller is responsible for consuming them.
@@ -44,7 +44,7 @@
 // - editorHeight controls only ChappieTextEditorView's height, not the whole panel.
 // - This prevents the "chips overflow above panel" bug when the editor grows tall.
 //
-// DRAG & DROP (DND):
+// DRAG & DROP (DND-GLOBAL):
 // - Drop is handled at the ContentView level (whole window), NOT here.
 // - InputMorphView receives attachments as @Binding — ContentView owns the state.
 // - appendFiles() is an internal helper used by the paperclip button only.
@@ -457,8 +457,9 @@ struct InputMorphView: View {
     // MARK: - Inputs
 
     @Binding var prompt: String
-    /// Files pending attachment — owned by ContentView, shared via binding.
-    /// ContentView also handles drag & drop into this array at the window level.
+    /// Pending file attachments — owned by ContentView, shared via @Binding.
+    /// ContentView's whole-window drop target writes to this binding directly.
+    /// InputMorphView reads it for display and clears it on send.
     @Binding var attachments: [AttachedFile]
     let isWorkspaceSelected: Bool
     let isThinking: Bool
@@ -521,7 +522,6 @@ struct InputMorphView: View {
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: editorHeight)
         .animation(.spring(response: 0.25, dampingFraction: 0.8), value: attachments.isEmpty)
         // Report total rendered height via GeometryReader so ChatScrollView can pad correctly.
-        // background(GeometryReader) is a standard SwiftUI pattern — doesn't affect layout.
         .background(
             GeometryReader { geo in
                 Color.clear
@@ -556,7 +556,6 @@ struct InputMorphView: View {
         VStack(alignment: .leading, spacing: 6) {
             // Attachment chips row — only visible when files are attached.
             // Rendered INSIDE the VStack so it contributes to natural panel height growth.
-            // No fixed frame on the outer ZStack means chips + editor stack cleanly.
             if !attachments.isEmpty {
                 AttachmentChipsRow(attachments: attachments) { id in
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
@@ -702,23 +701,15 @@ struct InputMorphView: View {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
-        // No type filter — we accept anything and let the model decide.
-        // If the model can't handle a type, it returns an error which we surface gracefully.
         panel.message = "Выбери файлы для прикрепления"
         panel.prompt = "Прикрепить"
 
         guard panel.runModal() == .OK else { return }
 
         let newFiles = panel.urls.compactMap { AttachedFile.load(from: $0) }
-        appendFiles(newFiles)
-    }
-
-    /// Appends new files to attachments, deduplicating by filename.
-    /// Shared by the file picker. Drop handling lives in ContentView.
-    func appendFiles(_ newFiles: [AttachedFile]) {
+        let existingNames = Set(attachments.map(\.filename))
+        let unique = newFiles.filter { !existingNames.contains($0.filename) }
         withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-            let existingNames = Set(attachments.map(\.filename))
-            let unique = newFiles.filter { !existingNames.contains($0.filename) }
             attachments.append(contentsOf: unique)
         }
     }
