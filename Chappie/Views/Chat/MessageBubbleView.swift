@@ -52,10 +52,13 @@
 //
 // FIX (BUG-IMAGE-BUBBLE-WIDTH):
 // User bubble with image-only content was stretching to full chat width.
-// Root cause: LazyVGrid with fixed columns consumed the full proposed width from Spacer.
-// Fix: .fixedSize() on LazyVGrid — it requests only the space it needs.
-// Fix: .fixedSize(horizontal: true, vertical: false) on user bubble VStack — shrinks
-//      to content width when there is no text to fill the bubble.
+// Root cause: LazyVGrid consumed the full proposed width from Spacer.
+// Fix: .frame(maxWidth: bubbleMaxWidth) on the user bubble container.
+// This mirrors the standard iMessage / Telegram approach: bubble width is capped
+// at a percentage of the available width, not driven by content ideal size.
+// WHY NOT .fixedSize: fixedSize(horizontal:) tells SwiftUI to use ideal width,
+// which for Text + LazyVGrid can be unbounded — causing the window to expand
+// to the full screen width. frame(maxWidth:) is the correct constraint here.
 
 import SwiftUI
 import QuickLook
@@ -96,86 +99,100 @@ struct MessageBubbleView: View {
         cost: Double?,
         attachments: [AttachedFile]
     ) -> some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            if isUser { Spacer(minLength: 40) }
+        // GeometryReader reads the available width from ChatScrollView's VStack.
+        // We cap the bubble at 75% of that width — same ratio as iMessage / Telegram.
+        // This prevents the bubble (and window) from expanding to fill the screen.
+        GeometryReader { geo in
+            // Max bubble width: 75% of available horizontal space.
+            // minLength: 40 on Spacer ensures at least 40pt gap on the opposite side.
+            let maxBubble = geo.size.width * 0.75
 
-            if isUser {
-                // USER BUBBLE
-                // .fixedSize(horizontal: true, vertical: false):
-                // When there is no text (image-only message), the VStack would otherwise
-                // stretch to fill the full width offered by the Spacer. fixedSize tells
-                // SwiftUI to use the VStack's ideal (content) width instead.
-                VStack(alignment: .trailing, spacing: 6) {
-                    // Attachments above the text
-                    if !attachments.isEmpty {
-                        AttachmentsView(attachments: attachments, isUser: true)
-                    }
-                    if !text.isEmpty {
-                        Text(text)
-                            .font(.system(size: 14))
-                            .lineSpacing(4)
-                            .foregroundStyle(.white)
-                            .textSelection(.enabled)
-                    }
-                }
-                .fixedSize(horizontal: true, vertical: false)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(Color.accentColor)
-                .clipShape(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 12,
-                        bottomLeadingRadius: 12,
-                        bottomTrailingRadius: 4,
-                        topTrailingRadius: 12
-                    )
-                )
-            } else {
-                // CHAPPIE BUBBLE
-                ZStack(alignment: .bottomTrailing) {
-                    VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .bottom, spacing: 8) {
+                if isUser { Spacer(minLength: 40) }
+
+                if isUser {
+                    // USER BUBBLE
+                    // frame(maxWidth: maxBubble): caps the bubble so it never exceeds
+                    // 75% of chat width, regardless of image or text content size.
+                    VStack(alignment: .trailing, spacing: 6) {
                         // Attachments above the text
                         if !attachments.isEmpty {
-                            AttachmentsView(attachments: attachments, isUser: false)
+                            AttachmentsView(attachments: attachments, isUser: true)
                         }
                         if !text.isEmpty {
-                            MarkdownTextView(text: text, fontSize: 14)
-                                // Reserve space for cost badge when present
-                                .padding(.bottom, cost != nil ? 18 : 0)
+                            Text(text)
+                                .font(.system(size: 14))
+                                .lineSpacing(4)
+                                .foregroundStyle(.white)
+                                .textSelection(.enabled)
+                                // Text wraps within the bubble — no horizontal overflow.
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: maxBubble, alignment: .trailing)
+                    .background(Color.accentColor)
+                    .clipShape(
+                        UnevenRoundedRectangle(
+                            topLeadingRadius: 12,
+                            bottomLeadingRadius: 12,
+                            bottomTrailingRadius: 4,
+                            topTrailingRadius: 12
+                        )
+                    )
+                } else {
+                    // CHAPPIE BUBBLE
+                    ZStack(alignment: .bottomTrailing) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            // Attachments above the text
+                            if !attachments.isEmpty {
+                                AttachmentsView(attachments: attachments, isUser: false)
+                            }
+                            if !text.isEmpty {
+                                MarkdownTextView(text: text, fontSize: 14)
+                                    // Reserve space for cost badge when present
+                                    .padding(.bottom, cost != nil ? 18 : 0)
+                            }
+                        }
 
-                    // Cost badge — bottom-trailing corner
-                    if let cost = cost {
-                        Text(String(format: "🪙 %.2f ₽", cost))
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.secondary)
+                        // Cost badge — bottom-trailing corner
+                        if let cost = cost {
+                            Text(String(format: "🪙 %.2f ₽", cost))
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
                     }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: maxBubble, alignment: .leading)
+                    .background(Color(NSColor.textBackgroundColor))
+                    .clipShape(
+                        UnevenRoundedRectangle(
+                            topLeadingRadius: 12,
+                            bottomLeadingRadius: 4,
+                            bottomTrailingRadius: 12,
+                            topTrailingRadius: 12
+                        )
+                    )
+                    .overlay(
+                        UnevenRoundedRectangle(
+                            topLeadingRadius: 12,
+                            bottomLeadingRadius: 4,
+                            bottomTrailingRadius: 12,
+                            topTrailingRadius: 12
+                        )
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    )
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(Color(NSColor.textBackgroundColor))
-                .clipShape(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 12,
-                        bottomLeadingRadius: 4,
-                        bottomTrailingRadius: 12,
-                        topTrailingRadius: 12
-                    )
-                )
-                .overlay(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 12,
-                        bottomLeadingRadius: 4,
-                        bottomTrailingRadius: 12,
-                        topTrailingRadius: 12
-                    )
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                )
-            }
 
-            if !isUser { Spacer(minLength: 40) }
+                if !isUser { Spacer(minLength: 40) }
+            }
         }
+        // GeometryReader is greedy — it takes all proposed space.
+        // .fixedSize(horizontal: false, vertical: true) collapses the vertical axis
+        // to the content height so rows in the VStack don't get extra blank space.
+        .fixedSize(horizontal: false, vertical: true)
         .id(msg.id)
     }
 }
@@ -202,10 +219,8 @@ private struct AttachmentsView: View {
             // IMAGE THUMBNAILS
             if !images.isEmpty {
                 // Fixed columns grid: each cell is 80×80, up to 3 per row.
-                // .fixedSize() is CRITICAL here: without it, LazyVGrid would consume
-                // the full proposed width from the parent (which is stretched by Spacer),
-                // causing the bubble to expand to full chat width even for a single image.
-                // With .fixedSize(), the grid reports its intrinsic width = n*80 + spacing.
+                // Column count is capped by actual image count so a single image
+                // doesn't leave empty column slots that inflate the grid width.
                 LazyVGrid(
                     columns: Array(repeating: GridItem(.fixed(80), spacing: 6), count: min(images.count, 3)),
                     spacing: 6
@@ -217,7 +232,6 @@ private struct AttachmentsView: View {
                         }
                     }
                 }
-                .fixedSize()
                 // QuickLook preview sheet triggered by tapping a thumbnail
                 .quickLookPreview($previewURL)
             }
