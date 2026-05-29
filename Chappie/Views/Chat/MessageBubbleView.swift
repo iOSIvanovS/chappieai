@@ -3,91 +3,110 @@
 //
 // WHY THIS FILE EXISTS:
 // Formerly MessageBubble was a private struct inside ContentView.swift.
-// Extracted to a separate file to:
-//   1. Keep ContentView from becoming a monolith
-//   2. Allow reuse (e.g. in search or preview)
-//   3. Isolate the visual bubble logic so it's easy to change
+// Extracted to a separate file to keep ContentView clean and allow reuse.
 //
-// BUBBLE WIDTH STRATEGY:
-// GeometryReader was used here to measure available width and pass it to FlowLayout
-// inside AttachmentsView. This caused a critical layout bug: GeometryReader inside
-// a ScrollView's VStack always receives infinite height from the scroll container,
-// so it expands to fill the whole screen — bubbles overlapped like playing cards.
+// BUBBLE WIDTH STRATEGY — background probe pattern:
 //
-// FIX: GeometryReader is completely removed.
-// Instead we use containerRelativeFrame(.horizontal, alignment:) which:
-//   1. Measures the CONTAINER width (the VStack column), not the scroll content height
-//   2. Does NOT expand vertically — it only constrains the horizontal axis
-//   3. Wraps to natural height automatically
-// The 75% fraction cap (bubbleMaxWidthFraction) is applied directly inside
-// containerRelativeFrame's count/span/spacing API.
+// PROBLEM: We need the row's available width to:
+//   1. Cap bubble width at 75% (frame(maxWidth:) — shrinks to content, not fixed)
+//   2. Give FlowLayout a finite maxWidth so thumbnails wrap to 2nd/3rd rows
 //
-// For AttachmentsView / FlowLayout: they receive a finite maxWidth because the
-// bubble itself is already capped. FlowLayout's sizeThatFits gets a real proposal
-// width and wraps thumbnails correctly.
+// WHY NOT containerRelativeFrame:
+//   containerRelativeFrame(.horizontal) sets EXACT width (like frame(width:)), not maxWidth.
+//   Short user messages were always stretched to 75% of the window — looked wrong.
+//
+// WHY NOT GeometryReader directly in body:
+//   GeometryReader takes ALL proposed space. Inside ScrollView's VStack, vertical space
+//   is infinite (scroll container). GeometryReader expands to fill the screen →
+//   bubbles overlap like playing cards.
+//
+// SOLUTION — background width probe:
+//   MessageBubbleRowView is the public entry point.
+//   It renders the bubble normally (natural height) and puts a Color.clear
+//   GeometryReader in the .background. Backgrounds are sized AFTER layout —
+//   they cannot inflate the parent's size. The measured width is stored in
+//   @State and passed into the bubble for FlowLayout calculations.
+//   Default value 600 is used on first render (before measurement) — safe fallback.
 //
 // CHANGE (Stage 6 — ТД-6):
 // MessageBubbleView now takes a typed enum ChatMessage instead of a struct.
 //
 // CHANGE (ТД-UX-PERF — UI performance optimization):
 // .toolCall is completely removed from this component's render.
-// .toolCall entries no longer appear in the feed — they are shown in StatusBarView.
 // MessageBubbleView now renders ONLY .message (text messages).
 //
 // CHANGE (UX-ANIMATION — Smooth bubble appearance):
-// Added .transition on the bubble: new messages smoothly slide in from the bottom
-// with simultaneous fade-in.
+// Added .transition on the bubble: new messages smoothly slide in from the bottom.
 //
 // CHANGE (UX-TYPOGRAPHY — Typography and Markdown):
-// Chappie's bubble now uses MarkdownTextView instead of Text():
-//   - Code blocks in Xcode Intelligence Panel style (dark background, Swift highlighting)
-//   - Inline code, bold, italic, headings
-//   - SF Pro Text 14pt, lineSpacing 5 (Apple HIG: 1.3–1.5× line-height)
-//   - Copy button in code blocks
+// Chappie's bubble uses MarkdownTextView for code and formatting support.
 //
 // CHANGE (UX-COST-IN-BUBBLE — Cost inside bubble):
-// Cost moved from below the bubble INTO it — bottom-trailing corner.
-// Uses ZStack(alignment: .bottomTrailing) + padding(.bottom, 18) under the text.
-// Shown only for Chappie messages (isUser == false) with known cost.
-// Standard messenger UX pattern (WhatsApp, Telegram) — time/status inside.
+// Cost badge in bottom-trailing corner (WhatsApp/Telegram pattern).
 //
 // CHANGE (MULTIMODAL — Step 4):
-// Attachments are now rendered inside the bubble:
-//   - Images: inline thumbnails in a wrapping flow grid, tap → full-size QuickLook sheet
-//   - Non-image files: compact chips with icon + filename
-// Layout: attachments appear ABOVE the text (natural reading order — see attachment, then message).
-// For user bubbles: accent-tinted chip background to match bubble color.
-// For Chappie bubbles: secondary background chip.
-//
-// BUBBLE DESIGN (Apple HIG + macOS 26):
-// User: accent color (blue), white text — "our" messages
-// Chappie: clean background with thin border, like macOS 26 cards — neutral
-// Both bubbles: cornerRadius 12, shadow 0.1 opacity — light, not aggressive
+// Attachments rendered inside the bubble above the text.
+// Images: FlowLayout thumbnails (wraps to multiple rows).
+// Files: compact chips with icon + filename.
 //
 // FLOW LAYOUT (IT-14):
-// FlowLayout for file chips moved to Shared/FlowLayout.swift — shared with ProjectChipsView.
-// The private duplicate has been removed from this file.
+// FlowLayout shared with ProjectChipsView via Shared/FlowLayout.swift.
 
 import SwiftUI
 import QuickLook
 
-// Maximum bubble width as a fraction of the container (VStack column) width.
-// 0.75 matches Telegram/iMessage: wide enough for long text, never full-width.
+// Maximum bubble width as a fraction of the row width.
+// Applied as frame(maxWidth:) — bubble shrinks to content, never wider than this cap.
+// 0.75 matches Telegram/iMessage proportions.
 private let bubbleMaxWidthFraction: CGFloat = 0.75
 
-/// Visual representation of a text message in the chat history.
+// MARK: - MessageBubbleRowView (public entry point)
+
+/// Public entry point for rendering a chat message bubble.
 ///
-/// Renders only `.message` — a bubble with text from the user or from Chappie.
-/// Chappie's bubble uses MarkdownTextView for code and formatting support.
-/// User's bubble uses plain Text — users don't write markdown.
-struct MessageBubbleView: View {
+/// Uses a background Color.clear GeometryReader to measure the row width
+/// without affecting layout height. The width is passed into the bubble
+/// so FlowLayout can wrap image thumbnails correctly.
+struct MessageBubbleRowView: View {
 
     let msg: ChatMessage
 
+    // Row width measured by the background probe.
+    // Default 600: safe fallback for first render before measurement fires.
+    @State private var rowWidth: CGFloat = 600
+
     var body: some View {
-        // Render only .message. .toolCall entries don't reach this component.
-        // IMPORTANT: pattern destructures ALL 6 fields of the .message case:
-        //   id, isUser, text, cost, summary, attachments
+        MessageBubbleView(msg: msg, rowWidth: rowWidth)
+            .background(
+                // WIDTH PROBE: Color.clear in background is sized by the parent AFTER layout.
+                // It cannot inflate the parent's size — purely passive measurement.
+                // onAppear + onChange cover both initial render and window resize.
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { rowWidth = geo.size.width }
+                        .onChange(of: geo.size.width) { _, w in rowWidth = w }
+                }
+            )
+            // Smooth slide-in from bottom on insertion, fade on removal.
+            .transition(
+                .asymmetric(
+                    insertion: .move(edge: .bottom).combined(with: .opacity),
+                    removal: .opacity
+                )
+            )
+    }
+}
+
+// MARK: - MessageBubbleView (internal render)
+
+/// Internal bubble renderer. Receives pre-measured rowWidth from MessageBubbleRowView.
+struct MessageBubbleView: View {
+
+    let msg: ChatMessage
+    // Available row width — used to cap bubble and size FlowLayout.
+    let rowWidth: CGFloat
+
+    var body: some View {
         if case .message(_, let isUser, let text, let cost, _, let attachments) = msg {
             messageBubble(
                 isUser: isUser,
@@ -95,20 +114,11 @@ struct MessageBubbleView: View {
                 cost: cost,
                 attachments: attachments
             )
-            // APPEARANCE ANIMATION:
-            // .asymmetric: insertion — slide from bottom + fade, removal — fade only.
-            .transition(
-                .asymmetric(
-                    insertion: .move(edge: .bottom).combined(with: .opacity),
-                    removal: .opacity
-                )
-            )
         }
     }
 
     // MARK: - Bubble Render
 
-    /// Text message bubble with optional attachments.
     @ViewBuilder
     private func messageBubble(
         isUser: Bool,
@@ -116,16 +126,24 @@ struct MessageBubbleView: View {
         cost: Double?,
         attachments: [AttachedFile]
     ) -> some View {
+        // Cap: bubble never wider than 75% of the row.
+        // frame(maxWidth:) — shrinks to content, unlike containerRelativeFrame which sets exact width.
+        let maxBubbleWidth = rowWidth * bubbleMaxWidthFraction
+        // Inner content width: bubble width minus horizontal padding (14×2 = 28).
+        let innerWidth = maxBubbleWidth - 28
+
         HStack(alignment: .bottom, spacing: 8) {
-            if isUser { Spacer(minLength: 40) }
+            if isUser { Spacer(minLength: 0) }
 
             if isUser {
-                // USER BUBBLE
-                // containerRelativeFrame caps width to 75% of the VStack column
-                // WITHOUT expanding vertically — safe inside ScrollView.
+                // USER BUBBLE — accent color, white text
                 VStack(alignment: .trailing, spacing: 6) {
                     if !attachments.isEmpty {
-                        AttachmentsView(attachments: attachments, isUser: true)
+                        AttachmentsView(
+                            attachments: attachments,
+                            isUser: true,
+                            maxWidth: innerWidth
+                        )
                     }
                     if !text.isEmpty {
                         Text(text)
@@ -146,28 +164,26 @@ struct MessageBubbleView: View {
                         topTrailingRadius: 12
                     )
                 )
-                // Cap bubble width to 75% of the container column.
-                // containerRelativeFrame only constrains the horizontal axis —
-                // height stays natural (wraps content). Safe inside ScrollView.
-                .containerRelativeFrame(.horizontal) { width, _ in
-                    width * bubbleMaxWidthFraction
-                }
+                // frame(maxWidth:) — shrinks to content, hard cap at 75%
+                .frame(maxWidth: maxBubbleWidth)
 
             } else {
-                // CHAPPIE BUBBLE
+                // CHAPPIE BUBBLE — neutral background, markdown text
                 ZStack(alignment: .bottomTrailing) {
                     VStack(alignment: .leading, spacing: 6) {
                         if !attachments.isEmpty {
-                            AttachmentsView(attachments: attachments, isUser: false)
+                            AttachmentsView(
+                                attachments: attachments,
+                                isUser: false,
+                                maxWidth: innerWidth
+                            )
                         }
                         if !text.isEmpty {
                             MarkdownTextView(text: text, fontSize: 14)
-                                // Reserve space for cost badge when present
                                 .padding(.bottom, cost != nil ? 18 : 0)
                         }
                     }
 
-                    // Cost badge — bottom-trailing corner
                     if let cost = cost {
                         Text(String(format: "🪙 %.2f ₽", cost))
                             .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -194,13 +210,10 @@ struct MessageBubbleView: View {
                     )
                     .stroke(Color.primary.opacity(0.08), lineWidth: 1)
                 )
-                // Cap bubble width to 75% of the container column.
-                .containerRelativeFrame(.horizontal) { width, _ in
-                    width * bubbleMaxWidthFraction
-                }
+                .frame(maxWidth: maxBubbleWidth)
             }
 
-            if !isUser { Spacer(minLength: 40) }
+            if !isUser { Spacer(minLength: 0) }
         }
         .id(msg.id)
     }
@@ -208,22 +221,17 @@ struct MessageBubbleView: View {
 
 // MARK: - AttachmentsView
 
-/// Renders a list of attachments: image thumbnails + file chips.
+/// Renders image thumbnails (FlowLayout) and file chips (FlowLayout).
 ///
-/// Images are shown as a wrapping FlowLayout of thumbnails (tap → full preview).
-/// Non-image files are shown as compact chips with icon + filename.
-///
-/// WHY FlowLayout FOR IMAGES:
-/// Previously HStack was used — it never wraps, so 7 images = 7×80+6×6 = 596px minimum.
-/// FlowLayout wraps thumbnails onto new rows when the available width is exceeded.
-/// The parent bubble is already capped via containerRelativeFrame, so FlowLayout
-/// receives a finite proposal width and wraps correctly.
+/// maxWidth is passed explicitly so FlowLayout receives a finite proposal
+/// and wraps thumbnails onto 2nd, 3rd rows when the bubble is narrow.
 private struct AttachmentsView: View {
 
     let attachments: [AttachedFile]
     let isUser: Bool
+    // Bubble inner width (bubble maxWidth minus horizontal padding).
+    let maxWidth: CGFloat
 
-    // Track which image URL is being previewed in QuickLook
     @State private var previewURL: URL? = nil
 
     private var images: [AttachedFile] { attachments.filter { $0.mimeType.isImage } }
@@ -231,8 +239,6 @@ private struct AttachmentsView: View {
 
     var body: some View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
-            // IMAGE THUMBNAILS — FlowLayout wraps onto new rows when width is exceeded.
-            // quickLookPreview must be on a container that holds all thumbnails.
             if !images.isEmpty {
                 FlowLayout(spacing: 6) {
                     ForEach(images) { file in
@@ -241,21 +247,22 @@ private struct AttachmentsView: View {
                         }
                     }
                 }
+                // Explicit width gives FlowLayout a finite proposal → wraps correctly.
+                .frame(width: maxWidth, alignment: isUser ? .trailing : .leading)
                 .quickLookPreview($previewURL)
             }
 
-            // FILE CHIPS — shared FlowLayout from Shared/FlowLayout.swift
             if !files.isEmpty {
                 FlowLayout(spacing: 6) {
                     ForEach(files) { file in
                         FileChipView(file: file, isUser: isUser)
                     }
                 }
+                .frame(width: maxWidth, alignment: isUser ? .trailing : .leading)
             }
         }
     }
 
-    /// Write attachment data to a temp file so QuickLook can open it.
     private func writeTempFile(_ file: AttachedFile) -> URL? {
         let dir = FileManager.default.temporaryDirectory
         let url = dir.appendingPathComponent(file.filename)
@@ -266,8 +273,7 @@ private struct AttachmentsView: View {
 
 // MARK: - ImageThumbnailView
 
-/// 80×80 rounded image thumbnail with a subtle border.
-/// Tapping calls `onTap` so the parent can open QuickLook.
+/// 80×80 rounded image thumbnail. Tapping opens QuickLook via parent's previewURL.
 private struct ImageThumbnailView: View {
 
     let file: AttachedFile
@@ -286,7 +292,6 @@ private struct ImageThumbnailView: View {
                             .stroke(Color.primary.opacity(0.12), lineWidth: 1)
                     )
             } else {
-                // Fallback: broken image placeholder
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.secondary.opacity(0.15))
                     .frame(width: 80, height: 80)
@@ -303,8 +308,7 @@ private struct ImageThumbnailView: View {
 
 // MARK: - FileChipView
 
-/// Compact chip: icon + filename, used for non-image attachments.
-/// Tinted with accent color for user bubbles, secondary for Chappie.
+/// Compact chip: icon + filename for non-image attachments.
 private struct FileChipView: View {
 
     let file: AttachedFile
@@ -322,8 +326,6 @@ private struct FileChipView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(
-            // User bubble: white at 20% opacity (sits on accent blue).
-            // Chappie bubble: primary at 6% opacity (sits on light/dark surface).
             isUser
                 ? Color.white.opacity(0.20)
                 : Color.primary.opacity(0.06)
@@ -340,54 +342,36 @@ private struct FileChipView: View {
     let sampleImage = AttachedFile(
         filename: "screenshot.png",
         mimeType: .imagePng,
-        // 1×1 white PNG (minimal valid PNG bytes)
         data: Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwADhQGAWjR9awAAAABJRU5ErkJggg==")!
     )
-    let samplePDF = AttachedFile(
-        filename: "requirements.pdf",
-        mimeType: .pdf,
-        data: Data()
-    )
-    let sampleTxt = AttachedFile(
-        filename: "notes.txt",
-        mimeType: .plainText,
-        data: Data()
-    )
+    let samplePDF = AttachedFile(filename: "requirements.pdf", mimeType: .pdf, data: Data())
+    let sampleTxt = AttachedFile(filename: "notes.txt", mimeType: .plainText, data: Data())
 
     return ScrollView {
         VStack(spacing: 16) {
-            // User message with image + file
-            MessageBubbleView(msg: .message(
+            MessageBubbleRowView(msg: .message(
                 isUser: true,
                 text: "Here's the screenshot and the spec",
                 attachments: [sampleImage, samplePDF]
             ))
-
-            // Chappie response with no attachments
-            MessageBubbleView(msg: .message(
+            MessageBubbleRowView(msg: .message(
                 isUser: false,
                 text: "Got it! I'll analyze both files.",
                 cost: 0.45
             ))
-
-            // User: image only, no text
-            MessageBubbleView(msg: .message(
+            MessageBubbleRowView(msg: .message(
                 isUser: true,
                 text: "",
-                attachments: [sampleImage]
+                attachments: [sampleImage, sampleImage, sampleImage, sampleImage, sampleImage, sampleImage, sampleImage]
             ))
-
-            // User: files only
-            MessageBubbleView(msg: .message(
+            MessageBubbleRowView(msg: .message(
                 isUser: true,
                 text: "Check these out",
                 attachments: [samplePDF, sampleTxt]
             ))
-
-            // Chappie with markdown + cost
-            MessageBubbleView(msg: .message(
+            MessageBubbleRowView(msg: .message(
                 isUser: false,
-                text: "## Analysis\n\nThe spec looks **solid**. Key points:\n- Feature A is well-defined\n- Feature B needs clarification\n\n```swift\nlet x = 42\n```",
+                text: "## Analysis\n\nThe spec looks **solid**.\n\n```swift\nlet x = 42\n```",
                 cost: 1.23
             ))
         }
