@@ -15,6 +15,15 @@
 //   FlowLayout measures each child's natural size and packs them
 //   greedily — each row is filled as tightly as possible before wrapping.
 //
+// sizeThatFits CONTRACT:
+//   Returns the ACTUAL used size (max row width × total height), NOT maxWidth.
+//   WHY: returning maxWidth causes HStack to treat FlowLayout as a greedy
+//   (frame-filling) child — it gets all available space and expands the pill.
+//   Returning the real content width lets HStack treat it as intrinsic-sized,
+//   so Spacer pushes it only as wide as its content needs.
+//   When proposal.width is finite (wrapping context), rows are packed into
+//   that width and the height grows — correct wrapping behaviour.
+//
 // AVAILABILITY: macOS 13+ (Layout protocol requirement).
 
 import SwiftUI
@@ -34,34 +43,42 @@ struct FlowLayout: Layout {
         subviews: Subviews,
         cache: inout ()
     ) -> CGSize {
+        // Use proposed width as the wrap boundary; nil → no wrapping (intrinsic measure)
         let maxWidth = proposal.width ?? .infinity
         var currentX: CGFloat = 0
         var currentRowHeight: CGFloat = 0
         var totalHeight: CGFloat = 0
+        // Track the widest row to report accurate content width
+        var maxUsedWidth: CGFloat = 0
         var isFirstInRow = true
 
         for subview in subviews {
             let size = subview.sizeThatFits(.unspecified)
 
-            // Determine whether this item fits on the current row
             let requiredX = isFirstInRow ? size.width : currentX + spacing + size.width
 
             if !isFirstInRow && requiredX > maxWidth {
-                // Wrap: commit current row height and start a new row
+                // Wrap: commit current row, record its width, start a new row
+                maxUsedWidth = max(maxUsedWidth, currentX)
                 totalHeight += currentRowHeight + spacing
                 currentX = size.width
                 currentRowHeight = size.height
             } else {
-                // Fits: extend current row
+                // Fits on current row
                 currentX = requiredX
                 currentRowHeight = max(currentRowHeight, size.height)
             }
             isFirstInRow = false
         }
 
-        // Add the last row
+        // Commit last row
+        maxUsedWidth = max(maxUsedWidth, currentX)
         totalHeight += currentRowHeight
-        return CGSize(width: maxWidth, height: totalHeight)
+
+        // Return ACTUAL content size, not maxWidth.
+        // This makes HStack treat FlowLayout as intrinsic-sized (like Text),
+        // so the pill never expands beyond its content.
+        return CGSize(width: maxUsedWidth, height: totalHeight)
     }
 
     func placeSubviews(
@@ -79,7 +96,6 @@ struct FlowLayout: Layout {
         for subview in subviews {
             let size = subview.sizeThatFits(.unspecified)
 
-            // Check if item fits on the current row
             let nextX = isFirstInRow ? currentX + size.width : currentX + spacing + size.width
 
             if !isFirstInRow && (nextX - bounds.minX) > maxWidth {
@@ -91,7 +107,6 @@ struct FlowLayout: Layout {
                 currentX += spacing
             }
 
-            // Place the item vertically centered within the row height
             subview.place(
                 at: CGPoint(x: currentX, y: currentY),
                 anchor: .topLeading,

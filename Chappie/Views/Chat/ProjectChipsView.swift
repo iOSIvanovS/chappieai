@@ -4,25 +4,23 @@
 // Floating pill row showing project chips for the current thread.
 // Chips wrap to new lines when the window is narrowed (FlowLayout).
 //
-// LAYOUT STRATEGY:
-//   Simple HStack mirroring ModelPickerRow:
-//     - Left pill: FlowLayout chips, NO frame(maxWidth: .infinity).
-//       fixedSize(horizontal: false, vertical: true) lets it shrink horizontally
-//       while still allowing FlowLayout to wrap vertically.
-//     - Spacer: pushes the two pills apart.
-//     - Right pill: fixedSize() — takes intrinsic width only.
+// LAYOUT STRATEGY (FINAL):
+//   ZStack approach:
+//     - Bottom layer: leftPill with frame(maxWidth: .infinity) — fills all available width.
+//       FlowLayout receives a finite proposal and wraps chips correctly.
+//     - Top layer (trailing): threadSettingsButton with fixedSize() — floats over the right edge.
 //
-//   WHY THIS WORKS:
-//     SwiftUI HStack first measures fixedSize children (right pill, Spacer min),
-//     then offers the remainder to the left pill. The left pill's FlowLayout
-//     receives a finite proposal and wraps correctly.
+//   WHY NOT HStack + Spacer:
+//     HStack first asks leftPill for its intrinsic size (proposal.width = nil).
+//     FlowLayout returns one long row (= intrinsic). HStack then offers exactly
+//     that width — leftPill never gets a narrower proposal → no wrapping ever occurs.
 //
-//   WHY GEOMETRY PROBES FAILED:
-//     ZStack + Color.clear GeometryReader on macOS does not reliably constrain
-//     the ZStack's own width — the ZStack has no external width constraint and
-//     collapses to content width, so the probe returns the content width, not
-//     the available width. This caused the left pill to always receive its
-//     intrinsic (single-row) width as the maxWidth cap.
+//   WHY ZStack WORKS:
+//     ZStack offers ALL subviews the SAME proposal (the full available width).
+//     leftPill gets frame(maxWidth: .infinity) → FlowLayout receives the full width
+//     as its proposal → wraps correctly when chips don't fit.
+//     threadSettingsButton has fixedSize() → takes only its intrinsic width,
+//     aligned to the trailing edge via ZStack(alignment: .topTrailing).
 //
 // THREAD SETTINGS CHIP (IT-12):
 //   Right-side pill shows gear icon + thread name.
@@ -56,23 +54,36 @@ struct ProjectChipsView: View {
     // MARK: - State
 
     @State private var hoveredProjectId: UUID? = nil
+    /// Width of the right pill — measured via background GeometryReader.
+    @State private var rightPillWidth: CGFloat = 0
 
     // MARK: - Body
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        // ZStack: leftPill fills full width, rightPill floats top-trailing.
+        // Both receive the same width proposal from ZStack = full available width.
+        ZStack(alignment: .topTrailing) {
 
-            // LEFT pill: FlowLayout wrapping chips.
-            // fixedSize(horizontal: false, vertical: true) is key:
-            //   - horizontal: false → HStack is allowed to shrink this child
-            //   - vertical: true   → pill grows taller as chips wrap, never clips
+            // LEFT PILL: fills full width, FlowLayout wraps chips.
+            // frame(maxWidth: .infinity) ensures FlowLayout always gets a finite proposal.
+            // padding on the right side reserves space so chips don't hide under rightPill.
             leftPill
-                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // Reserve space for the right pill so chips don't overlap it
+                .padding(.trailing, rightPillWidth + 8)
 
-            Spacer(minLength: 0)
-
-            // RIGHT pill: gear + thread name — intrinsic width only.
+            // RIGHT PILL: gear + thread name — intrinsic width only.
+            // fixedSize() prevents it from stretching.
+            // Background GeometryReader measures its width for the left pill's padding.
             threadSettingsButton
+                .fixedSize()
+                .background(
+                    GeometryReader { geo in
+                        Color.clear
+                            .onAppear { rightPillWidth = geo.size.width }
+                            .onChange(of: geo.size.width) { _, w in rightPillWidth = w }
+                    }
+                )
         }
     }
 
@@ -129,7 +140,6 @@ struct ProjectChipsView: View {
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
-        .fixedSize()
         .shakeOnTap(isLocked: isThinking)
     }
 
