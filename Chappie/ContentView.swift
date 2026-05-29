@@ -121,9 +121,12 @@
 //   attachments state lives in ContentView and is passed to InputMorphView via @Binding.
 //   The drop target is mainChatArea (the full app content area), NOT InputMorphView.
 //   This lets the user drop files anywhere in the window — not just on the input panel.
-//   isDragTargeted drives a full-window overlay: dashed accent border + icon + label.
-//   Drop is disabled while viewModel.isThinking — prevents accidental drops during AI response.
+//   ChappieDropDelegate inspects the dragged items BEFORE the drop:
+//     - If AI is thinking → red overlay (drop blocked).
+//     - If dragged items contain no valid file URLs (e.g. folders only) → red overlay.
+//     - Otherwise → blue/accent overlay (drop allowed).
 //   resolveDroppedFiles() runs URL resolution on a background Task, appends on @MainActor.
+//   Folders are silently skipped (isDirectory check inside resolveDroppedFiles).
 //
 // IT-09: Added project settings sheet.
 // IT-10: Universal AI Provider (two-level: provider → model).
@@ -138,6 +141,87 @@ import UniformTypeIdentifiers
 import SwiftData
 import ChappieCore
 
+// MARK: - Drop State
+
+/// Describes the current drag-over state for the global drop target.
+/// Drives overlay color: .allowed → accent blue, .blocked → red.
+private enum DropState: Equatable {
+    case idle        // No drag in progress
+    case allowed     // Valid files hovering, drop will succeed
+    case blocked     // AI is thinking OR only incompatible items (folders, etc.)
+}
+
+// MARK: - ChappieDropDelegate
+
+/// Custom DropDelegate for the global file-drop zone.
+///
+/// WHY a custom delegate instead of .onDrop(isTargeted:):
+/// The standard isTargeted binding goes true for ANY dragged item — including folders
+/// and items dragged while AI is thinking. We need to distinguish valid vs. invalid
+/// drops and show different overlay colors (blue vs. red) before the user releases.
+///
+/// validateDrop() is called continuously while the drag hovers — it updates dropState
+/// which drives the overlay color in real time.
+private struct ChappieDropDelegate: DropDelegate {
+
+    /// Written by this delegate, read by the overlay to pick its color.
+    @Binding var dropState: DropState
+    /// Whether AI is currently processing — blocks all drops.
+    let isThinking: Bool
+    /// Called when a valid drop is performed.
+    let onDrop: ([NSItemProvider]) -> Void
+
+    // MARK: - DropDelegate
+
+    func dropEntered(info: DropInfo) {
+        updateState(info: info)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        updateState(info: info)
+        // Return .forbidden proposal when blocked so the cursor shows the "no" icon
+        return dropState == .blocked
+            ? DropProposal(operation: .forbidden)
+            : DropProposal(operation: .copy)
+    }
+
+    func dropExited(info: DropInfo) {
+        dropState = .idle
+    }
+
+    func validateDrop(info: DropInfo) -> Bool {
+        // Allow the drop only when state is .allowed — this gates performDrop
+        return dropState == .allowed
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard dropState == .allowed else {
+            dropState = .idle
+            return false
+        }
+        let providers = info.itemProviders(for: [.fileURL])
+        onDrop(providers)
+        dropState = .idle
+        return true
+    }
+
+    // MARK: - Private
+
+    /// Determines whether the current drag payload is droppable and updates dropState.
+    private func updateState(info: DropInfo) {
+        // Thinking → always blocked
+        guard !isThinking else {
+            dropState = .blocked
+            return
+        }
+        // At least one file URL must be present (folders also conform to .fileURL,
+        // but we can't inspect directory-ness here synchronously — that check happens
+        // in resolveDroppedFiles. If the provider has .fileURL we optimistically allow.)
+        let hasFiles = info.hasItemsConforming(to: [.fileURL])
+        dropState = hasFiles ? .allowed : .blocked
+    }
+}
+
 // MARK: - ContentView
 
 struct ContentView: View {
@@ -150,8 +234,8 @@ struct ContentView: View {
     // DND-GLOBAL: attachments owned here so the whole-window drop target can write to them.
     // Passed to InputMorphView via @Binding — InputMorphView reads and clears them on send.
     @State private var attachments: [AttachedFile] = []
-    // True while a drag is hovering over the window — drives the drop overlay.
-    @State private var isDragTargeted: Bool = false
+    // Current drag state — drives overlay color (idle / allowed / blocked).
+    @State private var dropState: DropState = .idle
 
     @State private var selectedProjectForSettings: ProjectMetadata? = nil
     /// Thread whose settings sheet is currently open.
@@ -356,11 +440,7 @@ struct ContentView: View {
 
     /// Chat content: scroll view + floating top and bottom panels + global drop target.
     private var mainChatArea: some View {
-        // Capture isThinking for use inside the onDrop closure (closures can't reference
-        // computed properties of self directly in all Swift versions — capture explicitly).
-        let thinking = viewModel.isThinking
-
-        return ZStack(alignment: .top) {
+        ZStack(alignment: .top) {
 
             // BACK: full-screen scroll view.
             ChatScrollView(
@@ -392,55 +472,63 @@ struct ContentView: View {
             }
 
             // DND-GLOBAL: full-window drop overlay — shown only while drag is hovering.
-            // Sits on top of everything so the visual feedback is always visible.
-            if isDragTargeted {
-                dropOverlay
+            // Color depends on dropState: .allowed → accent, .blocked → red.
+            if dropState != .idle {
+                dropOverlay(state: dropState)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.easeInOut(duration: 0.2), value: viewModel.activeThread?.id)
-        // DND-GLOBAL: the entire chat area is the drop target.
-        // Drop is disabled while AI is thinking — prevents accidental attachment mid-response.
-        .onDrop(of: [.fileURL], isTargeted: $isDragTargeted) { providers in
-            guard !thinking else { return false }
-            resolveDroppedFiles(providers)
-            return true
-        }
+        // DND-GLOBAL: ChappieDropDelegate handles validation and color signaling.
+        .onDrop(
+            of: [.fileURL],
+            delegate: ChappieDropDelegate(
+                dropState: $dropState,
+                isThinking: viewModel.isThinking,
+                onDrop: resolveDroppedFiles
+            )
+        )
     }
 
     // MARK: - Drop Overlay
 
     /// Full-window overlay shown while a drag hovers over the app.
-    /// Dashed accent border + centered icon + label — clear affordance for the user.
-    private var dropOverlay: some View {
+    /// Color reflects whether the drop is allowed (accent) or blocked (red).
+    @ViewBuilder
+    private func dropOverlay(state: DropState) -> some View {
+        let isBlocked = state == .blocked
+        let color: Color = isBlocked ? .red : .accentColor
+
         ZStack {
-            // Semi-transparent tint so the chat content is still vaguely visible
-            Color.accentColor.opacity(0.08)
+            // Semi-transparent tint
+            color.opacity(0.08)
                 .ignoresSafeArea()
 
             // Dashed border around the whole window
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(
-                    Color.accentColor.opacity(0.7),
+                    color.opacity(0.7),
                     style: StrokeStyle(lineWidth: 2.5, dash: [10, 6])
                 )
                 .padding(12)
 
-            // Central hint
+            // Central hint — message changes based on state
             VStack(spacing: 12) {
-                Image(systemName: "arrow.down.doc.fill")
+                Image(systemName: isBlocked ? "nosign" : "arrow.down.doc.fill")
                     .font(.system(size: 40))
-                    .foregroundStyle(Color.accentColor)
-                Text("Отпусти для прикрепления")
+                    .foregroundStyle(color)
+                Text(isBlocked
+                     ? (viewModel.isThinking ? "Подожди — я думаю…" : "Папки не поддерживаются")
+                     : "Отпусти для прикрепления")
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(color)
             }
             .padding(24)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
         }
         .allowsHitTesting(false) // Overlay is visual-only — drop events pass through
         .transition(.opacity.combined(with: .scale(scale: 0.97)))
-        .animation(.easeInOut(duration: 0.15), value: isDragTargeted)
+        .animation(.easeInOut(duration: 0.15), value: dropState)
     }
 
     // MARK: - Top Floating Panel
@@ -543,8 +631,9 @@ struct ContentView: View {
 
     /// Resolves NSItemProvider array from a drop event into AttachedFile objects.
     ///
-    /// URL resolution runs inside a Task (background). AttachedFile.load() is @MainActor,
+    /// URL resolution runs inside a Task (background-safe). AttachedFile.load() is @MainActor,
     /// so the actual file loading and appending happen on the main actor via MainActor.run.
+    /// Directories are explicitly skipped — only regular files are accepted.
     private func resolveDroppedFiles(_ providers: [NSItemProvider]) {
         Task {
             // Collect raw URLs from all providers first (background-safe)
@@ -572,10 +661,17 @@ struct ContentView: View {
                 if let url { urls.append(url) }
             }
 
+            // Filter out directories — only regular files are supported
+            let fileURLs = urls.filter { url in
+                var isDir: ObjCBool = false
+                let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+                return exists && !isDir.boolValue
+            }
+
             // AttachedFile.load() is @MainActor — run on main actor with deduplication
             await MainActor.run {
                 let existingNames = Set(attachments.map(\.filename))
-                let newFiles = urls
+                let newFiles = fileURLs
                     .compactMap { AttachedFile.load(from: $0) }
                     .filter { !existingNames.contains($0.filename) }
                 withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
