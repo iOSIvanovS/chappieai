@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+    <channel>
+        <title>ChappieAI</title>
+        <link>https://iosivanovs.github.io/chappieai/releases/appcast.xml</link>
+        <description>ChappieAI releases</description>
+        <language>en</language>
+
+        <item>
+            <title>Version 1.0</title>
+            <pubDate>Sun, 01 Jun 2025 00:00:00 +0000</pubDate>
+            <sparkle:version>1</sparkle:version>
+            <sparkle:shortVersionString>1.0</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.dmg"
+                sparkle:edSignature="bViHmKkZbBRcb8hCHGHxSafB9jL3UWxlK0sLDSk6hL1ycuoZzVj/9t0DIAroQT00FtqZRhczWWtgm9uWnybHCQ=="
+                length="7337095"
+                type="application/octet-stream"
+            />
+        </item>
+
+    </channel>
+</rss>
