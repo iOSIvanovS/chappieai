@@ -1,82 +1,42 @@
 // ProjectStore.swift
 // ChappieCore
 //
-// НАЗНАЧЕНИЕ:
-// Актор для CRUD-операций над проектами через SwiftData (REFACTOR-THREADS IT-01).
+// Actor for CRUD operations on projects via SwiftData.
+// Each project stores a security-scoped bookmark for folder access.
+// Threads reference projects by UUID (in projectBindingsJSON).
 //
-// РОЛЬ В АРХИТЕКТУРЕ:
-// ProjectStore управляет списком известных проектов (воркспейсов).
-// Каждый проект хранит security-scoped bookmark для доступа к папке.
-// Треды ссылаются на проекты по UUID (в projectBindingsJSON).
-//
-// ПОЧЕМУ BACKGROUND CONTEXT:
-// Аналогично ThreadStore — используем ModelContext(modelContainer) вместо mainContext,
-// чтобы избежать нарушения правил Swift 6 (@MainActor isolation).
-//
-// СВЯЗЬ С СУЩЕСТВУЮЩИМ КОДОМ:
-// Сейчас выбор воркспейса хранится в UserDefaults через SettingsManager.
-// После IT-05 (UI тредов) воркспейс будет выбираться через ProjectStore.
-// Существующий SettingsManager остаётся как фолбэк до полной миграции.
-//
-// ИЗМЕНЕНИЕ (IT-06):
-// ProjectMetadata получил публичный инициализатор для Preview и тестов.
-// Swift автогенерирует memberwise init как internal — UI-таргету нужен явный public.
+// Why background context: ModelContext(modelContainer) instead of mainContext
+// avoids Swift 6 @MainActor isolation violations.
 
 import Foundation
 import SwiftData
 
 // MARK: - ProjectStore
 
-/// Актор для управления проектами в SwiftData.
-///
-/// Все методы изолированы в акторе — безопасный конкурентный доступ гарантирован.
+/// Actor managing projects in SwiftData.
 public actor ProjectStore {
 
-    // MARK: - Свойства
-
-    /// Контейнер модели SwiftData — хранится для создания контекстов.
     private let modelContainer: ModelContainer
 
-    // MARK: - Инициализация
-
-    /// Создаёт ProjectStore с указанным ModelContainer.
-    ///
-    /// - Parameter modelContainer: Контейнер SwiftData (создаётся в ChappieApp.swift)
     public init(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
     }
 
-    // MARK: - Вспомогательный метод создания контекста
-
-    /// Создаёт новый ModelContext для операций внутри actor.
-    ///
-    /// ModelContainer является Sendable — его можно безопасно хранить в actor.
-    /// ModelContext создаётся для каждой операции и не передаётся за пределы метода.
     private func makeContext() -> ModelContext {
         ModelContext(modelContainer)
     }
 
-    // MARK: - Создание
+    // MARK: - Create
 
-    /// Добавляет новый проект в базу данных.
+    /// Adds a new project. Returns the new project's UUID.
     ///
-    /// - Parameters:
-    ///   - displayName: Отображаемое имя проекта (обычно — имя папки)
-    ///   - bookmarkData: Security-scoped bookmark для доступа к папке проекта
-    ///   - settings: Настройки проекта (по умолчанию — дефолтные)
-    /// - Returns: UUID созданного проекта
-    /// - Throws: Ошибка SwiftData если сохранение не удалось
-    ///
-    /// ПОЧЕМУ ВОЗВРАЩАЕМ UUID:
-    /// Аналогично ThreadStore — ProjectEntity не является Sendable,
-    /// возвращаем UUID для безопасной передачи в UI.
+    /// Why return UUID: ProjectEntity is not Sendable, so we pass only primitives across the actor boundary.
     public func addProject(
         displayName: String,
         bookmarkData: Data,
         settings: ProjectSettings = ProjectSettings()
     ) throws -> UUID {
         let context = makeContext()
-
         let project = ProjectEntity(
             displayName: displayName,
             bookmarkData: bookmarkData,
@@ -84,31 +44,22 @@ public actor ProjectStore {
         )
         context.insert(project)
         try context.save()
-
-        print("[ProjectStore] ✅ Добавлен проект '\(displayName)' (id: \(project.id))")
+        print("[ProjectStore] ✅ Added project '\(displayName)' (id: \(project.id))")
         return project.id
     }
 
-    // MARK: - Загрузка
+    // MARK: - Read
 
-    /// Загружает метаданные всех проектов, отсортированных по дате создания.
-    ///
-    /// - Returns: Массив метаданных проектов
-    /// - Throws: Ошибка SwiftData если запрос не удался
+    /// Loads all projects sorted by creation date (newest first).
     public func loadProjects() throws -> [ProjectMetadata] {
         let context = makeContext()
         let descriptor = FetchDescriptor<ProjectEntity>(
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
-        let projects = try context.fetch(descriptor)
-        return projects.map { ProjectMetadata(from: $0) }
+        return try context.fetch(descriptor).map { ProjectMetadata(from: $0) }
     }
 
-    /// Загружает метаданные конкретного проекта по его UUID.
-    ///
-    /// - Parameter id: UUID проекта
-    /// - Returns: ProjectMetadata или nil если проект не найден
-    /// - Throws: Ошибка SwiftData если запрос не удался
+    /// Loads a single project by UUID. Returns nil if not found.
     public func loadProject(id: UUID) throws -> ProjectMetadata? {
         let context = makeContext()
         let descriptor = FetchDescriptor<ProjectEntity>(
@@ -118,29 +69,16 @@ public actor ProjectStore {
         return ProjectMetadata(from: project)
     }
 
-    /// Загружает метаданные проектов по списку UUID.
-    ///
-    /// - Parameter ids: Список UUID проектов
-    /// - Returns: Массив найденных ProjectMetadata (порядок соответствует ids)
-    /// - Throws: Ошибка SwiftData если запрос не удался
+    /// Loads projects for a list of UUIDs, preserving the order of `ids`.
     public func loadProjects(ids: [UUID]) throws -> [ProjectMetadata] {
         guard !ids.isEmpty else { return [] }
-
         let context = makeContext()
         let all = try context.fetch(FetchDescriptor<ProjectEntity>())
-        let metadataMap = Dictionary(uniqueKeysWithValues: all.map { ($0.id, ProjectMetadata(from: $0)) })
-
-        // Сохраняем порядок из ids
-        return ids.compactMap { metadataMap[$0] }
+        let map = Dictionary(uniqueKeysWithValues: all.map { ($0.id, ProjectMetadata(from: $0)) })
+        return ids.compactMap { map[$0] }
     }
 
-    /// Загружает security-scoped bookmark для проекта.
-    ///
-    /// Используется при смене активного проекта — нужен bookmark для resolveWorkspaceURL().
-    ///
-    /// - Parameter id: UUID проекта
-    /// - Returns: Data с bookmark или nil если проект не найден
-    /// - Throws: Ошибка SwiftData если запрос не удался
+    /// Loads the security-scoped bookmark for a project. Used when resolving workspace URL.
     public func loadBookmark(forProjectId id: UUID) throws -> Data? {
         let context = makeContext()
         let descriptor = FetchDescriptor<ProjectEntity>(
@@ -149,118 +87,71 @@ public actor ProjectStore {
         return try context.fetch(descriptor).first?.bookmarkData
     }
 
-    // MARK: - Обновление
+    // MARK: - Update
 
-    /// Обновляет настройки проекта.
-    ///
-    /// - Parameters:
-    ///   - settings: Новые настройки
-    ///   - projectId: UUID проекта для обновления
-    /// - Throws: Ошибка SwiftData если сохранение не удалось
     public func updateSettings(_ settings: ProjectSettings, forProjectId projectId: UUID) throws {
         let context = makeContext()
         let descriptor = FetchDescriptor<ProjectEntity>(
             predicate: #Predicate { $0.id == projectId }
         )
         guard let project = try context.fetch(descriptor).first else { return }
-
         project.settingsJSON = (try? JSONEncoder().encode(settings)) ?? project.settingsJSON
         try context.save()
-
-        print("[ProjectStore] ✅ Обновлены настройки проекта '\(project.displayName)'")
+        print("[ProjectStore] ✅ Updated settings for '\(project.displayName)'")
     }
 
-    /// Обновляет bookmark проекта (при устаревании).
-    ///
-    /// - Parameters:
-    ///   - bookmarkData: Новый security-scoped bookmark
-    ///   - projectId: UUID проекта для обновления
-    /// - Throws: Ошибка SwiftData если сохранение не удалось
     public func updateBookmark(_ bookmarkData: Data, forProjectId projectId: UUID) throws {
         let context = makeContext()
         let descriptor = FetchDescriptor<ProjectEntity>(
             predicate: #Predicate { $0.id == projectId }
         )
         guard let project = try context.fetch(descriptor).first else { return }
-
         project.bookmarkData = bookmarkData
         try context.save()
-
-        print("[ProjectStore] ✅ Обновлён bookmark для проекта '\(project.displayName)'")
+        print("[ProjectStore] ✅ Updated bookmark for '\(project.displayName)'")
     }
 
-    /// Переименовывает проект.
-    ///
-    /// - Parameters:
-    ///   - projectId: UUID проекта
-    ///   - name: Новое имя
-    /// - Throws: Ошибка SwiftData если сохранение не удалось
     public func renameProject(id projectId: UUID, name: String) throws {
         let context = makeContext()
         let descriptor = FetchDescriptor<ProjectEntity>(
             predicate: #Predicate { $0.id == projectId }
         )
         guard let project = try context.fetch(descriptor).first else { return }
-
         project.displayName = name
         try context.save()
     }
 
-    // MARK: - Удаление
+    // MARK: - Delete
 
-    /// Удаляет проект из базы данных.
-    ///
-    /// ВАЖНО: Удаление проекта НЕ удаляет треды, которые на него ссылаются.
-    /// UUID удалённого проекта просто перестаёт резолвиться в ProjectMetadata.
-    /// UI должен обрабатывать этот случай (показывать "Проект удалён" вместо имени).
-    ///
-    /// - Parameter projectId: UUID проекта для удаления
-    /// - Throws: Ошибка SwiftData если удаление не удалось
+    /// Deletes a project. Threads that reference it will get an unresolvable UUID —
+    /// UI should handle this gracefully (e.g. show "Project deleted").
     public func deleteProject(id projectId: UUID) throws {
         let context = makeContext()
         let descriptor = FetchDescriptor<ProjectEntity>(
             predicate: #Predicate { $0.id == projectId }
         )
         guard let project = try context.fetch(descriptor).first else { return }
-
         let name = project.displayName
         context.delete(project)
         try context.save()
-
-        print("[ProjectStore] 🗑 Проект '\(name)' удалён")
+        print("[ProjectStore] 🗑 Deleted project '\(name)'")
     }
 }
 
-// MARK: - ProjectMetadata (Sendable DTO для передачи за пределы actor)
+// MARK: - ProjectMetadata
 
-/// Метаданные проекта — безопасный Sendable value type для передачи из actor в UI.
+/// Sendable DTO for passing project data across the actor boundary.
 ///
-/// АНАЛОГ ThreadMetadata: ProjectEntity не является Sendable, поэтому
-/// передаём только примитивы. Для операций с файлами UI запрашивает
-/// bookmark через loadBookmark(forProjectId:).
-///
-/// ПОЧЕМУ ПУБЛИЧНЫЙ INIT (IT-06):
-/// Swift автогенерирует memberwise init как internal.
-/// UI-таргет (Chappie.app) не имеет доступа к internal-инициализаторам из другого модуля.
-/// Нужен явный public init для использования в Preview и тестах.
+/// Why explicit public init: Swift generates memberwise init as internal,
+/// which is inaccessible from the UI target (separate module).
 public struct ProjectMetadata: Sendable, Identifiable, Hashable {
 
-    /// UUID проекта
     public let id: UUID
-
-    /// Отображаемое имя проекта
     public let displayName: String
-
-    /// Время добавления проекта
     public let createdAt: Date
-
-    /// Настройки проекта
     public let settings: ProjectSettings
 
-    /// Создаёт ProjectMetadata из ProjectEntity (только внутри actor).
-    ///
-    /// Этот инициализатор используется внутри ProjectStore.
-    /// Не public — ProjectEntity не должен покидать actor.
+    /// Internal init from entity — stays inside the actor.
     init(from entity: ProjectEntity) {
         self.id = entity.id
         self.displayName = entity.displayName
@@ -268,17 +159,7 @@ public struct ProjectMetadata: Sendable, Identifiable, Hashable {
         self.settings = entity.settings
     }
 
-    /// Публичный инициализатор для Preview, тестов и прямого создания.
-    ///
-    /// ЗАЧЕМ НУЖЕН:
-    /// Swift генерирует memberwise init как internal — недоступен из UI-таргета.
-    /// Этот явный public init решает проблему без изменения архитектуры.
-    ///
-    /// - Parameters:
-    ///   - id: UUID проекта (по умолчанию — новый)
-    ///   - displayName: Отображаемое имя
-    ///   - createdAt: Дата создания (по умолчанию — сейчас)
-    ///   - settings: Настройки (по умолчанию — дефолтные)
+    /// Public init for Previews, tests, and direct construction.
     public init(
         id: UUID = UUID(),
         displayName: String,
