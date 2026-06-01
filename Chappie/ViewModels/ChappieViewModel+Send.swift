@@ -15,6 +15,11 @@
 // catch blocks dispatch to @MainActor explicitly — currentRequestTask runs in an unstructured
 // Task with no MainActor isolation, so withAnimation{} from a background thread is silently
 // ignored by SwiftUI. Without this, isThinking stays true and InputMorphView never morphs back.
+//
+// V2 SYSTEM PROMPT:
+// When FeatureFlags.useThreadIsolationV2 is ON, v2SystemPrompt() is awaited before process().
+// The result is passed as overrideSystemPrompt — AIOrchestrator skips its own MemoryManager call.
+// When flag is OFF, overrideSystemPrompt is nil and the V1 path runs unchanged.
 
 import SwiftUI
 import ChappieCore
@@ -52,6 +57,10 @@ extension ChappieViewModel {
         let activeProviderId = activeProvider?.id
 
         currentRequestTask = Task {
+            // V2: build system prompt from ThreadSession before entering the orchestrator.
+            // V1: nil → orchestrator builds it internally via MemoryManager.
+            let systemPromptOverride = await v2SystemPrompt()
+
             do {
                 let result = try await orchestrator.process(
                     prompt: prompt,
@@ -59,6 +68,7 @@ extension ChappieViewModel {
                     currentMessage: currentAIMessage,
                     config: config,
                     memoryContext: memoryContext,
+                    overrideSystemPrompt: systemPromptOverride,
                     onToolCall: { toolName, targetPath in
                         Task { @MainActor in
                             self.currentToolCall = targetPath.isEmpty

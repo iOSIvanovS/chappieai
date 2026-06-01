@@ -49,6 +49,11 @@ extension ChappieViewModel {
         self.displayedMessages = []
         self.activeThread = thread
 
+        // V2: discard previous session immediately on thread switch
+        if FeatureFlags.useThreadIsolationV2 {
+            self._activeThreadSession = nil
+        }
+
         saveLastActiveThreadId(thread.id)
 
         do {
@@ -82,6 +87,9 @@ extension ChappieViewModel {
         buildAndSyncMemoryContext()
         await syncActiveMemoryContext()
         refreshBalanceForActiveProvider()
+
+        // V2: assemble ThreadSession after projects are loaded
+        await assembleThreadSession(for: thread)
     }
 
     // MARK: - Create / Confirm / Cancel
@@ -232,6 +240,9 @@ extension ChappieViewModel {
                    let updated = refreshed.first(where: { $0.id == threadId }) {
                     self.activeThread = updated
                     self.activeThreadSettings = updatedSettings
+
+                    // V2: settings changed — invalidate cached prompt
+                    invalidateActiveThreadSession()
                 }
                 print("[ChappieViewModel] Thread settings saved for '\(newTitle)'")
             } catch {

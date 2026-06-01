@@ -2,6 +2,7 @@
 // Chappie
 //
 // Memory context: build MemoryContext for system prompt, sync to ToolExecutionService.
+// V2: invalidates ThreadSession cache after context rebuild so next send() gets fresh prompt.
 
 import ChappieCore
 
@@ -14,6 +15,9 @@ extension ChappieViewModel {
             MemoryContext.ProjectInfo(id: project.id, name: project.displayName, settings: project.settings)
         }
         self.activeMemoryContext = MemoryContext(threadId: activeThread?.id, projectInfos: projectInfos)
+
+        // V2: memory context changed — cached system prompt is stale
+        invalidateActiveThreadSession()
     }
 
     func syncActiveMemoryContext() async {

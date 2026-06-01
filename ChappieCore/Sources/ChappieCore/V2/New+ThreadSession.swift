@@ -6,14 +6,15 @@
 //
 // RESPONSIBILITIES:
 //   - Loads all memory scopes for the active thread from SwiftData in one pass
-//   - Resolves project settings from attached ProjectEntity records
+//   - Resolves project settings from attached ProjectMetadata (Sendable DTOs)
 //   - Builds PromptContext for SystemPromptBuilder
 //   - Computes merged ToolPermissions for ToolAccessController
 //   - Caches the built system prompt until explicitly invalidated
 //
 // CONTRACT:
 //   - ThreadSession is NOT a SwiftData entity — it's a pure runtime object
-//   - It reads from SwiftData but never writes to it
+//   - It reads from MemoryStore but never writes to it
+//   - ProjectEntity (@Model) is NOT stored here — only Sendable ProjectMetadata
 //   - Invalidate the cache whenever memory or project settings change
 //   - Behind FeatureFlags.useThreadIsolationV2
 
@@ -30,7 +31,7 @@ extension New {
         // MARK: - Stored properties
 
         private let thread: ThreadMetadata
-        private let projects: [ProjectEntity]
+        private let projectMetas: [ProjectMetadata]   // Sendable DTOs — no @Model here
         private let memoryStore: MemoryStore
         private let promptBuilder: SystemPromptBuilder
         private let userName: String?
@@ -43,13 +44,13 @@ extension New {
 
         public init(
             thread: ThreadMetadata,
-            projects: [ProjectEntity],
+            projectMetas: [ProjectMetadata],
             memoryStore: MemoryStore,
             promptBuilder: SystemPromptBuilder,
             userName: String? = nil
         ) {
             self.thread = thread
-            self.projects = projects
+            self.projectMetas = projectMetas
             self.memoryStore = memoryStore
             self.promptBuilder = promptBuilder
             self.userName = userName
@@ -85,12 +86,12 @@ extension New {
 
         // MARK: - Private: context assembly
 
-        /// Loads all memory scopes in one SwiftData fetch, then assembles PromptContext.
+        /// Loads all memory scopes in one MemoryStore fetch, then assembles PromptContext.
         private func buildPromptContext() async throws -> PromptContext {
-            // Collect all scopes needed: global + thread + one per project.
+            // Collect all scopes: global + thread + one per project.
             var scopes = ["global", thread.id.uuidString]
-            for project in projects {
-                scopes.append(project.id.uuidString)
+            for meta in projectMetas {
+                scopes.append(meta.id.uuidString)
             }
 
             // Single bulk fetch — avoids N round-trips to SwiftData.
@@ -99,12 +100,12 @@ extension New {
             let globalMemory = entriesByScope["global"] ?? []
             let threadMemory = entriesByScope[thread.id.uuidString] ?? []
 
-            // Build one ProjectContext per attached project.
-            let projectContexts: [PromptContext.ProjectContext] = projects.map { entity in
-                let projectMemory = entriesByScope[entity.id.uuidString] ?? []
+            // Build one ProjectContext per attached project using Sendable metadata.
+            let projectContexts: [PromptContext.ProjectContext] = projectMetas.map { meta in
+                let projectMemory = entriesByScope[meta.id.uuidString] ?? []
                 return PromptContext.ProjectContext(
-                    name: entity.displayName,
-                    settings: entity.settings,
+                    name: meta.displayName,
+                    settings: meta.settings,
                     memory: projectMemory
                 )
             }

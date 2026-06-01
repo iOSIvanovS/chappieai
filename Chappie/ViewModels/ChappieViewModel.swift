@@ -3,7 +3,7 @@
 //
 // Core @Observable class: state properties, init, service wiring, pagination, drafts, balance.
 // Business logic is split into extensions:
-//   +Threads, +Providers, +Projects, +Send, +Memory, +AppSettings (V2)
+//   +Threads, +Providers, +Projects, +Send, +Memory, +AppSettings (V2), +ThreadSession (V2)
 
 import SwiftUI
 import ChappieCore
@@ -126,6 +126,11 @@ final class ChappieViewModel {
     /// In-memory cache for last active thread ID (V2 path).
     /// Populated by preloadLastActiveThreadId() before thread selection.
     var cachedLastActiveThreadId: UUID?
+
+    // MARK: - V2: ThreadSession (backing storage for computed var in +ThreadSession extension)
+
+    /// Backing store for activeThreadSession. Use the computed var from +ThreadSession.
+    var _activeThreadSession: New.ThreadSession?
 
     // MARK: - UserDefaults keys (legacy — kept for V1 path and migration)
 

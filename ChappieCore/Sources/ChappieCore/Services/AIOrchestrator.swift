@@ -232,6 +232,10 @@ public actor AIOrchestrator {
 
     /// Runs the full agentic loop for the given prompt.
     ///
+    /// overrideSystemPrompt: when provided (V2 path), skips MemoryManager.buildSystemPrompt()
+    /// and uses this string directly. Assembled by New.ThreadSession before the call.
+    /// When nil (V1 path), falls back to the legacy MemoryManager-based assembly.
+    ///
     /// currentMessage: optional pre-built AIMessage for multimodal content (images/files).
     /// When provided, replaces the default AIMessage(role:"user", content:prompt).
     /// prompt is still used for context window deduplication and token estimation.
@@ -245,16 +249,23 @@ public actor AIOrchestrator {
         currentMessage: AIMessage? = nil,
         config: AppConfig = .shared,
         memoryContext: MemoryContext = .empty,
+        overrideSystemPrompt: String? = nil,
         onToolCall: @escaping @Sendable (String, String) -> Void,
         onToken: (@Sendable (String) -> Void)? = nil,
         onCostUpdate: (@Sendable (Double) -> Void)? = nil,
         onBalanceUpdate: (@Sendable (Double) -> Void)? = nil
     ) async throws -> AIOrchestratorResult {
 
-        let systemPrompt = await memoryManager.buildSystemPrompt(
-            basePrompt: baseSystemPrompt,
-            memoryContext: memoryContext
-        )
+        // V2: use pre-built prompt from ThreadSession; V1: build via MemoryManager.
+        let systemPrompt: String
+        if let override = overrideSystemPrompt {
+            systemPrompt = override
+        } else {
+            systemPrompt = await memoryManager.buildSystemPrompt(
+                basePrompt: baseSystemPrompt,
+                memoryContext: memoryContext
+            )
+        }
 
         var sessionHistory = buildContextWindow(
             from: history,
