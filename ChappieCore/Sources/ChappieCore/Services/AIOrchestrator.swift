@@ -236,6 +236,10 @@ public actor AIOrchestrator {
     /// and uses this string directly. Assembled by New.ThreadSession before the call.
     /// When nil (V1 path), falls back to the legacy MemoryManager-based assembly.
     ///
+    /// overrideToolPermissions: when provided (V2 path), New.ToolAccessController.check() is
+    /// called before every tool execution. When nil (V1 path), the legacy ToolAccessControl
+    /// inside ToolExecutionService handles access checks unchanged.
+    ///
     /// currentMessage: optional pre-built AIMessage for multimodal content (images/files).
     /// When provided, replaces the default AIMessage(role:"user", content:prompt).
     /// prompt is still used for context window deduplication and token estimation.
@@ -250,6 +254,7 @@ public actor AIOrchestrator {
         config: AppConfig = .shared,
         memoryContext: MemoryContext = .empty,
         overrideSystemPrompt: String? = nil,
+        overrideToolPermissions: New.ToolPermissions? = nil,
         onToolCall: @escaping @Sendable (String, String) -> Void,
         onToken: (@Sendable (String) -> Void)? = nil,
         onCostUpdate: (@Sendable (Double) -> Void)? = nil,
@@ -316,6 +321,7 @@ public actor AIOrchestrator {
                     toolCalls,
                     sessionHistory: &sessionHistory,
                     lastToolSignature: &lastToolSignature,
+                    overrideToolPermissions: overrideToolPermissions,
                     onToolCall: onToolCall
                 )
                 continue
@@ -539,6 +545,7 @@ public actor AIOrchestrator {
         _ toolCalls: [AIToolCall],
         sessionHistory: inout [AIMessage],
         lastToolSignature: inout String?,
+        overrideToolPermissions: New.ToolPermissions?,
         onToolCall: @Sendable (String, String) -> Void
     ) async throws {
         for toolCall in toolCalls {
@@ -556,7 +563,19 @@ public actor AIOrchestrator {
                 This is an infinite loop. DO NOT REPEAT THE SAME ACTION. USE A DIFFERENT APPROACH.
                 """
                 print("[AIOrchestrator] Loop detected: \(toolName) called twice in a row with same args")
+            } else if let permissions = overrideToolPermissions {
+                // V2: check access via New.ToolAccessController before executing.
+                let access = New.ToolAccessController.check(toolName: toolName, permissions: permissions)
+                if case .denied = access {
+                    resultString = access.denialJSON(toolName: toolName)
+                    print("[AIOrchestrator] V2 access denied for '\(toolName)'")
+                } else {
+                    lastToolSignature = signature
+                    onToolCall(toolName, targetPath)
+                    resultString = await toolService.execute(call: toolCall)
+                }
             } else {
+                // V1: ToolExecutionService handles its own access checks.
                 lastToolSignature = signature
                 onToolCall(toolName, targetPath)
                 resultString = await toolService.execute(call: toolCall)

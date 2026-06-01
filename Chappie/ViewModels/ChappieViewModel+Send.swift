@@ -16,10 +16,12 @@
 // Task with no MainActor isolation, so withAnimation{} from a background thread is silently
 // ignored by SwiftUI. Without this, isThinking stays true and InputMorphView never morphs back.
 //
-// V2 SYSTEM PROMPT:
-// When FeatureFlags.useThreadIsolationV2 is ON, v2SystemPrompt() is awaited before process().
-// The result is passed as overrideSystemPrompt — AIOrchestrator skips its own MemoryManager call.
-// When flag is OFF, overrideSystemPrompt is nil and the V1 path runs unchanged.
+// V2 SYSTEM PROMPT + TOOL PERMISSIONS:
+// When FeatureFlags.useThreadIsolationV2 is ON:
+//   - v2SystemPrompt() is awaited → passed as overrideSystemPrompt (AIOrchestrator skips MemoryManager).
+//   - v2ToolPermissions() is awaited → passed as overrideToolPermissions (orchestrator uses
+//     New.ToolAccessController.check() instead of legacy ToolAccessControl in ToolExecutionService).
+// When flag is OFF, both overrides are nil and the V1 path runs unchanged.
 
 import SwiftUI
 import ChappieCore
@@ -57,9 +59,10 @@ extension ChappieViewModel {
         let activeProviderId = activeProvider?.id
 
         currentRequestTask = Task {
-            // V2: build system prompt from ThreadSession before entering the orchestrator.
-            // V1: nil → orchestrator builds it internally via MemoryManager.
+            // V2: build system prompt + tool permissions from ThreadSession before the orchestrator.
+            // V1: both nil → orchestrator builds prompt via MemoryManager, ToolExecutionService handles access.
             let systemPromptOverride = await v2SystemPrompt()
+            let toolPermissionsOverride = await v2ToolPermissions()
 
             do {
                 let result = try await orchestrator.process(
@@ -69,6 +72,7 @@ extension ChappieViewModel {
                     config: config,
                     memoryContext: memoryContext,
                     overrideSystemPrompt: systemPromptOverride,
+                    overrideToolPermissions: toolPermissionsOverride,
                     onToolCall: { toolName, targetPath in
                         Task { @MainActor in
                             self.currentToolCall = targetPath.isEmpty
@@ -158,6 +162,16 @@ extension ChappieViewModel {
         guard let task = currentRequestTask else { return }
         print("[ChappieViewModel] Cancelling current request...")
         task.cancel()
+    }
+
+    // MARK: - V2 Tool Permissions
+
+    /// Returns V2 ToolPermissions if a session is active, nil otherwise.
+    /// Nil causes orchestrator to fall back to V1 ToolExecutionService access checks.
+    func v2ToolPermissions() async -> New.ToolPermissions? {
+        guard FeatureFlags.useThreadIsolationV2,
+              let session = _activeThreadSession else { return nil }
+        return try? await session.toolPermissions()
     }
 
     // MARK: - Build Network History
