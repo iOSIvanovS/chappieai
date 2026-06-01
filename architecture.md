@@ -4,12 +4,13 @@
 
 ```
 /Volumes/Storage/Work/Chappie/
-├── architecture.md                     # This file (root architecture)
+├── architecture.md                          # This file (root architecture)
+├── architecture-thread-isolation.md         # Thread isolation refactor design ← READ THIS
 ├── Chappie.xcodeproj/
-├── Chappie/                            # UI target → see Chappie/architecture.md
-├── ChappieCore/                        # Business logic → see ChappieCore/architecture.md
-├── ChappieCoreTests/                   # Tests → see ChappieCoreTests/architecture.md
-└── ChappieMCP/                         # Helper process → see ChappieMCP/architecture.md
+├── Chappie/                                 # UI target → see Chappie/architecture.md
+├── ChappieCore/                             # Business logic → see ChappieCore/architecture.md
+├── ChappieCoreTests/                        # Tests → see ChappieCoreTests/architecture.md
+└── ChappieMCP/                              # Helper process → see ChappieMCP/architecture.md
 ```
 
 ---
@@ -48,8 +49,8 @@ graph TD
     App -->|embeds in Contents/Helpers/| MCP
 
     subgraph Storage["Persistence"]
-        SD["SwiftData\n(ThreadEntity, ProjectEntity\nMemoryEntity, AIProviderEntity)"]
-        KC["Keychain\n(API keys)"]
+        SD["SwiftData\n(Thread, ThreadProject, ProviderSnapshot\nMemoryEntry, AIProvider, ProjectEntity)"]
+        KC["Keychain\n(API keys by keyId)"]
         UD["UserDefaults\n(balance_<id>, lastActiveThreadId)"]
     end
 
@@ -103,31 +104,43 @@ Balance stored per-provider in UserDefaults.
 
 ## 7. Memory Structure
 
-Three levels, all in SwiftData (`MemoryEntity`):
+Three levels — see `architecture-thread-isolation.md` section 3 for full detail.
 
-| Level | Scope value | Tool |
-|---|---|---|
-| Global | `"global"` | `memorize(scope:"global")` |
-| Project | `<projectId UUID>` | `memorize(targetName:"Chappie")` |
-| Thread | `<threadId UUID>` | `memorize(scope:"thread")` |
+| Level | Owner | Location | Tool |
+|---|---|---|---|
+| Global | `AppSettings` | `AppSettings.globalMemory` | `memorize(scope:"global")` |
+| Thread | `Thread` | `Thread.threadMemory` | `memorize(scope:"thread")` |
+| Project | `ThreadProject` | `ThreadProject.memory` | `memorize(targetName:"Name")` |
+
+Project memory is **per thread** — the same project in two threads has independent memory.
 
 **System prompt injection order:**
 ```
-[base prompt]
-## Memory Context
-## Project Settings: <name>   ← agent permissions first
-## Global Memory
-## Project Memory: <name>
-## Thread Context
+[1] Persona + 14 rules
+[2] userName
+[3] Global memory
+[4] Thread memory
+[5] Per-project: settings + project memory
+[6] Tool manifest (only available tools)
 ```
-
-**Agent permissions:** stored in `ProjectEntity.settingsJSON` as `ProjectSettings`.
-Default role: `.advisor` (read-only). `ToolExecutionService.checkToolAccess()` validates before each call.
-`git_diff` is always blocked — hard ban in code.
 
 ---
 
-## 8. 📚 Docs Group in Xcode Navigator
+## 8. Thread Isolation
+
+**Critical design — see `architecture-thread-isolation.md` for full detail.**
+
+Key entities:
+- `ProviderSnapshot` — frozen copy of provider+key+model selection, validated on thread load
+- `ThreadProject` — project in context of a thread; owns its own `ProjectSettings` and `memory`
+- `ProjectEntity` — global folder registry only (path + displayName, no logic)
+- `ThreadSession` — runtime container assembled on thread activation, discarded on switch
+- `SystemPromptBuilder` — deterministic prompt assembly from ThreadSession
+- `ToolAccessController` — hard gate before every tool execution, returns structured denial
+
+---
+
+## 9. 📚 Docs Group in Xcode Navigator
 
 `📚 Docs` group in `project.pbxproj` — navigation only, not included in build.
 Contains root `architecture.md` + references to 4 target architecture files.
@@ -135,7 +148,7 @@ Contains root `architecture.md` + references to 4 target architecture files.
 
 ---
 
-## 9. Work Pipeline
+## 10. Work Pipeline
 
 1. `git commit` — checkpoint before changes
 2. Implement
@@ -148,7 +161,7 @@ Contains root `architecture.md` + references to 4 target architecture files.
 
 ---
 
-## 10. Inviolable Agent Rules
+## 11. Inviolable Agent Rules
 
 **RULE-01: One task per pass** — decompose into backlog, execute one item, commit, repeat.
 Bundling causes signature drift and hard-to-rollback state.
@@ -164,7 +177,7 @@ Architecture files are ground truth; skipping them leads to costly rewrites.
 
 ---
 
-## 11. Tech Debt
+## 12. Tech Debt
 
 | ID | Issue | Priority |
 |----|-------|----------|
@@ -172,9 +185,10 @@ Architecture files are ground truth; skipping them leads to costly rewrites.
 
 ---
 
-## 12. Backlog
+## 13. Backlog
 
 | ID | Task | Priority |
 |----|------|----------|
 | BL-01 | Migrate ChatHistoryManager → SwiftData (per-thread chat history) | High |
 | BL-03 | Universal balance and message cost support for top-10 AI providers in Russia | Medium |
+| BL-04 | Thread isolation refactor — see architecture-thread-isolation.md (M-01 through M-10) | Critical |
