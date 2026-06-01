@@ -2,27 +2,19 @@
 //  AITunnelClient.swift
 //  ChappieCore
 //
-//  Сетевой клиент для работы с API AI-провайдера (AITunnel / OpenAI-совместимый).
+//  Lightweight network client for AITunnel (OpenAI-compatible) API.
 //
 
 import Foundation
 
-/// Лёгкий и быстрый сетевой клиент для выполнения запросов к API AITunnel.
+/// Lightweight HTTP client for AITunnel API requests.
 public struct AITunnelClient: Sendable {
 
-    // MARK: - Константы
-
     private let endpointURL = URL(string: "https://api.aitunnel.ru/v1/chat/completions")!
-
-    // MARK: - Конфигурация
-
     private let apiKey: String
     private let modelName: String
-
-    /// Кастомная URLSession с увеличенными таймаутами.
+    /// Custom URLSession with extended timeouts from AppConfig.
     private let urlSession: URLSession
-
-    // MARK: - Инициализация
 
     public init(apiKey: String, modelName: String = "claude-sonnet-4.6") {
         self.apiKey = apiKey
@@ -34,9 +26,9 @@ public struct AITunnelClient: Sendable {
         self.urlSession = URLSession(configuration: config)
     }
 
-    // MARK: - Публичный API: обычный запрос (резервный)
+    // MARK: - Public API
 
-    /// Отправляет запрос к языковой модели и возвращает полный ответ одним куском.
+    /// Non-streaming request — fallback for when streaming is unavailable.
     public func sendRequest(
         systemPrompt: String,
         chatHistory: [AIMessage],
@@ -44,13 +36,9 @@ public struct AITunnelClient: Sendable {
     ) async throws -> (message: AIMessage, cost: Double?, balance: Double?) {
 
         let messages = buildMessages(systemPrompt: systemPrompt, chatHistory: chatHistory)
-
         let requestBody = AITunnelRequest(
-            model: modelName,
-            messages: messages,
-            temperature: 0.7,
-            tools: tools.isEmpty ? nil : tools,
-            stream: false
+            model: modelName, messages: messages, temperature: 0.7,
+            tools: tools.isEmpty ? nil : tools, stream: false
         )
 
         let request = try buildURLRequest(body: requestBody)
@@ -61,15 +49,13 @@ public struct AITunnelClient: Sendable {
         logCacheStats(usage: result.usage)
 
         guard let choice = result.choices.first else {
-            throw ChappieError.parsingError("Модель вернула пустой массив choices — ответ отсутствует")
+            throw ChappieError.parsingError("Model returned empty choices array")
         }
 
         return (choice.message, result.usage?.cost_rub, result.usage?.balance)
     }
 
-    // MARK: - Публичный API: стриминговый запрос с инструментами (основной метод)
-
-    /// Отправляет стриминговый запрос с поддержкой инструментов и возвращает AIStreamResult.
+    /// Primary streaming request with tool-call support.
     public func streamRequestWithTools(
         systemPrompt: String,
         chatHistory: [AIMessage],
@@ -78,13 +64,9 @@ public struct AITunnelClient: Sendable {
     ) async throws -> AIStreamResult {
 
         let messages = buildMessages(systemPrompt: systemPrompt, chatHistory: chatHistory)
-
         let requestBody = AITunnelRequest(
-            model: modelName,
-            messages: messages,
-            temperature: 0.7,
-            tools: tools.isEmpty ? nil : tools,
-            stream: true
+            model: modelName, messages: messages, temperature: 0.7,
+            tools: tools.isEmpty ? nil : tools, stream: true
         )
 
         let request = try buildURLRequest(body: requestBody)
@@ -135,7 +117,6 @@ public struct AITunnelClient: Sendable {
                 if let streamToolCalls = delta.tool_calls {
                     for streamToolCall in streamToolCalls {
                         let idx = streamToolCall.index
-
                         if var existing = toolCallBuffers[idx] {
                             if let argChunk = streamToolCall.function?.arguments {
                                 existing.arguments += argChunk
@@ -160,21 +141,18 @@ public struct AITunnelClient: Sendable {
             toolCallBuffers.sorted(by: { $0.key < $1.key }).compactMap { (_, buffer) in
                 guard !buffer.name.isEmpty else { return nil }
                 return AIToolCall(
-                    id: buffer.id,
-                    type: "function",
+                    id: buffer.id, type: "function",
                     function: AIToolCallFunction(name: buffer.name, arguments: buffer.arguments)
                 )
             }
 
         return AIStreamResult(
-            text: accumulatedText,
-            toolCalls: assembledToolCalls,
-            cost: finalCost,
-            balance: finalBalance
+            text: accumulatedText, toolCalls: assembledToolCalls,
+            cost: finalCost, balance: finalBalance
         )
     }
 
-    // MARK: - Публичный API: стриминговый запрос без инструментов (устаревший)
+    /// Legacy streaming without tools — kept for backward compatibility.
     public func streamRequest(
         systemPrompt: String,
         chatHistory: [AIMessage]
@@ -205,95 +183,49 @@ public struct AITunnelClient: Sendable {
         return (stream, getUsage)
     }
 
-    // MARK: - Приватные методы: формирование сообщений
+    // MARK: - Private: message building
 
-    /// Формирует массив сообщений для запроса (классический формат).
     private func buildMessages(systemPrompt: String, chatHistory: [AIMessage]) -> [AIMessage] {
-        var messages: [AIMessage] = []
-
-        let systemMessage = AIMessage(
-            role: "system",
-            content: systemPrompt
-        )
-        messages.append(systemMessage)
+        var messages: [AIMessage] = [AIMessage(role: "system", content: systemPrompt)]
         messages.append(contentsOf: chatHistory)
-
-        print("[AITunnelClient] 📤 Формирование запроса: 1 (system) + \(chatHistory.count) (history) сообщений")
+        print("[AITunnelClient] 📤 Request: 1 system + \(chatHistory.count) history messages")
         return messages
     }
 
-    // MARK: - Диагностика кэша
+    // MARK: - Private: cache diagnostics
 
-    /// Логирует подробную статистику кэша промптов для диагностики.
-    ///
-    /// ЗАЧЕМ ТАКОЙ ПОДРОБНЫЙ ЛОГ:
-    /// Нам нужно понять — кэшируются ли инструменты (tools) вместе с системным промптом,
-    /// или только сам промпт. Для этого смотрим на соотношение:
-    ///   - prompt_tokens = полное количество входных токенов (system + history + tools)
-    ///   - cache_read    = сколько из них взято из кэша
-    ///   - coverage%     = cache_read / prompt_tokens * 100
-    ///
-    /// Если coverage ≈ 80-100% → инструменты тоже кэшируются (отлично!)
-    /// Если coverage ≈ 30-50%  → кэшируется только системный промпт (без инструментов)
-    /// Если coverage = 0%      → кэш не работает совсем
-    ///
-    /// Первый запрос в сессии всегда создаёт кэш (created > 0, read = 0).
-    /// Второй и последующие — должны читать из кэша (read > 0).
+    /// Logs prompt-cache stats to help diagnose whether tools are cached alongside the system prompt.
+    /// coverage% = cache_read / prompt_tokens — aim for 80-100% to confirm tool caching.
     private func logCacheStats(usage: AIUsage?) {
         guard let usage else { return }
 
-        let cacheRead     = usage.effectiveCacheRead
-        let cacheCreation = usage.effectiveCacheCreation
-        let promptTokens  = usage.prompt_tokens ?? 0
+        let cacheRead        = usage.effectiveCacheRead
+        let cacheCreation    = usage.effectiveCacheCreation
+        let promptTokens     = usage.prompt_tokens ?? 0
         let completionTokens = usage.completion_tokens ?? 0
-        let costStr = usage.cost_rub.map { String(format: "%.4f ₽", $0) } ?? "н/д"
+        let costStr          = usage.cost_rub.map { String(format: "%.4f ₽", $0) } ?? "n/a"
 
-        // Считаем процент покрытия кэшем — ключевая метрика для диагностики
-        // Если prompt_tokens > 0, считаем сколько % входных токенов пришло из кэша
         let coverageStr: String
         if promptTokens > 0 && cacheRead > 0 {
             let pct = Int(Double(cacheRead) / Double(promptTokens) * 100)
-            coverageStr = " | покрытие: \(pct)% промпта"
+            coverageStr = " | coverage: \(pct)%"
         } else {
             coverageStr = ""
         }
 
         if cacheRead > 0 {
-            // ✅ Кэш сработал — читаем токены из кэша (стоит ~10% от обычной цены)
             let savings = Int(Double(cacheRead) * 0.9)
-            print("""
-            [AITunnelClient] ✅ КЭШ HIT \
-            | prompt: \(promptTokens) tok \
-            | read: \(cacheRead) tok (~\(savings) tok сэкономлено)\(coverageStr) \
-            | created: \(cacheCreation) tok \
-            | completion: \(completionTokens) tok \
-            | cost: \(costStr)
-            """)
+            print("[AITunnelClient] ✅ CACHE HIT | prompt: \(promptTokens) tok | read: \(cacheRead) tok (~\(savings) saved)\(coverageStr) | created: \(cacheCreation) tok | completion: \(completionTokens) tok | cost: \(costStr)")
         } else if cacheCreation > 0 {
-            // 🔄 Кэш создан — первый запрос в сессии, токены записаны в кэш
-            print("""
-            [AITunnelClient] 🔄 КЭШ WRITE \
-            | prompt: \(promptTokens) tok \
-            | created: \(cacheCreation) tok → записано в кэш \
-            | completion: \(completionTokens) tok \
-            | cost: \(costStr)
-            """)
+            print("[AITunnelClient] 🔄 CACHE WRITE | prompt: \(promptTokens) tok | created: \(cacheCreation) tok | completion: \(completionTokens) tok | cost: \(costStr)")
         } else {
-            // ⚠️ Кэш не активен — ни чтения ни записи. Возможные причины:
-            // 1. top-level cache_control не поддерживается AITunnel для этой модели
-            // 2. Слишком мало токенов для кэширования (Anthropic требует минимум ~1024)
-            // 3. Шлюз проигнорировал поле
-            print("""
-            [AITunnelClient] ⚠️ КЭШ MISS \
-            | prompt: \(promptTokens) tok \
-            | completion: \(completionTokens) tok \
-            | cost: \(costStr) \
-            | (кэш не активен — ни read ни write)
-            """)
+            // No cache activity — possible causes: model doesn't support top-level cache_control,
+            // too few tokens (<1024), or the gateway ignored the field.
+            print("[AITunnelClient] ⚠️ CACHE MISS | prompt: \(promptTokens) tok | completion: \(completionTokens) tok | cost: \(costStr)")
         }
     }
 
-    // MARK: - Приватные методы: выполнение запросов
+    // MARK: - Private: request execution
 
     private func performStreamRequest(
         systemPrompt: String,
@@ -302,13 +234,9 @@ public struct AITunnelClient: Sendable {
     ) async throws -> (cost: Double?, balance: Double?) {
 
         let messages = buildMessages(systemPrompt: systemPrompt, chatHistory: chatHistory)
-
         let requestBody = AITunnelRequest(
-            model: modelName,
-            messages: messages,
-            temperature: 0.7,
-            tools: nil,
-            stream: true
+            model: modelName, messages: messages, temperature: 0.7,
+            tools: nil, stream: true
         )
 
         let request = try buildURLRequest(body: requestBody)
@@ -339,7 +267,6 @@ public struct AITunnelClient: Sendable {
             }
 
             guard let choice = chunk.choices.first else { continue }
-
             if let token = choice.delta.content, !token.isEmpty {
                 continuation.yield(token)
             }
@@ -348,7 +275,7 @@ public struct AITunnelClient: Sendable {
         return (finalCost, finalBalance)
     }
 
-    /// Формирует URLRequest с правильными заголовками и сериализованным телом.
+    /// Builds URLRequest with auth headers and serialized JSON body.
     private func buildURLRequest(body: AITunnelRequest) throws -> URLRequest {
         var request = URLRequest(url: endpointURL)
         request.httpMethod = "POST"
@@ -359,13 +286,12 @@ public struct AITunnelClient: Sendable {
         do {
             request.httpBody = try JSONEncoder().encode(body)
         } catch {
-            throw ChappieError.parsingError("Не удалось сериализовать тело запроса: \(error.localizedDescription)")
+            throw ChappieError.parsingError("Failed to serialize request body: \(error.localizedDescription)")
         }
 
         return request
     }
 
-    /// Выполняет URLRequest и возвращает данные + ответ.
     private func performRequest(_ request: URLRequest) async throws -> (Data, URLResponse) {
         do {
             return try await urlSession.data(for: request)
@@ -373,23 +299,22 @@ public struct AITunnelClient: Sendable {
             let nsError = error as NSError
             if nsError.code == NSURLErrorTimedOut {
                 throw ChappieError.networkError(
-                    "Превышено время ожидания ответа (\(Int(AppConfig.shared.requestTimeoutSeconds)) сек). " +
-                    "Задача слишком сложная или сервер перегружен. Попробуй разбить задачу на части."
+                    "Request timed out (\(Int(AppConfig.shared.requestTimeoutSeconds))s). " +
+                    "Task may be too complex or server is overloaded."
                 )
             }
-            throw ChappieError.networkError("Ошибка при выполнении запроса: \(error.localizedDescription)")
+            throw ChappieError.networkError("Request failed: \(error.localizedDescription)")
         }
     }
 
-    /// Проверяет HTTP-статус ответа.
     private func validateHTTPResponse(_ response: URLResponse, data: Data?) throws {
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw ChappieError.networkError("Получен некорректный тип ответа от сервера (не HTTPURLResponse)")
+            throw ChappieError.networkError("Invalid response type (not HTTPURLResponse)")
         }
 
         guard !(200...299).contains(httpResponse.statusCode) else { return }
 
-        let errorBody = data.flatMap { String(data: $0, encoding: .utf8) } ?? "Тело ответа недоступно"
+        let errorBody = data.flatMap { String(data: $0, encoding: .utf8) } ?? "No response body"
 
         let isContextError = httpResponse.statusCode == 413
             || errorBody.lowercased().contains("context")
@@ -403,12 +328,11 @@ public struct AITunnelClient: Sendable {
         throw ChappieError.networkError("HTTP \(httpResponse.statusCode): \(errorBody)")
     }
 
-    /// Декодирует полный (не-стриминговый) ответ API.
     private func decodeResponse(_ data: Data) throws -> AITunnelResponse {
         do {
             return try JSONDecoder().decode(AITunnelResponse.self, from: data)
         } catch {
-            throw ChappieError.parsingError("Не удалось декодировать ответ от модели: \(error.localizedDescription)")
+            throw ChappieError.parsingError("Failed to decode model response: \(error.localizedDescription)")
         }
     }
 }

@@ -2,185 +2,108 @@
 //  ChatHistoryManager.swift
 //  ChappieCore
 //
-//  Created by Chappie.
-//
 
 import Foundation
 
-/// Менеджер для сохранения и загрузки истории чата в локальный JSON-файл.
+/// Saves and loads chat history as a JSON file in the workspace root (or global fallback).
 ///
-/// ## Архитектурное решение (TD-03)
-/// После рефакторинга AI_Docs → architecture.md история чата переехала:
-///
-/// БЫЛО: `<workspaceURL>/AI_Docs/chat_history.json`
-/// СТАЛО: `<workspaceURL>/chat_history.json` (прямо в корне проекта)
-///
-/// ПОЧЕМУ В КОРНЕ:
-/// - Папка AI_Docs упразднена — теперь каждый таргет имеет только architecture.md.
-/// - Хранение в корне проекта логично: история — это артефакт проекта, а не технического слоя.
-/// - Проще находить, проще бэкапить, проще версионировать (если нужно).
-///
-/// ## Лимит сообщений (TD-03)
-/// При каждом сохранении история автоматически подрезается до maxStoredMessages (100).
-/// ПОЧЕМУ 100:
-/// - Для контекста оркестратора используется buildContextWindow() — он берёт последние N.
-/// - Хранить 1000+ сообщений бессмысленно: они никогда не попадут в контекст.
-/// - 100 сообщений — это ~20-50 диалоговых пар, достаточно для долгосрочной работы.
-/// - Файл остаётся компактным и не разрастается до неприличия.
-///
-/// ## Потокобезопасность
-/// Класс помечен как `Sendable`, потому что все его свойства — константы (`let`),
-/// вычисляемые один раз при инициализации. Методы чтения/записи не изменяют состояние объекта.
-///
-/// ## Обратная совместимость
-/// Статическое свойство `shared` сохранено как дефолтный фолбэк (без воркспейса).
+/// Generic T: Codable — ChappieCore doesn't depend on ChatMessage (UI target).
+/// History is trimmed to maxStoredMessages on every save to keep the file compact.
+/// All stored properties are constants → Sendable-safe.
 public final class ChatHistoryManager: Sendable {
 
-    // MARK: - Константы
+    // MARK: - Constants
 
-    /// Имя файла истории чата в корне воркспейса.
-    /// Вынесено в константу чтобы менять в одном месте.
     private static let workspaceHistoryFileName = "chat_history.json"
+    private static let globalSubdirectory       = "Chappie"
+    private static let globalHistoryFileName    = "global_chat_history.json"
 
-    /// Имя поддиректории в глобальных Documents для фолбэк-хранилища.
-    private static let globalSubdirectory = "Chappie"
-
-    /// Имя файла глобального фолбэк-хранилища.
-    private static let globalHistoryFileName = "global_chat_history.json"
-
-    /// Максимальное количество сообщений, хранимых в файле.
-    ///
-    /// При превышении лимита старые сообщения отбрасываются — сохраняются только последние N.
-    /// Значение 100 выбрано как баланс между полнотой истории и размером файла.
-    /// Оркестратор всё равно берёт из истории только последние 12 (maxMessagesInContext),
-    /// поэтому хранить больше 100 нет практического смысла.
+    /// Max messages kept on disk. Orchestrator uses only the last ~12 anyway,
+    /// so storing more than 100 provides no practical benefit.
     public static let maxStoredMessages = 100
 
-    // MARK: - Синглтон (обратная совместимость)
+    // MARK: - Singleton (backward compatibility)
 
-    /// Дефолтный экземпляр без привязки к воркспейсу.
-    /// Используется как фолбэк когда воркспейс ещё не выбран.
+    /// Default instance without a workspace — used before workspace is selected.
     public static let shared = ChatHistoryManager(workspaceURL: nil)
 
-    // MARK: - Свойства
+    // MARK: - Properties
 
-    /// Итоговый URL файла истории чата.
-    /// Вычисляется один раз в `init` и больше не меняется — это ключевое условие `Sendable`.
+    /// Resolved file URL — computed once in init, never changes (required for Sendable).
     public let fileURL: URL
 
-    // MARK: - Инициализация
+    // MARK: - Init
 
-    /// Создаёт менеджер истории чата.
-    ///
-    /// - Parameter workspaceURL: URL корневой папки воркспейса (проекта).
-    ///   Если передан — история хранится в `<workspaceURL>/chat_history.json`.
-    ///   Если `nil` — используется глобальный фолбэк `~/Documents/Chappie/global_chat_history.json`.
+    /// - Parameter workspaceURL: Workspace root → stores `<root>/chat_history.json`.
+    ///   If nil → falls back to `~/Documents/Chappie/global_chat_history.json`.
     public init(workspaceURL: URL?) {
         if let workspaceURL = workspaceURL {
-            // Режим воркспейса: история лежит прямо в корне папки проекта.
-            // Не нужна поддиректория AI_Docs — она упразднена в рефакторинге TD-03.
-            fileURL = workspaceURL
-                .appendingPathComponent(ChatHistoryManager.workspaceHistoryFileName)
+            fileURL = workspaceURL.appendingPathComponent(ChatHistoryManager.workspaceHistoryFileName)
         } else {
-            // Режим фолбэка: воркспейс ещё не выбран.
-            // Используем поддиректорию ~/Documents/Chappie/ чтобы не засорять корень Documents.
-            let documentsURL = FileManager.default
-                .urls(for: .documentDirectory, in: .userDomainMask)[0]
-            let chappieGlobalURL = documentsURL
-                .appendingPathComponent(ChatHistoryManager.globalSubdirectory, isDirectory: true)
-
+            let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            let chappieGlobalURL = documentsURL.appendingPathComponent(
+                ChatHistoryManager.globalSubdirectory, isDirectory: true
+            )
             ChatHistoryManager.createDirectoryIfNeeded(at: chappieGlobalURL)
-
-            fileURL = chappieGlobalURL
-                .appendingPathComponent(ChatHistoryManager.globalHistoryFileName)
+            fileURL = chappieGlobalURL.appendingPathComponent(ChatHistoryManager.globalHistoryFileName)
         }
     }
 
-    // MARK: - Публичный API
+    // MARK: - Public API
 
-    /// Загружает историю сообщений из файла.
-    ///
-    /// Использует Generic-тип `T`, чтобы менеджер в ChappieCore не зависел от
-    /// конкретной модели `ChatMessage`, которая определена в UI-слое приложения.
-    ///
-    /// - Returns: Массив декодированных сообщений, или пустой массив при ошибке/отсутствии файла.
+    /// Loads messages from disk. Returns empty array on missing file or decode error.
     public func loadMessages<T: Codable>() -> [T] {
         guard let data = try? Data(contentsOf: fileURL) else { return [] }
-
         do {
-            let messages = try JSONDecoder().decode([T].self, from: data)
-            return messages
+            return try JSONDecoder().decode([T].self, from: data)
         } catch {
-            // Ошибка декодирования — возможно повреждение файла или изменение модели.
-            // Возвращаем пустой массив чтобы не крашить приложение.
-            print("[ChatHistoryManager] Не удалось декодировать историю чата: \(error)")
+            // Corrupt file or model change — return empty rather than crash.
+            print("[ChatHistoryManager] Failed to decode chat history: \(error)")
             return []
         }
     }
 
-    /// Сохраняет историю сообщений в файл с автоматическим подрезанием до maxStoredMessages.
-    ///
-    /// ПОЧЕМУ ПОДРЕЗАНИЕ ПРИ СОХРАНЕНИИ, А НЕ ПРИ ЗАГРУЗКЕ:
-    /// - Файл остаётся компактным всегда, а не только в памяти приложения.
-    /// - Нет риска что при следующем запуске файл снова окажется раздутым.
-    /// - Логика подрезания в одном месте, не размазана по коду.
-    ///
-    /// Запись атомарная (.atomic): данные пишутся во временный файл, затем переименовываются.
-    /// Это защищает от повреждения файла при внезапном завершении приложения.
-    ///
-    /// - Parameter messages: Массив сообщений для сохранения.
+    /// Saves messages to disk, trimming to maxStoredMessages.
+    /// Write is atomic (.atomic) to protect against corruption on unexpected termination.
     public func saveMessages<T: Codable>(_ messages: [T]) {
-        // Подрезаем до лимита: берём только последние maxStoredMessages.
-        // Если сообщений меньше лимита — массив не изменяется (suffix безопасен).
-        let trimmedMessages = messages.count > ChatHistoryManager.maxStoredMessages
+        let trimmed = messages.count > ChatHistoryManager.maxStoredMessages
             ? Array(messages.suffix(ChatHistoryManager.maxStoredMessages))
             : messages
 
         if messages.count > ChatHistoryManager.maxStoredMessages {
-            let dropped = messages.count - ChatHistoryManager.maxStoredMessages
-            print("[ChatHistoryManager] ✂️ Подрезание: удалено \(dropped) старых сообщений, сохранено \(trimmedMessages.count)")
+            print("[ChatHistoryManager] ✂️ Trimmed \(messages.count - trimmed.count) old messages, kept \(trimmed.count)")
         }
 
         do {
-            let data = try JSONEncoder().encode(trimmedMessages)
+            let data = try JSONEncoder().encode(trimmed)
             try data.write(to: fileURL, options: .atomic)
         } catch {
-            print("[ChatHistoryManager] Не удалось сохранить историю чата: \(error)")
+            print("[ChatHistoryManager] Failed to save chat history: \(error)")
         }
     }
 
-    /// Удаляет файл истории чата.
-    ///
-    /// Полезно при сбросе настроек или очистке данных проекта.
-    /// Если файл не существует — операция считается успешной (нет ошибки).
+    /// Deletes the history file. No-op if file doesn't exist.
     public func clearHistory() {
         do {
             if FileManager.default.fileExists(atPath: fileURL.path) {
                 try FileManager.default.removeItem(at: fileURL)
             }
         } catch {
-            print("[ChatHistoryManager] Не удалось удалить файл истории: \(error)")
+            print("[ChatHistoryManager] Failed to delete history file: \(error)")
         }
     }
 
-    // MARK: - Вспомогательные методы (приватные, статические)
+    // MARK: - Private
 
-    /// Создаёт директорию по указанному URL, если она ещё не существует.
-    ///
-    /// Вынесено в статический метод, потому что вызывается из `init` до полной
-    /// инициализации `self`. Параметр `withIntermediateDirectories: true` позволяет
-    /// создать всю цепочку директорий за один вызов (аналог `mkdir -p`).
+    /// Called from init before self is fully initialized — must be static.
     private static func createDirectoryIfNeeded(at url: URL) {
         guard !FileManager.default.fileExists(atPath: url.path) else { return }
-
         do {
             try FileManager.default.createDirectory(
-                at: url,
-                withIntermediateDirectories: true,
-                attributes: nil
+                at: url, withIntermediateDirectories: true, attributes: nil
             )
         } catch {
-            print("[ChatHistoryManager] Не удалось создать директорию \(url.path): \(error)")
+            print("[ChatHistoryManager] Failed to create directory \(url.path): \(error)")
         }
     }
 }
