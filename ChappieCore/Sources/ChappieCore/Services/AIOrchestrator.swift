@@ -201,6 +201,15 @@ public actor AIOrchestrator {
         WHY: AI agents can stall, crash, or lose context mid-task. If old code is deleted first
         and the session is interrupted, the project is left broken with nothing to fall back to.
         Old code is removed LAST — never first. Demolition is always the final step.
+
+    14. AI-COMPATIBLE FILE SIZE (IMPORTANT):
+        Large files are expensive: they consume context window, slow down comprehension,
+        and increase error rate — for both humans and AI.
+        Limit: 200–300 lines per file. If a file grows beyond this — split it into focused
+        modules grouped in a folder. Each module has a single clear responsibility.
+        The folder name becomes the logical namespace.
+        WHY: a 600-line file costs 3× more tokens to load and 3× more cognitive effort to
+        navigate. Small files = fast reads, cheap edits, clean diffs.
     """
 
     // MARK: - Init
