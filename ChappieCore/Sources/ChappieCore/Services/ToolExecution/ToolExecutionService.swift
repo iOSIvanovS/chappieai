@@ -59,7 +59,9 @@ enum ToolAccessResult {
 ///
 /// Why actor: async file system + network ops require isolation in Swift 6.
 public actor ToolExecutionService {
-    let fileSystem: FileSystemManager
+    // WHY var: V2 thread isolation swaps fileSystem per thread via setFileSystem().
+    // V1 path sets it once in init and never changes it.
+    var fileSystem: FileSystemManager
     let memoryManager: MemoryManager
     let mcpBridge: MCPToolBridge
     let webFetch: WebFetchService?
@@ -108,6 +110,14 @@ public actor ToolExecutionService {
             let names = context.projectNames.joined(separator: ", ")
             print("[ToolExecutionService] 🔓 File tools unlocked: \(names)")
         }
+    }
+
+    /// V2 M-09: Swaps the active FileSystemManager to point at the thread's first project.
+    /// Called from assembleThreadSession() when V2 flag is ON and projects are present.
+    /// On thread deactivation (no projects) — pass the global fileSystem to restore default.
+    public func setFileSystem(_ fs: FileSystemManager) {
+        self.fileSystem = fs
+        print("[ToolExecutionService] 📂 FileSystem switched to: \(fs.workspaceURL.path)")
     }
 
     /// IT-09: Updates project settings cache from ViewModel.

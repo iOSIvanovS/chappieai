@@ -12,6 +12,11 @@
 //   selectThread() → assembleThreadSession() → New.ThreadSession stored in _activeThreadSession
 //   send() reads activeThreadSession?.systemPrompt() → passes as overrideSystemPrompt to orchestrator
 //   memory/project changes → invalidateActiveThreadSession() resets the cache
+//
+// M-09 WORKSPACE ISOLATION:
+//   assembleThreadSession() resolves the bookmark of the first attached project
+//   and calls toolService.setFileSystem() so file tools point at the right folder.
+//   On threads with no projects — restores the global fileSystem (from workspaceURL).
 
 import Foundation
 import ChappieCore
@@ -47,6 +52,9 @@ extension ChappieViewModel {
 
         self._activeThreadSession = session
         print("[ChappieViewModel] V2 ThreadSession assembled for '\(thread.title)' (\(activeProjects.count) projects)")
+
+        // M-09: Sync FileSystem to point at the first project's workspace folder.
+        await syncFileSystemForActiveThread()
     }
 
     // MARK: - Invalidate
@@ -66,6 +74,65 @@ extension ChappieViewModel {
         guard FeatureFlags.useThreadIsolationV2,
               let session = _activeThreadSession else { return nil }
         return try? await session.systemPrompt()
+    }
+
+    // MARK: - M-09: Workspace isolation
+
+    /// Resolves the workspace URL for the first project in the active thread
+    /// and swaps the FileSystemManager in ToolExecutionService.
+    ///
+    /// WHY first project: tools operate on one workspace at a time.
+    /// Future: multi-project routing can be added here without touching ToolExecutionService.
+    func syncFileSystemForActiveThread() async {
+        guard FeatureFlags.useThreadIsolationV2,
+              let ts = toolService else { return }
+
+        // No projects → restore global fileSystem (the one from workspaceURL).
+        guard let firstProject = activeProjects.first else {
+            if let globalFS = fileSystem {
+                await ts.setFileSystem(globalFS)
+                print("[ChappieViewModel] M-09: No projects — restored global fileSystem")
+            }
+            return
+        }
+
+        // Resolve bookmark for the first project.
+        guard let pStore = projectStore,
+              let bookmarkData = try? await pStore.loadBookmark(forProjectId: firstProject.id),
+              !bookmarkData.isEmpty else {
+            print("[ChappieViewModel] M-09: No bookmark for '\(firstProject.displayName)' — keeping current fileSystem")
+            return
+        }
+
+        var isStale = false
+        let resolvedURL: URL?
+
+        // Try security-scoped bookmark first (sandboxed app), fall back to plain.
+        if let url = try? URL(
+            resolvingBookmarkData: bookmarkData,
+            options: .withSecurityScope,
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        ) {
+            _ = url.startAccessingSecurityScopedResource()
+            resolvedURL = url
+        } else {
+            resolvedURL = try? URL(
+                resolvingBookmarkData: bookmarkData,
+                options: [],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            )
+        }
+
+        guard let workspaceURL = resolvedURL else {
+            print("[ChappieViewModel] M-09: Could not resolve bookmark for '\(firstProject.displayName)'")
+            return
+        }
+
+        let fs = FileSystemManager(workspaceURL: workspaceURL)
+        await ts.setFileSystem(fs)
+        print("[ChappieViewModel] M-09: FileSystem → '\(firstProject.displayName)' at \(workspaceURL.path)")
     }
 }
 
