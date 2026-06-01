@@ -22,11 +22,12 @@
 // into the SwiftUI environment. This is standard SwiftData practice —
 // a single container for the entire application.
 //
-// SWIFTDATA SCHEMA (IT-10 UPDATE):
+// SWIFTDATA SCHEMA:
 // - ThreadEntity: threads with message history and settings
 // - ProjectEntity: projects with security-scoped bookmarks
 // - MemoryEntity: three-level memory (global/project/thread)
-// - AIProviderEntity: AI provider configurations (IT-10, NEW)
+// - AIProviderEntity: AI provider configurations
+// - New.AppSettings: V2 global settings (added when FeatureFlags.useThreadIsolationV2 = true)
 //
 // WINDOW SIZE:
 // .defaultSize(width:height:) sets the initial window size on first launch.
@@ -60,17 +61,28 @@ struct ChappieApp: App {
     /// not in ViewModel, to guarantee a single instance throughout the app's lifetime.
     /// Creating multiple ModelContainers for the same schema causes conflicts and data loss.
     ///
+    /// V2 SCHEMA EXTENSION:
+    /// When FeatureFlags.useThreadIsolationV2 is true — New.AppSettings is added to the schema.
+    /// SwiftData handles this as a non-destructive migration (new table, no conflicts).
+    ///
     /// ERROR HANDLING:
     /// If the container cannot be created — this is a critical error (corrupted DB).
     /// In this case we try to recreate from scratch (deleteExistingFile: true).
     /// This means data loss, but it's better than a full app crash.
     let modelContainer: ModelContainer = {
-        let schema = Schema([
+        // Build schema types list — extend with V2 models when flag is active
+        var schemaTypes: [any PersistentModel.Type] = [
             ThreadEntity.self,
             ProjectEntity.self,
             MemoryEntity.self,
             AIProviderEntity.self
-        ])
+        ]
+
+        if FeatureFlags.useThreadIsolationV2 {
+            schemaTypes.append(New.AppSettings.self)
+        }
+
+        let schema = Schema(schemaTypes)
 
         let modelConfiguration = ModelConfiguration(
             schema: schema,
