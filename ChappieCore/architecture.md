@@ -1,21 +1,10 @@
-<!--
-  ChappieCore/architecture.md
-
-  ARCHITECTURE DOCUMENT — ChappieCore Swift Package
-
-  This file is the single source of architectural truth for the ChappieCore module.
-  Update after every significant architectural change.
--->
-
 # ChappieCore — Business Logic Package Architecture
 
 ## 1. Purpose
 
-**ChappieCore** is a Swift Package containing all business logic of the Chappie application.
-Completely independent of SwiftUI — can be tested without a UI.
+All business logic of Chappie. Completely independent of SwiftUI — testable without UI.
 
-**Dependency rule:** ChappieCore → Foundation, SwiftData only.
-No SwiftUI, AppKit, or any UI framework imports.
+**Dependency rule:** ChappieCore → Foundation, SwiftData only. No SwiftUI or AppKit.
 
 ---
 
@@ -130,24 +119,22 @@ graph TD
     var title: String
     var createdAt: Date
     var updatedAt: Date
-    var messagesJSON: Data      // [ChatMessage] serialized
-    var settingsJSON: Data      // ThreadSettings serialized
+    var messagesJSON: Data        // [ChatMessage] serialized
+    var settingsJSON: Data        // ThreadSettings serialized
     var projectBindingsJSON: Data // [UUID] serialized
 }
 ```
 
-**Why only primitives and Data:**
-SwiftData has limited support for custom Codable types in @Model.
-All complex objects are serialized to Data via JSONEncoder — full freedom to evolve without migrations.
+All complex objects serialized to `Data` via JSONEncoder — SwiftData schema stays stable as models evolve.
 
 ### ThreadSettings (Codable)
 
 ```swift
 struct ThreadSettings: Codable, Sendable {
     var maxMessagesInContext: Int   // 10...1000, default 20
-    var isUnlimitedContext: Bool    // bypass all trimming
-    var activeProviderId: UUID?     // per-thread provider selection
-    var activeModelName: String?    // per-thread model selection
+    var isUnlimitedContext: Bool
+    var activeProviderId: UUID?
+    var activeModelName: String?
 
     var tokenBudget: Int { isUnlimitedContext ? Int.max : maxMessagesInContext * 500 }
 }
@@ -162,46 +149,24 @@ struct ThreadMetadata: Sendable, Identifiable, Hashable {
     let createdAt: Date
     let updatedAt: Date
     let projectIds: [UUID]
-    let settings: ThreadSettings    // IT-11: included for direct UI access
+    let settings: ThreadSettings  // included so UI doesn't need extra ThreadStore call
 }
 ```
-
-**Why settings in ThreadMetadata (IT-11):**
-ThreadSettingsSheet needs current settings without an extra ThreadStore call.
-`ThreadStore.loadThreads()` always deserializes `settingsJSON` into `ThreadMetadata.settings`.
 
 ### AppConfig (dynamic, per-thread)
 
-```swift
-struct AppConfig: Codable, Equatable, Sendable {
-    let maxOrchestratorSteps: Int   // 100 (hardcoded)
-    let tokenBudget: Int            // maxMessages × 500, or Int.max
-    let maxMessagesInContext: Int    // 10...1000, or Int.max
-    let isUnlimitedContext: Bool
-    // ...
-}
-```
-
-**Context depth formula:**
-- `tokenBudget = maxMessagesInContext × 500`
-- Range: 10 → 5,000 tokens | 20 → 10,000 | 1000 → 500,000 | unlimited → Int.max
+Context depth formula: `tokenBudget = maxMessagesInContext × 500`.
+Range: 10 → 5,000 tokens | 20 → 10,000 | 1000 → 500,000 | unlimited → `Int.max`.
 
 ---
 
 ## 5. SwiftData Schema
 
 ```swift
-Schema([
-    ThreadEntity.self,
-    ProjectEntity.self,
-    MemoryEntity.self,
-    AIProviderEntity.self
-])
+Schema([ThreadEntity.self, ProjectEntity.self, MemoryEntity.self, AIProviderEntity.self])
 ```
 
-**Migration strategy:** none needed.
-All complex objects are serialized to JSON strings/Data.
-When a model evolves — only the Codable structs change; the SwiftData schema stays the same.
+No migrations needed — all complex types are JSON-serialized inside `Data` fields.
 
 ---
 
@@ -210,7 +175,7 @@ When a model evolves — only the Codable structs change; the SwiftData schema s
 ```swift
 public actor ThreadStore {
     func createThread(title:settings:) throws -> UUID
-    func loadThreads() throws -> [ThreadMetadata]           // includes settings (IT-11)
+    func loadThreads() throws -> [ThreadMetadata]
     func saveMessages<T: Codable>(_:toThreadId:) throws
     func loadMessages<T: Codable>(fromThreadId:as:) throws -> [T]
     func updateSettings(_:forThreadId:) throws
@@ -221,11 +186,7 @@ public actor ThreadStore {
 }
 ```
 
-**Why actor:** ModelContext is not Sendable and must be used on one thread.
-Actor guarantees sequential access — ideal for a thread-safe SwiftData wrapper.
-
-**ThreadMetadata location (IT-11):** moved from `ThreadStore.swift` to `ThreadModels.swift`.
-`ThreadStore` now only contains the actor + CRUD methods.
+Actor guarantees sequential access to `ModelContext` (not Sendable).
 
 ---
 
@@ -233,25 +194,21 @@ Actor guarantees sequential access — ideal for a thread-safe SwiftData wrapper
 
 ```
 process(prompt, history, config, memoryContext)
-  → buildSystemPrompt(memoryContext)     // injects memory into system prompt
-  → buildContextWindow(history, config)  // trims history to tokenBudget + maxMessages
-  → loop (maxOrchestratorSteps):
+  → buildSystemPrompt(memoryContext)
+  → buildContextWindow(history, config)   // trims to tokenBudget + maxMessages
+  → loop (maxOrchestratorSteps = 100):
       → aiClient.streamChat()
       → if tool_use → toolService.execute()
-      → if text → accumulate streaming tokens
+      → if text → accumulate tokens
       → if stop → return result
 ```
 
-**Context trimming (buildContextWindow):**
-1. Take last `maxMessagesInContext` messages
-2. If total tokens > `tokenBudget` → trim oldest until fits
-3. If `isUnlimitedContext = true` → skip all trimming
+Context trimming: take last `maxMessagesInContext` messages, drop oldest if over `tokenBudget`.
+`isUnlimitedContext = true` skips all trimming.
 
 ---
 
 ## 8. AIProviderStore
-
-Manages AI provider configurations in SwiftData.
 
 ```swift
 public actor AIProviderStore {
@@ -264,15 +221,14 @@ public actor AIProviderStore {
 }
 ```
 
-**API keys** are stored in Keychain (not SwiftData) — `KeychainManager`.
-`AIProviderEntity` stores only the key reference (provider UUID as Keychain key).
+API keys stored in Keychain (not SwiftData). `AIProviderEntity` holds only the UUID reference.
 
 ---
 
 ## 9. MemoryStore (three-level memory)
 
-Three scopes: `global`, `project`, `thread`.
-Stored in `MemoryEntity` (SwiftData): `key + type + jsonString + scope + targetId`.
+Scopes: `global`, `<projectId UUID>`, `<threadId UUID>`.
+Stored in `MemoryEntity`: `key + type + jsonString + scope + targetId`.
 
 ```swift
 public actor MemoryStore {
@@ -288,32 +244,23 @@ public actor MemoryStore {
 
 ## 10. ToolExecutionService
 
-Dispatches tool calls from AIOrchestrator to concrete implementations.
+Dispatches tool calls from AIOrchestrator.
 
 **Tool categories:**
 - File system: `read_file`, `write_file`, `delete_file`, `list_files`
-- Web: `web_fetch` — fetches a URL and returns clean stripped text (via WebFetchService)
+- Web: `web_fetch` (via WebFetchService)
 - Memory: `memorize`, `recall`, `search_memory`, `delete_memory`
 - Git (via MCP): `git_status`, `git_add`, `git_commit`, `git_log`, `git_reset`
 - Build (via MCP): `build_project`, `run_tests`, `read_build_log`
 - Projects: `add_project_to_thread`, `remove_project_from_thread`, `list_projects`
 
-**Permission check:** `ToolExecutionService` checks `ProjectSettings` before executing.
-`git_diff` is always blocked regardless of settings.
-
-**Cyrillic barrier:** `containsCyrillic()` blocks Cyrillic in memory writes —
-all memory must be in English (global rule: memory_language_barrier).
-
-**WebFetchService injection:**
-`WebFetchService` is passed via `init(webFetch:)` — optional, defaults to `nil`.
-When `nil`, `web_fetch` tool returns a clear error. This keeps backward compatibility
-for test initializers that don't need web fetch.
+`git_diff` always blocked regardless of settings.
+`containsCyrillic()` blocks Cyrillic in memory writes — all memory must be English.
+`WebFetchService` injected via `init(webFetch:)`, optional — `nil` returns a clear error.
 
 ---
 
 ## 11. WebFetchService (actor)
-
-Fetches public web pages and extracts meaningful plain text for the AI agent.
 
 ```swift
 public actor WebFetchService {
@@ -322,42 +269,19 @@ public actor WebFetchService {
 }
 ```
 
-**Design decisions:**
-- Foundation only — no external dependencies
-- Smart HTML stripping: removes nav/header/footer/aside/script/style, keeps main/article/p/headings
-- Optional CSS-like selector: filter by tag (`article`), `.class`, or `#id` before stripping
-- Size limit: 100,000 chars after strip; truncated from end with `[content truncated: N chars removed]`
-- Timeout: 30 seconds (configurable)
-- Encoding detection: Content-Type header → UTF-8 → ISO-8859-1 → lossy UTF-8
-- All errors return strings starting with `❌` — no throws, consistent with other tools
+- Foundation only, no external dependencies
+- Strips nav/header/footer/aside/script/style; keeps main/article/p/headings
+- Optional CSS-like selector: tag, `.class`, `#id`
+- Limit: 100,000 chars after strip; truncated from end with notice
+- All errors return `❌`-prefixed strings — no throws
 
 ---
 
-## 12. MigrationService (IT-04)
+## 12. MigrationService
 
-One-time migration from JSON files to SwiftData.
-Flag stored in UserDefaults: `"migrationIT04Completed"`.
+One-time migration from JSON → SwiftData. Flag: `UserDefaults["migrationIT04Completed"]`.
 
-**Migration steps:**
-1. Read `chat_history.json` → create thread "Основной" + save messages
-2. Read `semantic.json` → import memory entries into MemoryStore (scope=global)
-3. Set migration flag → skip on next launch
-
----
-
-## 📚 Changelog
-
-| Date | Change |
-|------|--------|
-| 2026-05-29 | Web Fetch Tool ✅: WebFetchService added; registered in ToolExecutionService as web_fetch tool; injected via DI from ChappieViewModel |
-| 2026-07-XX | Added Mermaid architecture diagram (section 3) per new architecture file rules |
-| 2026-05-28 | IT-11 ✅: ThreadMetadata.settings field added; ThreadMetadata moved to ThreadModels.swift; ThreadStore.loadThreads() deserializes settingsJSON into metadata |
-| 2026-05-XX | IT-10 ✅: AIProviderStore, AIProviderEntity, AIProvider, per-thread provider/model selection |
-| 2026-05-XX | IT-09 ✅: ProjectSettings in MemoryContext; ToolExecutionService.setProjectSettings() |
-| 2026-05-XX | IT-08 ✅: Three-level memory (global/project/thread); MemoryStore SwiftData |
-| 2026-05-XX | IT-07 ✅: Project tool handlers (add/remove/list_projects) |
-| 2026-05-XX | IT-06 ✅: ProjectStore, ProjectEntity, projectBindingsJSON in ThreadEntity |
-| 2026-05-XX | IT-05 ✅: ThreadStore, ThreadEntity, ThreadMetadata, multi-thread system |
-| 2026-05-XX | IT-04 ✅: MigrationService (JSON → SwiftData) |
-| 2026-05-XX | IT-02 ✅: Dynamic AppConfig from ThreadSettings; tokenBudget formula |
-| 2026-05-XX | IT-01 ✅: SwiftData schema (ThreadEntity, ProjectEntity, MemoryEntity) |
+Steps:
+1. `chat_history.json` → create thread "Основной" + save messages
+2. `semantic.json` → import entries into MemoryStore (scope=global)
+3. Set flag → skip on next launch
