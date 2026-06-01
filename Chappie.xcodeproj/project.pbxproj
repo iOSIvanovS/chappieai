@@ -53,6 +53,7 @@
 		87DOCS0000000000000000004 /* architecture.md (ChappieCoreTests) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (ChappieCoreTests)"; path = ChappieCoreTests/architecture.md; sourceTree = "<group>"; };
 		87DOCS0000000000000000005 /* architecture.md (ChappieMCP) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (ChappieMCP)"; path = ChappieMCP/architecture.md; sourceTree = "<group>"; };
 		87DOCS0001000000000000001 /* architecture.md (корень) */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture.md (корень)"; path = architecture.md; sourceTree = "<group>"; };
+		87DOCS0001000000000000002 /* architecture-thread-isolation.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture-thread-isolation.md"; path = architecture-thread-isolation.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -125,6 +126,7 @@
 			isa = PBXGroup;
 			children = (
 				87DOCS0001000000000000001 /* architecture.md (корень) */,
+				87DOCS0001000000000000002 /* architecture-thread-isolation.md */,
 				87DOCS0000000000000000002 /* architecture.md (Chappie) */,
 				87DOCS0000000000000000003 /* architecture.md (ChappieCore) */,
 				87DOCS0000000000000000004 /* architecture.md (ChappieCoreTests) */,
