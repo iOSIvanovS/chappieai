@@ -329,7 +329,105 @@ User switches thread
 
 ---
 
-## 9. Migration Plan (from current state)
+## 9. Data Storage Map
+
+### Storage layers
+
+| Layer      | What lives there                        | Why                                      |
+|------------|-----------------------------------------|------------------------------------------|
+| SwiftData  | All domain entities (JSON-in-Data)      | Structured, queryable, crash-safe        |
+| Keychain   | API key values only                     | Secrets — encrypted, process-isolated    |
+| UserDefaults | One-time migration flags only         | Tiny booleans, not secrets, not domain data |
+| Filesystem | Nothing intentional                     | chat_history.json is dead legacy — remove |
+
+### JSON-in-SwiftData pattern
+
+All complex domain objects are stored as JSON inside SwiftData primitive fields (`Data` or `String`).
+SwiftData `@Model` classes contain only: `UUID`, `Date`, `Bool`, `Int`, `String`, `Data`.
+
+```swift
+// ✅ Correct: store the struct as JSON blob
+@Model final class ThreadEntity {
+    var id: UUID
+    var settingsJSON: Data   // encoded ThreadSettings
+    var messagesJSON: Data   // encoded [ChatMessage]
+}
+
+// ❌ Wrong: embed complex types directly in @Model
+@Model final class ThreadEntity {
+    var settings: ThreadSettings  // causes SwiftData migration pain
+}
+```
+
+**Why this pattern:**
+- SwiftData schema migrations are painful and error-prone
+- JSON-in-Data means the schema never changes — only the Codable struct evolves
+- Full freedom to add/remove/rename fields in domain structs without touching SwiftData
+
+### ⚠️ CRITICAL RULE — JSON field renaming
+
+**Renaming a `Codable` property breaks existing stored data silently.**
+Old JSON has `"maxMessagesInContext"` — if you rename it to `"contextLimit"`, the decoder
+returns `nil` / default value, and the user's setting is silently lost.
+
+**Rules:**
+1. Never rename a `Codable` property that is stored in SwiftData without a migration plan.
+2. If a rename is needed — add `CodingKeys` with the old JSON key mapped to the new property name.
+3. Mark every persisted `Codable` struct with a comment:
+
+```swift
+// STORAGE: serialized to JSON in SwiftData.
+// ⚠️ Do NOT rename properties without updating CodingKeys.
+// Renaming breaks existing stored data silently.
+struct ThreadSettings: Codable {
+    var maxMessagesInContext: Int  // JSON key: "maxMessagesInContext" — do not rename
+    var isUnlimitedContext: Bool   // JSON key: "isUnlimitedContext" — do not rename
+    var activeProviderId: UUID?    // JSON key: "activeProviderId" — do not rename
+    var activeModelName: String?   // JSON key: "activeModelName" — do not rename
+}
+```
+
+4. When adding a new field — always provide a default value in `init` so old JSON decodes cleanly.
+
+### Structs that are persisted as JSON (must follow the rename rule)
+
+| Struct              | Stored in                          |
+|---------------------|------------------------------------|
+| `ThreadSettings`    | `ThreadEntity.settingsJSON`        |
+| `ProjectSettings`   | `ProjectEntity.settingsJSON`       |
+| `AIProvider`        | `AIProviderEntity.json`            |
+| `ProviderSnapshot`  | `ThreadEntity.providerSnapshotJSON` (planned) |
+| `ThreadProject`     | `ThreadEntity.attachedProjectsJSON` (planned) |
+| `MemoryEntry`       | `MemoryEntity.entriesJSON`         |
+| `[ChatMessage]`     | `ThreadEntity.messagesJSON`        |
+| `AppSettings`       | `AppSettingsEntity.json` (planned) |
+
+### Keychain key scheme
+
+API key values are stored in Keychain, never in SwiftData.
+Key format: `provider.id.uuidString` → API key string value.
+
+```
+Keychain entry:
+  service = Bundle.main.bundleIdentifier  ("ru.chappie")
+  account = provider.id.uuidString        ("550e8400-e29b-41d4-a716-446655440000")
+  value   = "sk-aitunnel-..."
+```
+
+When `APIKey` gets its own `id: UUID` (per new entity graph), the Keychain key becomes `apiKey.id.uuidString`.
+
+### Legacy to remove
+
+| Item                          | Status   | Action                                    |
+|-------------------------------|----------|-------------------------------------------|
+| `SettingsManager.swift`       | Legacy   | Remove after providers refactor is complete |
+| `KeychainManager.swift`       | Legacy   | Inline into `AIProviderStore` or keep as utility |
+| `UserDefaults.keychainMigrationDone` | Legacy | Remove with `SettingsManager`        |
+| `chat_history.json` (root)    | Dead file | Delete — ChatHistoryManager is gone      |
+
+---
+
+## 10. Migration Plan (from current state)
 
 The current SwiftData schema has:
 - `ThreadEntity` with loose references to providers via string/UUID fields
@@ -349,13 +447,13 @@ Target migration steps (to be executed one per commit):
 | M-07 | Update UI: validation badges on projects and provider chips |
 | M-08 | Update UI: ProviderSnapshot picker in thread settings |
 | M-09 | End-to-end test: switch threads, verify zero state leakage |
-| M-10 | Delete old dead code |
+| M-10 | Delete old dead code (SettingsManager, KeychainManager legacy, chat_history.json) |
 
 **Rule: each step is one commit. No bundling.**
 
 ---
 
-## 10. What This Fixes
+## 11. What This Fixes
 
 | Bug / Problem | Fix |
 |---------------|-----|
@@ -367,3 +465,4 @@ Target migration steps (to be executed one per commit):
 | AI calls tools it shouldn't have access to | ToolAccessController hard-gates every call |
 | AI gets confused by unavailable tools | Tool manifest in prompt only shows available tools |
 | AI crashes on denied tool call | Structured denial response — AI explains to user gracefully |
+| Renaming a Codable field silently corrupts data | CodingKeys rule + mandatory comments on all persisted structs |
