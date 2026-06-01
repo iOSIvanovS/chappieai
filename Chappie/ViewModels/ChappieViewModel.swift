@@ -3,7 +3,7 @@
 //
 // Core @Observable class: state properties, init, service wiring, pagination, drafts, balance.
 // Business logic is split into extensions:
-//   +Threads, +Providers, +Projects, +Send, +Memory
+//   +Threads, +Providers, +Projects, +Send, +Memory, +AppSettings (V2)
 
 import SwiftUI
 import ChappieCore
@@ -114,7 +114,20 @@ final class ChappieViewModel {
     var projectStore: ProjectStore?
     var providerStore: AIProviderStore?
 
-    // MARK: - UserDefaults keys
+    // MARK: - V2: AppSettingsStore + caches
+
+    /// V2 SwiftData-backed settings store. Nil when flag is OFF.
+    var appSettingsStore: New.AppSettingsStore?
+
+    /// In-memory cache for provider balances (V2 path).
+    /// Populated by refreshBalanceCacheIfNeeded() on startup.
+    var cachedBalances: [UUID: Double] = [:]
+
+    /// In-memory cache for last active thread ID (V2 path).
+    /// Populated by preloadLastActiveThreadId() before thread selection.
+    var cachedLastActiveThreadId: UUID?
+
+    // MARK: - UserDefaults keys (legacy — kept for V1 path and migration)
 
     let lastActiveThreadIdKey = "lastActiveThreadId"
 
@@ -159,32 +172,13 @@ final class ChappieViewModel {
     func setDraft(_ text: String, for threadId: UUID) { threadDrafts[threadId] = text }
     func clearDraft(for threadId: UUID) { threadDrafts.removeValue(forKey: threadId) }
 
-    // MARK: - Balance Storage (per-provider)
+    // MARK: - Balance key (legacy path only)
 
     func balanceKey(for providerId: UUID) -> String { "balance_\(providerId.uuidString)" }
-
-    func saveBalance(_ balance: Double, for providerId: UUID) {
-        UserDefaults.standard.set(balance, forKey: balanceKey(for: providerId))
-    }
-
-    func loadBalance(for providerId: UUID) -> Double? {
-        UserDefaults.standard.object(forKey: balanceKey(for: providerId)) as? Double
-    }
 
     func refreshBalanceForActiveProvider() {
         guard let provider = activeProvider else { return }
         self.currentBalance = loadBalance(for: provider.id)
-    }
-
-    // MARK: - Last Active Thread
-
-    func saveLastActiveThreadId(_ id: UUID) {
-        UserDefaults.standard.set(id.uuidString, forKey: lastActiveThreadIdKey)
-    }
-
-    func loadLastActiveThreadId() -> UUID? {
-        guard let str = UserDefaults.standard.string(forKey: lastActiveThreadIdKey) else { return nil }
-        return UUID(uuidString: str)
     }
 
     // MARK: - Connect SwiftData
@@ -205,6 +199,9 @@ final class ChappieViewModel {
         let provStore = AIProviderStore(modelContainer: container)
         self.providerStore = provStore
 
+        // V2: wire AppSettingsStore when flag is active
+        connectAppSettingsStore(container: container)
+
         if let mm = memoryManager { Task { await mm.setMemoryStore(store) } }
 
         print("[ChappieViewModel] ModelContainer connected")
@@ -214,6 +211,10 @@ final class ChappieViewModel {
         }
 
         Task {
+            // V2: preload caches before thread selection so loadLastActiveThreadId() works synchronously
+            await preloadLastActiveThreadId()
+            await refreshBalanceCacheIfNeeded()
+
             await runMigrationIfNeeded(threadStore: tStore, memoryStore: store)
             await loadProvidersAndSetActive(from: provStore)
             await loadThreadsAndSelectActive(from: tStore)
@@ -308,18 +309,22 @@ final class ChappieViewModel {
 
     // MARK: - Security-Scoped Bookmarks
 
-    private func saveWorkspaceWithSecurityScope(_ url: URL) {
+    func saveWorkspaceWithSecurityScope(_ url: URL) {
         do {
             let data = try url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
-            UserDefaults.standard.set(data, forKey: "workspaceBookmark")
+            saveWorkspaceBookmark(data)
         } catch {
             if let data = try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) {
-                UserDefaults.standard.set(data, forKey: "workspaceBookmark")
+                saveWorkspaceBookmark(data)
             }
         }
     }
 
-    private func loadWorkspaceWithSecurityScope() {
+    func loadWorkspaceWithSecurityScope() {
+        // Workspace loading at init time happens synchronously — V2 store isn't ready yet.
+        // We always read from UserDefaults here; V2 store is wired later in setModelContainer.
+        // WHY: ModelContainer is injected via setModelContainer() after init completes.
+        // The async V2 path (loadWorkspaceBookmarkData) is used for subsequent restores.
         guard let data = UserDefaults.standard.data(forKey: "workspaceBookmark") else { return }
         var isStale = false
 
