@@ -1,146 +1,15 @@
-// AIOrchestrator.swift
-// ChappieCore
-//
-// Main orchestrator of the Chappie agent cycle.
-//
-// IT-10: AITunnelClient replaced with AIClient (universal, provider-agnostic).
-// All other logic preserved intact.
-//
-// KEY ARCHITECTURAL DECISIONS:
-//
-// 1. MONOLITHIC ARCHITECTURE:
-//    Chappie works alone, without sub-agents or delegation. One agent — full responsibility.
-//    Reason: sub-agents create chaos, inconsistency and context duplication.
-//
-// 2. SINGLE STREAMING CYCLE (FIX FOR DOUBLE REQUEST):
-//    Old "probe + stream" strategy made TWO requests per final response.
-//    NEW STRATEGY: streamRequestWithTools() on every cycle step.
-//    AIClient accumulates tool_calls from SSE deltas and returns AIStreamResult.
-//    If tool_calls → execute tools, continue cycle.
-//    If no tool_calls → this is the final response. ONE request per step.
-//
-// 3. PROMPT CACHING:
-//    AIClient automatically adds cache_control to system prompt and last user message.
-//    Savings: ~80-90% of system prompt cost.
-//
-// 4. SELF-SUMMARY:
-//    System prompt contains a hard rule: at the end of each final response
-//    Chappie MUST add a <summary>...</summary> tag.
-//    When building the context window, long responses are replaced with their summary.
-//
-// 5. SMART CONTEXT WINDOW (cost optimization):
-//    Two levels of limits work simultaneously:
-//    a) maxMessagesInContext — hard limit by message count (from thread config).
-//    b) tokenBudget — soft limit by token volume (computed as maxMessages × 500).
-//    Last recentFullMessages (3) are always sent in full.
-//    Older ones — replaced with summary if available.
-//
-// 6. FIX FOR LAST MESSAGE DUPLICATION (bug):
-//    buildContextWindow() takes HISTORY (without current prompt) and SEPARATELY currentPrompt.
-//    History contains completed user/assistant pairs. currentPrompt — the new message.
-//    IMPORTANT: history passed to buildContextWindow() must NOT contain the current prompt.
-//
-// 7. TOKEN ESTIMATION:
-//    estimateTokens() uses UTF-8 bytes / 4 × 1.5.
-//    This gives a realistic estimate for mixed Russian-English text with code.
-//
-// 8. CUMULATIVE COST (UX-RUNNING-COST):
-//    onCostUpdate callback — called after each internal API request.
-//    Passes cumulative cost (not per-step cost).
-//    Allows UI to show price in real time in the streaming bubble.
-//
-// 9. LIVE BALANCE UPDATE (UX-BALANCE-LIVE):
-//    onBalanceUpdate callback — called after each step that returns a balance.
-//    Allows the balance pill in ModelPickerRow to update in real time during streaming.
-//
-// 10. DYNAMIC CONFIG (IT-02, REFACTOR-THREADS):
-//     process() takes config: AppConfig as parameter (with default AppConfig.shared).
-//     Different threads can have different context parameters.
-//
-// 11. THREE-LEVEL MEMORY IN SYSTEM PROMPT (IT-03, IT-08, REFACTOR-THREADS):
-//     process() takes memoryContext: MemoryContext — thread and project descriptions.
-//     Before each request MemoryManager.buildSystemPrompt() assembles the full prompt
-//     with global + project + thread memory injected.
-//
-// 12. LOOP PROTECTION (SMART, NOT SESSION-WIDE):
-//     Blocks only two CONSECUTIVE identical calls (same tool + same args with nothing in between).
-//     Session-wide blocking prevented legitimate repeats (read_file after write_file, etc.).
-//
-// 13. ENGLISH SYSTEM PROMPT (TOKEN EFFICIENCY):
-//     baseSystemPrompt is in English. English tokenizes 1.5–2x more efficiently than Cyrillic.
-//     Savings: ~3000 tokens per request (~35% of total prompt).
-//     Language mirroring rule ensures responses in the user's language.
-//
-// 14. UUID-BASED MEMORY (IT-08):
-//     Tools memorize/recall/search_memory/delete_memory work with UUID-based scope.
-//
-// 15. PROJECT NAMES IN SYSTEM PROMPT (IT-08 final):
-//     MemoryContext contains projectInfos: [(id: UUID, name: String)] instead of [UUID].
-//
-// 16. MEMORY IN ENGLISH ONLY (MEMORY-ENGLISH):
-//     baseSystemPrompt has a hard rule: all memorize calls MUST be in English.
-//
-// 17. NO EMOJI IN SYSTEM PROMPT (TOKEN-EFFICIENCY):
-//     All emoji removed from memory section headers in buildSystemPrompt().
-//
-// 18. MANIFEST REDESIGN (MANIFEST-REDESIGN):
-//     Chappie is now a universal agent, not hardcoded to iOS/macOS development.
-//
-// 19. RULES REDESIGN (RULES-REDESIGN):
-//     Rules 1–7 rewritten: removed hardcode, added flexibility.
-//
-// 20. PROJECT SETTINGS IN SYSTEM PROMPT (IT-09):
-//     MemoryContext.ProjectInfo extended with settings: ProjectSettings.
-//
-// 21. UNIVERSAL AI CLIENT (IT-10):
-//     AITunnelClient replaced with AIClient — accepts any OpenAI-compatible endpoint.
-//     ChappieViewModel creates AIClient from the active AIProvider config.
-//
-// 22. ARCHITECTURE FILES RULES (ARCH-FILES):
-//     Rule 4 updated: architecture files must contain file/folder list with descriptions
-//     AND a Mermaid diagram. Sub-targets are referenced, not duplicated.
-//
-// 23. DIGNITY RULE (DIGNITY):
-//     Rule 12 added: if the user is rude or insulting, Chappie calmly notes it once
-//     and continues working. No retaliation, no strike — just honest, quiet dignity.
-//
-// 24. MULTIMODAL (MULTIMODAL-STEP3):
-//     process() accepts optional currentMessage: AIMessage? parameter.
-//     When provided, it is used as the final user message instead of
-//     AIMessage(role: "user", content: prompt). This allows multimodal content
-//     (images, files) to be passed correctly as OpenAI vision array format.
-//     buildContextWindow() deduplication updated to handle multimodal messages.
-//
-// 25. STALL-WATCHDOG (STALL-WATCHDOG):
-//     streamRequestWithTools() in AIClient detects 60-second silence mid-stream
-//     and throws StallError(partialText:) instead of hanging for 5 minutes.
-//     AIOrchestrator catches StallError and performs a continuation retry:
-//     - Partial assistant text is added to sessionHistory as a partial message.
-//     - A continuation prompt is injected: "Continue from where you left off."
-//     - The step retries up to config.maxStallRetries times (default: 2).
-//     - If all retries are exhausted, ChappieError.networkError is thrown.
-//     This ensures long-running tasks survive transient network hiccups seamlessly.
-//
-// 26. BUILD BEFORE DEMOLISH (RULE-13):
-//     Rule 13 added: when refactoring, always build the new solution first,
-//     verify it works, then remove the old code. Old code is removed LAST.
-
 import Foundation
 
 // MARK: - MemoryContext
 
-/// Thread context description — passed to process() for building the system prompt with memory.
-///
-/// IT-09: ProjectInfo extended with settings: ProjectSettings.
-/// buildSystemPrompt() uses settings to form the agent permissions block.
+/// Thread context passed to process() for building the system prompt with injected memory.
 public struct MemoryContext: Sendable {
 
-    /// Information about one project in the memory context: UUID + name + settings.
+    /// One project in the memory context: UUID + display name + settings.
     public struct ProjectInfo: Sendable {
         public let id: UUID
         public let name: String
-        /// Project settings — agent permissions (IT-09).
-        /// nil = settings not yet loaded, permissions block is not inserted.
+        /// nil = settings not loaded yet; permissions block is omitted from system prompt.
         public let settings: ProjectSettings?
 
         public init(id: UUID, name: String, settings: ProjectSettings? = nil) {
@@ -150,14 +19,10 @@ public struct MemoryContext: Sendable {
         }
     }
 
-    /// UUID of the active thread (for thread memory).
-    /// nil = no active thread, thread memory is not injected.
+    /// nil = no active thread; thread memory is not injected.
     public let threadId: UUID?
-
-    /// Project information: UUID + name + settings for each project.
     public let projectInfos: [ProjectInfo]
 
-    /// All project UUIDs — for backward compatibility with code using [UUID].
     public var projectIds: [UUID] { projectInfos.map { $0.id } }
 
     public init(threadId: UUID? = nil, projectInfos: [ProjectInfo] = []) {
@@ -165,13 +30,11 @@ public struct MemoryContext: Sendable {
         self.projectInfos = projectInfos
     }
 
-    /// Default context — no thread, no projects.
     public static let empty = MemoryContext(threadId: nil, projectInfos: [])
 }
 
 // MARK: - AIOrchestratorResult
 
-/// Result of one orchestrator session.
 public struct AIOrchestratorResult: Sendable {
     public let finalResponse: String
     public let totalCost: Double?
@@ -186,20 +49,20 @@ public struct AIOrchestratorResult: Sendable {
 
 // MARK: - AIOrchestrator
 
-/// AI agent orchestrator — the main control component of ChappieCore.
+/// Main AI agent orchestrator — drives the agentic loop.
 ///
-/// Implements the agentic loop: iterative "request → tool call → response → next request"
-/// that continues until the model returns a final text response without tool calls.
+/// Loop: request → tool calls → response → next request, until the model
+/// returns a final text response with no tool calls.
 public actor AIOrchestrator {
 
-    // IT-10: AITunnelClient → AIClient (universal, provider-agnostic)
     private let aiClient: AIClient
     private let toolService: ToolExecutionService
     private let fileSystem: FileSystemManager
     private let memoryManager: MemoryManager
     private let defaultConfig: AppConfig
 
-    // MARK: - Base System Prompt (English — token efficiency)
+    // MARK: - Base System Prompt
+    // English — tokenizes 1.5–2x more efficiently than Cyrillic (~3000 tokens saved per request).
 
     private let baseSystemPrompt = """
     You are Chappie — a universal AI agent of the highest level.
@@ -342,7 +205,6 @@ public actor AIOrchestrator {
 
     // MARK: - Init
 
-    /// IT-10: Takes AIClient (universal) instead of AITunnelClient.
     public init(
         aiClient: AIClient,
         toolService: ToolExecutionService,
@@ -361,22 +223,13 @@ public actor AIOrchestrator {
 
     /// Runs the full agentic loop for the given prompt.
     ///
-    /// MULTIMODAL-STEP3:
-    /// Optional `currentMessage` parameter allows passing a pre-built AIMessage
-    /// (e.g. multimodal content with images) as the current user turn.
-    /// When provided, it replaces the default AIMessage(role: "user", content: prompt).
-    /// The `prompt` string is still used for context window deduplication and token estimation.
+    /// currentMessage: optional pre-built AIMessage for multimodal content (images/files).
+    /// When provided, replaces the default AIMessage(role:"user", content:prompt).
+    /// prompt is still used for context window deduplication and token estimation.
     ///
-    /// STALL-WATCHDOG:
-    /// Each call to streamRequestWithTools() is wrapped in a stall retry loop.
-    /// On StallError: partial text is preserved in sessionHistory as a partial assistant message,
-    /// a continuation prompt is appended, and the step retries (up to maxStallRetries times).
-    ///
-    /// - Parameters:
-    ///   - prompt: Text of the user's message (used for deduplication and token budget).
-    ///   - currentMessage: Optional pre-built AIMessage for the current turn.
-    ///   - onCostUpdate: Called after each step with cumulative cost in RUB.
-    ///   - onBalanceUpdate: Called after each step that returns a balance from the provider.
+    /// Stall recovery: each streamRequestWithTools() call is wrapped in a retry loop.
+    /// On StallError: partial text is preserved, a continuation prompt is injected, and
+    /// the step retries up to config.maxStallRetries times.
     public func process(
         prompt: String,
         history: [AIMessage],
@@ -413,8 +266,6 @@ public actor AIOrchestrator {
 
             let tools = await toolService.availableTools
 
-            // STALL-WATCHDOG: wrap each step in a stall retry loop.
-            // On StallError: inject partial text + continuation prompt, then retry.
             let streamResult = try await streamWithStallRetry(
                 systemPrompt: systemPrompt,
                 sessionHistory: sessionHistory,
@@ -428,7 +279,6 @@ public actor AIOrchestrator {
                 onCostUpdate?(totalCost)
             }
 
-            // Propagate live balance so the UI pill updates during streaming
             if let balance = streamResult.balance {
                 latestBalance = balance
                 onBalanceUpdate?(balance)
@@ -471,19 +321,16 @@ public actor AIOrchestrator {
 
     // MARK: - Private: Stall Retry Wrapper
 
-    /// Wraps a single streamRequestWithTools() call with stall detection and continuation retry.
+    /// Wraps streamRequestWithTools() with stall detection and continuation retry.
     ///
-    /// STALL RECOVERY FLOW:
+    /// Recovery flow:
     /// 1. AIClient throws StallError(partialText:) after stallTimeout seconds of silence.
-    /// 2. We append the partial assistant message to a LOCAL copy of sessionHistory.
-    /// 3. We append a user continuation message: "Continue from where you left off."
-    /// 4. We retry the stream with this extended history (model sees its own partial output).
-    /// 5. The model continues seamlessly from the interruption point.
-    /// 6. After maxStallRetries exhausted — throw a clear network error.
+    /// 2. Partial assistant message is appended to a LOCAL copy of sessionHistory.
+    /// 3. A continuation prompt is injected — model sees its own partial output and continues.
+    /// 4. Retries up to maxStallRetries times, then throws a clear network error.
     ///
-    /// WHY LOCAL HISTORY COPY:
-    /// We don't mutate the caller's sessionHistory here — the caller appends the FINAL
-    /// assembled message after this function returns. This keeps the control flow clean.
+    /// WHY LOCAL HISTORY: caller appends the final assembled message after this returns.
+    /// Mutating caller's history here would duplicate the partial message.
     private func streamWithStallRetry(
         systemPrompt: String,
         sessionHistory: [AIMessage],
@@ -506,14 +353,11 @@ public actor AIOrchestrator {
                     onToken: onToken
                 )
 
-                // Success — if we had partial text from previous stall attempts,
-                // prepend it to the result so the caller gets the full assembled response.
                 if accumulatedPartialText.isEmpty {
                     return result
                 } else {
-                    let fullText = accumulatedPartialText + result.text
                     return AIStreamResult(
-                        text: fullText,
+                        text: accumulatedPartialText + result.text,
                         toolCalls: result.toolCalls,
                         cost: result.cost,
                         balance: result.balance
@@ -532,27 +376,19 @@ public actor AIOrchestrator {
                     )
                 }
 
-                // Preserve partial text from this stall attempt
                 accumulatedPartialText += stallError.partialText
 
-                // Inject partial assistant message + continuation prompt into local history.
-                // The model will see its own partial output and continue from there.
                 if !stallError.partialText.isEmpty {
-                    let partialAssistant = AIMessage(
-                        role: "assistant",
-                        content: stallError.partialText
-                    )
-                    retryHistory.append(partialAssistant)
+                    retryHistory.append(AIMessage(role: "assistant", content: stallError.partialText))
                 }
 
-                let continuationPrompt = AIMessage(
+                retryHistory.append(AIMessage(
                     role: "user",
                     content: "[SYSTEM: Your previous response was interrupted by a network stall. " +
                              "Continue EXACTLY from where you left off. " +
                              "Do NOT repeat what you already wrote. " +
                              "Do NOT add any preamble. Just continue the response.]"
-                )
-                retryHistory.append(continuationPrompt)
+                ))
 
                 print("[AIOrchestrator] Retrying with continuation prompt. History: \(retryHistory.count) msgs.")
             }
@@ -563,13 +399,12 @@ public actor AIOrchestrator {
 
     /// Builds the context window from history + current user message.
     ///
-    /// MULTIMODAL-STEP3:
-    /// Accepts optional currentMessage: AIMessage? — when provided, appends it as-is
-    /// (preserving multimodal content). When nil, appends AIMessage(role: "user", content: prompt).
+    /// Deduplication: if the last history message is a plain-text user message matching
+    /// currentPrompt, it is removed to avoid duplication. Multimodal messages are never
+    /// deduplicated (contentString is nil, so the comparison always fails).
     ///
-    /// Deduplication: checks if the last history message is a plain text user message
-    /// matching the current prompt. Multimodal messages are never deduplicated
-    /// (their contentString is nil, so the string comparison always fails).
+    /// Compression: older messages beyond tokenBudget are replaced with their <summary>
+    /// if available. The last recentFullMessages are always sent in full.
     private func buildContextWindow(
         from history: [AIMessage],
         currentPrompt: String,
@@ -584,9 +419,6 @@ public actor AIOrchestrator {
         let totalTokensBefore = history.reduce(0) { $0 + estimateTokens($1) }
         print("[AIOrchestrator] History: \(history.count) msgs, ~\(totalTokensBefore) tokens | Budget: \(budget) (\(maxMessages) msgs x 500)")
 
-        // Deduplicate: remove last history message if it's a plain text user message
-        // matching the current prompt. Multimodal messages are never removed here —
-        // their contentString is nil so the comparison always returns false.
         let deduplicatedHistory: [AIMessage]
         if let lastMessage = history.last,
            lastMessage.role == "user",
@@ -630,8 +462,6 @@ public actor AIOrchestrator {
 
         var contextWindow = selectedOlder + recentMessages
 
-        // Append the current user message:
-        // Use the pre-built multimodal message if provided, otherwise build from prompt string.
         if let message = currentMessage {
             contextWindow.append(message)
         } else {
@@ -675,6 +505,7 @@ public actor AIOrchestrator {
         return summary.isEmpty ? nil : summary
     }
 
+    /// UTF-8 bytes / 4 × 1.5 — realistic estimate for mixed Russian/English text with code.
     private func estimateTokens(_ message: AIMessage) -> Int {
         let text = message.contentString ?? ""
         let utf8ByteCount = text.utf8.count
@@ -698,6 +529,8 @@ public actor AIOrchestrator {
             let resultString: String
 
             if lastToolSignature == signature {
+                // Blocks only consecutive identical calls — session-wide blocking
+                // prevented legitimate repeats (e.g. read_file after write_file).
                 resultString = """
                 SYSTEM ERROR: You just called `\(toolName)` with the exact same arguments right before this. \
                 This is an infinite loop. DO NOT REPEAT THE SAME ACTION. USE A DIFFERENT APPROACH.
@@ -709,13 +542,12 @@ public actor AIOrchestrator {
                 resultString = await toolService.execute(call: toolCall)
             }
 
-            let toolResponse = AIMessage(
+            sessionHistory.append(AIMessage(
                 role: "tool",
                 content: resultString,
                 tool_call_id: toolCall.id,
                 name: toolName
-            )
-            sessionHistory.append(toolResponse)
+            ))
         }
     }
 

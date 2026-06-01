@@ -1,50 +1,18 @@
-//
-//  AITunnelModels.swift
-//  ChappieCore
-//
-//  Codable/Sendable models for working with the AI provider API (OpenAI-compatible protocol
-//  with Anthropic extensions — in particular, Prompt Caching).
-//
-//  CHANGE (ТД-7 — Streaming):
-//  Added `stream` field to AITunnelRequest and new models for SSE chunk parsing.
-//
-//  CHANGE (ТД-COST — Prompt Caching):
-//  Added AIContentBlock and AIMessageContent types for prompt caching support.
-//
-//  CHANGE (SINGLE-STREAM — Unified streaming cycle):
-//  Added AIMessage(role:content:toolCalls:) initializer.
-//
-//  CHANGE (CACHE-PARSE — AITunnel cache parsing):
-//  AITunnel uses non-standard field names for cache stats via prompt_tokens_details.
-//
-//  CHANGE (TOP-LEVEL-CACHE — Automatic caching via top-level cache_control):
-//  Added `cache_control: AICacheControl?` to AITunnelRequest.
-//
-//  CHANGE (MULTIMODAL — Multimodal content parts):
-//  Added AIMultimodalPart struct and .multimodal case to AIMessageContent.
-//  Used for user messages that contain image or file attachments.
-//  Encodes to OpenAI vision format: array of {type, text} or {type, image_url} objects.
-
 import Foundation
 
 // MARK: - Prompt Caching: Content Blocks
 
-/// Cache control tag — used as a top-level field in AITunnelRequest.
+/// Cache control tag — placed at the top level of AITunnelRequest, not per-block.
 ///
-/// WHY TOP-LEVEL, NOT PER-BLOCK:
-/// AITunnel is an OpenAI-compatible gateway. The `content` field in messages MUST be a string.
-/// Passing an array of objects with cache_control inside messages breaks the gateway connection.
-/// The correct approach is top-level cache_control in the request body. The gateway moves
-/// the breakpoint automatically as the conversation grows (sticky routing).
+/// WHY TOP-LEVEL: AITunnel is an OpenAI-compatible gateway; passing cache_control inside
+/// message content arrays breaks the connection. Top-level placement lets the gateway
+/// move the breakpoint automatically as the conversation grows.
 ///
-/// WHY TTL 1 HOUR:
-/// Chappie development sessions last hours. The default 5-minute TTL means the system prompt
-/// (thousands of tokens) is recomputed every 5 minutes of inactivity.
-/// With TTL 1h the cache survives breaks and saves up to 90% of system prompt cost.
+/// WHY 1H TTL: Default 5-min TTL means the system prompt is recomputed every break.
+/// 1h covers full dev sessions and saves ~80-90% of system prompt cost.
 public struct AICacheControl: Codable, Sendable {
-    /// Cache type. Currently only "ephemeral" is supported.
     public let type: String
-    /// Cache TTL. "1h" = 1 hour, nil = 5 minutes (default).
+    /// "1h" = 1 hour, nil = 5 minutes (provider default).
     public let ttl: String?
 
     public init(type: String = "ephemeral", ttl: String? = nil) {
@@ -52,28 +20,17 @@ public struct AICacheControl: Codable, Sendable {
         self.ttl = ttl
     }
 
-    /// Factory: 1-hour cache — optimal for long development sessions.
     public static let oneHour = AICacheControl(type: "ephemeral", ttl: "1h")
-
-    /// Factory: 5-minute cache (default).
     public static let fiveMinutes = AICacheControl(type: "ephemeral", ttl: nil)
 }
 
-/// One content block in a message — text with optional cache tag.
+/// One content block — text with optional cache tag.
 ///
-/// WHY BLOCKS INSTEAD OF STRING:
-/// Standard OpenAI format uses `content: String`. But Anthropic extended the protocol:
-/// `content` can be an array of objects `[{type, text, cache_control?}]`.
-/// Only through this format can content be marked for caching.
-///
-/// IMPORTANT: This struct is kept for response decoding compatibility.
-/// In requests we do NOT use per-block cache_control — only top-level in AITunnelRequest.
+/// Kept for response decoding compatibility. In requests we use top-level cache_control
+/// on AITunnelRequest instead — per-block cache_control is NOT sent to AITunnel.
 public struct AIContentBlock: Codable, Sendable {
-    /// Block type. Always "text" for text blocks.
     public let type: String
-    /// Text content of the block.
     public let text: String
-    /// Optional cache tag. nil = not cached.
     public let cache_control: AICacheControl?
 
     public init(text: String, cacheControl: AICacheControl? = nil) {
@@ -82,12 +39,10 @@ public struct AIContentBlock: Codable, Sendable {
         self.cache_control = cacheControl
     }
 
-    /// Factory: cached block.
     public static func cached(_ text: String) -> AIContentBlock {
         AIContentBlock(text: text, cacheControl: AICacheControl())
     }
 
-    /// Factory: plain (non-cached) block.
     public static func plain(_ text: String) -> AIContentBlock {
         AIContentBlock(text: text, cacheControl: nil)
     }
@@ -95,30 +50,19 @@ public struct AIContentBlock: Codable, Sendable {
 
 // MARK: - Multimodal Content Parts
 
-/// One part of a multimodal message — either plain text or an image (via data URI).
+/// One part of a multimodal message — plain text or an image (data URI).
 ///
-/// WHY THIS TYPE:
-/// OpenAI vision API requires `content` to be an array of typed parts when sending images:
-///   [
-///     { "type": "text", "text": "What's in this image?" },
-///     { "type": "image_url", "image_url": { "url": "data:image/jpeg;base64,..." } }
-///   ]
+/// WHY: OpenAI vision API requires content to be an array of typed parts when sending images.
+/// For non-image files (PDF, TXT) we inline extracted text as a text part — most models
+/// can't process binary formats directly.
 ///
-/// For non-image files (PDF, TXT) we inline their content as a text part with a header,
-/// since most models cannot process binary formats directly — but can read extracted text.
-///
-/// DESIGN DECISION — send everything, handle errors gracefully:
-/// We do not filter by model capability. If the model rejects the content type,
-/// the API returns an error which ChappieViewModel surfaces as a human-friendly message.
+/// We don't filter by model capability — if the model rejects the type, the API returns
+/// an error which ChappieViewModel surfaces as a human-friendly message.
 public enum AIMultimodalPart: Encodable, Sendable {
 
-    /// Plain text part — the user's typed prompt.
     case text(String)
-
-    /// Image part — base64 data URI. Used for image/jpeg, image/png, image/gif, image/webp.
+    /// Base64 data URI. Used for image/jpeg, image/png, image/gif, image/webp.
     case imageURL(String)
-
-    // MARK: - Encodable
 
     // Encodes to OpenAI vision format:
     // text  → { "type": "text",      "text": "..." }
@@ -131,18 +75,15 @@ public enum AIMultimodalPart: Encodable, Sendable {
             try container.encode(content, forKey: .text)
         case .imageURL(let url):
             try container.encode("image_url", forKey: .type)
-            let imageURLObj = ImageURLObject(url: url)
-            try container.encode(imageURLObj, forKey: .imageURL)
+            try container.encode(ImageURLObject(url: url), forKey: .imageURL)
         }
     }
 
     private enum CodingKeys: String, CodingKey {
-        case type
-        case text
+        case type, text
         case imageURL = "image_url"
     }
 
-    // Nested struct for the image_url object
     private struct ImageURLObject: Encodable {
         let url: String
     }
@@ -150,37 +91,27 @@ public enum AIMultimodalPart: Encodable, Sendable {
 
 // MARK: - AIMessageContent
 
-/// Polymorphic message content: plain string, array of cached blocks, or multimodal parts.
+/// Polymorphic message content: plain string, cached blocks, or multimodal parts.
 ///
-/// WHY ENUM:
-/// API accepts all formats. For plain text messages we use .text — compact and compatible.
-/// For messages with image/file attachments we use .multimodal — encodes to vision array.
-/// .blocks is kept for response decoding that may arrive in extended Anthropic format.
+/// .text — all non-multimodal messages (standard OpenAI format).
+/// .blocks — decoding only; NOT sent to AITunnel (gateway rejects arrays).
+/// .multimodal — user messages with image/file attachments (OpenAI vision format).
 public enum AIMessageContent: Sendable {
-    /// Plain string — for all non-multimodal messages.
     case text(String)
-    /// Array of content blocks — for decoding responses in extended Anthropic format.
     case blocks([AIContentBlock])
-    /// Array of typed parts — for user messages with image/file attachments (OpenAI vision).
     case multimodal([AIMultimodalPart])
 }
 
 extension AIMessageContent: Encodable {
     public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
         switch self {
         case .text(let string):
-            // Encode as plain string — standard OpenAI format, compatible with AITunnel
-            var container = encoder.singleValueContainer()
             try container.encode(string)
         case .blocks(let blocks):
-            // Encode as array of objects — extended Anthropic format.
-            // WARNING: do NOT use in requests to AITunnel — gateway rejects arrays.
-            var container = encoder.singleValueContainer()
+            // WARNING: do NOT use in AITunnel requests — gateway rejects arrays.
             try container.encode(blocks)
         case .multimodal(let parts):
-            // Encode as array of typed parts — OpenAI vision format.
-            // Used when the user message contains image or file attachments.
-            var container = encoder.singleValueContainer()
             try container.encode(parts)
         }
     }
@@ -189,13 +120,11 @@ extension AIMessageContent: Encodable {
 extension AIMessageContent: Decodable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
-        // Try string first (most common case in API responses)
         if let string = try? container.decode(String.self) {
             self = .text(string)
         } else if let blocks = try? container.decode([AIContentBlock].self) {
             self = .blocks(blocks)
         } else {
-            // Neither — treat as empty string, don't crash
             self = .text("")
         }
     }
@@ -205,22 +134,14 @@ extension AIMessageContent: Decodable {
 
 /// POST request body for the AI provider API.
 ///
-/// FIELD cache_control (TOP-LEVEL CACHING):
-/// Key field for automatic prompt caching via AITunnel.
-/// Placed at the top level of the request (alongside model, messages) — this is NOT
-/// the same as per-block cache_control inside messages.
-///
-/// FIELD stream:
-/// - `stream = false` (default) → standard blocking response
-/// - `stream = true`  → server returns a stream of `data: {...}\n\n` chunks
+/// cache_control is top-level (not per-block) — required by AITunnel gateway.
+/// stream=true → SSE chunks; stream=false → single blocking response.
 public struct AITunnelRequest: Encodable, Sendable {
     public let model: String
     public let messages: [AIMessage]
     public let temperature: Double?
     public let tools: [AITool]?
-    /// Enables SSE streaming (Server-Sent Events).
     public let stream: Bool
-    /// Top-level cache control for automatic prompt caching.
     public let cache_control: AICacheControl?
 
     public init(
@@ -240,14 +161,10 @@ public struct AITunnelRequest: Encodable, Sendable {
     }
 }
 
-/// A single message in the conversation (role + content + optional fields).
+/// A single message in the conversation.
 ///
-/// FIELD `content` is `AIMessageContent?` — polymorphic:
-///   .text(String)                — plain text, used for all standard messages
-///   .blocks([AIContentBlock])    — Anthropic extended format, kept for decoding
-///   .multimodal([AIMultimodalPart]) — OpenAI vision format, used for messages with attachments
-///
-/// `contentString` computed property provides backward-compatible string access.
+/// content is AIMessageContent? — polymorphic (.text / .blocks / .multimodal).
+/// contentString provides backward-compatible string access without manual unwrapping.
 public struct AIMessage: Codable, Sendable {
     public var role: String
     public var content: AIMessageContent?
@@ -255,17 +172,15 @@ public struct AIMessage: Codable, Sendable {
     public var tool_call_id: String?
     public var name: String?
 
-    /// Convenient string access — no manual enum unwrapping needed.
     public var contentString: String? {
         guard let content else { return nil }
         switch content {
         case .text(let s): return s
         case .blocks(let blocks): return blocks.map(\.text).joined()
-        case .multimodal: return nil  // Multimodal has no single string representation
+        case .multimodal: return nil
         }
     }
 
-    /// Standard string initializer — backward compatible with all existing code.
     public init(
         role: String,
         content: String? = nil,
@@ -280,7 +195,7 @@ public struct AIMessage: Codable, Sendable {
         self.name = name
     }
 
-    /// Blocks initializer — kept for compatibility, NOT for use in AITunnel requests.
+    /// Blocks initializer — kept for compatibility. NOT for AITunnel requests.
     public init(
         role: String,
         contentBlocks: [AIContentBlock],
@@ -295,11 +210,7 @@ public struct AIMessage: Codable, Sendable {
         self.name = name
     }
 
-    /// Multimodal initializer — for user messages with image/file attachments.
-    ///
-    /// MULTIMODAL: Creates a message with .multimodal content that encodes to
-    /// OpenAI vision array format. Used by buildRawNetworkHistory() when the
-    /// user message has attachments.
+    /// Multimodal initializer — encodes to OpenAI vision array format.
     public init(
         role: String,
         multimodalParts: [AIMultimodalPart],
@@ -314,11 +225,7 @@ public struct AIMessage: Codable, Sendable {
         self.name = name
     }
 
-    /// Streaming assistant message initializer — for creating messages from streaming buffer.
-    ///
-    /// WHY SEPARATE: In the unified streaming cycle (no probe request), AIOrchestrator
-    /// accumulates the response in a text buffer and creates an AIMessage after the stream ends.
-    /// This initializer makes that creation explicit and semantically clear.
+    /// Streaming assistant message initializer — creates a message from the accumulated stream buffer.
     public init(
         role: String,
         content: String?,
@@ -382,14 +289,12 @@ public struct AIToolProperty: Codable, Sendable {
 
 // MARK: - Response Models (Non-Streaming)
 
-/// Full API response for a non-streaming request.
 public struct AITunnelResponse: Decodable, Sendable {
     public let id: String?
     public let choices: [AIChoice]
     public let usage: AIUsage?
 }
 
-/// One response choice (usually choices[0]).
 public struct AIChoice: Decodable, Sendable {
     public let message: AIMessage
     public let finish_reason: String?
@@ -397,21 +302,18 @@ public struct AIChoice: Decodable, Sendable {
 
 // MARK: - Cache Statistics
 
-/// Prompt token breakdown — nested object `prompt_tokens_details`.
+/// Token breakdown from prompt_tokens_details (AITunnel-specific nested object).
 ///
-/// WHY SEPARATE STRUCT:
-/// AITunnel returns cache stats NOT at the top level of usage (like standard Anthropic),
-/// but as a nested object prompt_tokens_details. This is a non-standard provider extension.
+/// WHY SEPARATE: AITunnel returns cache stats inside prompt_tokens_details,
+/// not at the top level like standard Anthropic. This struct decodes that nested object.
 public struct AIPromptTokensDetails: Decodable, Sendable {
-    /// Tokens written to cache in this request (AITunnel-specific field).
     public let cache_write_tokens: Int?
-    /// Tokens read from cache (AITunnel-specific field).
     public let cached_tokens: Int?
     public let audio_tokens: Int?
     public let video_tokens: Int?
 }
 
-/// Token usage statistics and financial information.
+/// Token usage and financial stats from the API response.
 public struct AIUsage: Decodable, Sendable {
     public let prompt_tokens: Int?
     public let completion_tokens: Int?
@@ -419,14 +321,10 @@ public struct AIUsage: Decodable, Sendable {
     public let cost_rub: Double?
     public let balance: Double?
 
-    /// Standard Anthropic fields (may be absent for AITunnel).
     public let cache_creation_input_tokens: Int?
     public let cache_read_input_tokens: Int?
-
-    /// Non-standard AITunnel cache breakdown object.
+    /// AITunnel-specific cache breakdown (non-standard nested object).
     public let prompt_tokens_details: AIPromptTokensDetails?
-
-    // MARK: - Computed properties for unified interface
 
     /// Tokens written to cache — works with both Anthropic and AITunnel formats.
     public var effectiveCacheCreation: Int {
@@ -469,80 +367,58 @@ public struct AIToolCallFunction: Codable, Sendable {
 
 /// One SSE stream chunk.
 ///
-/// Server sends a stream of lines like:
-///   data: {"id":"...","choices":[{"delta":{"content":"Hi"},"finish_reason":null}]}\n\n
-///   data: [DONE]\n\n
-///
-/// Each such line (except [DONE]) decodes into AIStreamChunk.
-/// The `usage` field is present only in the last chunk before [DONE].
+/// Server sends lines like: data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n
+/// Each line (except [DONE]) decodes into AIStreamChunk.
+/// usage is present only in the final chunk before [DONE].
 public struct AIStreamChunk: Decodable, Sendable {
     public let id: String?
     public let choices: [AIStreamChoice]
-    /// Token stats — present only in the final chunk.
     public let usage: AIUsage?
 }
 
-/// One response choice inside an SSE chunk.
 public struct AIStreamChoice: Decodable, Sendable {
-    /// Delta update: new tokens or start of a tool_call.
     public let delta: AIStreamDelta
-    /// "stop" = end of generation, nil = continues.
+    /// "stop" = generation complete, nil = still streaming.
     public let finish_reason: String?
 }
 
-/// Delta update: text increment or tool call.
+/// Delta update: text increment or tool call fragment.
 ///
-/// WHY TWO OPTIONAL FIELDS:
-/// The model generates either text (`content`) or a tool call (`tool_calls`), never both
-/// simultaneously. The first tool_call chunk contains id and name; subsequent chunks
-/// contain only `arguments` (JSON accumulates gradually).
+/// content and tool_calls are mutually exclusive — the model generates one or the other,
+/// never both in the same chunk.
 public struct AIStreamDelta: Decodable, Sendable {
-    /// New text tokens (nil if this is a tool_call chunk).
     public let content: String?
-    /// Tool calls — arrive in parts, must be accumulated.
+    /// Tool calls arrive in fragments and must be accumulated by index.
     public let tool_calls: [AIStreamToolCall]?
 }
 
 /// Partial tool call from SSE stream.
 ///
-/// Unlike AIToolCall (complete, from non-streaming response), this arrives in pieces:
-///   - First chunk: id="call_abc", function.name="write_file", function.arguments="{"
-///   - Subsequent: id=nil, function.name=nil, function.arguments="path"
-/// Therefore index is required — used to accumulate arguments into the correct slot.
+/// Arrives in pieces: first chunk has id + name, subsequent chunks have only arguments.
+/// index is used to accumulate fragments into the correct slot for parallel calls.
 public struct AIStreamToolCall: Decodable, Sendable {
-    /// Sequential number of the tool_call (for parallel calls).
     public let index: Int
-    /// Call ID — present only in the first chunk of this tool_call.
     public let id: String?
-    /// Type — usually "function", present only in the first chunk.
     public let type: String?
-    /// Partial function data.
     public let function: AIStreamToolCallFunction?
 }
 
-/// Partial function data from SSE stream.
 public struct AIStreamToolCallFunction: Decodable, Sendable {
-    /// Function name — only in the first chunk.
+    /// Present only in the first chunk for this tool call.
     public let name: String?
-    /// Piece of JSON arguments — accumulates across chunks.
+    /// Accumulates across chunks — each chunk appends a JSON fragment.
     public let arguments: String?
 }
 
 // MARK: - Streaming Result
 
-/// Complete result of a streaming request with tool call support.
+/// Complete result of a streaming request.
 ///
-/// WHY SEPARATE STRUCT:
-/// streamRequestWithTools() must return not just the token stream,
-/// but also the assembled tool_calls (which arrive in pieces in deltas).
-/// This struct aggregates everything accumulated during the stream.
+/// streamRequestWithTools() returns both the assembled text and tool_calls
+/// (which arrive as fragments in SSE deltas and must be accumulated).
 public struct AIStreamResult: Sendable {
-    /// Accumulated text response (empty if only tool_calls were returned).
     public let text: String
-    /// Assembled tool calls (nil if only text was returned).
     public let toolCalls: [AIToolCall]?
-    /// Request cost in rubles.
     public let cost: Double?
-    /// Updated balance after the request.
     public let balance: Double?
 }
