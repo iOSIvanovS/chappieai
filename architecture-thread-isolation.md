@@ -466,3 +466,150 @@ Target migration steps (to be executed one per commit):
 | AI gets confused by unavailable tools | Tool manifest in prompt only shows available tools |
 | AI crashes on denied tool call | Structured denial response — AI explains to user gracefully |
 | Renaming a Codable field silently corrupts data | CodingKeys rule + mandatory comments on all persisted structs |
+
+---
+
+## 12. Build Strategy — Feature Flag + `enum New` Namespace
+
+### The core problem
+
+We are rebuilding a live, working system. The old code works today.
+We cannot afford to break it mid-refactor — especially after the incident where
+a bad tool-feeding change made Chappie unable to do anything except chat.
+
+**Rule: the old Chappie must be recoverable at any moment by flipping one switch.**
+
+### Feature flag
+
+A single file `FeatureFlags.swift` controls the switch:
+
+```swift
+// FeatureFlags.swift
+enum FeatureFlags {
+    /// When true: new entity graph, ThreadSession, SystemPromptBuilder, ToolAccessController.
+    /// When false: old code path, exactly as before.
+    /// Flip to false at any time to get the old Chappie back instantly.
+    static let useThreadIsolationV2 = false
+}
+```
+
+This flag is checked at the top of `ChappieViewModel` and at the SwiftData container setup.
+Everything else branches from there.
+
+### `enum New` — namespace for all new types
+
+Good names are already taken by the old code. Instead of ugly `V2` suffixes,
+we use `enum New` as a pure namespace (no cases, no instances — just a container):
+
+```swift
+enum New {
+    // All new domain types live here during parallel construction
+    struct AppSettings: Codable { ... }
+    struct AIProvider: Codable { ... }
+    struct APIKey: Codable { ... }
+    struct AIModel: Codable { ... }
+    struct Thread: Codable { ... }
+    struct ThreadProject: Codable { ... }
+    struct ProviderSnapshot: Codable { ... }
+    struct MemoryEntry: Codable { ... }
+    struct ProjectSettings: Codable { ... }
+
+    class SystemPromptBuilder { ... }
+    class ToolAccessController { ... }
+    class ThreadSession { ... }
+}
+```
+
+**Usage during parallel construction:**
+```swift
+let session = New.ThreadSession(...)
+let snapshot = New.ProviderSnapshot(providerId: ..., keyId: ..., modelId: ...)
+```
+
+**When old code is deleted (M-10):**
+1. Remove the `enum New { }` wrapper.
+2. All types come out into the global namespace.
+3. One Find & Replace: `New.` → `` (empty string).
+4. Done. No rename cascade, no type conflicts.
+
+### Folder structure for new code
+
+New code lives in a parallel folder tree, clearly separated from old code:
+
+```
+ChappieCore/Sources/ChappieCore/
+├── Models/                         ← OLD (keep untouched until M-10)
+│   ├── AIProviderModels.swift
+│   ├── ThreadModels.swift
+│   ├── MemoryModels.swift
+│   ├── ProjectModels.swift
+│   └── AppConfig.swift
+│
+├── V2/                             ← NEW (everything under enum New lives here)
+│   ├── Models/
+│   │   ├── New+AppSettings.swift
+│   │   ├── New+AIProvider.swift
+│   │   ├── New+Thread.swift
+│   │   ├── New+ThreadProject.swift
+│   │   ├── New+ProviderSnapshot.swift
+│   │   └── New+MemoryEntry.swift
+│   ├── Storage/
+│   │   ├── New+SwiftDataEntities.swift    ← @Model classes (thin wrappers)
+│   │   └── New+AppSettingsStore.swift
+│   ├── Services/
+│   │   ├── New+SystemPromptBuilder.swift
+│   │   ├── New+ToolAccessController.swift
+│   │   ├── New+ThreadSession.swift
+│   │   └── New+MigrationService.swift
+│   └── FeatureFlags.swift
+│
+├── Services/                       ← OLD services (keep untouched until wired)
+│   ├── AIOrchestrator.swift
+│   ├── ToolExecution/
+│   └── ...
+```
+
+File naming convention: `New+TypeName.swift` — makes it trivially easy to find
+all new-architecture files and to grep for them.
+
+### SwiftData containers — two separate stores
+
+The new schema cannot share a SwiftData container with the old schema.
+Two containers run in parallel:
+
+```swift
+// Old container (unchanged)
+let oldContainer = try ModelContainer(for: ThreadEntity.self, ProjectEntity.self, MemoryEntity.self)
+
+// New container (V2, only active when FeatureFlags.useThreadIsolationV2 == true)
+let newContainer = try ModelContainer(for: New.AppSettingsEntity.self, New.ThreadEntity.self)
+```
+
+The new container uses a different store filename (`chappie-v2.store`) so there
+is zero risk of schema collision with the old store.
+
+### Switching order — tools are last
+
+The most dangerous change is tool-feeding (the incident that broke Chappie).
+Tool changes are done LAST, after everything else is verified:
+
+```
+Phase 1 — Data layer:       M-01 (models) → M-02 (migration)
+Phase 2 — Logic layer:      M-03 (prompt builder) → M-04 (access controller) → M-05 (session)
+Phase 3 — Wire up:          M-06 (ViewModel) → M-07, M-08 (UI)
+Phase 4 — Verify:           M-09 (end-to-end test, zero leakage confirmed)
+Phase 5 — Tools switch:     FeatureFlags.useThreadIsolationV2 = true  ← flip here
+Phase 6 — Cleanup:          M-10 (delete old code, remove enum New wrapper)
+```
+
+**The flag is flipped only after M-09 passes.** Until then, the user always has
+a working Chappie one `false` away.
+
+### Rollback procedure
+
+If anything goes wrong after the flag is flipped:
+1. Set `FeatureFlags.useThreadIsolationV2 = false`
+2. Build and run → old Chappie is back
+3. Investigate, fix, flip again
+
+No git revert needed. No lost work. Just one boolean.
