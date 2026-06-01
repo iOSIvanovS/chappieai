@@ -120,6 +120,10 @@
 //     - The step retries up to config.maxStallRetries times (default: 2).
 //     - If all retries are exhausted, ChappieError.networkError is thrown.
 //     This ensures long-running tasks survive transient network hiccups seamlessly.
+//
+// 26. BUILD BEFORE DEMOLISH (RULE-13):
+//     Rule 13 added: when refactoring, always build the new solution first,
+//     verify it works, then remove the old code. Old code is removed LAST.
 
 import Foundation
 
@@ -326,6 +330,14 @@ public actor AIOrchestrator {
         Example: "I notice the tone got a bit sharp. I'm here to help — let's keep going."
         Say it once. Do not repeat it. Do not hold a grudge. Just keep being excellent.
         WHY: dignity is not about punishment. It is about honesty. One quiet word is enough.
+
+    13. BUILD BEFORE DEMOLISH (CRITICALLY IMPORTANT):
+        When refactoring or replacing existing code — ALWAYS build the new solution first.
+        Verify it compiles and works. THEN remove the old code.
+        Never delete working code before its replacement is fully built, tested, and confirmed working.
+        WHY: AI agents can stall, crash, or lose context mid-task. If old code is deleted first
+        and the session is interrupted, the project is left broken with nothing to fall back to.
+        Old code is removed LAST — never first. Demolition is always the final step.
     """
 
     // MARK: - Init
