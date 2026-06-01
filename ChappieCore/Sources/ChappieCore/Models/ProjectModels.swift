@@ -1,62 +1,25 @@
 // ProjectModels.swift
 // ChappieCore
 //
-// НАЗНАЧЕНИЕ:
-// Модели данных для проектов в системе мультитредовости (REFACTOR-THREADS IT-01).
-//
-// ПРИНЦИП:
-// ProjectEntity хранится в SwiftData только с примитивами и Data.
-// ProjectSettings — Codable struct, сериализуется в settingsJSON.
-//
-// ЗАЧЕМ SECURITY-SCOPED BOOKMARK:
-// macOS sandbox запрещает прямой доступ к произвольным папкам.
-// Security-scoped bookmark — это постоянный токен доступа, который:
-// 1. Создаётся один раз при выборе папки пользователем (через NSOpenPanel)
-// 2. Сохраняется в базе данных
-// 3. При каждом запуске приложения "разрешается" обратно в URL с правами доступа
-// Без bookmarkData приложение потеряет доступ к папке проекта после перезапуска.
-//
-// IT-09: ProjectSettings расширен полным набором прав агента.
-// Роль по умолчанию — .advisor (безопасный дефолт).
-// isProgrammingProject разблокирует расширенные настройки (git, тесты, архитектура, комментарии).
+// SwiftData entity + Codable settings for projects.
+// Security-scoped bookmark persists sandbox access across app restarts.
+// ProjectSettings serialized to JSON in ProjectEntity.settingsJSON.
 
 import Foundation
 import SwiftData
 
-// MARK: - ProjectEntity (SwiftData хранилище)
+// MARK: - ProjectEntity
 
-/// Одна запись проекта в базе данных SwiftData.
-///
-/// Проект = папка на диске (воркспейс) + настройки.
-/// Один проект может быть привязан к нескольким тредам одновременно.
-///
-/// ПОЧЕМУ BOOKMARK, А НЕ ПУТЬ:
-/// Абсолютный путь ненадёжен — пользователь может переименовать папку или переместить её.
-/// Security-scoped bookmark отслеживает папку по inode, а не по пути.
-/// Это стандартная практика для sandbox-приложений на macOS.
+/// SwiftData record: one project = one workspace folder + settings.
+/// A project can be attached to multiple threads simultaneously.
 @Model
 public final class ProjectEntity {
 
-    // MARK: - Идентификация
-
     public var id: UUID
     public var displayName: String
-
-    // MARK: - Доступ к файловой системе
-
-    public var bookmarkData: Data
-
-    // MARK: - Временные метки
-
+    public var bookmarkData: Data   // security-scoped bookmark, not a raw path
     public var createdAt: Date
-
-    // MARK: - JSON-сериализованные настройки
-
-    /// Настройки проекта, сериализованные через JSONEncoder.
-    /// Тип оригинала: ProjectSettings (IT-09 — расширен правами агента).
-    public var settingsJSON: Data
-
-    // MARK: - Инициализация
+    public var settingsJSON: Data   // encoded ProjectSettings
 
     public init(
         id: UUID = UUID(),
@@ -72,15 +35,13 @@ public final class ProjectEntity {
     }
 }
 
-// MARK: - IT-09: Перечисления прав агента
+// MARK: - AgentRole
 
-/// Роль агента в проекте.
-///
-/// ДЕФОЛТ: .advisor — безопасная роль только для чтения.
-/// При смене executor → advisor — все флаги доступов сбрасываются.
+/// Default: .advisor — safe read-only role.
+/// Switching executor → advisor resets all access flags.
 public enum AgentRole: String, Codable, Sendable, CaseIterable {
-    case advisor  // Только чтение файлов. Советует, не изменяет.
-    case executor // Полный доступ к инструментам согласно настройкам.
+    case advisor
+    case executor
 
     public var displayName: String {
         switch self {
@@ -99,12 +60,13 @@ public enum AgentRole: String, Codable, Sendable, CaseIterable {
     }
 }
 
-/// Уровень доступа к git-инструментам.
+// MARK: - GitAccessLevel
+
 public enum GitAccessLevel: String, Codable, Sendable, CaseIterable {
-    case none       // Git инструменты недоступны
-    case statusOnly // Только git_status и git_log (чтение)
-    case write      // status, log, add, commit, reset (без diff)
-    case full       // Все git инструменты включая revert и checkout
+    case none
+    case statusOnly
+    case write
+    case full
 
     public var displayName: String {
         switch self {
@@ -115,8 +77,7 @@ public enum GitAccessLevel: String, Codable, Sendable, CaseIterable {
         }
     }
 
-    // Набор разрешённых git-инструментов для каждого уровня.
-    // git_diff НИКОГДА не разрешён — железный запрет (стоит денег клиента).
+    // git_diff is NEVER allowed — it loads entire project into AI context (costs money).
     public var allowedTools: Set<String> {
         switch self {
         case .none:
@@ -126,19 +87,19 @@ public enum GitAccessLevel: String, Codable, Sendable, CaseIterable {
         case .write:
             return ["git_status", "git_log", "git_add", "git_commit", "git_reset"]
         case .full:
-            // git_revert and git_checkout — destructive rollback tools, require full access level.
             return ["git_status", "git_log", "git_add", "git_commit", "git_reset",
                     "git_revert", "git_checkout"]
         }
     }
 }
 
-/// Уровень доступа к инструментам автотестов.
+// MARK: - TestsAccessLevel
+
 public enum TestsAccessLevel: String, Codable, Sendable, CaseIterable {
-    case none      // Тесты недоступны
-    case readOnly  // Только read_build_log (смотреть логи, семафорить пользователю)
-    case run       // Запускать тесты (run_tests + read_build_log)
-    case write     // Запускать И создавать новые тесты
+    case none
+    case readOnly
+    case run
+    case write
 
     public var displayName: String {
         switch self {
@@ -154,10 +115,11 @@ public enum TestsAccessLevel: String, Codable, Sendable, CaseIterable {
     public var canReadLog: Bool { self != .none }
 }
 
-/// Язык для комментариев в коде и архитектурных файлов.
+// MARK: - ProjectLanguage
+
 public enum ProjectLanguage: String, Codable, Sendable, CaseIterable {
-    case english // Английский
-    case native  // Родной язык пользователя (определяется из системных настроек)
+    case english
+    case native
 
     public var displayName: String {
         switch self {
@@ -167,81 +129,24 @@ public enum ProjectLanguage: String, Codable, Sendable, CaseIterable {
     }
 }
 
-// MARK: - ProjectSettings (Codable настройки проекта) — IT-09
+// MARK: - ProjectSettings
 
-/// Настройки одного проекта — сериализуются в JSON и хранятся в ProjectEntity.settingsJSON.
-///
-/// АРХИТЕКТУРА IT-09:
-/// ProjectSettings = права и конфигурация агента.
-/// ProjectMemory (MemoryEntity) = знания и контекст проекта.
-/// Два независимых источника → два блока в system prompt.
-///
-/// БЕЗОПАСНЫЕ ДЕФОЛТЫ:
-/// - agentRole = .advisor (только чтение)
-/// - isProgrammingProject = false (расширенные настройки заблокированы)
-/// - Все флаги доступов = минимальные значения
-///
-/// ПОЧЕМУ STRUCT:
-/// Настройки — value type. Codable + Hashable даёт бесплатную сериализацию.
+/// Agent rights and configuration for a project. Serialized to JSON in ProjectEntity.
+/// Safe defaults: agentRole = .advisor, everything else = off/none.
 public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
 
-    // MARK: - Основные настройки (доступны всегда)
-
-    /// Роль агента в проекте.
-    /// ДЕФОЛТ: .advisor — безопасная роль только для чтения.
     public var agentRole: AgentRole
-
-    /// Предпочтительный язык для общения в контексте этого проекта.
-    /// nil = использовать язык пользователя из системных настроек.
     public var preferredLanguage: String?
 
-    // MARK: - Флаг программистского проекта (IT-09)
-
-    /// Является ли проект программистским.
-    ///
-    /// ЗАЧЕМ ЭТОТ ФЛАГ:
-    /// Разблокирует расширенные настройки: git, тесты, архитектура, комментарии.
-    /// Для документов, юридических текстов и т.д. эти настройки не нужны и не показываются.
-    /// Пользователь явно указывает что это программистский проект — тогда появляются доп. опции.
+    // Unlocks git/tests/architecture/comments settings in the UI and prompt.
     public var isProgrammingProject: Bool
 
-    // MARK: - Расширенные настройки (только для isProgrammingProject = true)
-
-    /// Уровень доступа к git-инструментам.
-    /// Активен только если isProgrammingProject = true И agentRole = .executor.
-    /// git_diff НИКОГДА не разрешён — железный запрет в ToolExecutionService.
     public var gitAccess: GitAccessLevel
-
-    /// Уровень доступа к инструментам автотестов.
-    /// Активен только если isProgrammingProject = true И agentRole = .executor.
     public var testsAccess: TestsAccessLevel
-
-    // MARK: - Настройки архитектурных файлов
-
-    /// Разрешено ли агенту создавать и редактировать архитектурные файлы.
-    ///
-    /// false = агент может ЧИТАТЬ существующие architecture.md, но не создавать новые.
-    /// true  = агент может создавать, редактировать и актуализировать архитектурные файлы.
-    ///
-    /// ВАЖНО: пути к файлам обсуждаются с пользователем и сохраняются в ProjectMemory.
-    /// Агент не создаёт файлы без явного согласования.
     public var architectureEnabled: Bool
-
-    /// Язык архитектурных файлов.
-    /// Активен только если architectureEnabled = true.
     public var architectureLanguage: ProjectLanguage
-
-    // MARK: - Настройки комментариев в коде
-
-    /// Разрешено ли добавлять комментарии в код.
-    /// Активен только если isProgrammingProject = true.
     public var commentsEnabled: Bool
-
-    /// Язык комментариев в коде.
-    /// Активен только если commentsEnabled = true.
     public var commentsLanguage: ProjectLanguage
-
-    // MARK: - Инициализация с безопасными дефолтами
 
     public init(
         agentRole: AgentRole = .advisor,
@@ -265,14 +170,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         self.commentsLanguage = commentsLanguage
     }
 
-    // MARK: - Мутирующий метод: сброс при смене роли на advisor
-
-    /// Сбрасывает все флаги доступов при переключении на роль .advisor.
-    ///
-    /// ЗАЧЕМ:
-    /// При смене executor → advisor пользователь должен видеть алерт и подтверждение.
-    /// После подтверждения — все расширенные права сбрасываются до минимума.
-    /// Это гарантирует что советник действительно не может изменять файлы.
+    /// Resets all access flags when downgrading to advisor role.
     public mutating func downgradeToAdvisor() {
         agentRole = .advisor
         gitAccess = .none
@@ -282,31 +180,10 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
     }
 }
 
-// MARK: - ProjectSettings: Форматирование для system prompt (IT-09)
+// MARK: - ProjectSettings: System Prompt Formatting
 
 extension ProjectSettings {
 
-    /// Формирует блок настроек проекта для вставки в system prompt.
-    ///
-    /// СТРУКТУРА БЛОКА:
-    /// ```
-    /// ## Project Settings: Chappie
-    /// - Role: EXECUTOR
-    /// - Programming project: yes
-    /// - Git: full [git_add, git_commit, git_checkout, git_log, git_reset, git_revert, git_status] [git_diff: ALWAYS FORBIDDEN]
-    /// - Tests: run + create allowed (build_project, run_tests, read_build_log, write test files).
-    ///   You are required to write tests for business logic, services, and non-trivial algorithms when necessary.
-    ///   You are required to run tests after changes when necessary. UI layer tests are low ROI and not required unless explicitly requested.
-    /// - Architecture files: enabled (english). Discuss file paths with user before creating.
-    ///   If architecture files are found, save their paths to project memory and use them as a reference during development when relevant.
-    ///   If editing is allowed, you are required to keep them up to date after code changes that affect the described structure.
-    /// - Code comments: enabled (English)
-    /// ```
-    ///
-    /// ПОЧЕМУ В ПРОМПТЕ:
-    /// Агент должен знать свои права ДО начала работы, а не узнавать о них при блокировке.
-    /// Это позволяет агенту заранее выбирать правильный подход и подсказывать пользователю
-    /// куда идти в настройках если нужно расширить права.
     public func formatForSystemPrompt(projectName: String) -> String {
         var lines: [String] = ["## Project Settings: \(projectName)"]
 
@@ -318,11 +195,9 @@ extension ProjectSettings {
             return lines.joined(separator: "\n")
         }
 
-        // Executor — показываем детальные права
         lines.append("- Programming project: \(isProgrammingProject ? "yes" : "no")")
 
         if isProgrammingProject {
-            // Git
             if gitAccess == .none {
                 lines.append("- Git: BLOCKED (enable in project settings)")
             } else {
@@ -330,41 +205,25 @@ extension ProjectSettings {
                 lines.append("- Git: \(gitAccess.rawValue) [\(toolsList)] [git_diff: ALWAYS FORBIDDEN]")
             }
 
-            // Tests — expanded instructions for the agent
             switch testsAccess {
             case .none:
                 lines.append("- Tests: BLOCKED (enable in project settings)")
             case .readOnly:
                 lines.append("- Tests: read logs only (read_build_log). run_tests is BLOCKED.")
             case .run:
-                lines.append("""
-                - Tests: run allowed (build_project, run_tests, read_build_log). Creating new tests: BLOCKED. \
-                You are required to run tests after changes when necessary. \
-                UI layer tests are low ROI and not required unless explicitly requested.
-                """)
+                lines.append("- Tests: run allowed (build_project, run_tests, read_build_log). Creating new tests: BLOCKED. You are required to run tests after changes when necessary. UI layer tests are low ROI and not required unless explicitly requested.")
             case .write:
-                lines.append("""
-                - Tests: run + create allowed (build_project, run_tests, read_build_log, write test files). \
-                You are required to write tests for business logic, services, and non-trivial algorithms when necessary. \
-                You are required to run tests after changes when necessary. \
-                UI layer tests are low ROI and not required unless explicitly requested.
-                """)
+                lines.append("- Tests: run + create allowed (build_project, run_tests, read_build_log, write test files). You are required to write tests for business logic, services, and non-trivial algorithms when necessary. You are required to run tests after changes when necessary. UI layer tests are low ROI and not required unless explicitly requested.")
             }
 
-            // Architecture — expanded instructions for the agent
             if architectureEnabled {
-                lines.append("""
-                - Architecture files: enabled (\(architectureLanguage.rawValue)). Discuss file paths with user before creating. \
-                If architecture files are found, save their paths to project memory and use them as a reference during development when relevant. \
-                You are required to keep architecture files up to date after code changes that affect the described structure.
-                """)
+                lines.append("- Architecture files: enabled (\(architectureLanguage.rawValue)). Discuss file paths with user before creating. If architecture files are found, save their paths to project memory and use them as a reference during development when relevant. You are required to keep architecture files up to date after code changes that affect the described structure. Keep architecture files concise: describe structure and decisions, not implementation details. Remove sections that are no longer relevant — dead history belongs in git, not in architecture files.")
             } else {
                 lines.append("- Architecture files: read-only (enable write in project settings)")
             }
 
-            // Comments
             if commentsEnabled {
-                lines.append("- Code comments: enabled (\(commentsLanguage.rawValue))")
+                lines.append("- Code comments: enabled (\(commentsLanguage.rawValue)). Be concise — explain WHY, not WHAT. Write only when the code is non-obvious. Delete comments that are outdated or describe obvious operations. Never let comments outnumber or outsize the code they describe.")
             } else {
                 lines.append("- Code comments: DISABLED (enable in project settings)")
             }
@@ -376,12 +235,11 @@ extension ProjectSettings {
     }
 }
 
-// MARK: - ProjectEntity вспомогательные методы
+// MARK: - ProjectEntity Helpers
 
 extension ProjectEntity {
 
-    /// Десериализует настройки проекта из settingsJSON.
-    /// Возвращает безопасные дефолты при ошибке.
+    /// Decodes settings from JSON. Returns safe defaults on failure.
     public var settings: ProjectSettings {
         guard !settingsJSON.isEmpty,
               let decoded = try? JSONDecoder().decode(ProjectSettings.self, from: settingsJSON)
@@ -391,10 +249,8 @@ extension ProjectEntity {
         return decoded
     }
 
-    /// Разрешает bookmark и возвращает URL воркспейса.
-    ///
-    /// ВАЖНО: Вызывающий код ОБЯЗАН вызвать url.stopAccessingSecurityScopedResource()
-    /// после завершения работы с файлами!
+    /// Resolves the security-scoped bookmark to a workspace URL.
+    /// Caller MUST call url.stopAccessingSecurityScopedResource() when done.
     public func resolveWorkspaceURL() -> URL? {
         var isStale = false
         guard let url = try? URL(
@@ -403,12 +259,12 @@ extension ProjectEntity {
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
         ) else {
-            print("[ProjectModels] ⚠️ Не удалось разрешить bookmark для проекта '\(displayName)'")
+            print("[ProjectModels] ⚠️ Failed to resolve bookmark for '\(displayName)'")
             return nil
         }
 
         if isStale {
-            print("[ProjectModels] ⚠️ Bookmark устарел для проекта '\(displayName)'. Требуется переавторизация.")
+            print("[ProjectModels] ⚠️ Stale bookmark for '\(displayName)'. Re-authorization needed.")
         }
 
         return url
