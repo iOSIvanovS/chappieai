@@ -58,6 +58,8 @@ extension ChappieViewModel {
                     await loadProjectsForThread(updatedThread)
                     buildAndSyncMemoryContext()
                     await syncActiveMemoryContext()
+                    // M-09: project added via UI — sync FileSystem immediately.
+                    await syncFileSystemForActiveThread()
                 }
                 print("[ChappieViewModel] Project '\(displayName)' added to thread '\(thread.title)'")
             } catch {
@@ -83,6 +85,8 @@ extension ChappieViewModel {
                     await loadProjectsForThread(updatedThread)
                     buildAndSyncMemoryContext()
                     await syncActiveMemoryContext()
+                    // M-09: project removed via UI — sync FileSystem immediately.
+                    await syncFileSystemForActiveThread()
                 }
                 print("[ChappieViewModel] Project removed from thread '\(thread.title)'")
             } catch {
@@ -260,6 +264,8 @@ extension ChappieViewModel {
                 await loadProjectsForThread(updatedThread)
                 buildAndSyncMemoryContext()
                 await syncActiveMemoryContext()
+                // M-09: project changed via AI tool — sync FileSystem immediately.
+                await syncFileSystemForActiveThread()
             }
         } catch {
             print("[ChappieViewModel] Error reloading after project change: \(error)")

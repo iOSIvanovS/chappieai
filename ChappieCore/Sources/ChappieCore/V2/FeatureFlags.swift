@@ -19,5 +19,5 @@ public enum FeatureFlags {
     // - ToolAccessController replaces static ToolAccessControl
     // - Per-thread ProviderSnapshot instead of global AIProviderStore
     // - UserDefaults replaced by SwiftData for all persistent state
-    public static let useThreadIsolationV2: Bool = false
+    public static let useThreadIsolationV2: Bool = true
 }
