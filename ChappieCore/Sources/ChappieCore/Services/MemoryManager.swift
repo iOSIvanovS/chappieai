@@ -1,66 +1,27 @@
-// MemoryManager.swift
-// ChappieCore
+// MemoryManager.swift — central memory manager for the three-level memory system (IT-08).
 //
-// Менеджер памяти — центральный компонент системы контекстной памяти ИИ-ассистента.
+// STORAGE BACKENDS:
+// - SwiftData (MemoryStore) — primary backend for all memory operations.
+// - ~/Documents/Chappie/semantic.json — legacy file (migration/fallback only).
 //
-// АРХИТЕКТУРНОЕ РЕШЕНИЕ: Используем actor для обеспечения безопасного конкурентного доступа
-// в Swift 6. Это гарантирует, что все операции с файловой системой выполняются последовательно,
-// исключая состояния гонки при параллельных запросах от нескольких чатов или агентов.
+// SCOPE RESOLUTION (IT-08):
+// ToolExecutionService passes ActiveMemoryContext on each memory tool call.
+// resolveScope() maps (scope, targetName) → storage scope string:
+//   scope="global"       → "global"
+//   scope="thread"       → active thread UUID
+//   targetName="Chappie" → project UUID (must be attached to thread)
 //
-// ТРЁХУРОВНЕВАЯ ПАМЯТЬ (IT-08):
-// 1. Глобальная (scope = "global")     — факты, стиль общения, кросс-проектные правила
-// 2. Проектная  (scope = "<projectId>") — архитектура, пайплайны, договорённости проекта
-// 3. Тредовая   (scope = "<threadId>") — контекст текущей задачи, временные заметки
-//
-// МАППИНГ SCOPE (IT-08):
-// ToolExecutionService передаёт ActiveMemoryContext при каждом вызове инструмента памяти.
-// MemoryManager.resolveScope() преобразует (scope, targetName) → строку scope для MemoryStore:
-//   - scope="global"       → "global"
-//   - scope="thread"       → UUID активного треда (из ActiveMemoryContext.threadId)
-//   - targetName="Chappie" → UUID проекта с именем "Chappie" (из ActiveMemoryContext.projects)
-//
-// РАЗРЕШЕНИЕ КОНФЛИКТОВ (IT-08):
-// Если инструмент указывает targetName="Chappie" но в треде нет такого проекта —
-// возвращаем ошибку с подсказкой. Чаппи должен сначала добавить проект через add_project_to_thread.
-//
-// ДВОЙНОЙ БЭКЕНД (IT-03 → IT-08):
-// MemoryManager работает с ДВУМЯ бэкендами:
-// 1. Файловый (legacy): ~/Documents/Chappie/semantic.json — для обратной совместимости
-// 2. SwiftData (новый): MemoryStore — для трёхуровневой памяти
-//
-// После IT-08 инструменты memorize/recall/search/delete пишут ТОЛЬКО в SwiftData.
-// Файловый бэкенд используется только для buildSystemPrompt (legacy блок) и миграции.
-//
-// ФИНАЛЬНАЯ СТРУКТУРА ПАМЯТИ:
-//
-//   SwiftData MemoryEntity              — ОСНОВНОЙ бэкенд трёхуровневой памяти.
-//                                         scope: "global" | "<projectId>" | "<threadId>"
-//
-//   ~/Documents/Chappie/semantic.json   — LEGACY файл (только для миграции и фолбэка).
-//
-// ФАЙЛЫ АРХИТЕКТУРЫ (architecture.md):
-// Это ДОКУМЕНТАЦИЯ, а не данные. Чаппи читает и пишет их через инструменты
-// read_file/write_file как обычные текстовые файлы.
-// MemoryManager НЕ создаёт и НЕ управляет architecture.md автоматически.
-// Файлы архитектуры создаются ТОЛЬКО вручную по договорённости с пользователем.
-//
-// БЕЗ ЭМОДЗИ В SYSTEM PROMPT (MEMORY-ENGLISH + TOKEN-EFFICIENCY):
-// Все заголовки секций памяти в buildSystemPrompt() — только чистый текст без эмодзи.
-// ПРИЧИНА: каждый эмодзи = 2-4 токена, ~30 эмодзи в промпте = ~90 токенов впустую.
-// Плюс: кэширование промпта работает лучше на стабильном ASCII-тексте.
-// Формат заголовков: "## Global Memory", "## Project Memory: Chappie", "## Thread Context".
-//
-// PROJECT SETTINGS В SYSTEM PROMPT (IT-09):
-// buildSystemPrompt() теперь вставляет блок "## Project Settings: <name>" для каждого проекта
-// у которого есть настройки в MemoryContext.ProjectInfo.settings.
-// Это ПЕРВЫЙ блок после базового промпта — агент знает права ДО работы с памятью.
-// Формат: ProjectSettings.formatForSystemPrompt(projectName:).
+// SYSTEM PROMPT STRUCTURE (IT-09):
+// 1. Project Settings (agent rights — injected first)
+// 2. Global Memory
+// 3. Project Memory (one block per project)
+// 4. Thread Context
 
 import Foundation
 
-// MARK: - Модели данных
+// MARK: - Legacy models (file backend only)
 
-/// Запись в памяти ИИ-ассистента (legacy — используется только для файлового бэкенда).
+/// Memory record for legacy JSON file backend.
 public struct MemoryRecord: Codable, Sendable {
     public let type: String
     public let timestamp: Date
@@ -73,13 +34,13 @@ public struct MemoryRecord: Codable, Sendable {
     }
 }
 
-/// Область видимости памяти — используется в legacy API инструментов.
+/// Legacy scope enum — used only in old public API.
 public enum MemoryScope: String, Codable, Sendable {
     case project
     case global
 }
 
-// MARK: - Описание таргета
+// MARK: - Workspace target models
 
 public enum TargetKind: Sendable {
     case appTarget
@@ -111,22 +72,17 @@ public struct TargetScanResult: Sendable {
 
 // MARK: - MemoryManager
 
-/// Центральный менеджер памяти ИИ-ассистента Chappie.
+/// Central memory manager for Chappie.
 ///
-/// Архитектура хранения (IT-08):
-/// - Трёхуровневая память: SwiftData через MemoryStore (основной путь)
-/// - Legacy-память: ~/Documents/Chappie/semantic.json (только для миграции/фолбэка)
-///
-/// Почему actor: MemoryManager работает с файловой системой из нескольких мест
-/// параллельно. Actor гарантирует сериализацию доступа и отсутствие гонок данных
-/// в соответствии с требованиями Swift 6 Concurrency.
+/// Uses `actor` for safe concurrent access (Swift 6): all file system operations
+/// are serialized, preventing data races from parallel tool calls.
 public actor MemoryManager {
 
-    // MARK: - Публичные свойства
+    // MARK: - Public properties
 
     public let workspaceURL: URL
 
-    // MARK: - Приватные свойства
+    // MARK: - Private properties
 
     private let fileManager = FileManager.default
     private var targets: [WorkspaceTarget] = []
@@ -138,25 +94,23 @@ public actor MemoryManager {
         return docs.appendingPathComponent("Chappie/semantic.json")
     }
 
-    // MARK: - Инициализация
+    // MARK: - Init
 
     public init(workspaceURL: URL) {
         self.workspaceURL = workspaceURL
     }
 
-    // MARK: - Подключение SwiftData бэкенда (IT-03)
+    // MARK: - SwiftData backend setup
 
     public func setMemoryStore(_ store: MemoryStore) {
         self.memoryStore = store
         print("[MemoryManager] MemoryStore connected (SwiftData backend active)")
     }
 
-    // MARK: - Публичный метод инициализации
+    // MARK: - Workspace initialization
 
-    /// Инициализирует файловую структуру памяти для воркспейса.
-    ///
-    /// ВАЖНО: architecture.md файлы НЕ создаются автоматически.
-    /// Они создаются только вручную по договорённости с пользователем.
+    /// Sets up file structure for the workspace memory.
+    /// NOTE: architecture.md files are NOT created automatically — only by explicit user agreement.
     public func initializeWorkspaceMemory() async {
         guard !isInitialized else { return }
 
@@ -173,39 +127,14 @@ public actor MemoryManager {
         print("[MemoryManager] Initialization complete. Targets: \(targets.count). Memory: ~/Documents/Chappie/semantic.json")
     }
 
-    // MARK: - ТРЁХУРОВНЕВАЯ ПАМЯТЬ: Сборка System Prompt (IT-03, IT-08, IT-09)
+    // MARK: - System prompt assembly (IT-08, IT-09)
 
-    /// Собирает полный system prompt с подмешанной трёхуровневой памятью и настройками проектов.
+    /// Builds the full system prompt with injected memory and project settings.
     ///
-    /// СТРУКТУРА ИТОГОВОГО ПРОМПТА (IT-09):
-    /// ```
-    /// [базовый промпт — захардкоженные правила Чаппи]
+    /// Block order (IT-09): Project Settings → Global Memory → Project Memory → Thread Context.
+    /// Project Settings is first so the agent knows its rights before reading memory.
     ///
-    /// ---
-    /// ## Memory Context
-    ///
-    /// ## Project Settings: Chappie          ← IT-09: блок прав агента (первым!)
-    /// - Role: EXECUTOR
-    /// - Git: write [git_status, git_add, git_commit, git_log, git_reset]
-    /// ...
-    ///
-    /// ## Global Memory                       ← глобальная память
-    /// - [fact] user_name: Alexey
-    ///
-    /// ## Project Memory: Chappie             ← проектная память
-    /// - [project_map] architecture: { ... }
-    ///
-    /// ## Thread Context                      ← тредовая память
-    /// - [task] current_task: Thread refactoring
-    /// ```
-    ///
-    /// ПОРЯДОК БЛОКОВ (IT-09):
-    /// 1. Project Settings (права) — агент должен знать ограничения ДО работы с памятью
-    /// 2. Global Memory
-    /// 3. Project Memory (по одному блоку на проект)
-    /// 4. Thread Context
-    ///
-    /// FALLBACK: если MemoryStore не подключён — возвращает только базовый промпт.
+    /// Falls back to base prompt only if MemoryStore is not connected.
     public func buildSystemPrompt(
         basePrompt: String,
         memoryContext: MemoryContext
@@ -235,9 +164,7 @@ public actor MemoryManager {
 
         var memoryBlocks: [String] = []
 
-        // IT-09: БЛОКИ НАСТРОЕК ПРОЕКТОВ — вставляем ПЕРВЫМИ.
-        // Агент должен знать свои права до того как увидит память.
-        // Это позволяет ему заранее выбрать правильный подход.
+        // Project Settings first — agent must know its rights before seeing memory.
         for info in memoryContext.projectInfos {
             if let settings = info.settings {
                 let settingsBlock = settings.formatForSystemPrompt(projectName: info.name)
@@ -245,7 +172,7 @@ public actor MemoryManager {
             }
         }
 
-        // ГЛОБАЛЬНАЯ ПАМЯТЬ: SwiftData + legacy файл (с дедупликацией, SwiftData приоритет)
+        // Global memory: merge SwiftData + legacy file (SwiftData wins on key conflict).
         let globalSwiftDataEntries = entriesByScope["global"] ?? []
         let legacyEntries = loadLegacyMemoryForPrompt()
         let globalBlock = buildMemoryBlock(
@@ -257,7 +184,7 @@ public actor MemoryManager {
             memoryBlocks.append(block)
         }
 
-        // ПРОЕКТНАЯ ПАМЯТЬ: по одному блоку на проект
+        // One block per project.
         for info in memoryContext.projectInfos {
             let projectEntries = entriesByScope[info.id.uuidString] ?? []
             guard !projectEntries.isEmpty else { continue }
@@ -268,7 +195,7 @@ public actor MemoryManager {
             }
         }
 
-        // ТРЕДОВАЯ ПАМЯТЬ
+        // Thread context.
         if let threadId = memoryContext.threadId {
             let threadEntries = entriesByScope[threadId.uuidString] ?? []
             if !threadEntries.isEmpty {
@@ -289,7 +216,7 @@ public actor MemoryManager {
         return basePrompt + "\n\n" + memorySection
     }
 
-    // MARK: - Обратная совместимость: старая сигнатура buildSystemPrompt (IT-08 legacy)
+    // MARK: - Legacy buildSystemPrompt overload (IT-08 compat)
 
     public func buildSystemPrompt(
         basePrompt: String,
@@ -303,7 +230,7 @@ public actor MemoryManager {
         return await buildSystemPrompt(basePrompt: basePrompt, memoryContext: context)
     }
 
-    // MARK: - UUID-based методы памяти (IT-08, основной путь)
+    // MARK: - Three-level memory CRUD (IT-08, primary path)
 
     public func saveMemoryEntry(key: String, type: String, jsonString: String, scope: String) async -> String? {
         guard let store = memoryStore else {
@@ -368,7 +295,7 @@ public actor MemoryManager {
         }
     }
 
-    // MARK: - Публичные методы чтения/записи (legacy файловый бэкенд)
+    // MARK: - Legacy public API (file backend)
 
     public func saveMemory(key: String, type: String, jsonString: String, scope: MemoryScope = .project, targetName: String? = nil) async {
         await ensureInitialized()
@@ -400,7 +327,7 @@ public actor MemoryManager {
         }
     }
 
-    // MARK: - Вспомогательные публичные методы
+    // MARK: - Public helpers
 
     public func allTargets() async -> [WorkspaceTarget] {
         await ensureInitialized()
@@ -412,7 +339,7 @@ public actor MemoryManager {
         return appTarget()
     }
 
-    // MARK: - Приватные методы инициализации
+    // MARK: - Private: initialization
 
     private func ensureInitialized() async {
         guard !isInitialized else { return }
@@ -552,27 +479,23 @@ public actor MemoryManager {
         }
     }
 
-    // MARK: - Приватные вспомогательные методы
+    // MARK: - Private: helpers
 
     private func appTarget() -> WorkspaceTarget? {
         targets.first { $0.kind == .appTarget }
     }
-
-    // MARK: - Форматирование памяти для промпта (приватные хелперы)
 
     private func loadLegacyMemoryForPrompt() -> [MemoryEntry] {
         let storage = readStorage(at: globalFileURL)
         guard !storage.isEmpty else { return [] }
 
         return storage.map { key, record in
-            MemoryEntry(
-                key: key,
-                type: record.type,
-                jsonString: record.data
-            )
+            MemoryEntry(key: key, type: record.type, jsonString: record.data)
         }
     }
 
+    /// Merges SwiftData and legacy entries into a formatted memory block.
+    /// SwiftData wins on key conflict (deduplication).
     private func buildMemoryBlock(
         title: String,
         swiftDataEntries: [MemoryEntry],
@@ -608,7 +531,7 @@ public actor MemoryManager {
         return lines.joined(separator: "\n")
     }
 
-    // MARK: - Низкоуровневые операции с файлами (legacy)
+    // MARK: - Private: low-level file operations (legacy backend)
 
     private func readStorage(at url: URL) -> [String: MemoryRecord] {
         guard fileManager.fileExists(atPath: url.path),
