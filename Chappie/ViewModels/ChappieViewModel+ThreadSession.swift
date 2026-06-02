@@ -25,6 +25,12 @@
 //   and on ToolExecutionService (→ file tools blocked) before bookmark resolution starts.
 //   Both are set true after FileSystem is wired. This prevents stale FS responses
 //   during thread switch when bookmark resolution is slow (100ms–1s per project).
+//
+// SYNC TASK CANCELLATION:
+//   _syncTask holds the current background Task launched by selectThread().
+//   On every selectThread() call, the previous Task is cancelled before a new one starts.
+//   This prevents a slow syncFileSystemForActiveThread() from a previous thread from
+//   racing with the new thread's sync and leaving isFileSystemReady in a wrong state.
 
 import Foundation
 import ChappieCore
@@ -46,6 +52,10 @@ extension ChappieViewModel {
     func assembleThreadSession(for thread: ThreadMetadata) async {
         guard FeatureFlags.useThreadIsolationV2,
               let store = memoryStore else { return }
+
+        // Check cancellation before doing any work — if a newer selectThread()
+        // already cancelled this task, bail out immediately.
+        guard !Task.isCancelled else { return }
 
         let builder = New.SystemPromptBuilder(personaBlock: Self.v2PersonaBlock)
 
@@ -94,6 +104,10 @@ extension ChappieViewModel {
     ///   2. ts.setFileSystemReady(false) → ToolExecutionService blocks file/git/build tools.
     ///   Both are reset to true after FileSystem is wired into ToolExecutionService.
     ///
+    /// CANCELLATION: checks Task.isCancelled before and after each async step.
+    /// If a newer selectThread() cancelled this task — exits without touching isFileSystemReady,
+    /// so the new thread's sync takes full ownership of the readiness state.
+    ///
     /// WHY multi-workspace: B-01 — previously only the first project was visible.
     /// Each project's bookmark is resolved independently; failures are logged and skipped.
     func syncFileSystemForActiveThread() async {
@@ -103,6 +117,7 @@ extension ChappieViewModel {
         // No projects → restore global fileSystem (the one from workspaceURL).
         // No bookmark resolution needed — mark ready immediately.
         guard !activeProjects.isEmpty else {
+            guard !Task.isCancelled else { return }
             if let globalFS = fileSystem {
                 await ts.setFileSystem(globalFS)
                 print("[ChappieViewModel] M-09: No projects — restored global fileSystem")
@@ -122,6 +137,9 @@ extension ChappieViewModel {
         var workspaces: [(name: String, url: URL)] = []
 
         for project in activeProjects {
+            // Check cancellation before each bookmark resolution — each can take 100ms+.
+            guard !Task.isCancelled else { return }
+
             guard let bookmarkData = try? await pStore.loadBookmark(forProjectId: project.id),
                   !bookmarkData.isEmpty else {
                 print("[ChappieViewModel] M-09: No bookmark for '\(project.displayName)' — skipped")
@@ -156,6 +174,10 @@ extension ChappieViewModel {
                 print("[ChappieViewModel] M-09: ❌ Could not resolve bookmark for '\(project.displayName)'")
             }
         }
+
+        // Final cancellation check before wiring the FileSystem.
+        // If cancelled here — the new thread's sync will set isFileSystemReady itself.
+        guard !Task.isCancelled else { return }
 
         if workspaces.isEmpty {
             print("[ChappieViewModel] M-09: No workspaces resolved — keeping current fileSystem")

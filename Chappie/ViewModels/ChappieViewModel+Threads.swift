@@ -43,6 +43,14 @@ extension ChappieViewModel {
     func selectThread(_ thread: ThreadMetadata) async {
         guard let store = threadStore else { return }
 
+        // Cancel any in-flight background sync from a previous thread switch.
+        // WHY: syncFileSystemForActiveThread() can take 100ms–2s per project (bookmark resolution).
+        // Without cancellation, a slow previous sync races with the new one and can leave
+        // isFileSystemReady in an inconsistent state (e.g. set to true by the old thread's sync
+        // after the new thread's sync already started its own bookmark resolution).
+        _syncTask?.cancel()
+        _syncTask = nil
+
         // Instant UI reset — user sees spinner immediately
         self.isLoadingThread = true
         self.messages = []
@@ -73,23 +81,29 @@ extension ChappieViewModel {
 
         // Background: load messages + projects + memory + FS.
         // All of this runs after SwiftUI renders the empty chat frame.
-        Task { [weak self] in
+        // Stored in _syncTask so a subsequent selectThread() can cancel it immediately.
+        _syncTask = Task { [weak self] in
             guard let self else { return }
 
             // Load messages — the only remaining SwiftData hit on thread switch.
             // Runs in background so the empty chat is visible immediately.
             if let loaded = try? await store.loadMessages(fromThreadId: thread.id, as: ChatMessage.self) {
+                guard !Task.isCancelled else { return }
                 self.messages = loaded
                 self.resetPagination(fireScrollTrigger: true)
                 print("[ChappieViewModel] Thread '\(thread.title)' selected (\(loaded.count) messages)")
             }
 
+            guard !Task.isCancelled else { return }
             await self.loadProjectsForThread(thread)
+
+            guard !Task.isCancelled else { return }
             self.buildAndSyncMemoryContext()
             await self.syncActiveMemoryContext()
             self.refreshBalanceForActiveProvider()
 
             // V2: assemble session + sync FileSystem — slowest part, runs last.
+            guard !Task.isCancelled else { return }
             await self.assembleThreadSession(for: thread)
         }
     }

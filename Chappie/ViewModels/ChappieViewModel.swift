@@ -116,6 +116,14 @@ final class ChappieViewModel {
 
     var currentRequestTask: Task<Void, Never>? = nil
 
+    // MARK: - Background sync task (cancellable)
+
+    /// Holds the current background Task launched by selectThread().
+    /// Cancelled at the start of every new selectThread() call so a slow
+    /// syncFileSystemForActiveThread() from a previous thread cannot race
+    /// with the new thread's sync and corrupt isFileSystemReady state.
+    var _syncTask: Task<Void, Never>? = nil
+
     // MARK: - File system readiness
 
     /// False while syncFileSystemForActiveThread() is resolving bookmarks after thread switch.
