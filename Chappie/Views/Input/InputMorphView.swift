@@ -14,8 +14,9 @@
 //   Subclassing is the ONLY guaranteed approach on macOS.
 // - Plain Enter → send. Shift+Enter or Option+Enter → insert newline.
 // - Dynamic height: measured via NSLayoutManager (handles word-wrap correctly),
-//   capped at maxLines, with linear animation (not spring — avoids 60fps timer loop).
-// - On send: editorHeight resets to minEditorHeight immediately; morph animates to collapsedHeight.
+//   capped at maxLines. NO animation on height — height jumps are instant and imperceptible
+//   at normal typing speed. withAnimation here was firing a display link on every keystroke.
+// - On send: editorHeight resets to minEditorHeight immediately.
 // - On finish/cancel: height restores from editorHeight; editor auto-focuses via coordinator.
 //
 // HEIGHT STRATEGY (CPU-16 — STATIC FOOTER):
@@ -29,9 +30,9 @@
 //
 // CPU-10: THREE ANIMATIONS → ONE TOKEN (morph-only):
 // - Previously three separate .animation(..., value:) modifiers were stacked on the root view.
-// - Fix (CPU-14): animationToken combines ONLY isThinking + attachments.isEmpty.
-//   editorHeight is animated separately via its own .animation modifier scoped to the editor frame.
-//   Morph (thinking↔idle) still gets the full spring. Typing no longer triggers root animation.
+// - Fix: animationToken combines ONLY isThinking + attachments.isEmpty.
+//   editorHeight has NO animation at all — instant, imperceptible, zero cost.
+//   Morph (thinking↔idle) still gets the full spring. Typing no longer triggers any animation.
 //
 // CPU-13: STREAMING ISOLATION:
 // - InputMorphView receives `streaming: StreamingState` instead of separate isThinking
@@ -85,10 +86,9 @@ struct InputMorphView: View {
         return (hasText || hasAttachments) && isWorkspaceSelected && !streaming.isThinking
     }
 
-    /// CPU-14: morph-only animation token — does NOT include editorHeight.
-    /// editorHeight changes on every keystroke → including it here caused a spring
-    /// animation loop on every character (60fps timer-driven → 100% CPU while typing).
-    /// Editor height is animated separately via a dedicated .animation on its .frame.
+    /// Morph-only animation token — combines ONLY isThinking + attachments.isEmpty.
+    /// editorHeight is intentionally excluded: animating height on every keystroke
+    /// fires a display link for 80ms per character → 100% CPU while typing.
     private var morphToken: Int {
         var hasher = Hasher()
         hasher.combine(streaming.isThinking)
@@ -122,12 +122,9 @@ struct InputMorphView: View {
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
         .padding(.horizontal)
         .padding(.bottom, 16)
-        // CPU-14: only morph transitions are animated at root level (thinking↔idle, attachments appear).
-        // editorHeight is NOT in morphToken — typing no longer triggers this spring.
+        // Only morph transitions are animated (thinking↔idle, attachments appear/disappear).
+        // editorHeight is NOT in morphToken — typing triggers zero animation.
         .animation(.spring(response: 0.38, dampingFraction: 0.82), value: morphToken)
-        // CPU-16: onHeightChange callback REMOVED.
-        // ContentView no longer tracks bottomPanelHeight — uses InputLayout.maxPanelHeight instead.
-        // This eliminates the layout pass chain: editorHeight → ContentView state → ChatScrollView.
         .onChange(of: streaming.isThinking) { _, nowThinking in
             if !nowThinking {
                 // Small delay lets the morph animation finish before focusing
@@ -162,13 +159,11 @@ struct InputMorphView: View {
                     isEnabled: isWorkspaceSelected && !streaming.isThinking,
                     onSend: { if canSend { triggerSend() } },
                     onHeightChange: { newHeight in
-                        // Only update while not thinking — avoids fighting the collapse animation.
-                        // CPU-14: animate height change separately so it doesn't pollute morphToken.
-                        if !streaming.isThinking, abs(newHeight - editorHeight) > 1 {
-                            withAnimation(.linear(duration: 0.08)) {
-                                editorHeight = newHeight
-                            }
-                        }
+                        // Instant update — no animation. Height jumps are imperceptible at
+                        // normal typing speed and withAnimation here fires a 80ms display link
+                        // on every keystroke, which was the main cause of 100% CPU while typing.
+                        guard !streaming.isThinking, abs(newHeight - editorHeight) > 1 else { return }
+                        editorHeight = newHeight
                     },
                     onFocusChange: { focused in
                         isEditorFocused = focused
@@ -177,7 +172,6 @@ struct InputMorphView: View {
                         editorCoordinator = coordinator
                     }
                 )
-                // CPU-14: .frame animation is LOCAL to the editor — does not trigger root spring.
                 .frame(height: editorHeight)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
@@ -253,7 +247,6 @@ struct InputMorphView: View {
     private var thinkingView: some View {
         HStack(spacing: 12) {
             // isActive: true because thinkingView is only rendered when streaming.isThinking == true.
-            // No need to pass the flag — the view's existence IS the gate.
             ThinkingGearIcon(isActive: true)
 
             Text(streaming.currentToolCall ?? "Думаю…")
