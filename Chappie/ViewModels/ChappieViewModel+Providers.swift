@@ -90,10 +90,24 @@ extension ChappieViewModel {
             do {
                 let loaded = try await store.loadProviders()
                 self.providers = loaded
-                if let active = activeProvider,
-                   let updated = loaded.first(where: { $0.id == active.id }) {
-                    self.activeProvider = updated
+
+                if let active = activeProvider {
+                    if let updated = loaded.first(where: { $0.id == active.id }) {
+                        // Provider still exists — refresh the local copy.
+                        self.activeProvider = updated
+                    } else {
+                        // Active provider was deleted — invalidate everything so send() is blocked.
+                        // WHY: aiClient and orchestrator hold a stale API key/endpoint and will
+                        // keep sending requests to the deleted provider if not cleared here.
+                        // send() already guards on activeProvider != nil → shows an error to the user.
+                        print("[ChappieViewModel] Active provider was deleted — invalidating aiClient and orchestrator")
+                        self.activeProvider = nil
+                        self.aiClient = nil
+                        self.orchestrator = nil
+                        self.activeModelName = nil
+                    }
                 }
+
                 print("[ChappieViewModel] Providers reloaded: \(loaded.count)")
             } catch {
                 print("[ChappieViewModel] Failed to reload providers: \(error)")
