@@ -119,6 +119,12 @@ struct ChappieTextEditorView: NSViewRepresentable {
         var parent: ChappieTextEditorView
         weak var textView: ChappieTextView?
 
+        // CPU-18: cache last reported height — only fire onHeightChange when it actually changes.
+        // Previously recalculateHeight called onHeightChange on every keystroke even when
+        // the line count didn't change (e.g. typing within the same line).
+        // This eliminated a redundant @State write → SwiftUI layout pass per character.
+        private var lastReportedHeight: CGFloat = 0
+
         init(parent: ChappieTextEditorView) {
             self.parent = parent
         }
@@ -138,7 +144,7 @@ struct ChappieTextEditorView: NSViewRepresentable {
         }
 
         /// Measures real rendered height using NSLayoutManager.
-        /// This correctly handles word-wrap — unlike counting "\n" characters.
+        /// Only calls onHeightChange when the clamped height actually changes.
         func recalculateHeight(_ textView: NSTextView) {
             guard
                 let layoutManager = textView.layoutManager,
@@ -149,11 +155,13 @@ struct ChappieTextEditorView: NSViewRepresentable {
             layoutManager.ensureLayout(for: textContainer)
 
             let usedRect = layoutManager.usedRect(for: textContainer)
-            // usedRect.height reflects actual rendered lines including word-wrap
             let contentHeight = usedRect.height + InputLayout.editorVerticalPadding * 2
             let clamped = min(contentHeight, InputLayout.maxEditorHeight)
             let final = max(clamped, InputLayout.minEditorHeight)
 
+            // CPU-18: skip if height hasn't changed — avoids @State write → layout pass per char
+            guard abs(final - lastReportedHeight) > 0.5 else { return }
+            lastReportedHeight = final
             parent.onHeightChange(final)
         }
 

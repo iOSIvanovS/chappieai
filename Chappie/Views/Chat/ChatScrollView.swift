@@ -21,11 +21,14 @@
 //   → ChatScrollView re-render → footerHeight spacer update → scroll position recalc.
 // Now footerHeight never changes at runtime → no layout pass from typing.
 //
-// SCROLL ANCHOR STRATEGY:
-// sentinel "bottom" is a Color.clear spacer of height footerHeight + bottomGap.
-// anchor: .top means "align the TOP of the sentinel with the BOTTOM of the viewport".
-// This places the last real message just above the input panel — exactly right.
-// anchor: .bottom would overshoot by footerHeight, hiding the last message behind the panel.
+// SCROLL ANCHOR STRATEGY (CPU-19):
+// The sentinel "bottom" is placed BEFORE the footer spacer, not inside it.
+// anchor: .bottom aligns the BOTTOM of the sentinel with the BOTTOM of the viewport.
+// Since the sentinel has zero height, this means: "scroll so the last message is
+// at the bottom of the visible area". The footer spacer below it ensures the last
+// message is NOT hidden behind the input panel.
+// Previous approach (sentinel = footer spacer, anchor: .top) scrolled to the START
+// of the 328pt empty spacer, leaving the last message in the middle of the screen.
 //
 // VSTACK (PAGINATION OVER LAZYVSTACK):
 // Messages are rendered in a plain VStack — all displayed messages are always in the
@@ -41,7 +44,7 @@
 //      was fully populated (end of resetPagination). Uses .task(id:) instead of onChange
 //      because .task(id:) is guaranteed to run AFTER the view body has been applied to
 //      the layout tree. onChange fires during the render pass — before layout is committed.
-//      A 50ms sleep inside the task gives the VStack time to measure its content.
+//      A 150ms sleep gives the VStack time to measure its content on cold start.
 //   2. onChange(messages.count) — new message added to the chat.
 //   3. onChange(streaming.streamingText) — Chappie is streaming (throttled to 1/frame).
 //
@@ -159,11 +162,18 @@ struct ChatScrollView: View {
                         }
                     }
 
-                    // Sentinel spacer. anchor: .top aligns its top edge with the viewport bottom,
-                    // so the last real message sits just above the input panel — not behind it.
+                    // CPU-19: sentinel is placed BEFORE the footer spacer.
+                    // anchor: .bottom aligns the bottom of this zero-height marker with
+                    // the viewport bottom — so the last message is fully visible.
+                    // The footer spacer below provides clearance from the input panel.
+                    Color.clear
+                        .frame(height: 0)
+                        .id("bottom")
+
+                    // Static footer spacer — keeps last message above the input panel.
+                    // Never changes at runtime (CPU-16).
                     Color.clear
                         .frame(height: footerHeight + bottomGap)
-                        .id("bottom")
                 }
                 .padding(.horizontal, 16)
                 .animation(.easeInOut(duration: 0.25), value: streaming.isThinking)
@@ -173,22 +183,23 @@ struct ChatScrollView: View {
             .scrollIndicators(.never)
             .task(id: scrollToBottomTrigger) {
                 guard scrollToBottomTrigger > 0 else { return }
-                try? await Task.sleep(nanoseconds: 50_000_000)
+                // 150ms — enough for VStack to measure content on cold start
+                try? await Task.sleep(nanoseconds: 150_000_000)
                 withAnimation(.easeOut(duration: 0.3)) {
-                    // anchor: .top — top of the sentinel aligns with viewport bottom.
-                    // Last message is fully visible above the input panel.
-                    proxy.scrollTo("bottom", anchor: .top)
+                    // anchor: .bottom — bottom of sentinel aligns with viewport bottom.
+                    // Last message is fully visible just above the input panel.
+                    proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
             .onChange(of: messages.count) { _, _ in
                 withAnimation(.easeOut(duration: 0.3)) {
-                    proxy.scrollTo("bottom", anchor: .top)
+                    proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
             .onChange(of: streaming.isThinking) { _, isThinking in
                 if isThinking {
                     withAnimation(.easeOut(duration: 0.3)) {
-                        proxy.scrollTo("bottom", anchor: .top)
+                        proxy.scrollTo("bottom", anchor: .bottom)
                     }
                 }
             }
@@ -198,7 +209,7 @@ struct ChatScrollView: View {
                 scrollPending = true
                 Task {
                     try? await Task.sleep(nanoseconds: 16_000_000)
-                    proxy.scrollTo("bottom", anchor: .top)
+                    proxy.scrollTo("bottom", anchor: .bottom)
                     scrollPending = false
                 }
             }
