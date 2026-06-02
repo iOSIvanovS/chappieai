@@ -22,6 +22,13 @@
 // After: ModelPickerRow receives `streaming` reference and reads streaming.currentBalance
 // directly — balance updates are isolated to ModelPickerRow only.
 // ChappieViewModel keeps a backward-compat computed var that forwards to streaming.currentBalance.
+//
+// CPU-23: currentToolCall THROTTLED to 200ms.
+// thinkingView animates on every currentToolCall change (.animation value:).
+// Tool calls arrive with every token during tool execution — 30+/sec.
+// Throttle: _rawToolCall stores the real value, currentToolCall is the throttled
+// public property. A Task fires at most once per 200ms to flush _rawToolCall → currentToolCall.
+// Result: thinkingView re-renders at most 5x/sec instead of 30+/sec.
 
 import SwiftUI
 
@@ -35,7 +42,8 @@ final class StreamingState {
     // Updated on every cost delta from the server.
     var runningCost: Double = 0.0
 
-    // Set when a tool call is in progress; nil otherwise.
+    // CPU-23: throttled tool call label — updates at most every 200ms.
+    // Views animate on this; _rawToolCall absorbs the high-frequency writes.
     var currentToolCall: String? = nil
 
     // True while the AI is generating a response.
@@ -45,10 +53,31 @@ final class StreamingState {
     // nil until first response received from server.
     var currentBalance: Double? = nil
 
+    // MARK: - CPU-23: Throttle internals
+
+    // Raw value written at full token rate — NOT observed by views.
+    private var _rawToolCall: String? = nil
+    private var _throttleTask: Task<Void, Never>? = nil
+
+    /// Write tool call at full token rate — throttled flush to `currentToolCall` every 200ms.
+    func setToolCall(_ value: String?) {
+        _rawToolCall = value
+        guard _throttleTask == nil else { return }
+        _throttleTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            guard let self else { return }
+            self.currentToolCall = self._rawToolCall
+            self._throttleTask = nil
+        }
+    }
+
     func reset() {
         streamingText = ""
         runningCost = 0.0
         currentToolCall = nil
+        _rawToolCall = nil
+        _throttleTask?.cancel()
+        _throttleTask = nil
         isThinking = false
         // currentBalance is NOT reset — it persists across requests.
     }

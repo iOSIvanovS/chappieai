@@ -19,13 +19,12 @@
 // - On send: editorHeight resets to minEditorHeight immediately.
 // - On finish/cancel: height restores from editorHeight; editor auto-focuses via coordinator.
 //
-// HEIGHT STRATEGY (CPU-21 — DYNAMIC FOOTER):
-// - panelHeight: Binding<CGFloat> is passed from ContentView.
-// - When editor height changes (line count changes, not per character), panelHeight is updated.
-// - ChatScrollView uses panelHeight as footerHeight — spacer grows with the panel.
-// - This allows the user to scroll the last message above the expanded panel.
-// - Cost: 1 layout pass per LINE added — Coordinator cache (lastReportedHeight) ensures
-//   this fires only on actual line count changes, not on every keystroke.
+// FOOTER HEIGHT STRATEGY (CPU-22):
+// ContentView measures the actual rendered height of InputMorphView via onGeometryChange
+// and passes it to ChatScrollView as footerHeight. This is exact regardless of content
+// (attachment row, multi-line text, thinking state). No manual math needed here.
+// Previously: panelHeight Binding + updatePanelHeight() formula — inaccurate when
+// attachment row appeared because the formula didn't account for it.
 //
 // CPU-10: THREE ANIMATIONS → ONE TOKEN (morph-only):
 // - Previously three separate .animation(..., value:) modifiers were stacked on the root view.
@@ -37,6 +36,9 @@
 // - InputMorphView receives `streaming: StreamingState` instead of separate isThinking
 //   and currentToolCall parameters. It reads streaming.isThinking and streaming.currentToolCall
 //   directly — subscribing to StreamingState, NOT to ViewModel.
+//
+// CPU-23: currentToolCall is throttled to 200ms in StreamingState.
+// thinkingView animates on every currentToolCall change — throttle prevents 30+ redraws/sec.
 //
 // MULTIMODAL:
 // - Paperclip button opens NSOpenPanel (images, PDF, text, any file).
@@ -62,9 +64,6 @@ struct InputMorphView: View {
     @Binding var prompt: String
     /// Pending file attachments — owned by ContentView, shared via @Binding.
     @Binding var attachments: [AttachedFile]
-    /// CPU-21: actual panel height — written here, read by ChatScrollView as footerHeight.
-    /// Updated only when line count changes (not per character) via Coordinator cache.
-    @Binding var panelHeight: CGFloat
     let isWorkspaceSelected: Bool
 
     /// CPU-13: isolated streaming state — read directly, not via ViewModel.
@@ -139,7 +138,6 @@ struct InputMorphView: View {
             // When prompt is cleared externally (after send) — reset editor height immediately.
             if newValue.isEmpty {
                 editorHeight = InputLayout.minEditorHeight
-                updatePanelHeight(editorHeight: InputLayout.minEditorHeight)
             }
         }
     }
@@ -168,7 +166,6 @@ struct InputMorphView: View {
                         // CPU-18: Coordinator cache ensures this fires only on line count change.
                         guard !streaming.isThinking, abs(newHeight - editorHeight) > 1 else { return }
                         editorHeight = newHeight
-                        updatePanelHeight(editorHeight: newHeight)
                     },
                     onFocusChange: { focused in
                         isEditorFocused = focused
@@ -254,6 +251,8 @@ struct InputMorphView: View {
             // isActive: true because thinkingView is only rendered when streaming.isThinking == true.
             ThinkingGearIcon(isActive: true)
 
+            // CPU-23: currentToolCall is throttled to 200ms in StreamingState.
+            // Animation here fires at most 5x/sec instead of 30+/sec.
             Text(streaming.currentToolCall ?? "Думаю…")
                 .font(.system(size: 12, weight: .regular, design: .monospaced))
                 .lineLimit(1)
@@ -274,16 +273,6 @@ struct InputMorphView: View {
     }
 
     // MARK: - Private Helpers
-
-    /// Converts editor content height into full panel height and writes to panelHeight binding.
-    /// Panel height = editorHeight + innerPadding*2 (VStack) + outerPadding (ZStack) + bottomPadding.
-    private func updatePanelHeight(editorHeight: CGFloat) {
-        let newPanelHeight = editorHeight
-            + InputLayout.innerPadding * 2   // top+bottom padding inside the panel background
-            + InputLayout.outerBottomPadding  // .padding(.bottom, 16) outside
-            + InputLayout.innerPadding        // .padding(12) on ZStack
-        panelHeight = newPanelHeight
-    }
 
     private func triggerSend() {
         let pending = attachments
@@ -315,14 +304,12 @@ struct InputMorphView: View {
 // MARK: - Preview
 
 #Preview("Idle — empty") {
-    @Previewable @State var panelHeight: CGFloat = InputLayout.minPanelHeight
     let streaming = StreamingState()
     return VStack {
         Spacer()
         InputMorphView(
             prompt: .constant(""),
             attachments: .constant([]),
-            panelHeight: $panelHeight,
             isWorkspaceSelected: true,
             streaming: streaming,
             onSend: { _ in },
@@ -333,14 +320,12 @@ struct InputMorphView: View {
 }
 
 #Preview("Idle — multiline") {
-    @Previewable @State var panelHeight: CGFloat = InputLayout.minPanelHeight
     let streaming = StreamingState()
     return VStack {
         Spacer()
         InputMorphView(
             prompt: .constant("Строка 1\nСтрока 2\nСтрока 3\nСтрока 4\nСтрока 5"),
             attachments: .constant([]),
-            panelHeight: $panelHeight,
             isWorkspaceSelected: true,
             streaming: streaming,
             onSend: { _ in },
@@ -351,7 +336,6 @@ struct InputMorphView: View {
 }
 
 #Preview("Thinking — tool call") {
-    @Previewable @State var panelHeight: CGFloat = InputLayout.minPanelHeight
     let streaming = StreamingState()
     streaming.isThinking = true
     streaming.currentToolCall = "write_file → Chappie/Views/Input/InputMorphView.swift"
@@ -360,7 +344,6 @@ struct InputMorphView: View {
         InputMorphView(
             prompt: .constant(""),
             attachments: .constant([]),
-            panelHeight: $panelHeight,
             isWorkspaceSelected: true,
             streaming: streaming,
             onSend: { _ in },

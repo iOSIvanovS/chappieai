@@ -17,9 +17,16 @@
 //
 // CPU-15: currentBalance MOVED TO StreamingState.
 // Was updated via onBalanceUpdate on every streaming token — caused topPanel
-// (ModelPickerRow) to re-render on every cost delta. Now ModelPickerRow reads
-// streaming.currentBalance directly via the StreamingState reference.
+// (ModelPickerRow) to re-render on every cost delta. Before this move: topPanel
+// read viewModel.currentBalance → ContentView subscribed to ViewModel for balance
+// → every balance update re-rendered topPanel + all its children.
+// After: ModelPickerRow receives `streaming` reference and reads streaming.currentBalance
+// directly — balance updates are isolated to ModelPickerRow only.
 // ChappieViewModel keeps a backward-compat computed var for legacy call-sites.
+//
+// CPU-23: currentToolCall setter routes through streaming.setToolCall() — throttled to 200ms.
+// Direct writes to streaming.currentToolCall are replaced with setToolCall() so the
+// thinkingView animation fires at most 5x/sec instead of 30+/sec during tool calls.
 
 import SwiftUI
 import ChappieCore
@@ -66,9 +73,11 @@ final class ChappieViewModel {
         set { streaming.runningCost = newValue }
     }
 
+    // CPU-23: setter routes through throttled setToolCall() — 200ms throttle.
+    // Direct assignment would bypass the throttle and fire animation on every token.
     var currentToolCall: String? {
         get { streaming.currentToolCall }
-        set { streaming.currentToolCall = newValue }
+        set { streaming.setToolCall(newValue) }
     }
 
     /// CPU-15: balance forwarded to/from StreamingState.

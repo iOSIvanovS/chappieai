@@ -15,16 +15,18 @@
 // Sentinel "bottom" has zero height and sits BEFORE the footer spacer.
 // anchor: .top → the TOP of the sentinel aligns with the BOTTOM of the viewport.
 // This means the last message lands just above the sentinel — just above the
-// collapsed input panel. The footer spacer (minPanelHeight + gap) below the
-// sentinel provides clearance from the actual panel chrome.
+// input panel. The footer spacer (footerHeight) below the sentinel provides
+// physical clearance from the actual panel chrome.
 // WHY NOT anchor: .bottom — that would align the BOTTOM of the sentinel with
 // the viewport bottom, placing it below the panel — last message gets covered.
 //
-// STATIC FOOTER HEIGHT:
-// footerHeight = InputLayout.minPanelHeight — reserved for the collapsed panel.
-// maxPanelHeight was overkill: it left 268pt of empty space, pushing the last
-// message to the middle of the screen. minPanelHeight (88pt) is the actual
-// panel height when the editor has one line — the common idle state.
+// FOOTER HEIGHT (CPU-22):
+// footerHeight = currentPanelHeight, measured via onGeometryChange in ContentView.
+// This is the exact rendered height of InputMorphView — no manual formula, no gap.
+// When the panel grows (multi-line text, attachment row), footerHeight grows too,
+// so the user can always scroll the last message above the expanded panel.
+// Previously: minPanelHeight (88pt) was static — expanding panel covered messages
+// and the user couldn't scroll them into view.
 //
 // VSTACK (PAGINATION OVER LAZYVSTACK):
 // Messages are rendered in a plain VStack — all displayed messages are always in the
@@ -104,13 +106,9 @@ struct ChatScrollView: View {
     /// Height of the top floating panel — transparent header spacer.
     let headerHeight: CGFloat
 
-    /// Height of the bottom floating panel — transparent footer spacer.
-    /// Uses minPanelHeight: reserves space for collapsed panel only.
-    /// Sentinel + anchor:.top handles positioning; this spacer just provides clearance.
+    /// Height of the bottom floating panel — exact measured height of InputMorphView.
+    /// CPU-22: measured via onGeometryChange in ContentView, grows with the panel.
     let footerHeight: CGFloat
-
-    // Gap between sentinel and the actual panel chrome.
-    private let bottomGap: CGFloat = 12
 
     // CPU-05: debounce flag — true while a scroll task is already scheduled.
     // Prevents firing proxy.scrollTo on every streaming token (dozens/sec).
@@ -167,10 +165,11 @@ struct ChatScrollView: View {
                         .frame(height: 0)
                         .id("bottom")
 
-                    // Footer spacer: provides physical clearance between sentinel and
-                    // the window bottom edge so content isn't hidden behind the panel.
+                    // Footer spacer: exact panel height — provides physical clearance
+                    // so content isn't hidden behind the floating input panel.
+                    // CPU-22: footerHeight = measured InputMorphView height, grows dynamically.
                     Color.clear
-                        .frame(height: footerHeight + bottomGap)
+                        .frame(height: footerHeight)
                 }
                 .padding(.horizontal, 16)
                 .animation(.easeInOut(duration: 0.25), value: streaming.isThinking)
@@ -183,8 +182,6 @@ struct ChatScrollView: View {
                 // 150ms — enough for VStack to measure content on cold start.
                 try? await Task.sleep(nanoseconds: 150_000_000)
                 withAnimation(.easeOut(duration: 0.3)) {
-                    // anchor: .top — TOP of sentinel = BOTTOM of viewport.
-                    // Last message lands just above the collapsed input panel.
                     proxy.scrollTo("bottom", anchor: .top)
                 }
             }
@@ -314,9 +311,10 @@ struct ChatScrollView: View {
         HStack(alignment: .bottom, spacing: 8) {
             ZStack(alignment: .bottomTrailing) {
                 HStack(alignment: .bottom, spacing: 0) {
+                    // CPU-23: removed .animation(.linear(duration: 0.08), value: streamingText).
+                    // That animation fired a display link on every token (30+/sec).
+                    // Text appends are instant — no animation needed, imperceptible at token rate.
                     MarkdownTextView(text: streaming.streamingText, fontSize: 14)
-                        .contentTransition(.interpolate)
-                        .animation(.linear(duration: 0.08), value: streaming.streamingText)
 
                     BlinkingCursor()
                         .padding(.bottom, 1)

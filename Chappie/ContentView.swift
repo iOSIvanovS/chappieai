@@ -21,7 +21,7 @@
 //   rounded pill with ultraThinMaterial. The outer VStack is transparent.
 //   Bottom panel: InputMorphView — ultraThinMaterial.
 //   Top panel reports its height so ChatScrollView can add a matching header spacer.
-//   Bottom panel uses currentPanelHeight — tracks actual panel height for footer spacer.
+//   Bottom panel height is measured via onGeometryChange — exact, no manual math.
 //
 // CPU-08: WHY onGeometryChange INSTEAD OF GeometryReader:
 //   GeometryReader placed in .background participates in measurement and can cause
@@ -56,26 +56,23 @@
 //   directly — balance updates during streaming no longer invalidate ContentView or topPanel.
 //   ContentView does NOT read streaming.currentBalance — only ModelPickerRow does.
 //
-// CPU-16: STATIC FOOTER HEIGHT:
-//   bottomPanelHeight @State removed entirely. InputMorphView no longer has onHeightChange.
-//   ChatScrollView receives footerHeight: InputLayout.minPanelHeight — collapsed panel height.
-//   Previously: editorHeight changed on every keystroke → onHeightChange callback →
-//   bottomPanelHeight state update → ContentView layout pass → ChatScrollView re-render.
-//   That chain fired on every character and was the main source of 75% CPU while typing.
-//
 // CPU-20: SCROLL ANCHOR FIX:
 //   footerHeight changed from maxPanelHeight (268pt) to minPanelHeight (88pt).
 //   Sentinel "bottom" uses anchor:.top — TOP of sentinel aligns with BOTTOM of viewport.
 //   This means the last message lands just above the collapsed input panel, not in the
 //   middle of the screen. Footer spacer provides physical clearance from panel chrome.
 //
-// CPU-21: DYNAMIC FOOTER FOR SCROLL CLEARANCE:
-//   currentPanelHeight tracks the actual rendered panel height via @Binding in InputMorphView.
-//   ChatScrollView footerHeight = currentPanelHeight so the scroll area always has enough
-//   room to pull the last message above the expanded panel.
-//   Cost: 1 layout pass per LINE added (not per character) — Coordinator cache ensures this.
-//   Without this: when panel expands to 5+ lines, last message is hidden behind it and
-//   the user can't scroll it into view.
+// CPU-22: EXACT FOOTER HEIGHT via onGeometryChange:
+//   currentPanelHeight is now measured directly from the rendered InputMorphView via
+//   onGeometryChange on the bottomPanel view. This replaces the manual formula in
+//   updatePanelHeight() which was inaccurate when attachment row appeared.
+//   panelHeight Binding removed from InputMorphView — it no longer needs to know
+//   about its own height. ContentView owns the measurement.
+//   ChatScrollView footerHeight = currentPanelHeight — grows with the actual panel.
+//
+// CPU-23: THINKING INDICATOR CPU:
+//   currentToolCall in StreamingState is throttled to 200ms via setToolCall().
+//   thinkingView animation fires at most 5x/sec instead of 30+/sec.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -122,8 +119,9 @@ struct ContentView: View {
     @State private var topPanelHeight: CGFloat = 0
     @State private var safeAreaTop: CGFloat = 0
 
-    // CPU-21: tracks actual panel height so ChatScrollView footer grows with the input panel.
-    // Updated only when line count changes (Coordinator cache) — not on every keystroke.
+    // CPU-22: measured directly from rendered InputMorphView via onGeometryChange.
+    // Exact regardless of content (attachment row, multi-line, thinking state).
+    // Replaces manual formula in updatePanelHeight() which missed attachment row height.
     @State private var currentPanelHeight: CGFloat = InputLayout.minPanelHeight
 
     // CPU-11: debounce task reference — cancelled on every new keystroke
@@ -338,8 +336,8 @@ struct ContentView: View {
             // directly — it subscribes to StreamingState, not to ViewModel.
             // ContentView does NOT read any StreamingState property here.
             //
-            // CPU-21: footerHeight = currentPanelHeight — grows with the input panel.
-            // Updated only when line count changes, not on every keystroke.
+            // CPU-22: footerHeight = currentPanelHeight — measured via onGeometryChange
+            // on bottomPanel. Exact regardless of content (attachment row, multi-line, etc).
             ChatScrollView(
                 scrollToBottomTrigger: viewModel.scrollToBottomTrigger,
                 messages: viewModel.displayedMessages,
@@ -433,15 +431,15 @@ struct ContentView: View {
     // InputMorphView reads streaming.isThinking and streaming.currentToolCall directly.
     // ContentView does NOT read those properties here.
     //
-    // CPU-21: panelHeight binding passed to InputMorphView.
-    // InputMorphView writes actual panel height when line count changes.
-    // ChatScrollView footerHeight tracks it so last message is always scrollable into view.
+    // CPU-22: onGeometryChange measures the actual rendered height of InputMorphView.
+    // currentPanelHeight is updated only when height actually changes (line added/removed,
+    // attachment row appears/disappears). ChatScrollView footerHeight tracks it so the
+    // last message is always scrollable above the panel.
 
     private var bottomPanel: some View {
         InputMorphView(
             prompt: $prompt,
             attachments: $attachments,
-            panelHeight: $currentPanelHeight,
             isWorkspaceSelected: viewModel.workspaceURL != nil,
             streaming: viewModel.streaming,
             onSend: { attachedFiles in
@@ -449,6 +447,13 @@ struct ContentView: View {
             },
             onCancel: { viewModel.cancelCurrentRequest() }
         )
+        // CPU-22: measure actual panel height — fires only when size changes.
+        // onGeometryChange is a pure observer: no layout participation, no render loop.
+        .onGeometryChange(for: CGFloat.self) { geo in
+            geo.size.height
+        } action: { newValue in
+            currentPanelHeight = newValue
+        }
     }
 
     // MARK: - Private Helpers
