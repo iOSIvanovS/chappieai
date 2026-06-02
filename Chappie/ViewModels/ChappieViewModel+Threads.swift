@@ -127,23 +127,33 @@ extension ChappieViewModel {
         guard let provStore = providerStore else { return }
 
         // Case 1: saved UUID matches a known provider — validate model too.
-        // WHY: the model may have been deleted since last session. If savedModelName
-        // is not in provider.models, treat it as nil so the banner fires and
-        // orchestrator is NOT created with a ghost model name.
         if let savedId = settings.activeProviderId,
            let provider = providers.first(where: { $0.id == savedId }) {
-            let validatedModel = settings.activeModelName.flatMap {
+
+            let savedModelName = settings.activeModelName
+            let validatedModel = savedModelName.flatMap {
                 provider.models.contains($0) ? $0 : nil
             }
-            if validatedModel == nil, settings.activeModelName != nil {
-                // Model was deleted — heal the DB record so next restart is clean.
-                print("[ChappieViewModel] ⚠️ B-04: Model '\(settings.activeModelName!)' not found in provider '\(provider.displayName)' — healing")
+
+            // B-04: model was saved but is now deleted — show banner, block orchestrator.
+            // WHY: switchProvider(modelName: nil) falls back to provider.models.first,
+            // which silently picks Claude/whatever is first. We must NOT do that.
+            // Instead: set provider+nil model explicitly so toolbar shows the warning banner.
+            if savedModelName != nil, validatedModel == nil {
+                print("[ChappieViewModel] ⚠️ B-04: Model '\(savedModelName!)' not found in '\(provider.displayName)' — blocking orchestrator, showing banner")
+
+                // Heal DB so next restart is also clean.
                 if let tStore = threadStore {
                     var healed = settings
                     healed.activeModelName = nil
                     try? await tStore.updateSettings(healed, forThreadId: thread.id)
                 }
+
+                // Apply provider without model — orchestrator stays nil, banner fires.
+                await applyProviderWithoutModel(provider, from: provStore)
+                return
             }
+
             await switchProvider(provider, modelName: validatedModel, from: provStore, persistSettings: false)
             return
         }
@@ -181,6 +191,21 @@ extension ChappieViewModel {
             } ?? defaultProvider.models.first
             await switchProvider(defaultProvider, modelName: modelName, from: provStore, persistSettings: false)
         }
+    }
+
+    /// Sets activeProvider without creating aiClient or orchestrator.
+    /// Used when the saved model was deleted — toolbar shows the warning banner,
+    /// send() is blocked, but provider identity is preserved for the picker.
+    ///
+    /// WHY NOT switchProvider: it always creates AIClient + orchestrator (even with empty model).
+    /// We need a hard nil for both so send() guard fires and no request goes out.
+    private func applyProviderWithoutModel(_ provider: AIProvider, from store: AIProviderStore) async {
+        self.activeProvider = provider
+        self.activeModelName = nil
+        self.aiClient = nil
+        self.orchestrator = nil
+        self.currentBalance = loadBalance(for: provider.id)
+        print("[ChappieViewModel] B-04: Applied provider '\(provider.displayName)' with no model — orchestrator blocked")
     }
 
     // MARK: - Create / Confirm / Cancel
