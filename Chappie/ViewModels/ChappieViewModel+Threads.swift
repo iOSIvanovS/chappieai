@@ -57,22 +57,10 @@ extension ChappieViewModel {
         saveLastActiveThreadId(thread.id)
 
         do {
-            // PARALLEL LOAD: settings and messages are independent — fetch simultaneously.
-            async let settingsTask = store.loadSettings(forThreadId: thread.id)
-            let settings = try await settingsTask
-
+            let settings = try await store.loadSettings(forThreadId: thread.id)
             self.activeThreadSettings = settings
 
-            if let providerId = settings.activeProviderId,
-               let provider = providers.first(where: { $0.id == providerId }) {
-                await switchProvider(provider, modelName: settings.activeModelName)
-            } else if let provStore = providerStore,
-                      let defaultProvider = try? await provStore.loadDefaultProvider() {
-                let modelName = settings.activeModelName.flatMap { name in
-                    defaultProvider.models.contains(name) ? name : nil
-                } ?? defaultProvider.models.first
-                await switchProvider(defaultProvider, modelName: modelName, from: provStore)
-            }
+            await resolveAndApplyProvider(for: thread, settings: settings)
 
             let loaded = try await store.loadMessages(fromThreadId: thread.id, as: ChatMessage.self)
             self.messages = loaded
@@ -104,6 +92,64 @@ extension ChappieViewModel {
 
             // V2: assemble session + sync FileSystem — slowest part, runs last.
             await self.assembleThreadSession(for: thread)
+        }
+    }
+
+    // MARK: - Provider Resolution (B-03 fix)
+
+    /// Resolves which provider to use for a thread, with healing for orphaned UUIDs.
+    ///
+    /// WHY SEPARATE METHOD:
+    /// selectThread() was doing inline provider lookup — if UUID wasn't found it silently
+    /// fell back to the default provider for every thread, causing the "off-by-one" symptom
+    /// where all threads appeared to share the same provider after app restart.
+    ///
+    /// HEALING: When a saved UUID is orphaned (provider deleted/recreated), we fall back to
+    /// the best available provider AND immediately persist the corrected UUID to the thread's
+    /// settings. Next app start will find the correct UUID — no more silent fallback.
+    private func resolveAndApplyProvider(for thread: ThreadMetadata, settings: ThreadSettings) async {
+        guard let provStore = providerStore else { return }
+
+        // Case 1: saved UUID matches a known provider — exact match, happy path.
+        if let savedId = settings.activeProviderId,
+           let provider = providers.first(where: { $0.id == savedId }) {
+            await switchProvider(provider, modelName: settings.activeModelName, from: provStore)
+            return
+        }
+
+        // Case 2: UUID is set but not found — provider was deleted or recreated.
+        // Log a warning, pick the best available provider, and heal the stored UUID.
+        if let orphanedId = settings.activeProviderId {
+            print("[ChappieViewModel] ⚠️ B-03: Provider \(orphanedId) not found for thread '\(thread.title)' — healing")
+
+            let fallback = try? await provStore.loadDefaultProvider()
+            let resolved = fallback ?? providers.first
+
+            if let provider = resolved {
+                await switchProvider(provider, modelName: settings.activeModelName, from: provStore)
+
+                // Heal: persist corrected UUID so next restart finds the right provider.
+                if let tStore = threadStore {
+                    var healed = settings
+                    healed.activeProviderId = provider.id
+                    healed.activeModelName = settings.activeModelName.flatMap {
+                        provider.models.contains($0) ? $0 : nil
+                    } ?? provider.models.first
+                    try? await tStore.updateSettings(healed, forThreadId: thread.id)
+                    print("[ChappieViewModel] ✅ B-03: Healed thread '\(thread.title)' → provider '\(provider.displayName)'")
+                }
+            } else {
+                print("[ChappieViewModel] ⚠️ B-03: No providers available for thread '\(thread.title)'")
+            }
+            return
+        }
+
+        // Case 3: no saved provider at all — use default.
+        if let defaultProvider = try? await provStore.loadDefaultProvider() {
+            let modelName = settings.activeModelName.flatMap { name in
+                defaultProvider.models.contains(name) ? name : nil
+            } ?? defaultProvider.models.first
+            await switchProvider(defaultProvider, modelName: modelName, from: provStore)
         }
     }
 
