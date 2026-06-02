@@ -58,13 +58,7 @@ extension ChappieViewModel {
 
         do {
             // PARALLEL LOAD: settings and messages are independent — fetch simultaneously.
-            // WHY: sequential await adds ~100-300ms per call; on cold switch this stacks up.
-            // NOTE: ChatMessage.self cannot be passed in nonisolated async let (Swift 6 actor
-            // isolation constraint). We use a MainActor Task pair instead.
             async let settingsTask = store.loadSettings(forThreadId: thread.id)
-
-            // loadMessages is called after settingsTask to avoid the nonisolated ChatMessage.self
-            // constraint in async let. Settings are fast (single record) — the sequential cost is minimal.
             let settings = try await settingsTask
 
             self.activeThreadSettings = settings
@@ -89,23 +83,28 @@ extension ChappieViewModel {
             print("[ChappieViewModel] Error loading thread '\(thread.title)': \(error)")
         }
 
-        // UI is unblocked here — user sees messages immediately.
+        // Unblock UI — user sees messages NOW.
+        // WHY: isLoadingThread=false must be followed by a Task{} break so SwiftUI
+        // actually gets a chance to re-render before we start the background work below.
+        // Without Task{} all the awaits below keep MainActor busy and the screen stays
+        // frozen even though the flag is already false.
         self.isLoadingThread = false
         self.isAppReady = true
 
-        // These run after UI is shown — background work, non-blocking for the user.
-        // loadProjectsForThread + memory context are fast (SwiftData fetch).
-        // syncFileSystemForActiveThread is slow (bookmark resolution) — runs last,
-        // protected by isFileSystemReady flag in ToolExecutionService.
-        await loadProjectsForThread(thread)
-        buildAndSyncMemoryContext()
-        await syncActiveMemoryContext()
-        refreshBalanceForActiveProvider()
+        // Background post-load: runs after SwiftUI renders the messages.
+        // loadProjects + memory context are fast (SwiftData fetch, ~10ms).
+        // syncFileSystemForActiveThread is slow (bookmark resolution, up to 2s) —
+        // protected by isFileSystemReady flag so file tools are blocked until ready.
+        Task { [weak self] in
+            guard let self else { return }
+            await self.loadProjectsForThread(thread)
+            self.buildAndSyncMemoryContext()
+            await self.syncActiveMemoryContext()
+            self.refreshBalanceForActiveProvider()
 
-        // V2: assemble session + sync FileSystem in background after UI is shown.
-        // isFileSystemReady is set false before sync, true after — file tools are
-        // blocked during the window to prevent stale FS responses.
-        await assembleThreadSession(for: thread)
+            // V2: assemble session + sync FileSystem — slowest part, runs last.
+            await self.assembleThreadSession(for: thread)
+        }
     }
 
     // MARK: - Create / Confirm / Cancel
