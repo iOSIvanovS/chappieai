@@ -48,6 +48,12 @@
 //   to ChatScrollView and InputMorphView. ContentView's body does NOT subscribe
 //   to StreamingState — so 30+ token updates/sec no longer invalidate topPanel,
 //   bottomPanel, or any other ContentView subtree.
+//
+// CPU-15: BALANCE ISOLATION:
+//   currentBalance moved from ChappieViewModel into StreamingState.
+//   ModelPickerRow now receives `streaming` reference and reads streaming.currentBalance
+//   directly — balance updates during streaming no longer invalidate ContentView or topPanel.
+//   ContentView does NOT read streaming.currentBalance — only ModelPickerRow does.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -336,8 +342,11 @@ struct ContentView: View {
     }
 
     // MARK: - Top Floating Panel
-    // CPU-13: topPanel reads ONLY from viewModel (provider, model, balance, thread).
-    // None of these change during streaming — so topPanel is NOT re-rendered on tokens.
+    // CPU-13/15: topPanel does NOT read any StreamingState properties.
+    // isThinking and currentBalance are passed via the `streaming` reference —
+    // ModelPickerRow and ProjectChipsView subscribe to StreamingState directly.
+    // ContentView only reads: activeThread, providers, activeProvider, activeModelName,
+    // isThreadOrphaned, activeProjects — none of which change during streaming.
 
     private var topPanel: some View {
         VStack(spacing: 6) {
@@ -347,8 +356,7 @@ struct ContentView: View {
                     activeModelName: viewModel.activeModelName,
                     providers: viewModel.providers,
                     isOrphaned: viewModel.isThreadOrphaned,
-                    balance: viewModel.currentBalance,
-                    isThinking: viewModel.streaming.isThinking,
+                    streaming: viewModel.streaming,
                     onSelectProvider: { providerId, modelName in
                         if let provider = viewModel.providers.first(where: { $0.id == providerId }),
                            let store = viewModel.providerStore {

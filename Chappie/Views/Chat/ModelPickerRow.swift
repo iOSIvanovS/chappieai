@@ -11,6 +11,14 @@
 //                Visible only when balance is non-nil.
 //                Updates live during streaming via onBalanceUpdate in AIOrchestrator.
 //
+// CPU-15: STREAMING REFERENCE INSTEAD OF SCALAR PROPS:
+//   Previously: balance: Double? and isThinking: Bool were passed as value copies.
+//   ContentView read viewModel.currentBalance → subscribed ViewModel → topPanel re-rendered
+//   on every balance update during streaming.
+//   Now: streaming: StreamingState is passed as a let reference. ModelPickerRow reads
+//   streaming.currentBalance and streaming.isThinking directly — only this view re-renders
+//   when balance or isThinking changes. ContentView and topPanel are not invalidated.
+//
 // CHIP STYLE:
 //   Only the inner HStack gets ultraThinMaterial pill background.
 //   Consistent with ProjectChipsView and the bottom InputMorphView panel.
@@ -46,10 +54,9 @@ struct ModelPickerRow: View {
     let activeModelName: String?
     let providers: [AIProvider]
     let isOrphaned: Bool
-    /// Current account balance in RUB — nil until first response received.
-    let balance: Double?
-    /// When true — picker button is locked (AI is responding).
-    let isThinking: Bool
+    /// CPU-15: streaming reference — reads .currentBalance and .isThinking directly.
+    /// This view subscribes to StreamingState, not to ChappieViewModel.
+    let streaming: StreamingState
     let onSelectProvider: (UUID, String) -> Void
 
     // MARK: - State
@@ -69,7 +76,7 @@ struct ModelPickerRow: View {
             Spacer(minLength: 8)
 
             // RIGHT PILL: balance — shown only when a value is available, always fixed size
-            if let balance = balance {
+            if let balance = streaming.currentBalance {
                 balancePill(balance: balance)
                     .fixedSize()
             }
@@ -130,8 +137,8 @@ struct ModelPickerRow: View {
             }
             .buttonStyle(.plain)
             // Soft lock: shake on tap when locked — replaces old opacity(0.5) + .disabled()
-            .shakeOnTap(isLocked: isThinking)
-            .help(isThinking ? "Нельзя менять модель пока Чаппи думает" : "")
+            .shakeOnTap(isLocked: streaming.isThinking)
+            .help(streaming.isThinking ? "Нельзя менять модель пока Чаппи думает" : "")
             .popover(isPresented: $showPopover, arrowEdge: .top) {
                 ModelPickerPopover(
                     providers: providers,

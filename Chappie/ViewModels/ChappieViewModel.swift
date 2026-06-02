@@ -14,6 +14,12 @@
 //
 // Backward-compat computed vars (isThinking, streamingText, etc.) are kept so
 // that all existing call-sites in extensions compile without changes.
+//
+// CPU-15: currentBalance MOVED TO StreamingState.
+// Was updated via onBalanceUpdate on every streaming token — caused topPanel
+// (ModelPickerRow) to re-render on every cost delta. Now ModelPickerRow reads
+// streaming.currentBalance directly via the StreamingState reference.
+// ChappieViewModel keeps a backward-compat computed var for legacy call-sites.
 
 import SwiftUI
 import ChappieCore
@@ -37,7 +43,7 @@ final class ChappieViewModel {
 
     // MARK: - CPU-13: Isolated streaming state
 
-    /// Owns the four hot properties that change 30+ times/sec during streaming.
+    /// Owns the hot properties that change 30+ times/sec during streaming.
     /// ContentView holds a reference but never reads its properties — so token
     /// updates do NOT invalidate ContentView or topPanel.
     let streaming = StreamingState()
@@ -65,6 +71,13 @@ final class ChappieViewModel {
         set { streaming.currentToolCall = newValue }
     }
 
+    /// CPU-15: balance forwarded to/from StreamingState.
+    /// Legacy call-sites (refreshBalanceForActiveProvider, saveBalance) continue to work.
+    var currentBalance: Double? {
+        get { streaming.currentBalance }
+        set { streaming.currentBalance = newValue }
+    }
+
     // MARK: - State
 
     var workspaceURL: URL?
@@ -88,8 +101,6 @@ final class ChappieViewModel {
         if activeThreadSettings.isUnlimitedContext { return onlyMessages }
         return Array(onlyMessages.suffix(activeThreadSettings.maxMessagesInContext * 10))
     }
-
-    var currentBalance: Double?
 
     var isLoadingThread: Bool = false
     var isAppReady: Bool = false
@@ -247,6 +258,7 @@ final class ChappieViewModel {
 
     func refreshBalanceForActiveProvider() {
         guard let provider = activeProvider else { return }
+        // CPU-15: writes through to streaming.currentBalance via computed var.
         self.currentBalance = loadBalance(for: provider.id)
     }
 

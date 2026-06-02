@@ -14,6 +14,14 @@
 // ContentView can pass it down as a plain `let` reference without reading it.
 // Only ChatScrollView and InputMorphView read from it — they re-render in
 // isolation, leaving topPanel and the rest of ContentView untouched.
+//
+// CPU-15: currentBalance MOVED HERE from ChappieViewModel.
+// balance is updated via onBalanceUpdate during streaming — every token with cost info.
+// Before this move: topPanel read viewModel.currentBalance → ContentView subscribed to
+// ViewModel for balance → every balance update re-rendered topPanel + all its children.
+// After: ModelPickerRow receives `streaming` reference and reads streaming.currentBalance
+// directly — balance updates are isolated to ModelPickerRow only.
+// ChappieViewModel keeps a backward-compat computed var that forwards to streaming.currentBalance.
 
 import SwiftUI
 
@@ -33,10 +41,15 @@ final class StreamingState {
     // True while the AI is generating a response.
     var isThinking: Bool = false
 
+    // CPU-15: balance moved here — updates during streaming without invalidating ViewModel observers.
+    // nil until first response received from server.
+    var currentBalance: Double? = nil
+
     func reset() {
         streamingText = ""
         runningCost = 0.0
         currentToolCall = nil
         isThinking = false
+        // currentBalance is NOT reset — it persists across requests.
     }
 }
