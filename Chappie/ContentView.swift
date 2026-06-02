@@ -21,7 +21,7 @@
 //   rounded pill with ultraThinMaterial. The outer VStack is transparent.
 //   Bottom panel: InputMorphView — ultraThinMaterial.
 //   Top panel reports its height so ChatScrollView can add a matching header spacer.
-//   Bottom panel uses InputLayout.maxPanelHeight — a static constant, never changes at runtime.
+//   Bottom panel uses InputLayout.minPanelHeight — reserves space for collapsed panel only.
 //
 // CPU-08: WHY onGeometryChange INSTEAD OF GeometryReader:
 //   GeometryReader placed in .background participates in measurement and can cause
@@ -58,10 +58,16 @@
 //
 // CPU-16: STATIC FOOTER HEIGHT:
 //   bottomPanelHeight @State removed entirely. InputMorphView no longer has onHeightChange.
-//   ChatScrollView receives footerHeight: InputLayout.maxPanelHeight — a compile-time constant.
+//   ChatScrollView receives footerHeight: InputLayout.minPanelHeight — collapsed panel height.
 //   Previously: editorHeight changed on every keystroke → onHeightChange callback →
 //   bottomPanelHeight state update → ContentView layout pass → ChatScrollView re-render.
 //   That chain fired on every character and was the main source of 75% CPU while typing.
+//
+// CPU-20: SCROLL ANCHOR FIX:
+//   footerHeight changed from maxPanelHeight (268pt) to minPanelHeight (88pt).
+//   Sentinel "bottom" uses anchor:.top — TOP of sentinel aligns with BOTTOM of viewport.
+//   This means the last message lands just above the collapsed input panel, not in the
+//   middle of the screen. Footer spacer provides physical clearance from panel chrome.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -320,8 +326,9 @@ struct ContentView: View {
             // directly — it subscribes to StreamingState, not to ViewModel.
             // ContentView does NOT read any StreamingState property here.
             //
-            // CPU-16: footerHeight is InputLayout.maxPanelHeight — a static constant.
-            // No state variable, no callback, no layout pass on typing.
+            // CPU-20: footerHeight is InputLayout.minPanelHeight — collapsed panel height.
+            // Sentinel anchor:.top places last message just above the input panel.
+            // Using maxPanelHeight (268pt) was leaving 180pt of dead space above the panel.
             ChatScrollView(
                 scrollToBottomTrigger: viewModel.scrollToBottomTrigger,
                 messages: viewModel.displayedMessages,
@@ -330,7 +337,7 @@ struct ContentView: View {
                 streaming: viewModel.streaming,
                 isLoadingHistory: viewModel.isLoadingThread,
                 headerHeight: topPanelHeight + safeAreaTop,
-                footerHeight: InputLayout.maxPanelHeight
+                footerHeight: InputLayout.minPanelHeight
             )
             .ignoresSafeArea(edges: .top)
             // CPU-08: onGeometryChange does NOT participate in layout — no render loop risk.
@@ -416,7 +423,7 @@ struct ContentView: View {
     // ContentView does NOT read those properties here.
     //
     // CPU-16: onHeightChange REMOVED — InputMorphView no longer reports its height.
-    // footerHeight in ChatScrollView is InputLayout.maxPanelHeight (static constant).
+    // footerHeight in ChatScrollView is InputLayout.minPanelHeight (static constant).
 
     private var bottomPanel: some View {
         InputMorphView(

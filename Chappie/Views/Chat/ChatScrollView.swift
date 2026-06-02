@@ -7,28 +7,24 @@
 //
 // FLOATING PANELS LAYOUT:
 // ChatScrollView fills the entire ZStack behind the floating panels.
-// It does NOT know about InputMorphView height directly.
-// Instead it receives headerHeight and footerHeight — transparent spacers at the
-// top and bottom of the VStack inside ScrollView.
-// This guarantees the first and last messages are always fully readable
-// regardless of the panel heights.
+// The input panel is floating (ZStack overlay) — ScrollView viewport extends
+// to the full window height. The footer spacer below the sentinel provides
+// clearance so the last message is never hidden behind the input panel.
 //
-// CPU-16: STATIC FOOTER HEIGHT:
-// footerHeight is now InputLayout.maxPanelHeight — a compile-time constant passed from ContentView.
-// Previously footerHeight was a @State in ContentView updated via onHeightChange callback
-// from InputMorphView on every keystroke. That caused:
-//   editorHeight → onHeightChange → bottomPanelHeight state → ContentView layout pass
-//   → ChatScrollView re-render → footerHeight spacer update → scroll position recalc.
-// Now footerHeight never changes at runtime → no layout pass from typing.
+// SCROLL ANCHOR STRATEGY:
+// Sentinel "bottom" has zero height and sits BEFORE the footer spacer.
+// anchor: .top → the TOP of the sentinel aligns with the BOTTOM of the viewport.
+// This means the last message lands just above the sentinel — just above the
+// collapsed input panel. The footer spacer (minPanelHeight + gap) below the
+// sentinel provides clearance from the actual panel chrome.
+// WHY NOT anchor: .bottom — that would align the BOTTOM of the sentinel with
+// the viewport bottom, placing it below the panel — last message gets covered.
 //
-// SCROLL ANCHOR STRATEGY (CPU-19):
-// The sentinel "bottom" is placed BEFORE the footer spacer, not inside it.
-// anchor: .bottom aligns the BOTTOM of the sentinel with the BOTTOM of the viewport.
-// Since the sentinel has zero height, this means: "scroll so the last message is
-// at the bottom of the visible area". The footer spacer below it ensures the last
-// message is NOT hidden behind the input panel.
-// Previous approach (sentinel = footer spacer, anchor: .top) scrolled to the START
-// of the 328pt empty spacer, leaving the last message in the middle of the screen.
+// STATIC FOOTER HEIGHT:
+// footerHeight = InputLayout.minPanelHeight — reserved for the collapsed panel.
+// maxPanelHeight was overkill: it left 268pt of empty space, pushing the last
+// message to the middle of the screen. minPanelHeight (88pt) is the actual
+// panel height when the editor has one line — the common idle state.
 //
 // VSTACK (PAGINATION OVER LAZYVSTACK):
 // Messages are rendered in a plain VStack — all displayed messages are always in the
@@ -109,9 +105,11 @@ struct ChatScrollView: View {
     let headerHeight: CGFloat
 
     /// Height of the bottom floating panel — transparent footer spacer.
-    /// CPU-16: always InputLayout.maxPanelHeight — never changes at runtime.
+    /// Uses minPanelHeight: reserves space for collapsed panel only.
+    /// Sentinel + anchor:.top handles positioning; this spacer just provides clearance.
     let footerHeight: CGFloat
 
+    // Gap between sentinel and the actual panel chrome.
     private let bottomGap: CGFloat = 12
 
     // CPU-05: debounce flag — true while a scroll task is already scheduled.
@@ -162,16 +160,15 @@ struct ChatScrollView: View {
                         }
                     }
 
-                    // CPU-19: sentinel is placed BEFORE the footer spacer.
-                    // anchor: .bottom aligns the bottom of this zero-height marker with
-                    // the viewport bottom — so the last message is fully visible.
-                    // The footer spacer below provides clearance from the input panel.
+                    // Sentinel: zero height, anchor: .top.
+                    // TOP of this marker aligns with the BOTTOM of the viewport on scroll.
+                    // Result: last message sits just above the input panel.
                     Color.clear
                         .frame(height: 0)
                         .id("bottom")
 
-                    // Static footer spacer — keeps last message above the input panel.
-                    // Never changes at runtime (CPU-16).
+                    // Footer spacer: provides physical clearance between sentinel and
+                    // the window bottom edge so content isn't hidden behind the panel.
                     Color.clear
                         .frame(height: footerHeight + bottomGap)
                 }
@@ -183,23 +180,23 @@ struct ChatScrollView: View {
             .scrollIndicators(.never)
             .task(id: scrollToBottomTrigger) {
                 guard scrollToBottomTrigger > 0 else { return }
-                // 150ms — enough for VStack to measure content on cold start
+                // 150ms — enough for VStack to measure content on cold start.
                 try? await Task.sleep(nanoseconds: 150_000_000)
                 withAnimation(.easeOut(duration: 0.3)) {
-                    // anchor: .bottom — bottom of sentinel aligns with viewport bottom.
-                    // Last message is fully visible just above the input panel.
-                    proxy.scrollTo("bottom", anchor: .bottom)
+                    // anchor: .top — TOP of sentinel = BOTTOM of viewport.
+                    // Last message lands just above the collapsed input panel.
+                    proxy.scrollTo("bottom", anchor: .top)
                 }
             }
             .onChange(of: messages.count) { _, _ in
                 withAnimation(.easeOut(duration: 0.3)) {
-                    proxy.scrollTo("bottom", anchor: .bottom)
+                    proxy.scrollTo("bottom", anchor: .top)
                 }
             }
             .onChange(of: streaming.isThinking) { _, isThinking in
                 if isThinking {
                     withAnimation(.easeOut(duration: 0.3)) {
-                        proxy.scrollTo("bottom", anchor: .bottom)
+                        proxy.scrollTo("bottom", anchor: .top)
                     }
                 }
             }
@@ -209,7 +206,7 @@ struct ChatScrollView: View {
                 scrollPending = true
                 Task {
                     try? await Task.sleep(nanoseconds: 16_000_000)
-                    proxy.scrollTo("bottom", anchor: .bottom)
+                    proxy.scrollTo("bottom", anchor: .top)
                     scrollPending = false
                 }
             }
@@ -404,7 +401,7 @@ private struct BlinkingCursor: View {
         streaming: streaming,
         isLoadingHistory: false,
         headerHeight: 80,
-        footerHeight: InputLayout.maxPanelHeight
+        footerHeight: InputLayout.minPanelHeight
     )
     .frame(width: 650, height: 500)
     .background(Color(NSColor.windowBackgroundColor))
@@ -421,7 +418,7 @@ private struct BlinkingCursor: View {
         streaming: streaming,
         isLoadingHistory: false,
         headerHeight: 60,
-        footerHeight: InputLayout.maxPanelHeight
+        footerHeight: InputLayout.minPanelHeight
     )
     .frame(width: 650, height: 300)
     .background(Color(NSColor.windowBackgroundColor))
