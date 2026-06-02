@@ -126,10 +126,25 @@ extension ChappieViewModel {
     private func resolveAndApplyProvider(for thread: ThreadMetadata, settings: ThreadSettings) async {
         guard let provStore = providerStore else { return }
 
-        // Case 1: saved UUID matches a known provider — exact match, happy path.
+        // Case 1: saved UUID matches a known provider — validate model too.
+        // WHY: the model may have been deleted since last session. If savedModelName
+        // is not in provider.models, treat it as nil so the banner fires and
+        // orchestrator is NOT created with a ghost model name.
         if let savedId = settings.activeProviderId,
            let provider = providers.first(where: { $0.id == savedId }) {
-            await switchProvider(provider, modelName: settings.activeModelName, from: provStore, persistSettings: false)
+            let validatedModel = settings.activeModelName.flatMap {
+                provider.models.contains($0) ? $0 : nil
+            }
+            if validatedModel == nil, settings.activeModelName != nil {
+                // Model was deleted — heal the DB record so next restart is clean.
+                print("[ChappieViewModel] ⚠️ B-04: Model '\(settings.activeModelName!)' not found in provider '\(provider.displayName)' — healing")
+                if let tStore = threadStore {
+                    var healed = settings
+                    healed.activeModelName = nil
+                    try? await tStore.updateSettings(healed, forThreadId: thread.id)
+                }
+            }
+            await switchProvider(provider, modelName: validatedModel, from: provStore, persistSettings: false)
             return
         }
 
