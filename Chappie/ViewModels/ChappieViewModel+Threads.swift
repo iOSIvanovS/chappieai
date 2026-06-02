@@ -104,16 +104,17 @@ extension ChappieViewModel {
     /// fell back to the default provider for every thread, causing the "off-by-one" symptom
     /// where all threads appeared to share the same provider after app restart.
     ///
-    /// HEALING: When a saved UUID is orphaned (provider deleted/recreated), we fall back to
-    /// the best available provider AND immediately persist the corrected UUID to the thread's
-    /// settings. Next app start will find the correct UUID — no more silent fallback.
+    /// persistSettings: false — settings are already loaded from DB here; we must NOT
+    /// let switchProvider overwrite them with stale activeThreadSettings from the previous
+    /// thread. Healing writes (Case 2) are done explicitly below with the correct data.
     private func resolveAndApplyProvider(for thread: ThreadMetadata, settings: ThreadSettings) async {
         guard let provStore = providerStore else { return }
 
         // Case 1: saved UUID matches a known provider — exact match, happy path.
+        // persistSettings: false — DB record is already correct, no write needed.
         if let savedId = settings.activeProviderId,
            let provider = providers.first(where: { $0.id == savedId }) {
-            await switchProvider(provider, modelName: settings.activeModelName, from: provStore)
+            await switchProvider(provider, modelName: settings.activeModelName, from: provStore, persistSettings: false)
             return
         }
 
@@ -126,7 +127,8 @@ extension ChappieViewModel {
             let resolved = fallback ?? providers.first
 
             if let provider = resolved {
-                await switchProvider(provider, modelName: settings.activeModelName, from: provStore)
+                // persistSettings: false — we write the healed record explicitly below.
+                await switchProvider(provider, modelName: settings.activeModelName, from: provStore, persistSettings: false)
 
                 // Heal: persist corrected UUID so next restart finds the right provider.
                 if let tStore = threadStore {
@@ -145,11 +147,13 @@ extension ChappieViewModel {
         }
 
         // Case 3: no saved provider at all — use default.
+        // persistSettings: false — caller (selectThread) has already set activeThreadSettings
+        // from DB; we don't want to overwrite it with a default-provider record.
         if let defaultProvider = try? await provStore.loadDefaultProvider() {
             let modelName = settings.activeModelName.flatMap { name in
                 defaultProvider.models.contains(name) ? name : nil
             } ?? defaultProvider.models.first
-            await switchProvider(defaultProvider, modelName: modelName, from: provStore)
+            await switchProvider(defaultProvider, modelName: modelName, from: provStore, persistSettings: false)
         }
     }
 
@@ -189,8 +193,10 @@ extension ChappieViewModel {
         self.pendingNewThread = nil
         self.showNewThreadProviderPicker = false
 
+        // persistSettings: false — we write the complete settings record explicitly below,
+        // so switchProvider must not overwrite it with potentially stale activeThreadSettings.
         if let provider = providers.first(where: { $0.id == providerId }) {
-            await switchProvider(provider, modelName: modelName)
+            await switchProvider(provider, modelName: modelName, persistSettings: false)
         }
 
         // Always rename — even if title is "Новый тред" (user may have typed it explicitly).
@@ -305,11 +311,12 @@ extension ChappieViewModel {
 
                 var updatedSettings = settings
 
-                // M-08: apply new provider/model if user changed them
+                // M-08: apply new provider/model if user changed them.
+                // persistSettings: false — we write the complete record explicitly below.
                 if let providerId = newProviderId,
                    let provider = providers.first(where: { $0.id == providerId }) {
                     let modelName = newModelName ?? provider.models.first
-                    await switchProvider(provider, modelName: modelName)
+                    await switchProvider(provider, modelName: modelName, persistSettings: false)
                     updatedSettings.activeProviderId = providerId
                     updatedSettings.activeModelName = modelName?.isEmpty == false ? modelName : nil
                 } else {

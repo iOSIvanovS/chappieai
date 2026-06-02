@@ -22,7 +22,24 @@ extension ChappieViewModel {
 
     // MARK: - Switch Provider / Model
 
-    func switchProvider(_ provider: AIProvider, modelName: String?, from store: AIProviderStore? = nil) async {
+    /// Switches the active provider and model.
+    ///
+    /// - Parameter persistSettings: When true (default), writes the new provider/model
+    ///   to the active thread's settings in the DB. Pass false when the caller already
+    ///   manages persistence (e.g. resolveAndApplyProvider, confirmNewThread) to avoid
+    ///   overwriting freshly-loaded or not-yet-saved thread settings with stale data.
+    ///
+    /// WHY THIS FLAG EXISTS (B-03):
+    /// switchProvider was always persisting to activeThread, but during selectThread()
+    /// it was called BEFORE activeThreadSettings was fully loaded — so it wrote stale
+    /// settings from the PREVIOUS thread into the NEW thread's DB record.
+    /// After several thread switches all threads ended up with each other's providers.
+    func switchProvider(
+        _ provider: AIProvider,
+        modelName: String?,
+        from store: AIProviderStore? = nil,
+        persistSettings: Bool = true
+    ) async {
         let provStore = store ?? self.providerStore
         guard let provStore else { return }
 
@@ -38,8 +55,10 @@ extension ChappieViewModel {
             self.orchestrator = AIOrchestrator(aiClient: client, toolService: ts, fileSystem: fs, memoryManager: mm)
         }
 
-        // Persist provider/model selection to the active thread's settings
-        if activeThread != nil {
+        // Only persist when the caller explicitly wants it.
+        // During thread load (resolveAndApplyProvider) — skip: settings are already
+        // loaded from DB and will be written by the caller if healing is needed.
+        if persistSettings, activeThread != nil {
             var settings = activeThreadSettings
             settings.activeProviderId = provider.id
             settings.activeModelName = model.isEmpty ? nil : model
