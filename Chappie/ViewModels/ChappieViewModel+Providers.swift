@@ -82,6 +82,26 @@ extension ChappieViewModel {
         Task { await switchProvider(provider, modelName: modelName, from: provStore) }
     }
 
+    // MARK: - Immediate invalidation (B-04)
+
+    /// Synchronously clears aiClient, orchestrator, and activeProvider if the given
+    /// provider ID matches the currently active one.
+    ///
+    /// WHY SYNCHRONOUS:
+    /// reloadProviders() spawns an internal Task — there is a race window between
+    /// store.deleteProvider() returning and that Task completing. If send() fires
+    /// in that window, it finds a non-nil orchestrator and sends a request to the
+    /// deleted provider. Calling this method synchronously right after deleteProvider()
+    /// closes the race: by the time the UI can respond to a tap, the state is already nil.
+    func invalidateProviderIfDeleted(id: UUID) {
+        guard activeProvider?.id == id else { return }
+        print("[ChappieViewModel] Synchronously invalidating deleted active provider: \(id)")
+        self.activeProvider = nil
+        self.aiClient = nil
+        self.orchestrator = nil
+        self.activeModelName = nil
+    }
+
     // MARK: - Reload
 
     func reloadProviders() {
@@ -96,11 +116,8 @@ extension ChappieViewModel {
                         // Provider still exists — refresh the local copy.
                         self.activeProvider = updated
                     } else {
-                        // Active provider was deleted — invalidate everything so send() is blocked.
-                        // WHY: aiClient and orchestrator hold a stale API key/endpoint and will
-                        // keep sending requests to the deleted provider if not cleared here.
-                        // send() already guards on activeProvider != nil → shows an error to the user.
-                        print("[ChappieViewModel] Active provider was deleted — invalidating aiClient and orchestrator")
+                        // Fallback: invalidate in case invalidateProviderIfDeleted wasn't called.
+                        print("[ChappieViewModel] Active provider gone after reload — invalidating")
                         self.activeProvider = nil
                         self.aiClient = nil
                         self.orchestrator = nil

@@ -179,6 +179,13 @@ struct ProvidersSettingsView: View {
 
     private func deleteProvider(id: UUID) {
         guard let store = viewModel.providerStore else { return }
+
+        // Synchronously clear aiClient/orchestrator BEFORE the async delete completes.
+        // WHY: reloadProviders() spawns an internal Task — there is a race window where
+        // send() can fire and find a non-nil orchestrator still pointing at the deleted
+        // provider. Calling this synchronously closes the race immediately on the MainActor.
+        viewModel.invalidateProviderIfDeleted(id: id)
+
         Task {
             do {
                 try await store.deleteProvider(id: id)
