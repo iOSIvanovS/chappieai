@@ -13,20 +13,24 @@ import SwiftData
 @MainActor
 final class ChappieViewModel {
 
-    // MARK: - Pagination constants
+    // MARK: - Pagination constants (CPU-01)
 
-    /// Number of messages shown on initial thread load.
-    let pageSize = 50
+    /// Messages shown on initial thread load (half of the max window).
+    let pageSize = 30
 
-    /// Number of messages prepended when user loads more (scrolls to top).
+    /// Messages prepended/appended when user scrolls to edge.
     let pageSizeLoad = 30
+
+    /// Maximum messages kept in the render tree at once.
+    /// When window exceeds this, the opposite end is trimmed.
+    let maxDisplayed = 60
 
     // MARK: - State
 
     var workspaceURL: URL?
     var messages: [ChatMessage] = []
 
-    /// Paginated slice shown in ChatScrollView.
+    /// Paginated slice shown in ChatScrollView (≤ maxDisplayed items).
     var displayedMessages: [ChatMessage] = []
 
     /// True when older messages exist above the current displayed slice.
@@ -142,7 +146,13 @@ final class ChappieViewModel {
         loadWorkspaceWithSecurityScope()
     }
 
-    // MARK: - Pagination
+    // MARK: - Pagination (CPU-01)
+    //
+    // Window strategy: always ≤ maxDisplayed (60) messages in the render tree.
+    //   - Initial load: last 30 messages.
+    //   - Scroll up: prepend 30, trim 30 from bottom if window > 60.
+    //   - New message appended: trim 30 from top if window > 60.
+    // This keeps VStack lean regardless of conversation length.
 
     func resetPagination(fireScrollTrigger: Bool = false) {
         let count = messages.count
@@ -158,6 +168,8 @@ final class ChappieViewModel {
         if fireScrollTrigger { scrollToBottomTrigger += 1 }
     }
 
+    /// Load older messages (scroll up). Prepends pageSizeLoad items,
+    /// trims the same amount from the bottom if window would exceed maxDisplayed.
     func loadMoreMessages() {
         guard hasMoreMessages, displayedStart > 0 else { return }
         let newStart = max(0, displayedStart - pageSizeLoad)
@@ -165,10 +177,26 @@ final class ChappieViewModel {
         displayedStart = newStart
         displayedMessages = additional + displayedMessages
         hasMoreMessages = displayedStart > 0
+
+        // Trim bottom to keep window ≤ maxDisplayed.
+        if displayedMessages.count > maxDisplayed {
+            let excess = displayedMessages.count - maxDisplayed
+            displayedMessages = Array(displayedMessages.dropLast(excess))
+        }
     }
 
+    /// Append a new message to the displayed slice.
+    /// Trims the top if window exceeds maxDisplayed (keeps bottom pinned).
     func appendToDisplayed(_ message: ChatMessage) {
         displayedMessages.append(message)
+
+        // Trim top when window overflows — user is at the bottom, old messages slide out.
+        if displayedMessages.count > maxDisplayed {
+            let excess = displayedMessages.count - maxDisplayed
+            displayedMessages = Array(displayedMessages.dropFirst(excess))
+            displayedStart += excess
+            hasMoreMessages = displayedStart > 0
+        }
     }
 
     // MARK: - Draft Management
