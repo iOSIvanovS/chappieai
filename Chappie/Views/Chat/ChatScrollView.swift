@@ -68,6 +68,13 @@
 // contentTransition(.numericText(value:)) is kept for visual smoothness but the
 // animation driver is removed — SwiftUI uses the default transaction instead.
 //
+// CPU-28: ProgressView() REPLACED WITH DotsIndicator:
+// ProgressView() on macOS is NSProgressIndicator — a CoreAnimation-driven spinning
+// control that renders at 60fps regardless of visibility context.
+// Two instances were present: thinkingIndicator (in chat) and historyLoadingIndicator.
+// Both replaced with DotsIndicator — three circles animated via drawingGroup() (Metal).
+// Metal rasterization means the animation runs on GPU with no SwiftUI layout passes.
+//
 // NOTE ON "bad range for [%{public}s]" IN XCODE CONSOLE:
 // This warning is NOT caused by our code. It is an internal CoreData/SwiftData OSLog
 // decode error that fires when SwiftData performs its first PostSaveMaintenance
@@ -230,9 +237,9 @@ struct ChatScrollView: View {
 
     // MARK: - Subviews
 
+    /// CPU-28: DotsIndicator instead of ProgressView — Metal via drawingGroup(), not CoreAnimation.
     private var historyLoadingIndicator: some View {
-        ProgressView()
-            .controlSize(.regular)
+        DotsIndicator()
             .frame(maxWidth: .infinity)
             .padding(.top, 40)
     }
@@ -295,10 +302,10 @@ struct ChatScrollView: View {
         }
     }
 
+    /// CPU-28: DotsIndicator replaces ProgressView() — see DotsIndicator comment below.
     private var thinkingIndicator: some View {
         HStack {
-            ProgressView()
-                .controlSize(.small)
+            DotsIndicator()
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background(Color(NSColor.textBackgroundColor))
@@ -370,6 +377,49 @@ struct ChatScrollView: View {
 
             Spacer(minLength: 40)
         }
+    }
+}
+
+// MARK: - DotsIndicator
+
+/// CPU-28: Metal-rendered waiting indicator — replaces ProgressView (NSProgressIndicator).
+///
+/// WHY: ProgressView on macOS is NSProgressIndicator — CoreAnimation-driven, renders at 60fps
+/// via the main CA render server regardless of how lightweight it looks. Two instances
+/// (thinkingIndicator + historyLoadingIndicator) were adding ~15% CPU in thinking state.
+///
+/// FIX: Three circles with staggered .opacity + .scaleEffect animations, wrapped in
+/// drawingGroup() — rasterized into a single Metal texture. The animation loop runs on GPU,
+/// zero SwiftUI layout passes per frame.
+private struct DotsIndicator: View {
+    @State private var animating = false
+
+    private let dotSize: CGFloat = 7
+    private let spacing: CGFloat = 5
+
+    var body: some View {
+        HStack(spacing: spacing) {
+            dot(delay: 0.0)
+            dot(delay: 0.18)
+            dot(delay: 0.36)
+        }
+        // Rasterize all three dots + animations into a single Metal texture.
+        .drawingGroup()
+        .onAppear { animating = true }
+    }
+
+    private func dot(delay: Double) -> some View {
+        Circle()
+            .fill(Color.secondary.opacity(0.6))
+            .frame(width: dotSize, height: dotSize)
+            .scaleEffect(animating ? 1.0 : 0.5)
+            .opacity(animating ? 1.0 : 0.3)
+            .animation(
+                .easeInOut(duration: 0.54)
+                .repeatForever(autoreverses: true)
+                .delay(delay),
+                value: animating
+            )
     }
 }
 
@@ -452,6 +502,26 @@ private struct BlinkingCursor: View {
     return ChatScrollView(
         scrollToBottomTrigger: 0,
         messages: [],
+        hasMoreMessages: false,
+        onLoadMore: {},
+        streaming: streaming,
+        isLoadingHistory: false,
+        headerHeight: 60,
+        footerHeight: InputLayout.minPanelHeight
+    )
+    .frame(width: 650, height: 300)
+    .background(Color(NSColor.windowBackgroundColor))
+}
+
+#Preview("Thinking — dots") {
+    let streaming = StreamingState()
+    streaming.isThinking = true
+
+    return ChatScrollView(
+        scrollToBottomTrigger: 0,
+        messages: [
+            .message(isUser: true, text: "Думай...")
+        ],
         hasMoreMessages: false,
         onLoadMore: {},
         streaming: streaming,
