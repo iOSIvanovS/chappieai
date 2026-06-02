@@ -34,8 +34,9 @@
 //
 // STALE BOOKMARK HEALTH-CHECK:
 //   Before spending time on bookmark resolution, we verify the resolved URL is:
-//   (a) reachable — fileExists(atPath:) returns true
-//   (b) not in Trash — path contains "/.Trash/" (user Trash) or "/.Trashes/" (volume Trash)
+//   (a) bookmark is not stale (isStale == false) — stale means macOS re-routed it elsewhere
+//   (b) reachable — fileExists(atPath:) returns true
+//   (c) not in Trash — path contains "/.Trash/" (user Trash) or "/.Trashes/" (volume Trash)
 //   Stale projects are marked isUnavailable=true in activeProjects and shown with
 //   an orange icon in ProjectChipsView. This gives the user a clear signal to either
 //   restore the folder or remove the project from the thread.
@@ -123,6 +124,7 @@ extension ChappieViewModel {
     /// so the new thread's sync takes full ownership of the readiness state.
     ///
     /// HEALTH-CHECK + B-05: after bookmark resolution, each URL is validated before use:
+    ///   - isStale == false (stale bookmark was re-routed by macOS to a different folder)
     ///   - path must not contain "/.Trash/" or "/.Trashes/" (user/volume Trash)
     ///   - fileExists(atPath:) must return true (folder was deleted or unmounted)
     ///   Failed projects are marked isUnavailable=true in activeProjects so the chip
@@ -193,6 +195,16 @@ extension ChappieViewModel {
                 continue
             }
 
+            // CRITICAL: stale bookmark means macOS re-routed it to a DIFFERENT folder.
+            // We must not trust the resolved URL — it may point to a completely unrelated path.
+            // WHY: when the original folder is moved to Trash, macOS may re-resolve the bookmark
+            // to a similarly-named folder elsewhere (e.g. the app's own project folder).
+            if isStale {
+                print("[ChappieViewModel] M-09: ⚠️ Stale bookmark for '\(project.displayName)' — macOS re-routed to '\(url.path)', rejecting")
+                activeProjects[i].isUnavailable = true
+                continue
+            }
+
             // Health-check: reject Trash and missing/unmounted paths.
             // WHY: FileManager hangs 1–2 min on these; user needs to see the orange chip.
             if isURLStale(url) {
@@ -246,12 +258,16 @@ extension ChappieViewModel {
     ///   2. Path contains "/.Trashes/" — folder in volume Trash (external drives).
     ///   3. fileExists returns false — folder deleted, volume unmounted, or path changed.
     ///
+    /// NOTE: isStale (bookmark staleness) is checked separately BEFORE this function.
+    /// A stale bookmark may resolve to a valid-looking URL that passes all checks here
+    /// but points to a completely wrong folder — so it must be caught at the source.
+    ///
     /// WHY NOT use URLResourceValues: resourceValues(forKeys:) itself can hang on
     /// sandbox-restricted paths. fileExists is cheaper and fails fast.
     private func isURLStale(_ url: URL) -> Bool {
         let path = url.path
 
-        // Reject user Trash — macOS moves items to ~/.Trash/ (no 'es').
+        // Reject user Trash — macOS moves items to ~/.Trash/FolderName (contains /.Trash/).
         if path.contains("/.Trash/") {
             return true
         }
