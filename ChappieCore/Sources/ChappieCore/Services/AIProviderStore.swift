@@ -16,6 +16,17 @@
 // THREAD SAFETY:
 // All async methods run in a detached Task with ModelContainer actor isolation.
 // Same pattern as ThreadStore and ProjectStore.
+//
+// CACHING:
+// cachedProviders holds the full list in RAM after first load.
+// All reads return from cache — zero SwiftData hits on hot path.
+// All writes invalidate the cache by calling refreshCache() after saving.
+// This eliminates read contention during thread switching (no concurrent ModelContext fetches).
+//
+// DEFAULT PROVIDER:
+// isDefault lives on AIProviderEntity (SwiftData), not on AIProvider (domain model).
+// The cache stores a separate cachedDefaultId to answer loadDefaultProvider() without
+// iterating over JSON or hitting the DB.
 
 import Foundation
 import SwiftData
@@ -41,6 +52,13 @@ public actor AIProviderStore {
 
     private let modelContainer: ModelContainer
 
+    // MARK: - In-memory cache
+
+    // Full provider list — populated on first access, invalidated on writes.
+    private var cachedProviders: [AIProvider]? = nil
+    // ID of the default provider — kept in sync with cachedProviders.
+    private var cachedDefaultId: UUID? = nil
+
     // MARK: - Keychain constants
 
     private let keychainService: String = {
@@ -53,41 +71,51 @@ public actor AIProviderStore {
         self.modelContainer = modelContainer
     }
 
+    // MARK: - Cache Management
+
+    /// Loads all providers from SwiftData and stores them in cachedProviders.
+    /// Called after every write operation to keep cache fresh.
+    private func refreshCache() throws {
+        let context = ModelContext(modelContainer)
+        let descriptor = FetchDescriptor<AIProviderEntity>(
+            sortBy: [SortDescriptor(\.createdAt, order: .forward)]
+        )
+        let entities = try context.fetch(descriptor)
+        cachedProviders = entities.compactMap { $0.toProvider() }
+        // Track which UUID is marked as default so loadDefaultProvider() needs no DB hit
+        cachedDefaultId = entities.first(where: { $0.isDefault })?.id
+    }
+
+    /// Returns cached providers, loading from SwiftData on first call.
+    private func getProviders() throws -> [AIProvider] {
+        if let cached = cachedProviders { return cached }
+        try refreshCache()
+        return cachedProviders ?? []
+    }
+
     // MARK: - Load
 
     /// Returns all stored providers, sorted by creation date (oldest first).
+    /// Served from in-memory cache — no SwiftData hit on warm calls.
     public func loadProviders() async throws -> [AIProvider] {
-        let context = ModelContext(modelContainer)
-        let descriptor = FetchDescriptor<AIProviderEntity>(
-            sortBy: [SortDescriptor(\.createdAt, order: .forward)]
-        )
-        let entities = try context.fetch(descriptor)
-        return entities.compactMap { $0.toProvider() }
+        return try getProviders()
     }
 
     /// Returns the default provider, or the first one if no default is set.
+    /// Served from in-memory cache — no SwiftData hit on warm calls.
     public func loadDefaultProvider() async throws -> AIProvider? {
-        let context = ModelContext(modelContainer)
-        let descriptor = FetchDescriptor<AIProviderEntity>(
-            sortBy: [SortDescriptor(\.createdAt, order: .forward)]
-        )
-        let entities = try context.fetch(descriptor)
-
-        // Prefer the explicitly marked default
-        if let defaultEntity = entities.first(where: { $0.isDefault }) {
-            return defaultEntity.toProvider()
+        let providers = try getProviders()
+        if let defaultId = cachedDefaultId,
+           let found = providers.first(where: { $0.id == defaultId }) {
+            return found
         }
-        // Fall back to the first one
-        return entities.first?.toProvider()
+        return providers.first
     }
 
     /// Returns a single provider by ID.
+    /// Served from in-memory cache — no SwiftData hit on warm calls.
     public func loadProvider(id: UUID) async throws -> AIProvider? {
-        let context = ModelContext(modelContainer)
-        let descriptor = FetchDescriptor<AIProviderEntity>(
-            predicate: #Predicate { $0.id == id }
-        )
-        return try context.fetch(descriptor).first?.toProvider()
+        return try getProviders().first(where: { $0.id == id })
     }
 
     // MARK: - Add
@@ -110,6 +138,9 @@ public actor AIProviderStore {
 
         // Store API key in Keychain
         saveApiKey(apiKey, for: provider.id)
+
+        // Invalidate cache — next read will reflect the new provider
+        try refreshCache()
 
         print("[AIProviderStore] Added provider '\(provider.displayName)' (id: \(provider.id))")
         return provider.id
@@ -135,6 +166,8 @@ public actor AIProviderStore {
         if let key = apiKey, !key.isEmpty {
             saveApiKey(key, for: provider.id)
         }
+
+        try refreshCache()
 
         print("[AIProviderStore] Updated provider '\(provider.displayName)'")
     }
@@ -171,6 +204,8 @@ public actor AIProviderStore {
         // Remove API key from Keychain
         deleteApiKey(for: id)
 
+        try refreshCache()
+
         print("[AIProviderStore] Deleted provider id: \(id)")
     }
 
@@ -194,6 +229,8 @@ public actor AIProviderStore {
         entity.update(from: provider)
         try context.save()
 
+        try refreshCache()
+
         print("[AIProviderStore] Added model '\(trimmed)' to provider '\(provider.displayName)'")
     }
 
@@ -213,6 +250,8 @@ public actor AIProviderStore {
         entity.update(from: provider)
         try context.save()
 
+        try refreshCache()
+
         print("[AIProviderStore] Deleted model '\(modelName)' from provider '\(provider.displayName)'")
     }
 
@@ -228,6 +267,8 @@ public actor AIProviderStore {
         }
         try context.save()
 
+        try refreshCache()
+
         print("[AIProviderStore] Default provider set to id: \(id)")
     }
 
@@ -240,9 +281,7 @@ public actor AIProviderStore {
 
     /// Returns true if at least one provider exists.
     public func hasProviders() async -> Bool {
-        let context = ModelContext(modelContainer)
-        let count = (try? context.fetch(FetchDescriptor<AIProviderEntity>()).count) ?? 0
-        return count > 0
+        return (try? getProviders().isEmpty == false) ?? false
     }
 
     // MARK: - Keychain Helpers (private)

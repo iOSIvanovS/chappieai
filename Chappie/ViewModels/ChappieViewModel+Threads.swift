@@ -43,7 +43,7 @@ extension ChappieViewModel {
     func selectThread(_ thread: ThreadMetadata) async {
         guard let store = threadStore else { return }
 
-        // Show spinner immediately — before activeThread is assigned (prevents welcome screen flash)
+        // Instant UI reset — user sees spinner immediately
         self.isLoadingThread = true
         self.messages = []
         self.displayedMessages = []
@@ -56,35 +56,34 @@ extension ChappieViewModel {
 
         saveLastActiveThreadId(thread.id)
 
-        do {
-            let settings = try await store.loadSettings(forThreadId: thread.id)
-            self.activeThreadSettings = settings
+        // Load settings synchronously — single fast SwiftData fetch (~1ms).
+        // Settings MUST be ready before we release the spinner so the toolbar
+        // shows the correct provider name from frame one.
+        let settings = (try? await store.loadSettings(forThreadId: thread.id)) ?? ThreadSettings()
+        self.activeThreadSettings = settings
 
-            await resolveAndApplyProvider(for: thread, settings: settings)
+        // Apply provider from in-memory providers[] — zero SwiftData hit.
+        // resolveAndApplyProvider reads self.providers which is already cached in RAM.
+        await resolveAndApplyProvider(for: thread, settings: settings)
 
-            let loaded = try await store.loadMessages(fromThreadId: thread.id, as: ChatMessage.self)
-            self.messages = loaded
-            resetPagination(fireScrollTrigger: true)
-
-            print("[ChappieViewModel] Thread '\(thread.title)' selected (\(loaded.count) messages)")
-        } catch {
-            print("[ChappieViewModel] Error loading thread '\(thread.title)': \(error)")
-        }
-
-        // Unblock UI — user sees messages NOW.
-        // WHY: isLoadingThread=false must be followed by a Task{} break so SwiftUI
-        // actually gets a chance to re-render before we start the background work below.
-        // Without Task{} all the awaits below keep MainActor busy and the screen stays
-        // frozen even though the flag is already false.
+        // Release spinner — user sees the chat (empty for now) immediately.
+        // Messages load in the background Task below.
         self.isLoadingThread = false
         self.isAppReady = true
 
-        // Background post-load: runs after SwiftUI renders the messages.
-        // loadProjects + memory context are fast (SwiftData fetch, ~10ms).
-        // syncFileSystemForActiveThread is slow (bookmark resolution, up to 2s) —
-        // protected by isFileSystemReady flag so file tools are blocked until ready.
+        // Background: load messages + projects + memory + FS.
+        // All of this runs after SwiftUI renders the empty chat frame.
         Task { [weak self] in
             guard let self else { return }
+
+            // Load messages — the only remaining SwiftData hit on thread switch.
+            // Runs in background so the empty chat is visible immediately.
+            if let loaded = try? await store.loadMessages(fromThreadId: thread.id, as: ChatMessage.self) {
+                self.messages = loaded
+                self.resetPagination(fireScrollTrigger: true)
+                print("[ChappieViewModel] Thread '\(thread.title)' selected (\(loaded.count) messages)")
+            }
+
             await self.loadProjectsForThread(thread)
             self.buildAndSyncMemoryContext()
             await self.syncActiveMemoryContext()
@@ -99,10 +98,13 @@ extension ChappieViewModel {
 
     /// Resolves which provider to use for a thread, with healing for orphaned UUIDs.
     ///
-    /// WHY SEPARATE METHOD:
-    /// selectThread() was doing inline provider lookup — if UUID wasn't found it silently
-    /// fell back to the default provider for every thread, causing the "off-by-one" symptom
-    /// where all threads appeared to share the same provider after app restart.
+    /// WHY NO SwiftData CALLS HERE:
+    /// self.providers[] is already loaded into RAM at app start and kept fresh by
+    /// loadProvidersAndSetActive / reloadProviders. Reading from it is instant.
+    /// provStore.loadDefaultProvider() used to be called here — that was a SwiftData
+    /// fetch that could block for seconds if the DB was under write pressure.
+    /// Now we resolve the default via providerStore.loadDefaultProvider() which is
+    /// served from AIProviderStore's in-memory cache — no DB hit.
     ///
     /// persistSettings: false — settings are already loaded from DB here; we must NOT
     /// let switchProvider overwrite them with stale activeThreadSettings from the previous
@@ -111,7 +113,6 @@ extension ChappieViewModel {
         guard let provStore = providerStore else { return }
 
         // Case 1: saved UUID matches a known provider — exact match, happy path.
-        // persistSettings: false — DB record is already correct, no write needed.
         if let savedId = settings.activeProviderId,
            let provider = providers.first(where: { $0.id == savedId }) {
             await switchProvider(provider, modelName: settings.activeModelName, from: provStore, persistSettings: false)
@@ -119,15 +120,13 @@ extension ChappieViewModel {
         }
 
         // Case 2: UUID is set but not found — provider was deleted or recreated.
-        // Log a warning, pick the best available provider, and heal the stored UUID.
+        // loadDefaultProvider() is served from AIProviderStore's in-memory cache — no DB hit.
         if let orphanedId = settings.activeProviderId {
             print("[ChappieViewModel] ⚠️ B-03: Provider \(orphanedId) not found for thread '\(thread.title)' — healing")
 
-            let fallback = try? await provStore.loadDefaultProvider()
-            let resolved = fallback ?? providers.first
+            let resolved = (try? await provStore.loadDefaultProvider()) ?? providers.first
 
             if let provider = resolved {
-                // persistSettings: false — we write the healed record explicitly below.
                 await switchProvider(provider, modelName: settings.activeModelName, from: provStore, persistSettings: false)
 
                 // Heal: persist corrected UUID so next restart finds the right provider.
@@ -146,10 +145,8 @@ extension ChappieViewModel {
             return
         }
 
-        // Case 3: no saved provider at all — use default.
-        // persistSettings: false — caller (selectThread) has already set activeThreadSettings
-        // from DB; we don't want to overwrite it with a default-provider record.
-        if let defaultProvider = try? await provStore.loadDefaultProvider() {
+        // Case 3: no saved provider at all — use cached default (no DB hit).
+        if let defaultProvider = (try? await provStore.loadDefaultProvider()) ?? providers.first {
             let modelName = settings.activeModelName.flatMap { name in
                 defaultProvider.models.contains(name) ? name : nil
             } ?? defaultProvider.models.first
@@ -200,7 +197,6 @@ extension ChappieViewModel {
         }
 
         // Always rename — even if title is "Новый тред" (user may have typed it explicitly).
-        // Use the thread object from refreshed list after rename so selectThread gets the correct title.
         let finalTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedTitle = finalTitle.isEmpty ? "Новый тред" : finalTitle
         try? await store.renameThread(id: thread.id, title: resolvedTitle)
@@ -212,7 +208,6 @@ extension ChappieViewModel {
 
         // Reload threads so we pass the up-to-date ThreadMetadata (with correct title) to selectThread.
         // WHY: thread object captured in pendingNewThread still has the old title "Новый тред".
-        // Passing stale object to selectThread sets activeThread.title incorrectly in the sidebar.
         let refreshed = (try? await store.loadThreads()) ?? []
         self.threads = refreshed
         let updatedThread = refreshed.first(where: { $0.id == thread.id }) ?? thread

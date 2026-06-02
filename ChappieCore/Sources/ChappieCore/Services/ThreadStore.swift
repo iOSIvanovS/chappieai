@@ -26,6 +26,13 @@
 //
 // IT-11: ThreadMetadata moved to ThreadModels.swift (with settings field).
 // ThreadStore.loadThreads() now deserializes settingsJSON into ThreadMetadata.settings.
+//
+// CACHING:
+// cachedThreads holds the thread list in RAM after first load.
+// loadThreads() is served from cache — no SwiftData hit on warm calls.
+// loadSettings() / loadMessages() / loadProjectIds() always hit SwiftData —
+// they are per-thread reads that happen only when a thread is selected, not in hot loops.
+// All writes call refreshCache() to keep the thread list consistent.
 
 import Foundation
 import SwiftData
@@ -48,6 +55,11 @@ public actor ThreadStore {
     /// Context is created inside the actor per operation via ModelContext(container).
     private let modelContainer: ModelContainer
 
+    // In-memory cache of the thread list — populated on first loadThreads(), invalidated on writes.
+    // loadSettings/loadMessages/loadProjectIds are NOT cached: they are per-thread,
+    // called only on thread selection, and their data changes frequently (messages).
+    private var cachedThreads: [ThreadMetadata]? = nil
+
     // MARK: - Init
 
     /// Creates a ThreadStore with the given ModelContainer.
@@ -68,6 +80,17 @@ public actor ThreadStore {
     /// ModelContainer manages synchronization between contexts automatically.
     private func makeContext() -> ModelContext {
         ModelContext(modelContainer)
+    }
+
+    // MARK: - Cache Management
+
+    /// Reloads the thread list from SwiftData into cachedThreads.
+    private func refreshCache() throws {
+        let context = makeContext()
+        let descriptor = FetchDescriptor<ThreadEntity>(
+            sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
+        )
+        cachedThreads = try context.fetch(descriptor).map { ThreadMetadata(from: $0) }
     }
 
     // MARK: - Create
@@ -93,6 +116,8 @@ public actor ThreadStore {
         context.insert(thread)
         try context.save()
 
+        try refreshCache()
+
         print("[ThreadStore] ✅ Created thread '\(title)' (id: \(thread.id))")
         return thread.id
     }
@@ -100,6 +125,7 @@ public actor ThreadStore {
     // MARK: - Load
 
     /// Loads metadata for all threads, sorted by last update time (newest first).
+    /// Served from in-memory cache — no SwiftData hit on warm calls.
     ///
     /// RETURNS VALUE TYPE:
     /// Returns ThreadMetadata (struct) — safe Sendable type.
@@ -111,12 +137,9 @@ public actor ThreadStore {
     /// - Returns: Array of thread metadata sorted by updatedAt DESC
     /// - Throws: SwiftData error if fetch failed
     public func loadThreads() throws -> [ThreadMetadata] {
-        let context = makeContext()
-        let descriptor = FetchDescriptor<ThreadEntity>(
-            sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
-        )
-        let threads = try context.fetch(descriptor)
-        return threads.map { ThreadMetadata(from: $0) }
+        if let cached = cachedThreads { return cached }
+        try refreshCache()
+        return cachedThreads ?? []
     }
 
     // MARK: - Save/Load Messages (Generic)
@@ -157,9 +180,13 @@ public actor ThreadStore {
         thread.messagesJSON = try JSONEncoder().encode(trimmed)
         thread.updatedAt = Date()
         try context.save()
+
+        // Invalidate thread list cache — updatedAt changed, sort order may shift
+        try refreshCache()
     }
 
     /// Loads message history from a thread.
+    /// Always hits SwiftData — messages change on every send, caching would be stale.
     ///
     /// GENERIC T: Codable — UI layer specifies the concrete type ([ChatMessage]).
     ///
@@ -204,9 +231,12 @@ public actor ThreadStore {
 
         thread.settingsJSON = (try? JSONEncoder().encode(settings)) ?? thread.settingsJSON
         try context.save()
+
+        // Invalidate thread list cache — settings are embedded in ThreadMetadata
+        try refreshCache()
     }
 
-    /// Loads thread settings.
+    /// Loads thread settings. Always hits SwiftData — not cached.
     ///
     /// - Parameter threadId: Thread UUID
     /// - Returns: ThreadSettings (defaults if thread not found or data is corrupt)
@@ -273,6 +303,8 @@ public actor ThreadStore {
         thread.updatedAt = Date()
         try context.save()
 
+        try refreshCache()
+
         print("[ThreadStore] ✅ Updated project bindings for thread '\(thread.title)': \(projectIds.count) projects")
     }
 
@@ -303,6 +335,8 @@ public actor ThreadStore {
         thread.projectBindingsJSON = (try? JSONEncoder().encode(ids)) ?? thread.projectBindingsJSON
         thread.updatedAt = Date()
         try context.save()
+
+        try refreshCache()
 
         print("[ThreadStore] ✅ Project \(projectId) added to thread '\(thread.title)'")
     }
@@ -337,6 +371,8 @@ public actor ThreadStore {
         thread.updatedAt = Date()
         try context.save()
 
+        try refreshCache()
+
         print("[ThreadStore] ✅ Project \(projectId) removed from thread '\(thread.title)'")
     }
 
@@ -358,6 +394,8 @@ public actor ThreadStore {
         thread.title = title
         thread.updatedAt = Date()
         try context.save()
+
+        try refreshCache()
     }
 
     // MARK: - Delete
@@ -379,6 +417,8 @@ public actor ThreadStore {
         let title = thread.title
         context.delete(thread)
         try context.save()
+
+        try refreshCache()
 
         print("[ThreadStore] 🗑 Thread '\(title)' deleted")
     }
