@@ -15,51 +15,73 @@ import AppKit
 /// - colorBuiltins only for: python, javascript, typescript, sql, bash
 /// - colorJsonKeys only for: json
 /// - colorBashVars only for: bash
+///
+/// CACHE (CPU-03):
+/// NSCache keyed by "\(code.hashValue)_\(language)_\(dark)" — avoids re-highlighting
+/// the same code block on every SwiftUI re-render. NSCache is thread-safe and
+/// automatically evicts under memory pressure.
 enum SyntaxEngine {
+
+    // MARK: - Cache
+
+    /// Global highlight cache. Key: "hashValue_language_dark".
+    /// NSCache is thread-safe and auto-evicts under memory pressure.
+    private static let cache = NSCache<NSString, NSAttributedString>()
 
     // Exposed so CodeBlockView can resolve the theme before highlighting.
     static func normalizePublic(_ language: String?) -> String { normalize(language) }
 
     static func highlight(code: String, language: String?, theme: SyntaxNSTheme) -> NSAttributedString {
         let lang = normalize(language)
+        // Use theme's plainText color pointer as a cheap dark/light discriminator.
+        // NSColor instances from SyntaxNSTheme are static — pointer equality is stable.
+        let isDark = theme.plainText != NSColor.black
+        let key = "\(code.hashValue)_\(lang)_\(isDark)" as NSString
+
+        if let cached = cache.object(forKey: key) { return cached }
+
+        let result: NSAttributedString
         switch lang {
         case "swift":
-            return kw(code, keywords: swiftKeywords, types: true, builtins: [],
-                      comment: .slashSlash, theme: theme)
+            result = kw(code, keywords: swiftKeywords, types: true, builtins: [],
+                        comment: .slashSlash, theme: theme)
         case "python":
-            return kw(code, keywords: pythonKeywords, types: false, builtins: pythonBuiltins,
-                      comment: .hash, theme: theme)
+            result = kw(code, keywords: pythonKeywords, types: false, builtins: pythonBuiltins,
+                        comment: .hash, theme: theme)
         case "javascript":
-            return kw(code, keywords: jsKeywords, types: false, builtins: jsBuiltins,
-                      comment: .slashSlash, theme: theme)
+            result = kw(code, keywords: jsKeywords, types: false, builtins: jsBuiltins,
+                        comment: .slashSlash, theme: theme)
         case "typescript":
-            return kw(code, keywords: tsKeywords, types: true, builtins: jsBuiltins,
-                      comment: .slashSlash, theme: theme)
+            result = kw(code, keywords: tsKeywords, types: true, builtins: jsBuiltins,
+                        comment: .slashSlash, theme: theme)
         case "kotlin":
-            return kw(code, keywords: kotlinKeywords, types: true, builtins: [],
-                      comment: .slashSlash, theme: theme)
+            result = kw(code, keywords: kotlinKeywords, types: true, builtins: [],
+                        comment: .slashSlash, theme: theme)
         case "rust":
-            return kw(code, keywords: rustKeywords, types: true, builtins: [],
-                      comment: .slashSlash, theme: theme)
+            result = kw(code, keywords: rustKeywords, types: true, builtins: [],
+                        comment: .slashSlash, theme: theme)
         case "go":
-            return kw(code, keywords: goKeywords, types: true, builtins: goBuiltins,
-                      comment: .slashSlash, theme: theme)
+            result = kw(code, keywords: goKeywords, types: true, builtins: goBuiltins,
+                        comment: .slashSlash, theme: theme)
         case "java":
-            return kw(code, keywords: javaKeywords, types: true, builtins: [],
-                      comment: .slashSlash, theme: theme)
+            result = kw(code, keywords: javaKeywords, types: true, builtins: [],
+                        comment: .slashSlash, theme: theme)
         case "c", "cpp":
-            return kw(code, keywords: cKeywords, types: false, builtins: [],
-                      comment: .slashSlash, theme: theme)
+            result = kw(code, keywords: cKeywords, types: false, builtins: [],
+                        comment: .slashSlash, theme: theme)
         case "bash":
-            return bash(code, theme: theme)
+            result = bash(code, theme: theme)
         case "json":
-            return json(code, theme: theme)
+            result = json(code, theme: theme)
         case "sql":
-            return kw(code, keywords: sqlKeywords, types: false, builtins: sqlBuiltins,
-                      comment: .doubleDash, theme: theme, caseInsensitive: true)
+            result = kw(code, keywords: sqlKeywords, types: false, builtins: sqlBuiltins,
+                        comment: .doubleDash, theme: theme, caseInsensitive: true)
         default:
-            return plain(code, theme: theme)
+            result = plain(code, theme: theme)
         }
+
+        cache.setObject(result, forKey: key)
+        return result
     }
 
     // MARK: - Language normalization
