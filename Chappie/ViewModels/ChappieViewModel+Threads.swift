@@ -147,19 +147,25 @@ extension ChappieViewModel {
             await switchProvider(provider, modelName: modelName)
         }
 
+        // Always rename — even if title is "Новый тред" (user may have typed it explicitly).
+        // Use the thread object from refreshed list after rename so selectThread gets the correct title.
         let finalTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !finalTitle.isEmpty && finalTitle != "Новый тред" {
-            try? await store.renameThread(id: thread.id, title: finalTitle)
-        }
+        let resolvedTitle = finalTitle.isEmpty ? "Новый тред" : finalTitle
+        try? await store.renameThread(id: thread.id, title: resolvedTitle)
 
         var updatedSettings = settings
         updatedSettings.activeProviderId = providerId
         updatedSettings.activeModelName = modelName.isEmpty ? nil : modelName
         try? await store.updateSettings(updatedSettings, forThreadId: thread.id)
 
-        if let refreshed = try? await store.loadThreads() { self.threads = refreshed }
+        // Reload threads so we pass the up-to-date ThreadMetadata (with correct title) to selectThread.
+        // WHY: thread object captured in pendingNewThread still has the old title "Новый тред".
+        // Passing stale object to selectThread sets activeThread.title incorrectly in the sidebar.
+        let refreshed = (try? await store.loadThreads()) ?? []
+        self.threads = refreshed
+        let updatedThread = refreshed.first(where: { $0.id == thread.id }) ?? thread
 
-        await selectThread(thread)
+        await selectThread(updatedThread)
         self.messages = []
         resetPagination(fireScrollTrigger: false)
         self.activeProjects = []
