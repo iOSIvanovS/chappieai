@@ -26,13 +26,14 @@
 // - Now: onGeometryChange(for: CGFloat.self) in ContentView's bottomPanel wrapper.
 //   InputMorphView itself has NO GeometryReader — it just reports via callback.
 //
-// CPU-10: THREE ANIMATIONS → ONE:
+// CPU-10: THREE ANIMATIONS → ONE TOKEN (morph-only):
 // - Previously three separate .animation(..., value:) modifiers were stacked on the root view.
-//   SwiftUI evaluates ALL animation modifiers on every render pass regardless of which value
-//   changed — three modifiers = 3x animation overhead on every keystroke.
-// - Now: a single .animation(.spring(...), value: animationToken) where animationToken
-//   is a combined hash of (isThinking, editorHeight, attachments.isEmpty).
-//   One evaluation, same visual result.
+// - Then: a single animationToken combining isThinking + editorHeight + attachments.isEmpty.
+//   BUG: editorHeight changes on every keystroke → animationToken changes → spring animation
+//   fires on every character → spring is timer-driven at 60fps → 100% CPU while typing.
+// - Fix (CPU-14): animationToken now combines ONLY isThinking + attachments.isEmpty.
+//   editorHeight is animated separately via its own .animation modifier scoped to the editor frame.
+//   Morph (thinking↔idle) still gets the full spring. Typing no longer triggers root animation.
 //
 // CPU-13: STREAMING ISOLATION:
 // - InputMorphView receives `streaming: StreamingState` instead of separate isThinking
@@ -92,12 +93,13 @@ struct InputMorphView: View {
         return (hasText || hasAttachments) && isWorkspaceSelected && !streaming.isThinking
     }
 
-    /// CPU-10: single animation token combining all three changing values.
-    /// SwiftUI evaluates only ONE .animation modifier instead of three.
-    private var animationToken: Int {
+    /// CPU-14: morph-only animation token — does NOT include editorHeight.
+    /// editorHeight changes on every keystroke → including it here caused a spring
+    /// animation loop on every character (60fps timer-driven → 100% CPU while typing).
+    /// Editor height is animated separately via a dedicated .animation on its .frame.
+    private var morphToken: Int {
         var hasher = Hasher()
         hasher.combine(streaming.isThinking)
-        hasher.combine(editorHeight)
         hasher.combine(attachments.isEmpty)
         return hasher.finalize()
     }
@@ -111,22 +113,26 @@ struct InputMorphView: View {
                 .opacity(streaming.isThinking ? 0 : 1)
                 .scaleEffect(streaming.isThinking ? 0.96 : 1, anchor: .bottom)
 
-            // THINKING: fixed collapsedHeight, centered in the capsule
-            thinkingView
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
-                .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .opacity(streaming.isThinking ? 1 : 0)
-                .scaleEffect(streaming.isThinking ? 1 : 0.96, anchor: .bottom)
-                .frame(height: streaming.isThinking ? InputLayout.collapsedHeight : 0)
+            // THINKING: fixed collapsedHeight, centered in the capsule.
+            // Rendered conditionally — ThinkingGearIcon has a repeating symbolEffect
+            // that runs even at opacity:0, costing ~10% CPU idle. Guard it here.
+            if streaming.isThinking {
+                thinkingView
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .frame(height: InputLayout.collapsedHeight)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottom)))
+            }
         }
         .padding(12)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
         .padding(.horizontal)
         .padding(.bottom, 16)
-        // CPU-10: single .animation instead of three separate ones.
-        .animation(.spring(response: 0.38, dampingFraction: 0.82), value: animationToken)
+        // CPU-14: only morph transitions are animated at root level (thinking↔idle, attachments appear).
+        // editorHeight is NOT in morphToken — typing no longer triggers this spring.
+        .animation(.spring(response: 0.38, dampingFraction: 0.82), value: morphToken)
         // CPU-08: report height via onGeometryChange — no GeometryReader render loop.
         .onGeometryChange(for: CGFloat.self) { geo in
             geo.size.height
@@ -167,9 +173,12 @@ struct InputMorphView: View {
                     isEnabled: isWorkspaceSelected && !streaming.isThinking,
                     onSend: { if canSend { triggerSend() } },
                     onHeightChange: { newHeight in
-                        // Only update while not thinking — avoids fighting the collapse animation
+                        // Only update while not thinking — avoids fighting the collapse animation.
+                        // CPU-14: animate height change separately so it doesn't pollute morphToken.
                         if !streaming.isThinking, abs(newHeight - editorHeight) > 1 {
-                            editorHeight = newHeight
+                            withAnimation(.linear(duration: 0.08)) {
+                                editorHeight = newHeight
+                            }
                         }
                     },
                     onFocusChange: { focused in
@@ -179,6 +188,7 @@ struct InputMorphView: View {
                         editorCoordinator = coordinator
                     }
                 )
+                // CPU-14: .frame animation is LOCAL to the editor — does not trigger root spring.
                 .frame(height: editorHeight)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
@@ -253,7 +263,9 @@ struct InputMorphView: View {
 
     private var thinkingView: some View {
         HStack(spacing: 12) {
-            ThinkingGearIcon()
+            // isActive: true because thinkingView is only rendered when streaming.isThinking == true.
+            // No need to pass the flag — the view's existence IS the gate.
+            ThinkingGearIcon(isActive: true)
 
             Text(streaming.currentToolCall ?? "Думаю…")
                 .font(.system(size: 12, weight: .regular, design: .monospaced))
