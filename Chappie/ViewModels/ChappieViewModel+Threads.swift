@@ -232,6 +232,12 @@ extension ChappieViewModel {
         self.activeProjects = []
         buildAndSyncMemoryContext()
         await syncActiveMemoryContext()
+
+        // Send live AI greeting as the first message in the new thread.
+        // Runs in background — thread opens immediately, greeting arrives shortly after.
+        Task { [weak self] in
+            await self?.sendWelcomeGreeting(for: updatedThread)
+        }
     }
 
     func cancelNewThread() {
@@ -244,6 +250,37 @@ extension ChappieViewModel {
             try? await store.deleteThread(id: thread.id)
             if let refreshed = try? await store.loadThreads() { self.threads = refreshed }
         }
+    }
+
+    // MARK: - Welcome Greeting
+
+    /// Requests a short AI greeting and saves it as the first message in the thread.
+    ///
+    /// WHY SEPARATE METHOD:
+    /// Keeps confirmNewThread() readable. Greeting is best-effort — any failure is silent.
+    /// appLanguage is hardcoded "ru" for now; wire AppSettings.appLanguage when i18n lands.
+    private func sendWelcomeGreeting(for thread: ThreadMetadata) async {
+        guard let client = aiClient, let store = threadStore else { return }
+
+        // TODO: replace "ru" with AppSettings.appLanguage when i18n lands.
+        let appLanguage: String? = "ru"
+
+        guard let greetingText = await WelcomeService.generateGreeting(
+            using: client,
+            appLanguage: appLanguage
+        ) else { return }
+
+        let greetingMessage = ChatMessage.message(isUser: false, text: greetingText)
+
+        // Only add if thread is still active and still empty — user may have typed already.
+        guard activeThread?.id == thread.id, messages.isEmpty else { return }
+
+        messages.append(greetingMessage)
+        appendToDisplayed(greetingMessage)
+
+        // Persist so greeting survives app restart.
+        try? await store.saveMessages(messages, toThreadId: thread.id)
+        print("[ChappieViewModel] Welcome greeting saved for thread '\(thread.title)'")
     }
 
     // MARK: - Delete / Rename
