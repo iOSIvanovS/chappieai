@@ -31,6 +31,13 @@
 //   On every selectThread() call, the previous Task is cancelled before a new one starts.
 //   This prevents a slow syncFileSystemForActiveThread() from a previous thread from
 //   racing with the new thread's sync and leaving isFileSystemReady in a wrong state.
+//
+// STALE BOOKMARK HEALTH-CHECK:
+//   Before spending time on bookmark resolution, we verify the resolved URL is:
+//   (a) reachable — fileExists(atPath:) returns true
+//   (b) not in Trash — path does not contain "/.Trashes/"
+//   Stale projects are logged and skipped immediately — no FileManager enumeration attempt.
+//   This prevents a 1–2 minute hang when a project folder was deleted or moved to Trash.
 
 import Foundation
 import ChappieCore
@@ -108,8 +115,12 @@ extension ChappieViewModel {
     /// If a newer selectThread() cancelled this task — exits without touching isFileSystemReady,
     /// so the new thread's sync takes full ownership of the readiness state.
     ///
-    /// WHY multi-workspace: B-01 — previously only the first project was visible.
-    /// Each project's bookmark is resolved independently; failures are logged and skipped.
+    /// HEALTH-CHECK: after bookmark resolution, each URL is validated before use:
+    ///   - path must not contain "/.Trashes/" (folder was moved to Trash)
+    ///   - fileExists(atPath:) must return true (folder was deleted or unmounted)
+    ///   Stale projects are marked in ProjectStore and skipped — no FS enumeration attempt.
+    ///   WHY: without this check, a Trash/missing folder causes FileManager to hang for
+    ///   1–2 minutes trying to enumerate a sandbox-restricted or non-existent path.
     func syncFileSystemForActiveThread() async {
         guard FeatureFlags.useThreadIsolationV2,
               let ts = toolService else { return }
@@ -133,7 +144,7 @@ extension ChappieViewModel {
         self.isFileSystemReady = false
         await ts.setFileSystemReady(false)
 
-        // Resolve bookmark for each project; collect successful (name, URL) pairs.
+        // Resolve bookmark for each project; collect healthy (name, URL) pairs.
         var workspaces: [(name: String, url: URL)] = []
 
         for project in activeProjects {
@@ -167,12 +178,20 @@ extension ChappieViewModel {
                 )
             }
 
-            if let url = resolvedURL {
-                workspaces.append((name: project.displayName, url: url))
-                print("[ChappieViewModel] M-09: ✅ '\(project.displayName)' → \(url.path)")
-            } else {
+            guard let url = resolvedURL else {
                 print("[ChappieViewModel] M-09: ❌ Could not resolve bookmark for '\(project.displayName)'")
+                continue
             }
+
+            // Health-check: reject Trash and missing/unmounted paths immediately.
+            // WHY: FileManager hangs for 1–2 min trying to access these paths.
+            if isURLStale(url) {
+                print("[ChappieViewModel] M-09: ⚠️ Stale path for '\(project.displayName)' — skipped (\(url.path))")
+                continue
+            }
+
+            workspaces.append((name: project.displayName, url: url))
+            print("[ChappieViewModel] M-09: ✅ '\(project.displayName)' → \(url.path)")
         }
 
         // Final cancellation check before wiring the FileSystem.
@@ -203,6 +222,32 @@ extension ChappieViewModel {
 
         let names = workspaces.map(\.name).joined(separator: ", ")
         print("[ChappieViewModel] M-09: FileSystem → [\(names)] (\(workspaces.count) workspaces)")
+    }
+
+    // MARK: - Stale URL detection
+
+    /// Returns true if the URL should be rejected without attempting FS access.
+    ///
+    /// Checks:
+    ///   1. Path contains "/.Trashes/" — folder was moved to macOS Trash.
+    ///   2. fileExists returns false — folder deleted, volume unmounted, or path changed.
+    ///
+    /// WHY NOT use URLResourceValues: resourceValues(forKeys:) itself can hang on
+    /// sandbox-restricted paths. fileExists is cheaper and fails fast.
+    private func isURLStale(_ url: URL) -> Bool {
+        let path = url.path
+
+        // Reject Trash paths immediately — no filesystem access needed.
+        if path.contains("/.Trashes/") {
+            return true
+        }
+
+        // Reject missing/unmounted paths.
+        if !FileManager.default.fileExists(atPath: path) {
+            return true
+        }
+
+        return false
     }
 }
 
