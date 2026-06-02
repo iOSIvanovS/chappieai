@@ -58,7 +58,9 @@ struct MarkdownTextView: View {
         case .divider:
             Divider().padding(.vertical, 4)
         case .table(let headers, let rows, _):
-            TableBlockView(headers: headers, rows: rows, fontSize: fontSize)
+            // CPU-04: EquatableView skips re-render when headers/rows/fontSize unchanged.
+            // Tables are the heaviest block — this guard is the most impactful.
+            EquatableView(content: TableBlockView(headers: headers, rows: rows, fontSize: fontSize))
         }
     }
 
@@ -87,10 +89,16 @@ struct TableRow: Identifiable {
 
 // MARK: - Table block
 
-struct TableBlockView: View {
+/// CPU-04: Equatable conformance lets EquatableView skip re-render when inputs are unchanged.
+/// Tables are the most expensive block to layout — this guard pays off most here.
+struct TableBlockView: View, Equatable {
 
     let headers: [String]; let rows: [[String]]; let fontSize: CGFloat
     @Environment(\.colorScheme) private var colorScheme
+
+    static func == (lhs: TableBlockView, rhs: TableBlockView) -> Bool {
+        lhs.headers == rhs.headers && lhs.rows == rhs.rows && lhs.fontSize == rhs.fontSize
+    }
 
     private var borderColor: Color      { colorScheme == .dark ? Color(white: 0.3)   : Color(white: 0.75) }
     private var headerBackground: Color { colorScheme == .dark ? Color(white: 0.18)  : Color(white: 0.93) }
