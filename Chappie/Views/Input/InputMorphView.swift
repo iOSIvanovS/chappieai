@@ -23,8 +23,6 @@
 // ContentView measures the actual rendered height of InputMorphView via onGeometryChange
 // and passes it to ChatScrollView as footerHeight. This is exact regardless of content
 // (attachment row, multi-line text, thinking state). No manual math needed here.
-// Previously: panelHeight Binding + updatePanelHeight() formula — inaccurate when
-// attachment row appeared because the formula didn't account for it.
 //
 // CPU-10: THREE ANIMATIONS → ONE TOKEN (morph-only):
 // - Previously three separate .animation(..., value:) modifiers were stacked on the root view.
@@ -38,12 +36,14 @@
 //   directly — subscribing to StreamingState, NOT to ViewModel.
 //
 // CPU-23: currentToolCall is throttled to 200ms in StreamingState.
-// thinkingView animates on every currentToolCall change — throttle prevents 30+ redraws/sec.
 //
-// CPU-26: .contentTransition(.numericText()) removed from toolCall Text.
-// numericText is designed for numeric values — it applies digit-by-digit flip animation.
-// On a string like "write_file → ContentView.swift" this is visually wrong and expensive.
-// Simple .animation(.easeInOut, value: currentToolCall) is sufficient.
+// CPU-28: ThinkingGearIcon replaced from DotsIndicator back to gear, but now uses
+// rotationEffect instead of symbolEffect(.rotate, .repeating) — see ThinkingGearIcon.swift.
+//
+// CPU-29: .animation(.easeInOut, value: currentToolCall) removed from toolCall Text.
+// Even with 200ms throttle, SwiftUI cross-fade animation runs two render passes
+// simultaneously (old text + new text) on every tool call update.
+// Text simply updates instantly — imperceptible at 200ms cadence, zero render cost.
 //
 // MULTIMODAL:
 // - Paperclip button opens NSOpenPanel (images, PDF, text, any file).
@@ -111,9 +111,8 @@ struct InputMorphView: View {
                 .opacity(streaming.isThinking ? 0 : 1)
                 .scaleEffect(streaming.isThinking ? 0.96 : 1, anchor: .bottom)
 
-            // THINKING: fixed collapsedHeight, centered in the capsule.
-            // Rendered conditionally — ThinkingGearIcon has a repeating symbolEffect
-            // that runs even at opacity:0, costing ~10% CPU idle. Guard it here.
+            // THINKING: rendered conditionally — ThinkingGearIcon rotation animator
+            // is created on onAppear and destroyed on disappear. No idle cost.
             if streaming.isThinking {
                 thinkingView
                     .padding(.horizontal, 12)
@@ -167,8 +166,7 @@ struct InputMorphView: View {
                     onHeightChange: { newHeight in
                         // Instant update — no animation. Height jumps are imperceptible at
                         // normal typing speed and withAnimation here fires a 80ms display link
-                        // on every keystroke, which was the main cause of 100% CPU while typing.
-                        // CPU-18: Coordinator cache ensures this fires only on line count change.
+                        // on every keystroke. CPU-18: coordinator cache fires only on line count change.
                         guard !streaming.isThinking, abs(newHeight - editorHeight) > 1 else { return }
                         editorHeight = newHeight
                     },
@@ -253,17 +251,15 @@ struct InputMorphView: View {
 
     private var thinkingView: some View {
         HStack(spacing: 12) {
-            // isActive: true because thinkingView is only rendered when streaming.isThinking == true.
-            ThinkingGearIcon(isActive: true)
+            ThinkingGearIcon()
 
             // CPU-23: currentToolCall throttled to 200ms in StreamingState — at most 5 redraws/sec.
-            // CPU-26: .contentTransition(.numericText()) removed — it's for numeric values only.
-            // On a path string like "write_file → ContentView.swift" it was visually wrong and expensive.
+            // CPU-29: NO .animation here — cross-fade runs two render passes simultaneously.
+            // At 200ms cadence, instant text swap is imperceptible and costs nothing.
             Text(streaming.currentToolCall ?? "Думаю…")
                 .font(.system(size: 12, weight: .regular, design: .monospaced))
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .animation(.easeInOut(duration: 0.2), value: streaming.currentToolCall)
 
             Spacer()
 

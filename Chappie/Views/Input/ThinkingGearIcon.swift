@@ -2,31 +2,31 @@
 // Chappie
 //
 // Spinning gear icon for the thinking state.
-// macOS 15+: .rotate symbolEffect. macOS 14: opacity pulse fallback.
 //
-// WHY isActive PARAMETER:
-// .symbolEffect(.rotate, options: .repeating) is a timer-driven animation loop.
-// On macOS 15 it runs even when the view is hidden (opacity: 0) — costing ~10% CPU idle.
-// Fix: render this view ONLY when isActive == true. Caller gates visibility.
+// WHY rotationEffect instead of symbolEffect(.rotate):
+// symbolEffect(.rotate, options: .repeating) runs a CoreAnimation CADisplayLink timer
+// continuously — costing ~10-15% CPU even when nothing visually changes.
+// rotationEffect + withAnimation(.linear.repeatForever) creates ONE animator on onAppear
+// and reuses it — no per-frame overhead, no CADisplayLink churn.
+//
+// WHY @State angle + onAppear:
+// The animation is started once and runs on the render thread.
+// No SwiftUI invalidation on each frame — the view body is not re-evaluated per tick.
 
 import SwiftUI
 
 struct ThinkingGearIcon: View {
-    var isActive: Bool = true
-    @State private var pulsing = false
+
+    @State private var angle: Double = 0
 
     var body: some View {
-        if #available(macOS 15.0, *) {
-            Image(systemName: "gearshape.arrow.triangle.2.circlepath")
-                .font(.system(size: 13))
-                .symbolEffect(.rotate, options: .repeating, isActive: isActive)
-        } else {
-            Image(systemName: "gearshape.arrow.triangle.2.circlepath")
-                .font(.system(size: 13))
-                .opacity(pulsing ? 0.4 : 1.0)
-                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulsing)
-                .onAppear { pulsing = isActive }
-                .onChange(of: isActive) { _, active in pulsing = active }
-        }
+        Image(systemName: "gearshape.arrow.triangle.2.circlepath")
+            .font(.system(size: 13))
+            .rotationEffect(.degrees(angle))
+            .onAppear {
+                withAnimation(.linear(duration: 2.0).repeatForever(autoreverses: false)) {
+                    angle = 360
+                }
+            }
     }
 }
