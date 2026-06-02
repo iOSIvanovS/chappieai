@@ -52,6 +52,22 @@
 // Because StreamingState is a separate @Observable, only ChatScrollView re-renders on
 // token updates — ContentView and topPanel are NOT invalidated.
 //
+// CPU-24: STREAMING BUBBLE — PLAIN TEXT DURING STREAM:
+// MarkdownTextView.init() calls MarkdownParser.parse() on every render.
+// During streaming that means full re-parse on every token (30+/sec), growing text.
+// Fix: streamingBubble uses StreamingTextView (plain Text) — zero parse cost.
+// MarkdownTextView is only used in MessageBubbleView for completed messages.
+//
+// CPU-25: ANIMATION SCOPE NARROWED:
+// .animation(.easeInOut, value: streaming.isThinking) was on the outer VStack —
+// it animated the entire message list on every thinking state change.
+// Now each animated element carries its own targeted animation.
+//
+// CPU-27: runningCost ANIMATION REMOVED:
+// .animation(.easeInOut(0.3), value: runningCost) fired on every token with cost info.
+// contentTransition(.numericText(value:)) is kept for visual smoothness but the
+// animation driver is removed — SwiftUI uses the default transaction instead.
+//
 // NOTE ON "bad range for [%{public}s]" IN XCODE CONSOLE:
 // This warning is NOT caused by our code. It is an internal CoreData/SwiftData OSLog
 // decode error that fires when SwiftData performs its first PostSaveMaintenance
@@ -123,9 +139,11 @@ struct ChatScrollView: View {
                         .frame(height: headerHeight)
                         .id("top")
 
+                    // CPU-25: isLoadingHistory animation is scoped to its own element only.
                     if isLoadingHistory {
                         historyLoadingIndicator
                             .transition(.opacity)
+                            .animation(.easeInOut(duration: 0.2), value: isLoadingHistory)
                     } else {
                         if hasMoreMessages {
                             loadMoreButton
@@ -142,10 +160,12 @@ struct ChatScrollView: View {
                             }
                         }
 
+                        // CPU-25: thinking indicator animates independently — not the whole VStack.
                         if streaming.isThinking {
                             if streaming.streamingText.isEmpty {
                                 thinkingIndicator
                                     .transition(.opacity)
+                                    .animation(.easeInOut(duration: 0.25), value: streaming.isThinking)
                                     .id("thinking-spinner")
                             } else {
                                 streamingBubble
@@ -153,6 +173,7 @@ struct ChatScrollView: View {
                                         insertion: .move(edge: .bottom).combined(with: .opacity),
                                         removal: .opacity
                                     ))
+                                    .animation(.easeInOut(duration: 0.3), value: streaming.streamingText.isEmpty)
                                     .id("thinking-streaming")
                             }
                         }
@@ -172,9 +193,6 @@ struct ChatScrollView: View {
                         .frame(height: footerHeight)
                 }
                 .padding(.horizontal, 16)
-                .animation(.easeInOut(duration: 0.25), value: streaming.isThinking)
-                .animation(.easeInOut(duration: 0.3), value: streaming.streamingText.isEmpty)
-                .animation(.easeInOut(duration: 0.2), value: isLoadingHistory)
             }
             .scrollIndicators(.never)
             .task(id: scrollToBottomTrigger) {
@@ -306,26 +324,28 @@ struct ChatScrollView: View {
         }
     }
 
-    /// Live streaming bubble with blinking cursor and running cost.
+    /// Live streaming bubble — plain text during stream, no Markdown parsing.
+    /// CPU-24: MarkdownTextView.init() calls MarkdownParser.parse() on every render.
+    /// During streaming that means full re-parse on every token (30+/sec), growing text.
+    /// StreamingTextView renders plain Text — zero parse overhead during stream.
+    /// Markdown is applied only after stream completes (MessageBubbleView).
     private var streamingBubble: some View {
         HStack(alignment: .bottom, spacing: 8) {
             ZStack(alignment: .bottomTrailing) {
                 HStack(alignment: .bottom, spacing: 0) {
-                    // CPU-23: removed .animation(.linear(duration: 0.08), value: streamingText).
-                    // That animation fired a display link on every token (30+/sec).
-                    // Text appends are instant — no animation needed, imperceptible at token rate.
-                    MarkdownTextView(text: streaming.streamingText, fontSize: 14)
-
+                    StreamingTextView(text: streaming.streamingText)
                     BlinkingCursor()
                         .padding(.bottom, 1)
                 }
                 .padding(.bottom, 18)
 
+                // CPU-27: .animation(.easeInOut(0.3), value: runningCost) removed —
+                // it fired on every token with cost info (30+/sec).
+                // contentTransition is kept for visual smoothness on the numeric flip.
                 Text(String(format: "🪙 %.2f ₽", streaming.runningCost))
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .contentTransition(.numericText(value: streaming.runningCost))
-                    .animation(.easeInOut(duration: 0.3), value: streaming.runningCost)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -350,6 +370,27 @@ struct ChatScrollView: View {
 
             Spacer(minLength: 40)
         }
+    }
+}
+
+// MARK: - StreamingTextView
+
+/// CPU-24: Plain text renderer for the live streaming bubble.
+/// No Markdown parsing — just renders the raw text as-is with basic font styling.
+/// WHY: MarkdownTextView calls MarkdownParser.parse() in init() — O(n) on every token.
+/// During a 500-token stream that's 500 full parses of growing text.
+/// Plain Text() is O(1) — just a string assignment.
+private struct StreamingTextView: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 14))
+            .lineSpacing(4)
+            .foregroundStyle(Color.primary)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

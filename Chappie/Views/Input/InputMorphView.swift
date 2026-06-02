@@ -40,6 +40,11 @@
 // CPU-23: currentToolCall is throttled to 200ms in StreamingState.
 // thinkingView animates on every currentToolCall change — throttle prevents 30+ redraws/sec.
 //
+// CPU-26: .contentTransition(.numericText()) removed from toolCall Text.
+// numericText is designed for numeric values — it applies digit-by-digit flip animation.
+// On a string like "write_file → ContentView.swift" this is visually wrong and expensive.
+// Simple .animation(.easeInOut, value: currentToolCall) is sufficient.
+//
 // MULTIMODAL:
 // - Paperclip button opens NSOpenPanel (images, PDF, text, any file).
 // - attachments: [AttachedFile] is a @Binding from ContentView — NOT local @State.
@@ -251,13 +256,13 @@ struct InputMorphView: View {
             // isActive: true because thinkingView is only rendered when streaming.isThinking == true.
             ThinkingGearIcon(isActive: true)
 
-            // CPU-23: currentToolCall is throttled to 200ms in StreamingState.
-            // Animation here fires at most 5x/sec instead of 30+/sec.
+            // CPU-23: currentToolCall throttled to 200ms in StreamingState — at most 5 redraws/sec.
+            // CPU-26: .contentTransition(.numericText()) removed — it's for numeric values only.
+            // On a path string like "write_file → ContentView.swift" it was visually wrong and expensive.
             Text(streaming.currentToolCall ?? "Думаю…")
                 .font(.system(size: 12, weight: .regular, design: .monospaced))
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .contentTransition(.numericText())
                 .animation(.easeInOut(duration: 0.2), value: streaming.currentToolCall)
 
             Spacer()
