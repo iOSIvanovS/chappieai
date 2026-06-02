@@ -17,13 +17,14 @@
 // Messages are rendered in a plain VStack — all displayed messages are always in the
 // render tree. This eliminates the disappearing-messages bug caused by LazyVStack's
 // cell recycling when switching threads or scrolling.
-// Performance is managed by pagination in ViewModel: only the last 50 messages are
+// Performance is managed by pagination in ViewModel: only the last 30 messages are
 // shown initially; older ones are loaded in batches of 30 via loadMoreMessages().
+// The window is capped at 60 messages — trimming happens on both ends as user scrolls.
 //
 // SCROLL ANCHOR STRATEGY (prevents jumping during streaming):
 // Each message has a stable .id(msg.id). Bottom sentinel is Color.clear.id("bottom").
-// During streaming: scrollTo("bottom") is called on every streamingText change.
-// This pins the view to the bottom WITHOUT layout recalculation jumping.
+// During streaming: scrollTo("bottom") is throttled to once per frame (16ms) via
+// a Task-based debounce flag. This prevents layout thrashing on every token.
 // Key insight: proxy.scrollTo without animation during streaming (instant snap),
 // with animation only for discrete events (new message, thread switch).
 //
@@ -37,7 +38,7 @@
 //   2. footerHeight becomes non-zero AND messages are already loaded — "layout ready" moment.
 //      Guard: only fires when messages.count > 0 to avoid scrollTo on empty layout.
 //   3. onChange(messages.count) — new message added to the chat.
-//   4. onChange(streamingText) — Chappie is streaming a response (live bubble grows).
+//   4. onChange(streamingText) — Chappie is streaming a response (throttled to 1/frame).
 // Intentionally NOT scrolling when footerHeight changes after initial scroll
 // so the user can freely read mid-chat while typing a long message.
 //
@@ -107,6 +108,10 @@ struct ChatScrollView: View {
 
     @State private var initialScrollDone = false
 
+    // CPU-05: debounce flag — true while a scroll task is already scheduled.
+    // Prevents firing proxy.scrollTo on every streaming token (dozens/sec).
+    @State private var scrollPending = false
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -156,7 +161,9 @@ struct ChatScrollView: View {
                         .id("bottom")
                 }
                 .padding(.horizontal, 16)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: messages.count)
+                // CPU-06: removed .spring animation on messages.count — it animated the entire
+                // VStack subtree on every new message, forcing a full layout pass.
+                // Individual bubble insertion uses .transition on MessageBubbleView — sufficient.
                 .animation(.easeInOut(duration: 0.25), value: isThinking)
                 .animation(.easeInOut(duration: 0.3), value: streamingText.isEmpty)
                 .animation(.easeInOut(duration: 0.2), value: isLoadingHistory)
@@ -191,7 +198,15 @@ struct ChatScrollView: View {
                 }
             }
             .onChange(of: streamingText) { _, _ in
-                proxy.scrollTo("bottom", anchor: .bottom)
+                // CPU-05: throttle scroll to once per frame (~16ms).
+                // Without this, every streaming token triggers a layout pass.
+                guard !scrollPending else { return }
+                scrollPending = true
+                Task {
+                    try? await Task.sleep(nanoseconds: 16_000_000) // 1 frame at 60fps
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                    scrollPending = false
+                }
             }
         }
     }
@@ -350,6 +365,9 @@ private struct BlinkingCursor: View {
             .font(.system(size: 14))
             .foregroundStyle(Color.accentColor)
             .opacity(isVisible ? 1 : 0)
+            // CPU-07: drawingGroup() rasterizes the cursor into a Metal texture.
+            // Its RepeatForever animation no longer invalidates the parent bubble view.
+            .drawingGroup()
             .animation(
                 .easeInOut(duration: 0.5).repeatForever(autoreverses: true),
                 value: isVisible
