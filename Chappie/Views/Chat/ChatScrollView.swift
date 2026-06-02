@@ -91,8 +91,13 @@
 //
 // LOADING HISTORY INDICATOR (UX-LOADING):
 // isLoadingHistory is forwarded from ViewModel.isLoadingThread.
-// While true: a centered ProgressView is shown instead of messages or welcome screen.
-// This prevents the "flash of welcome message" on app launch while SwiftData loads.
+// While true: a centered DotsIndicator is shown instead of messages.
+// This prevents the "flash of empty chat" on app launch while SwiftData loads.
+//
+// EMPTY STATE:
+// When messages are empty and not loading — show nothing.
+// The AI sends a live greeting as the first message when a new thread is created,
+// so there is no need for a static placeholder. Old threads load their real history.
 //
 // MESSAGE RENDERING:
 // ForEach uses MessageBubbleView directly — no GeometryReader, no background probe.
@@ -157,14 +162,9 @@ struct ChatScrollView: View {
                                 .transition(.opacity)
                         }
 
-                        if messages.isEmpty && !streaming.isThinking {
-                            welcomeMessage
-                                .transition(.opacity)
-                        } else {
-                            ForEach(messages) { msg in
-                                MessageBubbleView(msg: msg)
-                                    .id(msg.id)
-                            }
+                        ForEach(messages) { msg in
+                            MessageBubbleView(msg: msg)
+                                .id(msg.id)
                         }
 
                         // CPU-25: thinking indicator animates independently — not the whole VStack.
@@ -264,42 +264,6 @@ struct ChatScrollView: View {
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity)
-    }
-
-    private var welcomeMessage: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Привет! Я — Чаппи 👋")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.primary)
-                Text("Выбери папку проекта в сайдбаре и скажи, что нужно сделать.")
-                    .font(.system(size: 14))
-                    .lineSpacing(4)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(Color(NSColor.textBackgroundColor))
-            .clipShape(
-                UnevenRoundedRectangle(
-                    topLeadingRadius: 12,
-                    bottomLeadingRadius: 4,
-                    bottomTrailingRadius: 12,
-                    topTrailingRadius: 12
-                )
-            )
-            .overlay(
-                UnevenRoundedRectangle(
-                    topLeadingRadius: 12,
-                    bottomLeadingRadius: 4,
-                    bottomTrailingRadius: 12,
-                    topTrailingRadius: 12
-                )
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-            )
-
-            Spacer(minLength: 40)
-        }
     }
 
     /// CPU-28: DotsIndicator replaces ProgressView() — see DotsIndicator comment below.
