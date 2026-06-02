@@ -116,6 +116,14 @@ final class ChappieViewModel {
 
     var currentRequestTask: Task<Void, Never>? = nil
 
+    // MARK: - File system readiness
+
+    /// False while syncFileSystemForActiveThread() is resolving bookmarks after thread switch.
+    /// ProjectChipsView shows a spinner on project chips while false.
+    /// ToolExecutionService blocks file/git/build tools while false.
+    /// Set to true by syncFileSystemForActiveThread() when FS is ready.
+    var isFileSystemReady: Bool = true
+
     // MARK: - Threads
 
     var threads: [ThreadMetadata] = []

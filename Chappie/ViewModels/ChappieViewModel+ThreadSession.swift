@@ -19,6 +19,12 @@
 //   can access every project, not just the first one.
 //   Paths are prefixed: "ProjectName/relative/path".
 //   On threads with no projects — restores the global fileSystem (from workspaceURL).
+//
+// FS READINESS GUARD:
+//   syncFileSystemForActiveThread() sets isFileSystemReady=false on ViewModel (→ UI spinner)
+//   and on ToolExecutionService (→ file tools blocked) before bookmark resolution starts.
+//   Both are set true after FileSystem is wired. This prevents stale FS responses
+//   during thread switch when bookmark resolution is slow (100ms–1s per project).
 
 import Foundation
 import ChappieCore
@@ -83,6 +89,11 @@ extension ChappieViewModel {
     /// Resolves bookmarks for ALL attached projects and builds a multi-workspace
     /// FileSystemManager so every project is accessible via "ProjectName/path".
     ///
+    /// READINESS GUARD (dual-layer):
+    ///   1. self.isFileSystemReady = false → ProjectChipsView shows spinner, "+" disabled.
+    ///   2. ts.setFileSystemReady(false) → ToolExecutionService blocks file/git/build tools.
+    ///   Both are reset to true after FileSystem is wired into ToolExecutionService.
+    ///
     /// WHY multi-workspace: B-01 — previously only the first project was visible.
     /// Each project's bookmark is resolved independently; failures are logged and skipped.
     func syncFileSystemForActiveThread() async {
@@ -90,15 +101,22 @@ extension ChappieViewModel {
               let ts = toolService else { return }
 
         // No projects → restore global fileSystem (the one from workspaceURL).
+        // No bookmark resolution needed — mark ready immediately.
         guard !activeProjects.isEmpty else {
             if let globalFS = fileSystem {
                 await ts.setFileSystem(globalFS)
                 print("[ChappieViewModel] M-09: No projects — restored global fileSystem")
             }
+            self.isFileSystemReady = true
+            await ts.setFileSystemReady(true)
             return
         }
 
         guard let pStore = projectStore else { return }
+
+        // Block file tools in UI and in ToolExecutionService while resolving bookmarks.
+        self.isFileSystemReady = false
+        await ts.setFileSystemReady(false)
 
         // Resolve bookmark for each project; collect successful (name, URL) pairs.
         var workspaces: [(name: String, url: URL)] = []
@@ -139,8 +157,11 @@ extension ChappieViewModel {
             }
         }
 
-        guard !workspaces.isEmpty else {
+        if workspaces.isEmpty {
             print("[ChappieViewModel] M-09: No workspaces resolved — keeping current fileSystem")
+            // Still mark ready — user shouldn't be blocked forever on a bad bookmark.
+            self.isFileSystemReady = true
+            await ts.setFileSystemReady(true)
             return
         }
 
@@ -153,6 +174,10 @@ extension ChappieViewModel {
         }
 
         await ts.setFileSystem(fs)
+
+        // FileSystem is wired — unblock UI and file tools.
+        self.isFileSystemReady = true
+        await ts.setFileSystemReady(true)
 
         let names = workspaces.map(\.name).joined(separator: ", ")
         print("[ChappieViewModel] M-09: FileSystem → [\(names)] (\(workspaces.count) workspaces)")

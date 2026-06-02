@@ -28,6 +28,10 @@
 //
 // IT-09: Tap on chip opens ProjectSettingsSheet.
 // IT-13: Soft lock — shake animation instead of opacity dimming.
+//
+// FS READINESS:
+//   isFileSystemReady=false → project chips show a small spinner instead of folder icon,
+//   addButton is disabled. Cleared once syncFileSystemForActiveThread() completes.
 
 import SwiftUI
 import ChappieCore
@@ -43,6 +47,7 @@ struct ProjectChipsView: View {
     let projects: [ProjectMetadata]
     let threadName: String?
     let isThinking: Bool
+    let isFileSystemReady: Bool
 
     // MARK: - Callbacks
 
@@ -147,9 +152,18 @@ struct ProjectChipsView: View {
 
     private func projectChip(for project: ProjectMetadata) -> some View {
         HStack(spacing: 4) {
-            Image(systemName: "folder.fill")
-                .font(.system(size: 10))
-                .foregroundStyle(Color.accentColor.opacity(0.8))
+            // Show spinner while FileSystem is syncing, folder icon when ready.
+            // WHY: user sees that projects are being loaded, not silently broken.
+            if !isFileSystemReady {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .scaleEffect(0.55)
+                    .frame(width: 10, height: 10)
+            } else {
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.accentColor.opacity(0.8))
+            }
 
             Text(project.displayName)
                 .font(.system(size: 12, weight: .medium))
@@ -158,7 +172,7 @@ struct ProjectChipsView: View {
 
             roleIndicator(for: project.settings.agentRole)
 
-            if hoveredProjectId == project.id && !isThinking {
+            if hoveredProjectId == project.id && !isThinking && isFileSystemReady {
                 Button {
                     onRemoveProject(project.id)
                 } label: {
@@ -173,17 +187,21 @@ struct ProjectChipsView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
-        .overlay(Capsule().stroke(Color.accentColor.opacity(0.2), lineWidth: 0.5))
+        .overlay(Capsule().stroke(Color.accentColor.opacity(isFileSystemReady ? 0.2 : 0.08), lineWidth: 0.5))
         .onHover { isHovered in
             withAnimation(.easeInOut(duration: 0.15)) {
                 hoveredProjectId = isHovered ? project.id : nil
             }
         }
         .onTapGesture {
-            if !isThinking { onOpenSettings(project.id) }
+            if !isThinking && isFileSystemReady { onOpenSettings(project.id) }
         }
         .shakeOnTap(isLocked: isThinking)
-        .help("Проект: \(project.displayName) (\(project.settings.agentRole.displayName))\nТап — настройки\(isThinking ? "" : ", × — убрать из треда")")
+        .help(
+            isFileSystemReady
+                ? "Проект: \(project.displayName) (\(project.settings.agentRole.displayName))\nТап — настройки\(isThinking ? "" : ", × — убрать из треда")"
+                : "Загружаю проекты…"
+        )
     }
 
     @ViewBuilder
@@ -203,23 +221,35 @@ struct ProjectChipsView: View {
     // MARK: - Add button
 
     private var addButton: some View {
-        Button {
+        // Disabled while FS is syncing — opening a folder picker at this moment
+        // would trigger another syncFileSystemForActiveThread() on top of the running one.
+        let isLocked = isThinking || !isFileSystemReady
+
+        return Button {
             openFolderPicker()
         } label: {
             Image(systemName: "plus")
                 .font(.system(size: 11, weight: .semibold))
                 .padding(.horizontal, 5)
                 .padding(.vertical, 5)
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(isLocked ? Color.secondary : Color.accentColor)
                 .background(
                     Capsule()
                         .fill(Color(NSColor.controlBackgroundColor))
-                        .overlay(Capsule().stroke(Color.accentColor.opacity(0.35), lineWidth: 1))
+                        .overlay(Capsule().stroke(
+                            isLocked ? Color.secondary.opacity(0.2) : Color.accentColor.opacity(0.35),
+                            lineWidth: 1
+                        ))
                 )
         }
         .buttonStyle(.plain)
+        .disabled(isLocked)
         .shakeOnTap(isLocked: isThinking)
-        .help(isThinking ? "Нельзя добавить проект пока Чаппи думает" : "Добавить папку проекта к этому треду")
+        .help(
+            isThinking
+                ? "Нельзя добавить проект пока Чаппи думает"
+                : (!isFileSystemReady ? "Подожди, проекты загружаются…" : "Добавить папку проекта к этому треду")
+        )
     }
 
     // MARK: - Private helpers
@@ -251,6 +281,28 @@ struct ProjectChipsView: View {
         ],
         threadName: "Разработка Chappie",
         isThinking: false,
+        isFileSystemReady: true,
+        onAddProject: { _ in },
+        onRemoveProject: { _ in },
+        onOpenSettings: { _ in },
+        onOpenThreadSettings: {}
+    )
+    .padding()
+    .frame(width: 300)
+    .background(Color(NSColor.windowBackgroundColor))
+}
+
+#Preview("Загрузка проектов") {
+    ProjectChipsView(
+        projects: [
+            ProjectMetadata(id: UUID(), displayName: "Chappie",
+                            settings: ProjectSettings(agentRole: .executor, isProgrammingProject: true)),
+            ProjectMetadata(id: UUID(), displayName: "MyApp",
+                            settings: ProjectSettings(agentRole: .advisor))
+        ],
+        threadName: "Разработка Chappie",
+        isThinking: false,
+        isFileSystemReady: false,
         onAddProject: { _ in },
         onRemoveProject: { _ in },
         onOpenSettings: { _ in },
@@ -269,6 +321,7 @@ struct ProjectChipsView: View {
         ],
         threadName: "Разработка Chappie",
         isThinking: true,
+        isFileSystemReady: true,
         onAddProject: { _ in },
         onRemoveProject: { _ in },
         onOpenSettings: { _ in },

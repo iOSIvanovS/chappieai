@@ -371,7 +371,7 @@ struct ContentView: View {
     // isThinking and currentBalance are passed via the `streaming` reference —
     // ModelPickerRow and ProjectChipsView subscribe to StreamingState directly.
     // ContentView only reads: activeThread, providers, activeProvider, activeModelName,
-    // isThreadOrphaned, activeProjects — none of which change during streaming.
+    // isThreadOrphaned, activeProjects, isFileSystemReady — none change during streaming.
 
     private var topPanel: some View {
         VStack(spacing: 6) {
@@ -399,6 +399,7 @@ struct ContentView: View {
                     projects: viewModel.activeProjects,
                     threadName: viewModel.activeThread?.title,
                     isThinking: viewModel.streaming.isThinking,
+                    isFileSystemReady: viewModel.isFileSystemReady,
                     onAddProject: { url in viewModel.addProject(url: url) },
                     onRemoveProject: { projectId in viewModel.removeProject(id: projectId) },
                     onOpenSettings: { projectId in

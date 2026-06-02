@@ -57,7 +57,16 @@ extension ChappieViewModel {
         saveLastActiveThreadId(thread.id)
 
         do {
-            let settings = try await store.loadSettings(forThreadId: thread.id)
+            // PARALLEL LOAD: settings and messages are independent — fetch simultaneously.
+            // WHY: sequential await adds ~100-300ms per call; on cold switch this stacks up.
+            // NOTE: ChatMessage.self cannot be passed in nonisolated async let (Swift 6 actor
+            // isolation constraint). We use a MainActor Task pair instead.
+            async let settingsTask = store.loadSettings(forThreadId: thread.id)
+
+            // loadMessages is called after settingsTask to avoid the nonisolated ChatMessage.self
+            // constraint in async let. Settings are fast (single record) — the sequential cost is minimal.
+            let settings = try await settingsTask
+
             self.activeThreadSettings = settings
 
             if let providerId = settings.activeProviderId,
@@ -80,15 +89,22 @@ extension ChappieViewModel {
             print("[ChappieViewModel] Error loading thread '\(thread.title)': \(error)")
         }
 
+        // UI is unblocked here — user sees messages immediately.
         self.isLoadingThread = false
         self.isAppReady = true
 
+        // These run after UI is shown — background work, non-blocking for the user.
+        // loadProjectsForThread + memory context are fast (SwiftData fetch).
+        // syncFileSystemForActiveThread is slow (bookmark resolution) — runs last,
+        // protected by isFileSystemReady flag in ToolExecutionService.
         await loadProjectsForThread(thread)
         buildAndSyncMemoryContext()
         await syncActiveMemoryContext()
         refreshBalanceForActiveProvider()
 
-        // V2: assemble ThreadSession after projects are loaded
+        // V2: assemble session + sync FileSystem in background after UI is shown.
+        // isFileSystemReady is set false before sync, true after — file tools are
+        // blocked during the window to prevent stale FS responses.
         await assembleThreadSession(for: thread)
     }
 

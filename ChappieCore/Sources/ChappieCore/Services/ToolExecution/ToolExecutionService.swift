@@ -33,6 +33,11 @@
 // File/git/build tools require at least one project attached to the thread.
 // Checked via hasActiveProjects before checkToolAccess().
 //
+// FILE SYSTEM READINESS GUARD:
+// File/git/build tools are blocked while syncFileSystemForActiveThread() is running.
+// isFileSystemReady flag is set to false before sync starts, true after it completes.
+// Prevents stale or empty FileSystemManager from answering tool calls during thread switch.
+//
 // IRON ENGLISH BARRIER (MEMORY-ENGLISH):
 // memorize validates all fields for Cyrillic — code-level barrier, not prompt-level.
 // validateMemoryEnglish() + containsCyrillic() in MemoryTools.swift.
@@ -73,6 +78,13 @@ public actor ToolExecutionService {
     var hasActiveProjects: Bool {
         activeMemoryContext.hasProjects
     }
+
+    // MARK: - File system readiness flag
+
+    /// False while syncFileSystemForActiveThread() is resolving bookmarks.
+    /// File/git/build tools return a "please wait" message when false.
+    /// Set via setFileSystemReady() from ChappieViewModel on MainActor.
+    var isFileSystemReady: Bool = true
 
     // MARK: - Project handlers (IT-07)
 
@@ -120,6 +132,17 @@ public actor ToolExecutionService {
         print("[ToolExecutionService] 📂 FileSystem switched to: \(fs.workspaceURL.path)")
     }
 
+    /// Marks whether the FileSystem is ready for tool calls.
+    /// Called false before syncFileSystemForActiveThread() starts, true when it completes.
+    public func setFileSystemReady(_ ready: Bool) {
+        self.isFileSystemReady = ready
+        if ready {
+            print("[ToolExecutionService] ✅ FileSystem ready — file tools unblocked")
+        } else {
+            print("[ToolExecutionService] ⏳ FileSystem syncing — file tools temporarily blocked")
+        }
+    }
+
     /// IT-09: Updates project settings cache from ViewModel.
     public func setProjectSettings(_ settings: [UUID: ProjectSettings]) {
         self.projectSettingsCache = settings
@@ -159,10 +182,11 @@ public actor ToolExecutionService {
 
     /// Executes the specified tool and returns a string result.
     ///
-    /// CHECK ORDER (IT-09):
-    /// 1. PROJECT GUARD — require attached project for file/git/build tools.
-    /// 2. TOOL ACCESS CHECK — check rights from ProjectSettings.
-    /// 3. Dispatch to the appropriate execution handler.
+    /// CHECK ORDER:
+    /// 1. FS READINESS GUARD — block file/git/build tools while FileSystem is syncing.
+    /// 2. PROJECT GUARD — require attached project for file/git/build tools.
+    /// 3. TOOL ACCESS CHECK — check rights from ProjectSettings (IT-09).
+    /// 4. Dispatch to the appropriate execution handler.
     public func execute(call: AIToolCall) async -> String {
         let name = call.function.name
         let argsData = call.function.arguments.data(using: .utf8) ?? Data()
@@ -173,6 +197,16 @@ public actor ToolExecutionService {
             "git_log", "git_reset", "git_revert", "git_checkout",
             "build_project", "run_tests", "read_build_log"
         ]
+
+        // FS READINESS GUARD: block file/git/build tools while FileSystem is syncing on thread switch.
+        // WHY: bookmark resolution takes 100ms–1s per project; during that window FileSystemManager
+        // may point at stale or empty workspace. Better to delay than to silently return wrong data.
+        if projectRequiredTools.contains(name) && !isFileSystemReady {
+            return """
+            ⏳ Проекты ещё загружаются — файловые инструменты временно недоступны.
+            Подожди секунду и повтори запрос. Это займёт не более нескольких секунд.
+            """
+        }
 
         // PROJECT GUARD: block file/git/build tools without an attached project.
         if projectRequiredTools.contains(name) && !hasActiveProjects {
