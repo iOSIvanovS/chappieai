@@ -57,7 +57,27 @@ enum MarkdownBlock: Identifiable {
 
 struct MarkdownParser {
 
+    // MARK: - Cache (CPU-02)
+
+    /// Parsed block cache keyed by text hash.
+    /// Prevents re-parsing the same message on every SwiftUI re-render.
+    /// NSCache is thread-safe and auto-evicts under memory pressure.
+    ///
+    /// WHY NSCache<NSString, NSArray>: [MarkdownBlock] is not an NSObject,
+    /// so we box it in a thin wrapper to store in NSCache.
+    private static let cache = NSCache<NSString, ParsedBlocksBox>()
+
     static func parse(_ text: String) -> [MarkdownBlock] {
+        let key = "\(text.hashValue)" as NSString
+        if let cached = cache.object(forKey: key) { return cached.blocks }
+        let result = _parse(text)
+        cache.setObject(ParsedBlocksBox(result), forKey: key)
+        return result
+    }
+
+    // MARK: - Core parser (called once per unique text)
+
+    private static func _parse(_ text: String) -> [MarkdownBlock] {
         var blocks: [MarkdownBlock] = []
         let lines = text.components(separatedBy: "\n")
         var i = 0
@@ -157,4 +177,12 @@ struct MarkdownParser {
         let rows = lines.dropFirst(2).map { parseCells($0) }
         return .table(headers: headers, rows: rows, index: index)
     }
+}
+
+// MARK: - NSCache box
+
+/// Thin NSObject wrapper so [MarkdownBlock] can be stored in NSCache.
+private final class ParsedBlocksBox: NSObject {
+    let blocks: [MarkdownBlock]
+    init(_ blocks: [MarkdownBlock]) { self.blocks = blocks }
 }
