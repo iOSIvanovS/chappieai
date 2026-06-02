@@ -38,9 +38,15 @@
 //   2. footerHeight becomes non-zero AND messages are already loaded — "layout ready" moment.
 //      Guard: only fires when messages.count > 0 to avoid scrollTo on empty layout.
 //   3. onChange(messages.count) — new message added to the chat.
-//   4. onChange(streamingText) — Chappie is streaming a response (throttled to 1/frame).
+//   4. onChange(streaming.streamingText) — Chappie is streaming (throttled to 1/frame).
 // Intentionally NOT scrolling when footerHeight changes after initial scroll
 // so the user can freely read mid-chat while typing a long message.
+//
+// CPU-13: STREAMING ISOLATION:
+// ChatScrollView receives `streaming: StreamingState` as a `let` reference.
+// It reads streaming.isThinking, streaming.streamingText, streaming.runningCost directly.
+// Because StreamingState is a separate @Observable, only ChatScrollView re-renders on
+// token updates — ContentView and topPanel are NOT invalidated.
 //
 // NOTE ON "bad range for [%{public}s]" IN XCODE CONSOLE:
 // This warning is NOT caused by our code. It is an internal CoreData/SwiftData OSLog
@@ -86,17 +92,12 @@ struct ChatScrollView: View {
     /// Called when user taps "Load earlier messages" — ViewModel prepends more.
     let onLoadMore: () -> Void
 
-    /// Flag: Chappie is thinking (show spinner or streaming bubble)
-    let isThinking: Bool
+    /// CPU-13: isolated streaming state — only this view subscribes to it.
+    /// ContentView passes the reference without reading any of its properties.
+    let streaming: StreamingState
 
     /// True while history is being loaded from SwiftData.
     let isLoadingHistory: Bool
-
-    /// Accumulated streaming response text.
-    let streamingText: String
-
-    /// Cumulative cost of the current request — running total.
-    let runningCost: Double
 
     /// Height of the top floating panel — transparent header spacer.
     let headerHeight: CGFloat
@@ -130,7 +131,7 @@ struct ChatScrollView: View {
                                 .transition(.opacity)
                         }
 
-                        if messages.isEmpty && !isThinking {
+                        if messages.isEmpty && !streaming.isThinking {
                             welcomeMessage
                                 .transition(.opacity)
                         } else {
@@ -140,8 +141,8 @@ struct ChatScrollView: View {
                             }
                         }
 
-                        if isThinking {
-                            if streamingText.isEmpty {
+                        if streaming.isThinking {
+                            if streaming.streamingText.isEmpty {
                                 thinkingIndicator
                                     .transition(.opacity)
                                     .id("thinking-spinner")
@@ -161,11 +162,8 @@ struct ChatScrollView: View {
                         .id("bottom")
                 }
                 .padding(.horizontal, 16)
-                // CPU-06: removed .spring animation on messages.count — it animated the entire
-                // VStack subtree on every new message, forcing a full layout pass.
-                // Individual bubble insertion uses .transition on MessageBubbleView — sufficient.
-                .animation(.easeInOut(duration: 0.25), value: isThinking)
-                .animation(.easeInOut(duration: 0.3), value: streamingText.isEmpty)
+                .animation(.easeInOut(duration: 0.25), value: streaming.isThinking)
+                .animation(.easeInOut(duration: 0.3), value: streaming.streamingText.isEmpty)
                 .animation(.easeInOut(duration: 0.2), value: isLoadingHistory)
             }
             .scrollIndicators(.never)
@@ -190,20 +188,19 @@ struct ChatScrollView: View {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
-            .onChange(of: isThinking) { _, isThinking in
+            .onChange(of: streaming.isThinking) { _, isThinking in
                 if isThinking {
                     withAnimation(.easeOut(duration: 0.3)) {
                         proxy.scrollTo("bottom", anchor: .bottom)
                     }
                 }
             }
-            .onChange(of: streamingText) { _, _ in
+            .onChange(of: streaming.streamingText) { _, _ in
                 // CPU-05: throttle scroll to once per frame (~16ms).
-                // Without this, every streaming token triggers a layout pass.
                 guard !scrollPending else { return }
                 scrollPending = true
                 Task {
-                    try? await Task.sleep(nanoseconds: 16_000_000) // 1 frame at 60fps
+                    try? await Task.sleep(nanoseconds: 16_000_000)
                     proxy.scrollTo("bottom", anchor: .bottom)
                     scrollPending = false
                 }
@@ -312,20 +309,20 @@ struct ChatScrollView: View {
         HStack(alignment: .bottom, spacing: 8) {
             ZStack(alignment: .bottomTrailing) {
                 HStack(alignment: .bottom, spacing: 0) {
-                    MarkdownTextView(text: streamingText, fontSize: 14)
+                    MarkdownTextView(text: streaming.streamingText, fontSize: 14)
                         .contentTransition(.interpolate)
-                        .animation(.linear(duration: 0.08), value: streamingText)
+                        .animation(.linear(duration: 0.08), value: streaming.streamingText)
 
                     BlinkingCursor()
                         .padding(.bottom, 1)
                 }
                 .padding(.bottom, 18)
 
-                Text(String(format: "🪙 %.2f ₽", runningCost))
+                Text(String(format: "🪙 %.2f ₽", streaming.runningCost))
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(.secondary)
-                    .contentTransition(.numericText(value: runningCost))
-                    .animation(.easeInOut(duration: 0.3), value: runningCost)
+                    .contentTransition(.numericText(value: streaming.runningCost))
+                    .animation(.easeInOut(duration: 0.3), value: streaming.runningCost)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -379,7 +376,12 @@ private struct BlinkingCursor: View {
 // MARK: - Preview
 
 #Preview("With history and streaming") {
-    ChatScrollView(
+    let streaming = StreamingState()
+    streaming.isThinking = true
+    streaming.streamingText = "Also you can add `@MainActor` for **thread safety**..."
+    streaming.runningCost = 1.23
+
+    return ChatScrollView(
         scrollToBottomTrigger: 1,
         messages: [
             .message(isUser: true, text: "Show me a code example"),
@@ -391,10 +393,8 @@ private struct BlinkingCursor: View {
         ],
         hasMoreMessages: true,
         onLoadMore: {},
-        isThinking: true,
+        streaming: streaming,
         isLoadingHistory: false,
-        streamingText: "Also you can add `@MainActor` for **thread safety**...",
-        runningCost: 1.23,
         headerHeight: 80,
         footerHeight: 80
     )
@@ -403,15 +403,15 @@ private struct BlinkingCursor: View {
 }
 
 #Preview("Empty chat") {
-    ChatScrollView(
+    let streaming = StreamingState()
+
+    return ChatScrollView(
         scrollToBottomTrigger: 0,
         messages: [],
         hasMoreMessages: false,
         onLoadMore: {},
-        isThinking: false,
+        streaming: streaming,
         isLoadingHistory: false,
-        streamingText: "",
-        runningCost: 0.0,
         headerHeight: 60,
         footerHeight: 80
     )

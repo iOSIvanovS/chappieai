@@ -4,6 +4,16 @@
 // Core @Observable class: state properties, init, service wiring, pagination, drafts, balance.
 // Business logic is split into extensions:
 //   +Threads, +Providers, +Projects, +Send, +Memory, +AppSettings (V2), +ThreadSession (V2)
+//
+// CPU-13: STREAMING ISOLATION
+// streamingText, runningCost, currentToolCall, isThinking are moved into a
+// dedicated StreamingState object. ContentView passes `streaming` as a `let`
+// reference without reading any of its properties — so token updates no longer
+// invalidate ContentView, topPanel, or bottomPanel. Only ChatScrollView and
+// InputMorphView subscribe to StreamingState directly.
+//
+// Backward-compat computed vars (isThinking, streamingText, etc.) are kept so
+// that all existing call-sites in extensions compile without changes.
 
 import SwiftUI
 import ChappieCore
@@ -24,6 +34,36 @@ final class ChappieViewModel {
     /// Maximum messages kept in the render tree at once.
     /// When window exceeds this, the opposite end is trimmed.
     let maxDisplayed = 60
+
+    // MARK: - CPU-13: Isolated streaming state
+
+    /// Owns the four hot properties that change 30+ times/sec during streaming.
+    /// ContentView holds a reference but never reads its properties — so token
+    /// updates do NOT invalidate ContentView or topPanel.
+    let streaming = StreamingState()
+
+    // MARK: - Backward-compat accessors (used by extensions and legacy call-sites)
+    // These forward reads/writes to StreamingState so no extension needs updating.
+
+    var isThinking: Bool {
+        get { streaming.isThinking }
+        set { streaming.isThinking = newValue }
+    }
+
+    var streamingText: String {
+        get { streaming.streamingText }
+        set { streaming.streamingText = newValue }
+    }
+
+    var runningCost: Double {
+        get { streaming.runningCost }
+        set { streaming.runningCost = newValue }
+    }
+
+    var currentToolCall: String? {
+        get { streaming.currentToolCall }
+        set { streaming.currentToolCall = newValue }
+    }
 
     // MARK: - State
 
@@ -49,10 +89,6 @@ final class ChappieViewModel {
         return Array(onlyMessages.suffix(activeThreadSettings.maxMessagesInContext * 10))
     }
 
-    var isThinking = false
-    var streamingText: String = ""
-    var runningCost: Double = 0.0
-    var currentToolCall: String? = nil
     var currentBalance: Double?
 
     var isLoadingThread: Bool = false

@@ -34,6 +34,13 @@
 //   is a combined hash of (isThinking, editorHeight, attachments.isEmpty).
 //   One evaluation, same visual result.
 //
+// CPU-13: STREAMING ISOLATION:
+// - InputMorphView receives `streaming: StreamingState` instead of separate isThinking
+//   and currentToolCall parameters. It reads streaming.isThinking and streaming.currentToolCall
+//   directly — subscribing to StreamingState, NOT to ViewModel.
+// - ContentView's bottomPanel does NOT read any StreamingState property — it only passes
+//   the reference. So keystroke-driven ViewModel updates do NOT re-render bottomPanel.
+//
 // MULTIMODAL:
 // - Paperclip button opens NSOpenPanel (images, PDF, text, any file).
 // - attachments: [AttachedFile] is a @Binding from ContentView — NOT local @State.
@@ -59,8 +66,10 @@ struct InputMorphView: View {
     /// Pending file attachments — owned by ContentView, shared via @Binding.
     @Binding var attachments: [AttachedFile]
     let isWorkspaceSelected: Bool
-    let isThinking: Bool
-    let currentToolCall: String?
+
+    /// CPU-13: isolated streaming state — read directly, not via ViewModel.
+    let streaming: StreamingState
+
     let onSend: ([AttachedFile]) -> Void
     let onCancel: () -> Void
 
@@ -80,14 +89,14 @@ struct InputMorphView: View {
     private var canSend: Bool {
         let hasText = !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasAttachments = !attachments.isEmpty
-        return (hasText || hasAttachments) && isWorkspaceSelected && !isThinking
+        return (hasText || hasAttachments) && isWorkspaceSelected && !streaming.isThinking
     }
 
     /// CPU-10: single animation token combining all three changing values.
     /// SwiftUI evaluates only ONE .animation modifier instead of three.
     private var animationToken: Int {
         var hasher = Hasher()
-        hasher.combine(isThinking)
+        hasher.combine(streaming.isThinking)
         hasher.combine(editorHeight)
         hasher.combine(attachments.isEmpty)
         return hasher.finalize()
@@ -99,8 +108,8 @@ struct InputMorphView: View {
         ZStack(alignment: .bottom) {
             // IDLE: VStack grows naturally — no fixed frame height on the ZStack.
             idleView
-                .opacity(isThinking ? 0 : 1)
-                .scaleEffect(isThinking ? 0.96 : 1, anchor: .bottom)
+                .opacity(streaming.isThinking ? 0 : 1)
+                .scaleEffect(streaming.isThinking ? 0.96 : 1, anchor: .bottom)
 
             // THINKING: fixed collapsedHeight, centered in the capsule
             thinkingView
@@ -108,17 +117,15 @@ struct InputMorphView: View {
                 .padding(.vertical, 4)
                 .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .opacity(isThinking ? 1 : 0)
-                .scaleEffect(isThinking ? 1 : 0.96, anchor: .bottom)
-                .frame(height: isThinking ? InputLayout.collapsedHeight : 0)
+                .opacity(streaming.isThinking ? 1 : 0)
+                .scaleEffect(streaming.isThinking ? 1 : 0.96, anchor: .bottom)
+                .frame(height: streaming.isThinking ? InputLayout.collapsedHeight : 0)
         }
         .padding(12)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
         .padding(.horizontal)
         .padding(.bottom, 16)
         // CPU-10: single .animation instead of three separate ones.
-        // All three animated values (isThinking, editorHeight, attachments.isEmpty)
-        // are combined into one token — one evaluation per render pass.
         .animation(.spring(response: 0.38, dampingFraction: 0.82), value: animationToken)
         // CPU-08: report height via onGeometryChange — no GeometryReader render loop.
         .onGeometryChange(for: CGFloat.self) { geo in
@@ -126,7 +133,7 @@ struct InputMorphView: View {
         } action: { newHeight in
             onHeightChange?(newHeight)
         }
-        .onChange(of: isThinking) { _, nowThinking in
+        .onChange(of: streaming.isThinking) { _, nowThinking in
             if !nowThinking {
                 // Small delay lets the morph animation finish before focusing
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
@@ -157,11 +164,11 @@ struct InputMorphView: View {
             HStack(alignment: .bottom, spacing: 12) {
                 ChappieTextEditorView(
                     text: $prompt,
-                    isEnabled: isWorkspaceSelected && !isThinking,
+                    isEnabled: isWorkspaceSelected && !streaming.isThinking,
                     onSend: { if canSend { triggerSend() } },
                     onHeightChange: { newHeight in
                         // Only update while not thinking — avoids fighting the collapse animation
-                        if !isThinking, abs(newHeight - editorHeight) > 1 {
+                        if !streaming.isThinking, abs(newHeight - editorHeight) > 1 {
                             editorHeight = newHeight
                         }
                     },
@@ -248,12 +255,12 @@ struct InputMorphView: View {
         HStack(spacing: 12) {
             ThinkingGearIcon()
 
-            Text(currentToolCall ?? "Думаю…")
+            Text(streaming.currentToolCall ?? "Думаю…")
                 .font(.system(size: 12, weight: .regular, design: .monospaced))
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .contentTransition(.numericText())
-                .animation(.easeInOut(duration: 0.2), value: currentToolCall)
+                .animation(.easeInOut(duration: 0.2), value: streaming.currentToolCall)
 
             Spacer()
 
@@ -299,14 +306,14 @@ struct InputMorphView: View {
 // MARK: - Preview
 
 #Preview("Idle — empty") {
-    VStack {
+    let streaming = StreamingState()
+    return VStack {
         Spacer()
         InputMorphView(
             prompt: .constant(""),
             attachments: .constant([]),
             isWorkspaceSelected: true,
-            isThinking: false,
-            currentToolCall: nil,
+            streaming: streaming,
             onSend: { _ in },
             onCancel: {}
         )
@@ -315,14 +322,14 @@ struct InputMorphView: View {
 }
 
 #Preview("Idle — multiline") {
-    VStack {
+    let streaming = StreamingState()
+    return VStack {
         Spacer()
         InputMorphView(
             prompt: .constant("Строка 1\nСтрока 2\nСтрока 3\nСтрока 4\nСтрока 5"),
             attachments: .constant([]),
             isWorkspaceSelected: true,
-            isThinking: false,
-            currentToolCall: nil,
+            streaming: streaming,
             onSend: { _ in },
             onCancel: {}
         )
@@ -331,14 +338,16 @@ struct InputMorphView: View {
 }
 
 #Preview("Thinking — tool call") {
-    VStack {
+    let streaming = StreamingState()
+    streaming.isThinking = true
+    streaming.currentToolCall = "write_file → Chappie/Views/Input/InputMorphView.swift"
+    return VStack {
         Spacer()
         InputMorphView(
             prompt: .constant(""),
             attachments: .constant([]),
             isWorkspaceSelected: true,
-            isThinking: true,
-            currentToolCall: "write_file → Chappie/Views/Input/InputMorphView.swift",
+            streaming: streaming,
             onSend: { _ in },
             onCancel: {}
         )

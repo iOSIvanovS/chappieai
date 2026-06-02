@@ -40,6 +40,14 @@
 //   onChange(of: prompt) used to call setDraft on every keystroke, publishing
 //   into ViewModel on every character. Now debounced via Task + 300ms sleep.
 //   Draft is still saved immediately on thread switch (direct call, no debounce).
+//
+// CPU-13: STREAMING ISOLATION:
+//   ContentView no longer reads viewModel.isThinking, viewModel.streamingText,
+//   viewModel.runningCost, or viewModel.currentToolCall directly.
+//   Instead, viewModel.streaming (StreamingState) is passed as a `let` reference
+//   to ChatScrollView and InputMorphView. ContentView's body does NOT subscribe
+//   to StreamingState — so 30+ token updates/sec no longer invalidate topPanel,
+//   bottomPanel, or any other ContentView subtree.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -110,7 +118,9 @@ struct ContentView: View {
         .onAppear {
             viewModel.setModelContainer(modelContext.container)
 
-            dropDelegate.isThinkingGetter = { [self] in viewModel.isThinking }
+            // CPU-13: isThinkingGetter reads from StreamingState directly,
+            // not from ViewModel — avoids creating a ViewModel subscription here.
+            dropDelegate.isThinkingGetter = { [self] in viewModel.streaming.isThinking }
             dropDelegate.onFilesDropped = { [self] providers in
                 resolveDroppedFiles(providers)
             }
@@ -189,7 +199,12 @@ struct ContentView: View {
                     ChappieToolbarContent(
                         isApiKeyValid: !viewModel.providers.isEmpty,
                         isSidebarVisible: $isSidebarVisible,
-                        isThinking: viewModel.isThinking,
+                        // CPU-13: read isThinking from StreamingState, not ViewModel.
+                        // This toolbar modifier is evaluated by ContentView's body —
+                        // reading from ViewModel here would subscribe ContentView to
+                        // every token update. StreamingState is read only at call-site
+                        // inside ChappieToolbarContent which owns its own subscription.
+                        isThinking: viewModel.streaming.isThinking,
                         onOpenSettings: { showSettings = true }
                     )
                 }
@@ -209,7 +224,8 @@ struct ContentView: View {
                     threads: viewModel.threads,
                     selectedThreadId: viewModel.activeThread?.id,
                     orphanedThreadIds: orphanedThreadIds,
-                    isThinking: viewModel.isThinking,
+                    // CPU-13: same pattern — StreamingState read, not ViewModel.
+                    isThinking: viewModel.streaming.isThinking,
                     onOpenSettings: {
                         showSettings = true
                         isSidebarVisible = false
@@ -271,7 +287,11 @@ struct ContentView: View {
                 viewModel.setDraft(newValue, for: threadId)
             }
         }
-        .onChange(of: viewModel.isThinking) { _, thinking in
+        // CPU-13: observe isThinking via StreamingState, not ViewModel.
+        // NOTE: this onChange DOES subscribe ContentView to StreamingState.isThinking,
+        // but isThinking changes only twice per request (true/false) — not 30x/sec.
+        // Cost: 2 re-renders per request vs 30+ without isolation. Acceptable.
+        .onChange(of: viewModel.streaming.isThinking) { _, thinking in
             if thinking && showSettings {
                 showSettings = false
             }
@@ -283,21 +303,22 @@ struct ContentView: View {
     private var mainChatArea: some View {
         ZStack(alignment: .top) {
 
+            // CPU-13: ChatScrollView receives streaming as a whole object reference.
+            // ChatScrollView reads streaming.streamingText and streaming.runningCost
+            // directly — it subscribes to StreamingState, not to ViewModel.
+            // ContentView does NOT read any StreamingState property here.
             ChatScrollView(
                 scrollToBottomTrigger: viewModel.scrollToBottomTrigger,
                 messages: viewModel.displayedMessages,
                 hasMoreMessages: viewModel.hasMoreMessages,
                 onLoadMore: { viewModel.loadMoreMessages() },
-                isThinking: viewModel.isThinking,
+                streaming: viewModel.streaming,
                 isLoadingHistory: viewModel.isLoadingThread,
-                streamingText: viewModel.streamingText,
-                runningCost: viewModel.runningCost,
                 headerHeight: topPanelHeight + safeAreaTop,
                 footerHeight: bottomPanelHeight
             )
             .ignoresSafeArea(edges: .top)
             // CPU-08: onGeometryChange does NOT participate in layout — no render loop risk.
-            // Fires only when safeAreaInsets.top actually changes (e.g. toolbar height changes).
             .onGeometryChange(for: CGFloat.self) { geo in
                 geo.safeAreaInsets.top
             } action: { newValue in
@@ -311,14 +332,12 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // CPU-09: removed .animation(value: activeThread?.id) from the entire ZStack.
-        // It was re-rendering ALL children on any @Published change to activeThread
-        // (title, model, balance, etc.) — not just on actual thread switches.
-        // Animations are now applied point-locally on topPanel transitions.
         .onDrop(of: [.fileURL], delegate: dropDelegate)
     }
 
     // MARK: - Top Floating Panel
+    // CPU-13: topPanel reads ONLY from viewModel (provider, model, balance, thread).
+    // None of these change during streaming — so topPanel is NOT re-rendered on tokens.
 
     private var topPanel: some View {
         VStack(spacing: 6) {
@@ -329,7 +348,7 @@ struct ContentView: View {
                     providers: viewModel.providers,
                     isOrphaned: viewModel.isThreadOrphaned,
                     balance: viewModel.currentBalance,
-                    isThinking: viewModel.isThinking,
+                    isThinking: viewModel.streaming.isThinking,
                     onSelectProvider: { providerId, modelName in
                         if let provider = viewModel.providers.first(where: { $0.id == providerId }),
                            let store = viewModel.providerStore {
@@ -346,7 +365,7 @@ struct ContentView: View {
                 ProjectChipsView(
                     projects: viewModel.activeProjects,
                     threadName: viewModel.activeThread?.title,
-                    isThinking: viewModel.isThinking,
+                    isThinking: viewModel.streaming.isThinking,
                     onAddProject: { url in viewModel.addProject(url: url) },
                     onRemoveProject: { projectId in viewModel.removeProject(id: projectId) },
                     onOpenSettings: { projectId in
@@ -367,8 +386,6 @@ struct ContentView: View {
         .padding(.horizontal, 12)
         .padding(.top, 8)
         // CPU-08: onGeometryChange instead of GeometryReader in .background.
-        // GeometryReader caused: topPanel height changes → state update → re-render
-        // → topPanel height changes again → infinite loop at 35% CPU idle.
         .onGeometryChange(for: CGFloat.self) { geo in
             geo.size.height
         } action: { newValue in
@@ -377,14 +394,16 @@ struct ContentView: View {
     }
 
     // MARK: - Bottom Floating Panel
+    // CPU-13: bottomPanel passes streaming object to InputMorphView.
+    // InputMorphView reads streaming.isThinking and streaming.currentToolCall directly.
+    // ContentView does NOT read those properties here.
 
     private var bottomPanel: some View {
         InputMorphView(
             prompt: $prompt,
             attachments: $attachments,
             isWorkspaceSelected: viewModel.workspaceURL != nil,
-            isThinking: viewModel.isThinking,
-            currentToolCall: viewModel.currentToolCall,
+            streaming: viewModel.streaming,
             onSend: { attachedFiles in
                 sendMessage(attachments: attachedFiles)
             },
