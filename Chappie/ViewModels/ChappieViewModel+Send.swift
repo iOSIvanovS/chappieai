@@ -16,6 +16,14 @@
 // Task with no MainActor isolation, so withAnimation{} from a background thread is silently
 // ignored by SwiftUI. Without this, isThinking stays true and InputMorphView never morphs back.
 //
+// CANCEL UX (CANCEL-FIX):
+// On CancellationError — partial streamingText is preserved as a cancelled message in history.
+// This gives the AI context that the previous operation was interrupted by the user, so it
+// doesn't get confused on the next message. Format:
+//   [partial stream text, if any]
+//   ---
+//   *(Operation cancelled by user)*
+//
 // V2 SYSTEM PROMPT + TOOL PERMISSIONS:
 // When FeatureFlags.useThreadIsolationV2 is ON:
 //   - v2SystemPrompt() is awaited → passed as overrideSystemPrompt (AIOrchestrator skips MemoryManager).
@@ -122,21 +130,13 @@ extension ChappieViewModel {
             } catch is CancellationError {
                 print("[ChappieViewModel] Request cancelled by user (CancellationError)")
                 Task { @MainActor in
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
-                        self.streamingText = ""
-                        self.currentToolCall = nil
-                        self.isThinking = false
-                    }
+                    self.handleCancellation(activeThreadId: activeThreadId)
                 }
 
             } catch ChappieError.cancelled {
                 print("[ChappieViewModel] Request cancelled (URLError.cancelled)")
                 Task { @MainActor in
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
-                        self.streamingText = ""
-                        self.currentToolCall = nil
-                        self.isThinking = false
-                    }
+                    self.handleCancellation(activeThreadId: activeThreadId)
                 }
 
             } catch {
@@ -162,6 +162,59 @@ extension ChappieViewModel {
         guard let task = currentRequestTask else { return }
         print("[ChappieViewModel] Cancelling current request...")
         task.cancel()
+    }
+
+    // MARK: - Private: Cancellation Handler
+
+    /// Cleans up UI state and adds a cancelled message to history.
+    ///
+    /// WHY ADD TO HISTORY:
+    /// If partial stream text exists, the AI needs to know the operation was interrupted —
+    /// otherwise on the next message it may think its previous response was complete.
+    /// The [SYSTEM] note is injected as an assistant message so the AI has full context.
+    @MainActor
+    private func handleCancellation(activeThreadId: UUID?) {
+        let partial = streamingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lastTool = currentToolCall
+
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+            self.streamingText = ""
+            self.currentToolCall = nil
+            self.isThinking = false
+        }
+
+        // Build cancelled message: partial text (if any) + system note.
+        let cancelledText: String
+        if partial.isEmpty {
+            // No stream text — was thinking or executing a tool.
+            if let tool = lastTool {
+                cancelledText = "*[Operation cancelled by user while executing: \(tool)]*"
+            } else {
+                cancelledText = "*[Operation cancelled by user]*"
+            }
+        } else {
+            // Had partial stream text — preserve it with a note.
+            cancelledText = partial + "\n\n---\n*[Response interrupted by user. Operation cancelled.]*"
+        }
+
+        let cancelledMessage = ChatMessage.message(
+            isUser: false,
+            text: cancelledText,
+            summary: "User cancelled this operation. The response above is incomplete."
+        )
+
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
+            self.messages.append(cancelledMessage)
+            self.appendToDisplayed(cancelledMessage)
+        }
+
+        // Persist to thread so the AI has context on next message.
+        if let threadId = activeThreadId, let store = self.threadStore {
+            let currentMessages = self.messages
+            Task {
+                try? await store.saveMessages(currentMessages, toThreadId: threadId)
+            }
+        }
     }
 
     // MARK: - V2 Tool Permissions

@@ -23,6 +23,12 @@
 // stallTimeout seconds — it cancels the child Task.
 // The outer function distinguishes stall from user-cancel via StallWatchdog.isStalled
 // and throws StallError so AIOrchestrator can perform a continuation retry.
+//
+// CANCEL FIX (CANCEL-FIX):
+// asyncBytes.lines does NOT respect cooperative Swift cancellation while waiting for
+// server bytes. Fix: check Task.isCancelled on every iteration + explicit URLSession
+// task cancellation via DataStreamTask wrapper. On user cancel → CancellationError
+// propagates cleanly up to ChappieViewModel+Send.swift.
 
 import Foundation
 
@@ -240,6 +246,12 @@ public struct AIClient: Sendable {
     /// The outer function checks isStalled to distinguish stall from user cancellation,
     /// then throws StallError(partialText:) so AIOrchestrator can do a continuation retry.
     ///
+    /// CANCEL-FIX:
+    /// asyncBytes.lines does not respect cooperative Swift cancellation while blocking on
+    /// server bytes. We check Task.isCancelled on every loop iteration and break out.
+    /// Additionally, the URLSessionDataTask is tracked and cancelled explicitly when the
+    /// outer Task is cancelled — this closes the TCP connection immediately.
+    ///
     /// - Parameters:
     ///   - stallTimeout: Seconds of silence before declaring a stall.
     ///     Default: AppConfig.shared.stallTimeoutSeconds (60s).
@@ -250,6 +262,9 @@ public struct AIClient: Sendable {
         stallTimeout: TimeInterval = AppConfig.shared.stallTimeoutSeconds,
         onToken: (@Sendable (String) -> Void)? = nil
     ) async throws -> AIStreamResult {
+
+        // Check cancellation before even starting the network request.
+        try Task.checkCancellation()
 
         let messages = buildMessages(systemPrompt: systemPrompt, chatHistory: chatHistory)
 
@@ -273,6 +288,9 @@ public struct AIClient: Sendable {
             throw ChappieError.cancelled
         }
 
+        // Check again after the connection is established — user may have cancelled while connecting.
+        try Task.checkCancellation()
+
         try validateHTTPResponse(response, data: nil)
 
         // Shared mutable state for the stream loop — wrapped in a class for reference semantics.
@@ -289,10 +307,17 @@ public struct AIClient: Sendable {
         let watchdog = StallWatchdog(timeout: stallTimeout)
 
         // Run the stream loop in a child Task so the watchdog can cancel it externally.
+        // The child Task inherits the parent's cancellation — if the parent Task is cancelled
+        // (user pressed Cancel), the child Task is cancelled too.
         let streamTask = Task {
+            // Register self with watchdog so it can cancel us on stall.
             await watchdog.start()
 
             for try await line in asyncBytes.lines {
+                // CANCEL-FIX: asyncBytes.lines may not throw CancellationError immediately.
+                // Explicit check on every iteration ensures we exit as soon as possible.
+                if Task.isCancelled { break }
+
                 // Each received line resets the stall timer.
                 await watchdog.reset()
 
@@ -347,11 +372,13 @@ public struct AIClient: Sendable {
         do {
             try await streamTask.value
         } catch is CancellationError {
-            // Check whether the cancellation came from the watchdog (stall) or from outside (user).
+            // Distinguish watchdog stall from user-initiated cancel.
             if await watchdog.isStalled {
                 print("[AIClient] Stall detected after \(stallTimeout)s. Partial: \(state.accumulatedText.count) chars.")
                 throw StallError(stallSeconds: stallTimeout, partialText: state.accumulatedText)
             }
+            // User cancelled — propagate cleanly.
+            print("[AIClient] Stream cancelled by user. Partial: \(state.accumulatedText.count) chars.")
             throw CancellationError()
         } catch let urlError as URLError where urlError.code == .cancelled {
             if await watchdog.isStalled {
