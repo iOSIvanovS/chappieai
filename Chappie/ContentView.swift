@@ -215,6 +215,14 @@ struct ContentView: View {
                     }
                 )
             }
+            // Alert: user tried to send a message but no provider/model is configured.
+            // Shown instead of injecting a system message into chat history.
+            .alert("Нет активной модели", isPresented: $viewModel.showNoProviderAlert) {
+                Button("Открыть настройки") { showSettings = true }
+                Button("Отмена", role: .cancel) { }
+            } message: {
+                Text("Выбранная модель была удалена. Откройте настройки и подключите провайдера или выберите другую модель.")
+            }
     }
 
     // MARK: - Navigation

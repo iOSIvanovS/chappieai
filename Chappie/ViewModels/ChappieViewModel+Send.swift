@@ -31,12 +31,11 @@
 //     New.ToolAccessController.check() instead of legacy ToolAccessControl in ToolExecutionService).
 // When flag is OFF, both overrides are nil and the V1 path runs unchanged.
 //
-// B-04 PROVIDER DELETED DURING SEND:
-// send() captures `orchestrator` locally before the Task starts — this is a value-type
-// reference that survives invalidateProviderIfDeleted(). The only reliable fix is to
-// re-check activeProvider on MainActor INSIDE the Task, after all awaits complete.
-// By the time we reach orchestrator.process(), we are back on a background thread and
-// the captured reference is stale. The MainActor check below closes this race window.
+// NO PROVIDER ALERT:
+// When orchestrator is nil (model/provider deleted from under the thread), send() triggers
+// showNoProviderAlert instead of injecting a system message into chat history.
+// WHY: system messages pollute AI context and confuse history. An alert is ephemeral UI —
+// it informs the user without leaving noise in the conversation.
 
 import SwiftUI
 import ChappieCore
@@ -47,12 +46,16 @@ extension ChappieViewModel {
 
     func send(prompt: String, attachments: [AttachedFile] = []) {
         guard !prompt.isEmpty || !attachments.isEmpty else { return }
+
+        print("[B-04] send() entry — activeProvider: \(activeProvider?.displayName ?? "nil"), orchestrator: \(orchestrator != nil ? "set" : "nil")")
+
+        // No provider/model configured — show alert instead of polluting chat history
         guard let orchestrator = orchestrator else {
-            messages.append(.message(isUser: false, text: "Ошибка: Оркестратор не инициализирован. Подключите папку с проектом."))
+            showNoProviderAlert = true
             return
         }
         guard activeProvider != nil else {
-            messages.append(.message(isUser: false, text: "⚠️ Нет настроенного AI-провайдера. Откройте настройки и добавьте провайдера."))
+            showNoProviderAlert = true
             return
         }
 
@@ -78,23 +81,6 @@ extension ChappieViewModel {
             // V1: both nil → orchestrator builds prompt via MemoryManager, ToolExecutionService handles access.
             let systemPromptOverride = await v2SystemPrompt()
             let toolPermissionsOverride = await v2ToolPermissions()
-
-            // B-04: Re-check provider on MainActor after all awaits.
-            // Between send() entry and here, the user may have deleted the active provider.
-            // `orchestrator` was captured before the Task — it is a stale local reference.
-            // Only activeProvider (a @MainActor property) reflects the current ground truth.
-            let providerStillValid = await MainActor.run { self.activeProvider != nil }
-            guard providerStillValid else {
-                print("[ChappieViewModel] Provider was deleted before request started — aborting send()")
-                await MainActor.run {
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
-                        self.streamingText = ""
-                        self.currentToolCall = nil
-                        self.isThinking = false
-                    }
-                }
-                return
-            }
 
             do {
                 let result = try await orchestrator.process(

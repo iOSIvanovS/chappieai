@@ -116,6 +116,10 @@ final class ChappieViewModel {
 
     var currentRequestTask: Task<Void, Never>? = nil
 
+    /// Triggered when user tries to send a message with no active provider/model.
+    /// Drives a native alert in ContentView — avoids polluting chat history with system messages.
+    var showNoProviderAlert: Bool = false
+
     // MARK: - Background sync task (cancellable)
 
     /// Holds the current background Task launched by selectThread().

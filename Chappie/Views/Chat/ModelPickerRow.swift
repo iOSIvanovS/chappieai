@@ -1,11 +1,11 @@
 // ModelPickerRow.swift
 // Chappie
 //
-// Row displayed above ProjectChipsView showing the active AI provider + model,
+// Row displayed above ProjectChipsView showing the active AI model,
 // and — on the right — the current account balance from the active provider.
 //
 // LAYOUT:
-//   Left pill  — "Модель:" label + provider·model chip (ultraThinMaterial).
+//   Left pill  — "Модель:" label + model chip (ultraThinMaterial).
 //   Spacer     — pushes the two pills to opposite edges.
 //   Right pill — creditcard icon + balance amount (ultraThinMaterial).
 //                Visible only when balance is non-nil.
@@ -35,8 +35,8 @@
 //   SwiftUI's automatic opacity(0.5) side effect.
 //
 // TRUNCATION:
-//   The provider·model label uses .truncationMode(.middle) so that when the
-//   window is narrow the text clips in the middle: "api.ai… · claude-…4.6"
+//   The model label uses .truncationMode(.middle) so that when the
+//   window is narrow the text clips in the middle: "deepseek-v4-pro"
 //   Both pills compress gracefully — right pill is fixedSize, left pill gets
 //   the remaining space via layoutPriority(1).
 
@@ -100,7 +100,7 @@ struct ModelPickerRow: View {
                         .fill(Color(NSColor.controlBackgroundColor))
                 )
 
-            // Provider + model selector button — shrinks and truncates in the middle.
+            // Model selector button — shrinks and truncates in the middle.
             // No .fixedSize() here — button must compress when window narrows.
             Button {
                 showPopover.toggle()
@@ -195,24 +195,25 @@ struct ModelPickerRow: View {
     @ViewBuilder
     private var chipLabel: some View {
         if isOrphaned {
+            // Model was deleted — prompt user to pick another
             Text("Модель недоступна — выберите другую")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.orange)
                 .lineLimit(1)
                 .truncationMode(.middle)
-        } else if let provider = activeProvider, let model = activeModelName {
-            Text("\(provider.displayName) · \(model)")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                // Middle truncation keeps both provider host and model suffix visible
-                .truncationMode(.middle)
-        } else if let provider = activeProvider {
-            Text(provider.displayName)
+        } else if let model = activeModelName {
+            // Show only the model name — provider name is redundant and makes the chip too long
+            Text(model)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .truncationMode(.middle)
+        } else if activeProvider != nil {
+            // Provider set but no model selected yet
+            Text("Выберите модель")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.orange)
+                .lineLimit(1)
         } else {
             Text("Не выбрана")
                 .font(.system(size: 12, weight: .medium))
