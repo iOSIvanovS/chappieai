@@ -1,22 +1,19 @@
 // FileSystemManagerTests.swift
 // ChappieCoreTests
 //
-// Юнит-тесты для FileSystemManager — "рук" ИИ-агента в файловой системе.
+// Unit tests for FileSystemManager.
 //
-// ПРИОРИТЕТ ТЕСТИРОВАНИЯ:
-// Самое важное здесь — безопасность. Path Traversal (CWE-22) — это критическая
-// уязвимость: если защита сломается, ИИ сможет читать/писать системные файлы.
-// Тесты безопасности помечены явно и должны проходить при любом рефакторинге.
+// PRIORITY:
+// Security first. Path Traversal (CWE-22) is a critical vulnerability —
+// if the guard breaks, the AI can read/write system files.
+// Security tests are marked explicitly and must pass on every refactor.
 //
-// ИЗОЛЯЦИЯ:
-// Каждый тест работает во временной директории — реальные файлы проекта не трогаются.
+// ISOLATION:
+// Each test runs in a temp directory — real project files are never touched.
 //
-// ВАЖНО ПРО listFiles():
-// FileSystemManager.listFiles() — синхронный метод (throws, не async throws).
-// Тесты вызывают его напрямую без await. Также метод возвращает пути
-// через replacingOccurrences, но на некоторых системах workspaceURL.path
-// может иметь префикс /private (симлинк /tmp → /private/tmp).
-// Поэтому сравниваем через hasSuffix, а не точное совпадение.
+// NOTE on listFiles():
+// FileSystemManager.listFiles() is synchronous (throws, not async throws).
+// We compare via hasSuffix to be resilient to /private/tmp vs /tmp symlink differences.
 
 import Testing
 import Foundation
@@ -25,10 +22,8 @@ import Foundation
 @Suite("FileSystemManager Tests")
 struct FileSystemManagerTests {
 
-    // MARK: - Вспомогательные методы
+    // MARK: - Helpers
 
-    /// Создаёт временную директорию и возвращает готовый FileSystemManager.
-    /// Используем UUID чтобы тесты были изолированы даже при параллельном запуске.
     private func makeManager() throws -> (FileSystemManager, URL) {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("FSMTests_\(UUID().uuidString)", isDirectory: true)
@@ -37,70 +32,67 @@ struct FileSystemManagerTests {
         return (manager, tempDir)
     }
 
+    private func makeTempDir() throws -> URL {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FSMTests_\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        return tempDir
+    }
+
     private func cleanup(_ url: URL) {
         try? FileManager.default.removeItem(at: url)
     }
 
-    // MARK: - Тесты чтения
+    // MARK: - Read
 
-    /// Базовый сценарий: файл существует → читаем содержимое.
-    @Test("Чтение существующего файла")
+    @Test("Read existing file")
     func readExistingFile() async throws {
         let (manager, workspace) = try makeManager()
         defer { cleanup(workspace) }
 
-        // Создаём файл напрямую через FileManager (минуя FileSystemManager)
         let fileURL = workspace.appendingPathComponent("test.txt")
         try "Hello, Chappie!".write(to: fileURL, atomically: true, encoding: .utf8)
 
-        // Читаем через FileSystemManager — метод синхронный, вызываем через actor
         let content = try await manager.readFile(at: "test.txt")
         #expect(content == "Hello, Chappie!")
     }
 
-    /// Чтение несуществующего файла должно бросать ChappieError.fileSystemError.
-    @Test("Чтение несуществующего файла бросает ошибку")
+    @Test("Read missing file throws")
     func readMissingFileThrows() async throws {
         let (manager, workspace) = try makeManager()
         defer { cleanup(workspace) }
 
-        // Ожидаем ошибку — файла нет
         await #expect(throws: (any Error).self) {
             try await manager.readFile(at: "nonexistent_file_xyz.txt")
         }
     }
 
-    // MARK: - Тесты записи
+    // MARK: - Write
 
-    /// Запись нового файла → файл создаётся с правильным содержимым.
-    @Test("Запись нового файла")
+    @Test("Write new file")
     func writeNewFile() async throws {
         let (manager, workspace) = try makeManager()
         defer { cleanup(workspace) }
 
         try await manager.writeFile(at: "new_file.swift", content: "import Foundation")
 
-        // Проверяем через прямое чтение (не через FileSystemManager)
         let fileURL = workspace.appendingPathComponent("new_file.swift")
         let content = try String(contentsOf: fileURL, encoding: .utf8)
         #expect(content == "import Foundation")
     }
 
-    /// Запись в поддиректорию — директория создаётся автоматически.
-    @Test("Запись в поддиректорию создаёт промежуточные папки")
+    @Test("Write to subdirectory creates intermediate folders")
     func writeToSubdirectoryCreatesDirectories() async throws {
         let (manager, workspace) = try makeManager()
         defer { cleanup(workspace) }
 
-        // Путь с несуществующей поддиректорией
         try await manager.writeFile(at: "Views/Chat/ChatView.swift", content: "// ChatView")
 
         let fileURL = workspace.appendingPathComponent("Views/Chat/ChatView.swift")
         #expect(FileManager.default.fileExists(atPath: fileURL.path))
     }
 
-    /// Перезапись существующего файла — содержимое обновляется.
-    @Test("Перезапись существующего файла")
+    @Test("Overwrite existing file")
     func overwriteExistingFile() async throws {
         let (manager, workspace) = try makeManager()
         defer { cleanup(workspace) }
@@ -112,10 +104,9 @@ struct FileSystemManagerTests {
         #expect(content == "new content")
     }
 
-    // MARK: - Тесты удаления
+    // MARK: - Delete
 
-    /// Удаление существующего файла — файл исчезает.
-    @Test("Удаление существующего файла")
+    @Test("Delete existing file")
     func deleteExistingFile() async throws {
         let (manager, workspace) = try makeManager()
         defer { cleanup(workspace) }
@@ -129,8 +120,7 @@ struct FileSystemManagerTests {
         #expect(!FileManager.default.fileExists(atPath: fileURL.path))
     }
 
-    /// Удаление несуществующего файла бросает ошибку (не молчит).
-    @Test("Удаление несуществующего файла бросает ошибку")
+    @Test("Delete missing file throws")
     func deleteMissingFileThrows() async throws {
         let (manager, workspace) = try makeManager()
         defer { cleanup(workspace) }
@@ -140,81 +130,164 @@ struct FileSystemManagerTests {
         }
     }
 
-    // MARK: - Тесты списка файлов
+    // MARK: - List files
 
-    /// listFiles возвращает все файлы в директории.
-    ///
-    /// ПОЧЕМУ hasSuffix а не точное совпадение:
-    /// На macOS /tmp является симлинком на /private/tmp. FileSystemManager использует
-    /// workspaceURL.path для вычисления относительных путей через replacingOccurrences.
-    /// Но enumerator может вернуть пути через /private/tmp, тогда как workspaceURL
-    /// указывает на /tmp — replacingOccurrences не сработает и путь останется абсолютным.
-    /// hasSuffix устойчив к этой разнице и проверяет только значимую часть пути.
-    @Test("listFiles возвращает все файлы")
+    @Test("listFiles returns all files")
     func listFilesReturnsAllFiles() async throws {
         let (manager, workspace) = try makeManager()
         defer { cleanup(workspace) }
 
-        // Создаём несколько файлов через FileSystemManager
         try await manager.writeFile(at: "a.swift", content: "")
         try await manager.writeFile(at: "b.swift", content: "")
         try await manager.writeFile(at: "sub/c.swift", content: "")
 
-        // listFiles — синхронный метод, но вызываем через actor (await нужен для входа в actor)
         let files = try await manager.listFiles()
 
-        // Проверяем через hasSuffix — устойчиво к /private/tmp vs /tmp
-        #expect(files.contains(where: { $0.hasSuffix("a.swift") }), "Файл a.swift должен быть в списке")
-        #expect(files.contains(where: { $0.hasSuffix("b.swift") }), "Файл b.swift должен быть в списке")
-        #expect(files.contains(where: { $0.hasSuffix("c.swift") }), "Файл sub/c.swift должен быть в списке")
+        #expect(files.contains(where: { $0.hasSuffix("a.swift") }), "a.swift must be listed")
+        #expect(files.contains(where: { $0.hasSuffix("b.swift") }), "b.swift must be listed")
+        #expect(files.contains(where: { $0.hasSuffix("c.swift") }), "sub/c.swift must be listed")
     }
 
-    // MARK: - ТЕСТЫ БЕЗОПАСНОСТИ (Path Traversal)
+    // MARK: - Multi-workspace (B-01)
 
-    /// КРИТИЧЕСКИЙ ТЕСТ: попытка выйти за пределы workspace через "../" должна быть отклонена.
-    @Test("🔒 Path Traversal через ../ отклоняется")
+    @Test("Multi-workspace: listFiles prefixes paths with project name")
+    func multiWorkspaceListFilesHasPrefixes() async throws {
+        let dir1 = try makeTempDir()
+        let dir2 = try makeTempDir()
+        defer { cleanup(dir1); cleanup(dir2) }
+
+        // Seed files directly into each workspace dir.
+        try "".write(to: dir1.appendingPathComponent("alpha.swift"), atomically: true, encoding: .utf8)
+        try "".write(to: dir2.appendingPathComponent("beta.swift"), atomically: true, encoding: .utf8)
+
+        let manager = FileSystemManager(workspaces: [
+            (name: "ProjectA", url: dir1),
+            (name: "ProjectB", url: dir2)
+        ])
+
+        let files = try await manager.listFiles()
+
+        #expect(files.contains(where: { $0.hasPrefix("ProjectA/") && $0.hasSuffix("alpha.swift") }),
+                "ProjectA/alpha.swift must be listed")
+        #expect(files.contains(where: { $0.hasPrefix("ProjectB/") && $0.hasSuffix("beta.swift") }),
+                "ProjectB/beta.swift must be listed")
+    }
+
+    @Test("Multi-workspace: readFile routes by project prefix")
+    func multiWorkspaceReadFileRoutes() async throws {
+        let dir1 = try makeTempDir()
+        let dir2 = try makeTempDir()
+        defer { cleanup(dir1); cleanup(dir2) }
+
+        try "content-A".write(to: dir1.appendingPathComponent("file.txt"), atomically: true, encoding: .utf8)
+        try "content-B".write(to: dir2.appendingPathComponent("file.txt"), atomically: true, encoding: .utf8)
+
+        let manager = FileSystemManager(workspaces: [
+            (name: "Alpha", url: dir1),
+            (name: "Beta", url: dir2)
+        ])
+
+        let contentA = try await manager.readFile(at: "Alpha/file.txt")
+        let contentB = try await manager.readFile(at: "Beta/file.txt")
+
+        #expect(contentA == "content-A")
+        #expect(contentB == "content-B")
+    }
+
+    @Test("Multi-workspace: writeFile routes by project prefix")
+    func multiWorkspaceWriteFileRoutes() async throws {
+        let dir1 = try makeTempDir()
+        let dir2 = try makeTempDir()
+        defer { cleanup(dir1); cleanup(dir2) }
+
+        let manager = FileSystemManager(workspaces: [
+            (name: "Alpha", url: dir1),
+            (name: "Beta", url: dir2)
+        ])
+
+        try await manager.writeFile(at: "Alpha/out.txt", content: "hello from alpha")
+        try await manager.writeFile(at: "Beta/out.txt", content: "hello from beta")
+
+        let readA = try String(contentsOf: dir1.appendingPathComponent("out.txt"), encoding: .utf8)
+        let readB = try String(contentsOf: dir2.appendingPathComponent("out.txt"), encoding: .utf8)
+
+        #expect(readA == "hello from alpha")
+        #expect(readB == "hello from beta")
+    }
+
+    @Test("Multi-workspace: unknown prefix throws")
+    func multiWorkspaceUnknownPrefixThrows() async throws {
+        let dir1 = try makeTempDir()
+        defer { cleanup(dir1) }
+
+        let manager = FileSystemManager(workspaces: [
+            (name: "Alpha", url: dir1)
+        ])
+
+        await #expect(throws: (any Error).self) {
+            try await manager.readFile(at: "Unknown/file.txt")
+        }
+    }
+
+    // MARK: - Security (Path Traversal)
+
+    @Test("🔒 Path traversal via ../ is blocked")
     func pathTraversalUpDirectoryBlocked() async throws {
         let (manager, workspace) = try makeManager()
         defer { cleanup(workspace) }
 
-        // Классическая атака Path Traversal — выход на уровень выше workspace
         await #expect(throws: (any Error).self) {
             try await manager.readFile(at: "../../etc/passwd")
         }
     }
 
-    /// КРИТИЧЕСКИЙ ТЕСТ: абсолютный путь должен быть отклонён.
-    @Test("🔒 Абсолютный путь отклоняется")
+    @Test("🔒 Absolute path is blocked")
     func absolutePathBlocked() async throws {
         let (manager, workspace) = try makeManager()
         defer { cleanup(workspace) }
 
-        // Попытка использовать абсолютный путь к системному файлу
         await #expect(throws: (any Error).self) {
             try await manager.readFile(at: "/etc/hosts")
         }
     }
 
-    /// КРИТИЧЕСКИЙ ТЕСТ: попытка записи за пределы workspace отклоняется.
-    @Test("🔒 Запись за пределы workspace отклоняется")
+    @Test("🔒 Write outside workspace is blocked")
     func writeOutsideWorkspaceBlocked() async throws {
         let (manager, workspace) = try makeManager()
         defer { cleanup(workspace) }
 
-        // Попытка записи в родительскую директорию через Path Traversal
         await #expect(throws: (any Error).self) {
             try await manager.writeFile(at: "../evil_file.txt", content: "hacked")
         }
     }
 
-    /// КРИТИЧЕСКИЙ ТЕСТ: удаление за пределами workspace отклоняется.
-    @Test("🔒 Удаление за пределами workspace отклоняется")
+    @Test("🔒 Delete outside workspace is blocked")
     func deleteOutsideWorkspaceBlocked() async throws {
         let (manager, workspace) = try makeManager()
         defer { cleanup(workspace) }
 
         await #expect(throws: (any Error).self) {
             try await manager.deleteFile(at: "../../important_file.txt")
+        }
+    }
+
+    @Test("🔒 Multi-workspace: path traversal across projects is blocked")
+    func multiWorkspacePathTraversalBlocked() async throws {
+        let dir1 = try makeTempDir()
+        let dir2 = try makeTempDir()
+        defer { cleanup(dir1); cleanup(dir2) }
+
+        // Plant a file in dir2 that shouldn't be reachable from Alpha workspace.
+        try "secret".write(to: dir2.appendingPathComponent("secret.txt"), atomically: true, encoding: .utf8)
+
+        let manager = FileSystemManager(workspaces: [
+            (name: "Alpha", url: dir1),
+            (name: "Beta", url: dir2)
+        ])
+
+        // Attempt to reach Beta's file from Alpha's workspace context via traversal.
+        await #expect(throws: (any Error).self) {
+            try await manager.readFile(at: "Alpha/../../\(dir2.lastPathComponent)/secret.txt")
         }
     }
 }

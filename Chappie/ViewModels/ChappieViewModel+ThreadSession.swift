@@ -13,9 +13,11 @@
 //   send() reads activeThreadSession?.systemPrompt() → passes as overrideSystemPrompt to orchestrator
 //   memory/project changes → invalidateActiveThreadSession() resets the cache
 //
-// M-09 WORKSPACE ISOLATION:
-//   assembleThreadSession() resolves the bookmark of the first attached project
-//   and calls toolService.setFileSystem() so file tools point at the right folder.
+// M-09 WORKSPACE ISOLATION (B-01 FIX):
+//   syncFileSystemForActiveThread() resolves bookmarks for ALL attached projects
+//   and builds a multi-workspace FileSystemManager so list_files / read_file / etc.
+//   can access every project, not just the first one.
+//   Paths are prefixed: "ProjectName/relative/path".
 //   On threads with no projects — restores the global fileSystem (from workspaceURL).
 
 import Foundation
@@ -53,7 +55,7 @@ extension ChappieViewModel {
         self._activeThreadSession = session
         print("[ChappieViewModel] V2 ThreadSession assembled for '\(thread.title)' (\(activeProjects.count) projects)")
 
-        // M-09: Sync FileSystem to point at the first project's workspace folder.
+        // M-09 / B-01: Sync FileSystem to cover ALL attached projects.
         await syncFileSystemForActiveThread()
     }
 
@@ -76,19 +78,19 @@ extension ChappieViewModel {
         return try? await session.systemPrompt()
     }
 
-    // MARK: - M-09: Workspace isolation
+    // MARK: - M-09 / B-01: Multi-workspace isolation
 
-    /// Resolves the workspace URL for the first project in the active thread
-    /// and swaps the FileSystemManager in ToolExecutionService.
+    /// Resolves bookmarks for ALL attached projects and builds a multi-workspace
+    /// FileSystemManager so every project is accessible via "ProjectName/path".
     ///
-    /// WHY first project: tools operate on one workspace at a time.
-    /// Future: multi-project routing can be added here without touching ToolExecutionService.
+    /// WHY multi-workspace: B-01 — previously only the first project was visible.
+    /// Each project's bookmark is resolved independently; failures are logged and skipped.
     func syncFileSystemForActiveThread() async {
         guard FeatureFlags.useThreadIsolationV2,
               let ts = toolService else { return }
 
         // No projects → restore global fileSystem (the one from workspaceURL).
-        guard let firstProject = activeProjects.first else {
+        guard !activeProjects.isEmpty else {
             if let globalFS = fileSystem {
                 await ts.setFileSystem(globalFS)
                 print("[ChappieViewModel] M-09: No projects — restored global fileSystem")
@@ -96,43 +98,64 @@ extension ChappieViewModel {
             return
         }
 
-        // Resolve bookmark for the first project.
-        guard let pStore = projectStore,
-              let bookmarkData = try? await pStore.loadBookmark(forProjectId: firstProject.id),
-              !bookmarkData.isEmpty else {
-            print("[ChappieViewModel] M-09: No bookmark for '\(firstProject.displayName)' — keeping current fileSystem")
-            return
-        }
+        guard let pStore = projectStore else { return }
 
-        var isStale = false
-        let resolvedURL: URL?
+        // Resolve bookmark for each project; collect successful (name, URL) pairs.
+        var workspaces: [(name: String, url: URL)] = []
 
-        // Try security-scoped bookmark first (sandboxed app), fall back to plain.
-        if let url = try? URL(
-            resolvingBookmarkData: bookmarkData,
-            options: .withSecurityScope,
-            relativeTo: nil,
-            bookmarkDataIsStale: &isStale
-        ) {
-            _ = url.startAccessingSecurityScopedResource()
-            resolvedURL = url
-        } else {
-            resolvedURL = try? URL(
+        for project in activeProjects {
+            guard let bookmarkData = try? await pStore.loadBookmark(forProjectId: project.id),
+                  !bookmarkData.isEmpty else {
+                print("[ChappieViewModel] M-09: No bookmark for '\(project.displayName)' — skipped")
+                continue
+            }
+
+            var isStale = false
+            let resolvedURL: URL?
+
+            // Try security-scoped bookmark first (sandboxed app), fall back to plain.
+            if let url = try? URL(
                 resolvingBookmarkData: bookmarkData,
-                options: [],
+                options: .withSecurityScope,
                 relativeTo: nil,
                 bookmarkDataIsStale: &isStale
-            )
+            ) {
+                _ = url.startAccessingSecurityScopedResource()
+                resolvedURL = url
+            } else {
+                resolvedURL = try? URL(
+                    resolvingBookmarkData: bookmarkData,
+                    options: [],
+                    relativeTo: nil,
+                    bookmarkDataIsStale: &isStale
+                )
+            }
+
+            if let url = resolvedURL {
+                workspaces.append((name: project.displayName, url: url))
+                print("[ChappieViewModel] M-09: ✅ '\(project.displayName)' → \(url.path)")
+            } else {
+                print("[ChappieViewModel] M-09: ❌ Could not resolve bookmark for '\(project.displayName)'")
+            }
         }
 
-        guard let workspaceURL = resolvedURL else {
-            print("[ChappieViewModel] M-09: Could not resolve bookmark for '\(firstProject.displayName)'")
+        guard !workspaces.isEmpty else {
+            print("[ChappieViewModel] M-09: No workspaces resolved — keeping current fileSystem")
             return
         }
 
-        let fs = FileSystemManager(workspaceURL: workspaceURL)
+        // Single project: use single-workspace mode (no prefix in paths, backward compat).
+        let fs: FileSystemManager
+        if workspaces.count == 1 {
+            fs = FileSystemManager(workspaceURL: workspaces[0].url)
+        } else {
+            fs = FileSystemManager(workspaces: workspaces)
+        }
+
         await ts.setFileSystem(fs)
-        print("[ChappieViewModel] M-09: FileSystem → '\(firstProject.displayName)' at \(workspaceURL.path)")
+
+        let names = workspaces.map(\.name).joined(separator: ", ")
+        print("[ChappieViewModel] M-09: FileSystem → [\(names)] (\(workspaces.count) workspaces)")
     }
 }
 
