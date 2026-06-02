@@ -84,18 +84,29 @@ extension ChappieViewModel {
 
     // MARK: - Immediate invalidation (B-04)
 
-    /// Synchronously clears aiClient, orchestrator, and activeProvider if the given
-    /// provider ID matches the currently active one.
+    /// Cancels any in-flight request and clears aiClient/orchestrator/activeProvider
+    /// if the given provider ID matches the currently active one.
     ///
-    /// WHY SYNCHRONOUS:
-    /// reloadProviders() spawns an internal Task — there is a race window between
-    /// store.deleteProvider() returning and that Task completing. If send() fires
-    /// in that window, it finds a non-nil orchestrator and sends a request to the
-    /// deleted provider. Calling this method synchronously right after deleteProvider()
-    /// closes the race: by the time the UI can respond to a tap, the state is already nil.
+    /// WHY CANCEL currentRequestTask:
+    /// AIOrchestrator is an actor — it holds its own private `let aiClient` reference.
+    /// Nulling `self.orchestrator` does NOT stop an already-running process() call,
+    /// because the Task captured its own local reference at launch time.
+    /// The only way to stop the in-flight URLSession request is to cancel the Task
+    /// that owns it — Swift structured concurrency propagates cancellation into
+    /// the async chain and URLSession throws CancellationError.
     func invalidateProviderIfDeleted(id: UUID) {
         guard activeProvider?.id == id else { return }
-        print("[ChappieViewModel] Synchronously invalidating deleted active provider: \(id)")
+        print("[ChappieViewModel] Invalidating deleted active provider: \(id)")
+
+        // Cancel the in-flight request first — this is the only reliable stop.
+        // Nulling orchestrator alone doesn't help: the Task already captured its
+        // own reference to aiClient inside the actor's private storage.
+        if let task = currentRequestTask {
+            print("[ChappieViewModel] Cancelling in-flight request due to provider deletion")
+            task.cancel()
+            currentRequestTask = nil
+        }
+
         self.activeProvider = nil
         self.aiClient = nil
         self.orchestrator = nil
