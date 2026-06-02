@@ -216,21 +216,41 @@ extension ChappieViewModel {
 
     // MARK: - Settings Update
 
-    func updateThreadSettings(_ settings: ThreadSettings, newTitle: String, forThreadId threadId: UUID) {
+    /// Called from ThreadSettingsSheet on save.
+    /// - Parameters:
+    ///   - settings: Updated context/unlimited settings.
+    ///   - newTitle: Renamed thread title.
+    ///   - threadId: Target thread ID.
+    ///   - newProviderId: Non-nil when user changed the provider in M-08 picker.
+    ///   - newModelName: Non-nil when user changed the model in M-08 picker.
+    func updateThreadSettings(
+        _ settings: ThreadSettings,
+        newTitle: String,
+        forThreadId threadId: UUID,
+        newProviderId: UUID? = nil,
+        newModelName: String? = nil
+    ) {
         guard let store = threadStore else { return }
 
         Task {
             do {
                 try await store.renameThread(id: threadId, title: newTitle)
 
-                // Preserve active provider/model — they are managed by switchProvider, not the settings sheet
                 var updatedSettings = settings
-                if let currentProviderId = activeThreadSettings.activeProviderId {
-                    updatedSettings.activeProviderId = currentProviderId
+
+                // M-08: apply new provider/model if user changed them
+                if let providerId = newProviderId,
+                   let provider = providers.first(where: { $0.id == providerId }) {
+                    let modelName = newModelName ?? provider.models.first
+                    await switchProvider(provider, modelName: modelName)
+                    updatedSettings.activeProviderId = providerId
+                    updatedSettings.activeModelName = modelName?.isEmpty == false ? modelName : nil
+                } else {
+                    // Preserve existing provider/model — managed by switchProvider, not overwritten here
+                    updatedSettings.activeProviderId = activeThreadSettings.activeProviderId
+                    updatedSettings.activeModelName = activeThreadSettings.activeModelName
                 }
-                if let currentModelName = activeThreadSettings.activeModelName {
-                    updatedSettings.activeModelName = currentModelName
-                }
+
                 try await store.updateSettings(updatedSettings, forThreadId: threadId)
 
                 let refreshed = try await store.loadThreads()

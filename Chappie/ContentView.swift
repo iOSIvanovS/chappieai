@@ -60,12 +60,13 @@
 //   On send: draft is cleared via viewModel.clearDraft().
 //   This ensures each thread remembers its own unsent text across switches.
 //
-// THREAD SETTINGS SHEET (IT-11 / IT-12):
+// THREAD SETTINGS SHEET (IT-11 / IT-12 / M-08):
 //   selectedThreadForSettings: ThreadMetadata? — opened from two places:
 //   1. Context menu in ThreadRowView (sidebar) — gear removed from row hover buttons.
 //   2. Thread name + gear chip in ProjectChipsView.
 //   Both set selectedThreadForSettings → .sheet(item:) shows ThreadSettingsSheet.
-//   onSave → viewModel.updateThreadSettings() → title + settings persisted.
+//   M-08: ThreadSettingsSheet now also receives providers list and returns
+//   (title, settings, providerId?, modelName?) — ViewModel calls switchProvider if changed.
 //
 // LAST ACTIVE THREAD (UX-RESTORE):
 //   ViewModel saves lastActiveThreadId on every selectThread() call.
@@ -131,6 +132,7 @@
 //        NewThreadProviderSheet extended with name + context settings.
 // IT-13: Soft lock — toolbar, sidebar, model picker, project chips disabled while isThinking.
 //        Auto-close SettingsView when isThinking becomes true (TASK-5).
+// M-08: ThreadSettingsSheet now includes provider/model picker.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -143,14 +145,10 @@ import ChappieCore
 /// Directories are rejected; only regular files are passed to the handler.
 private final class SilentDropDelegate: DropDelegate {
 
-    /// Called when valid files are dropped. Receives resolved NSItemProviders.
     var onFilesDropped: ([NSItemProvider]) -> Void = { _ in }
-
-    /// Returns true only when not thinking and the drag contains file URLs.
     var isThinkingGetter: () -> Bool = { false }
 
     func validateDrop(info: DropInfo) -> Bool {
-        // Always return true — returning false here prevents performDrop from being called.
         return true
     }
 
@@ -172,37 +170,25 @@ struct ContentView: View {
     @State private var showSettings: Bool = false
     @State private var isSidebarVisible: Bool = false
 
-    // DND-GLOBAL: attachments owned here so the whole-window drop target can write to them.
-    // Passed to InputMorphView via @Binding — InputMorphView reads and clears them on send.
     @State private var attachments: [AttachedFile] = []
-
-    // DND-GLOBAL: single delegate instance, wired once in onAppear.
     @State private var dropDelegate = SilentDropDelegate()
 
     @State private var selectedProjectForSettings: ProjectMetadata? = nil
-    /// Thread whose settings sheet is currently open.
     @State private var selectedThreadForSettings: ThreadMetadata? = nil
 
-    // Heights reported by floating panels — used as transparent spacers in ChatScrollView.
     @State private var topPanelHeight: CGFloat = 0
     @State private var bottomPanelHeight: CGFloat = 0
-
-    // Safe area top inset (= toolbar height).
-    // Read via .background(GeometryReader) on ChatScrollView — NOT from a GeometryReader
-    // placed in the layout tree to avoid horizontal greediness that prevents narrow windows.
     @State private var safeAreaTop: CGFloat = 0
 
     @Environment(\.modelContext) private var modelContext
 
     private var orphanedThreadIds: Set<UUID> { [] }
 
-    // Sidebar width — fixed, matches standard macOS sidebar proportions
     private let sidebarWidth: CGFloat = 260
 
     var body: some View {
         Group {
             if !viewModel.isAppReady {
-                // UX-APP-READY: show a spinner until the first selectThread() completes.
                 ProgressView("Загрузка...")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if viewModel.providers.isEmpty {
@@ -214,7 +200,6 @@ struct ContentView: View {
         .onAppear {
             viewModel.setModelContainer(modelContext.container)
 
-            // Wire drop delegate callbacks once — stable for the lifetime of the view.
             dropDelegate.isThinkingGetter = { [self] in viewModel.isThinking }
             dropDelegate.onFilesDropped = { [self] providers in
                 resolveDroppedFiles(providers)
@@ -243,14 +228,17 @@ struct ContentView: View {
                 )
             }
             .sheet(item: $selectedThreadForSettings) { thread in
-                // IT-11/IT-12: Thread settings sheet — opened from sidebar or ProjectChipsView chip
+                // M-08: pass providers so user can change provider/model per-thread
                 ThreadSettingsSheet(
                     thread: thread,
-                    onSave: { newTitle, newSettings in
+                    providers: viewModel.providers,
+                    onSave: { newTitle, newSettings, newProviderId, newModelName in
                         viewModel.updateThreadSettings(
                             newSettings,
                             newTitle: newTitle,
-                            forThreadId: thread.id
+                            forThreadId: thread.id,
+                            newProviderId: newProviderId,
+                            newModelName: newModelName
                         )
                         selectedThreadForSettings = nil
                     },
@@ -260,7 +248,6 @@ struct ContentView: View {
                 )
             }
             .sheet(isPresented: $viewModel.showNewThreadProviderPicker) {
-                // IT-12: extended sheet — also returns thread title and ThreadSettings
                 NewThreadProviderSheet(
                     providers: viewModel.providers,
                     currentProvider: viewModel.activeProvider,
@@ -287,10 +274,8 @@ struct ContentView: View {
     private var navigationContent: some View {
         ZStack(alignment: .topLeading) {
 
-            // MIDDLE LAYER: main app content — chat + floating panels
             mainChatArea
                 .toolbar {
-                    // IT-13: isThinking forwarded — disables toolbar buttons while AI responds
                     ChappieToolbarContent(
                         isApiKeyValid: !viewModel.providers.isEmpty,
                         isSidebarVisible: $isSidebarVisible,
@@ -299,9 +284,7 @@ struct ContentView: View {
                     )
                 }
 
-            // FRONT LAYER: dim overlay + sidebar (only when visible)
             if isSidebarVisible {
-                // Dim overlay — tapping it closes the sidebar
                 Color.black.opacity(0.25)
                     .ignoresSafeArea()
                     .onTapGesture {
@@ -311,8 +294,6 @@ struct ContentView: View {
                     }
                     .transition(.opacity)
 
-                // Floating sidebar panel
-                // IT-13: isThinking forwarded — disables thread switching/deletion while AI responds
                 SidebarView(
                     isApiKeyValid: !viewModel.providers.isEmpty,
                     threads: viewModel.threads,
@@ -371,7 +352,6 @@ struct ContentView: View {
                 viewModel.setDraft(newValue, for: threadId)
             }
         }
-        // TASK-5 (IT-13): auto-close SettingsView when AI starts responding.
         .onChange(of: viewModel.isThinking) { _, thinking in
             if thinking && showSettings {
                 showSettings = false
@@ -381,11 +361,9 @@ struct ContentView: View {
 
     // MARK: - Main Chat Area
 
-    /// Chat content: scroll view + floating top and bottom panels + global drop target.
     private var mainChatArea: some View {
         ZStack(alignment: .top) {
 
-            // BACK: full-screen scroll view.
             ChatScrollView(
                 scrollToBottomTrigger: viewModel.scrollToBottomTrigger,
                 messages: viewModel.displayedMessages,
@@ -407,7 +385,6 @@ struct ContentView: View {
                 }
             )
 
-            // FRONT: floating panels — transparent container, each pill floats independently
             VStack(spacing: 0) {
                 topPanel
                 Spacer()
@@ -416,13 +393,11 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.easeInOut(duration: 0.2), value: viewModel.activeThread?.id)
-        // DND-GLOBAL: whole-window drop target — silently accepts files, no overlay.
         .onDrop(of: [.fileURL], delegate: dropDelegate)
     }
 
     // MARK: - Top Floating Panel
 
-    /// Top panel: transparent container holding floating pill rows.
     private var topPanel: some View {
         VStack(spacing: 6) {
             if viewModel.activeThread != nil && !viewModel.providers.isEmpty {
@@ -480,9 +455,6 @@ struct ContentView: View {
 
     // MARK: - Bottom Floating Panel
 
-    /// Bottom panel: InputMorphView — ultraThinMaterial frosted glass.
-    /// attachments are owned by ContentView and shared via @Binding so the
-    /// whole-window drop target (mainChatArea) can append files directly.
     private var bottomPanel: some View {
         InputMorphView(
             prompt: $prompt,
@@ -506,8 +478,6 @@ struct ContentView: View {
 
     // MARK: - Private Helpers
 
-    /// Sends the current prompt + attachments to the ViewModel.
-    /// Clears the prompt and draft immediately on send.
     private func sendMessage(attachments: [AttachedFile]) {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || !attachments.isEmpty else { return }
@@ -518,11 +488,6 @@ struct ContentView: View {
         prompt = ""
     }
 
-    /// Resolves NSItemProvider array from a drop event into AttachedFile objects.
-    ///
-    /// URL resolution runs inside a Task (background-safe). AttachedFile.load() is @MainActor,
-    /// so the actual file loading and appending happen on the main actor via MainActor.run.
-    /// Directories are explicitly skipped — only regular files are accepted.
     private func resolveDroppedFiles(_ providers: [NSItemProvider]) {
         Task {
             var urls: [URL] = []
@@ -530,7 +495,6 @@ struct ContentView: View {
                 guard provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) else {
                     continue
                 }
-                // loadItem callback is not async — bridge via withCheckedContinuation
                 let url: URL? = await withCheckedContinuation { continuation in
                     provider.loadItem(
                         forTypeIdentifier: UTType.fileURL.identifier,
@@ -549,14 +513,12 @@ struct ContentView: View {
                 if let url { urls.append(url) }
             }
 
-            // Filter out directories — only regular files are supported
             let fileURLs = urls.filter { url in
                 var isDir: ObjCBool = false
                 let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
                 return exists && !isDir.boolValue
             }
 
-            // Load and append files on main actor with deduplication
             await MainActor.run {
                 let existingNames = Set(attachments.map(\.filename))
                 let newFiles = fileURLs

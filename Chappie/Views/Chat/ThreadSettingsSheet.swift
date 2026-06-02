@@ -5,17 +5,17 @@
 // Opened from two places: gear icon in ThreadRowView (sidebar) and gear chip in ProjectChipsView.
 //
 // ARCHITECTURE (DUMB COMPONENT PRINCIPLE):
-// Receives ThreadMetadata + ThreadSettings, returns via onSave(ThreadSettings).
+// Receives ThreadMetadata + available providers, returns via onSave.
 // No direct dependency on ViewModel or SwiftData.
 //
 // SETTINGS:
 // - Thread name (inline rename)
+// - Provider + model (M-08: per-thread provider override)
 // - Context depth: slider 10...1000 messages
 //   Token budget = messages × 500 (displayed as info, not editable)
 // - Unlimited context toggle: bypasses all trimming
 //
-// CONTEXT DEPTH DISPLAY:
-// Shows both message count and token budget so the user understands the tradeoff.
+// ProviderPickRow / ModelPickRow are defined in Shared/ProviderModelPickerRows.swift.
 
 import SwiftUI
 import ChappieCore
@@ -27,26 +27,40 @@ struct ThreadSettingsSheet: View {
     // MARK: - Input
 
     let thread: ThreadMetadata
-    let onSave: (String, ThreadSettings) -> Void
+    let providers: [AIProvider]
+    let onSave: (String, ThreadSettings, UUID?, String?) -> Void
     let onDismiss: () -> Void
 
     // MARK: - Local draft state
 
     @State private var draftTitle: String
     @State private var draftSettings: ThreadSettings
+    @State private var selectedProviderId: UUID?
+    @State private var selectedModelName: String
+    @State private var manualModelInput: String = ""
+
+    // MARK: - Computed
+
+    private var selectedProvider: AIProvider? {
+        providers.first { $0.id == selectedProviderId }
+    }
 
     // MARK: - Init
 
     init(
         thread: ThreadMetadata,
-        onSave: @escaping (String, ThreadSettings) -> Void,
+        providers: [AIProvider],
+        onSave: @escaping (String, ThreadSettings, UUID?, String?) -> Void,
         onDismiss: @escaping () -> Void
     ) {
         self.thread = thread
+        self.providers = providers
         self.onSave = onSave
         self.onDismiss = onDismiss
         self._draftTitle = State(initialValue: thread.title)
         self._draftSettings = State(initialValue: thread.settings)
+        self._selectedProviderId = State(initialValue: thread.settings.activeProviderId)
+        self._selectedModelName = State(initialValue: thread.settings.activeModelName ?? "")
     }
 
     // MARK: - Body
@@ -60,6 +74,10 @@ struct ThreadSettingsSheet: View {
                 VStack(alignment: .leading, spacing: 24) {
                     nameSection
                     Divider().padding(.vertical, 2)
+                    if !providers.isEmpty {
+                        providerSection
+                        Divider().padding(.vertical, 2)
+                    }
                     contextSection
                 }
                 .padding(20)
@@ -69,7 +87,7 @@ struct ThreadSettingsSheet: View {
             footerView
         }
         .frame(width: 440)
-        .frame(minHeight: 320)
+        .frame(minHeight: 400)
     }
 
     // MARK: - Header
@@ -83,7 +101,6 @@ struct ThreadSettingsSheet: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Настройки треда")
                     .font(.headline)
-                // Thread name shown in subtitle — updated live as user types
                 Text(draftTitle.isEmpty ? "Без названия" : draftTitle)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -117,13 +134,120 @@ struct ThreadSettingsSheet: View {
         }
     }
 
+    // MARK: - Provider Section (M-08)
+
+    private var providerSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionLabel("Провайдер и модель", systemImage: "cpu")
+
+            HStack(alignment: .top, spacing: 0) {
+
+                // Left: providers
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Провайдер")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                        .padding(.bottom, 4)
+
+                    ScrollView {
+                        VStack(spacing: 2) {
+                            ForEach(providers) { provider in
+                                ProviderPickRow(
+                                    provider: provider,
+                                    isSelected: selectedProviderId == provider.id,
+                                    onSelect: {
+                                        selectedProviderId = provider.id
+                                        // Auto-select first model of this provider
+                                        selectedModelName = provider.models.first ?? ""
+                                    }
+                                )
+                            }
+                        }
+                        .padding(.horizontal, 4)
+                    }
+                    .frame(maxHeight: 160)
+                }
+                .frame(width: 180)
+
+                Divider()
+                    .padding(.horizontal, 8)
+
+                // Right: models
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Модель")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                        .padding(.bottom, 4)
+
+                    if let provider = selectedProvider {
+                        if provider.models.isEmpty {
+                            modelsEmptyState
+                        } else {
+                            ScrollView {
+                                VStack(spacing: 2) {
+                                    ForEach(provider.models, id: \.self) { model in
+                                        ModelPickRow(
+                                            model: model,
+                                            isSelected: selectedModelName == model,
+                                            onSelect: { selectedModelName = model }
+                                        )
+                                    }
+                                }
+                                .padding(.horizontal, 4)
+                            }
+                            .frame(maxHeight: 160)
+                        }
+
+                        // Manual model input
+                        Divider().padding(.vertical, 4)
+                        HStack(spacing: 6) {
+                            TextField("Ввести вручную…", text: $manualModelInput)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(.callout, design: .monospaced))
+                                .onSubmit { applyManualModel() }
+                            Button("OK") { applyManualModel() }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(manualModelInput.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
+                    } else {
+                        VStack {
+                            Spacer()
+                            Text("← Выберите провайдера")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .padding(12)
+            .background(Color.primary.opacity(0.03))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            // Summary of current selection
+            if let provider = selectedProvider, !selectedModelName.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.green)
+                    Text("\(provider.displayName) · \(selectedModelName)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+    }
+
     // MARK: - Context Depth Section
 
     private var contextSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             sectionLabel("Глубина контекста", systemImage: "clock.arrow.circlepath")
 
-            // Unlimited context toggle
             Toggle(isOn: $draftSettings.isUnlimitedContext) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Без ограничений")
@@ -140,7 +264,6 @@ struct ThreadSettingsSheet: View {
                 limitedContextControls
             }
 
-            // Info box — always visible, adapts to current state
             contextInfoBox
         }
     }
@@ -149,7 +272,6 @@ struct ThreadSettingsSheet: View {
 
     private var limitedContextControls: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Message count label
             HStack {
                 Text("Сообщений в контексте:")
                     .font(.callout)
@@ -160,7 +282,6 @@ struct ThreadSettingsSheet: View {
                     .frame(minWidth: 44, alignment: .trailing)
             }
 
-            // Slider 10...1000 with logarithmic feel via step groups
             Slider(
                 value: Binding(
                     get: { Double(draftSettings.maxMessagesInContext) },
@@ -171,7 +292,6 @@ struct ThreadSettingsSheet: View {
             )
             .accentColor(Color.accentColor)
 
-            // Range labels
             HStack {
                 Text("10")
                     .font(.caption2)
@@ -186,7 +306,6 @@ struct ThreadSettingsSheet: View {
 
     // MARK: - Context Info Box
 
-    /// Shows token budget and chat display depth.
     private var contextInfoBox: some View {
         VStack(alignment: .leading, spacing: 6) {
             if draftSettings.isUnlimitedContext {
@@ -221,6 +340,22 @@ struct ThreadSettingsSheet: View {
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
+    // MARK: - Models Empty State
+
+    private var modelsEmptyState: some View {
+        VStack(spacing: 6) {
+            Spacer()
+            Image(systemName: "square.stack.3d.up.slash")
+                .font(.system(size: 22))
+                .foregroundStyle(.secondary.opacity(0.4))
+            Text("Нет сохранённых моделей")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: 80)
+    }
+
     // MARK: - Footer
 
     private var footerView: some View {
@@ -236,7 +371,13 @@ struct ThreadSettingsSheet: View {
             Button("Сохранить") {
                 let trimmedTitle = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
                 let finalTitle = trimmedTitle.isEmpty ? thread.title : trimmedTitle
-                onSave(finalTitle, draftSettings)
+                // Always pass current picker selection — ViewModel compares and decides if switchProvider is needed
+                onSave(
+                    finalTitle,
+                    draftSettings,
+                    selectedProviderId,
+                    selectedModelName.isEmpty ? nil : selectedModelName
+                )
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.return, modifiers: .command)
@@ -246,14 +387,19 @@ struct ThreadSettingsSheet: View {
 
     // MARK: - Helpers
 
-    /// Section label with icon — consistent with ProjectSettingsSheet style.
+    private func applyManualModel() {
+        let trimmed = manualModelInput.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        selectedModelName = trimmed
+        manualModelInput = ""
+    }
+
     private func sectionLabel(_ title: String, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(.primary)
     }
 
-    /// One info row inside the context info box.
     private func infoRow(icon: String, color: Color, text: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: icon)
@@ -282,7 +428,6 @@ struct ThreadSettingsSheet: View {
         }
     }
 
-    /// Formats large numbers with thousands separator for readability.
     private func formatNumber(_ n: Int) -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
@@ -291,8 +436,6 @@ struct ThreadSettingsSheet: View {
         return formatter.string(from: NSNumber(value: n)) ?? "\(n)"
     }
 
-    /// Returns a slider step that gives finer control at low values, coarser at high.
-    /// 10-100: step 5 | 100-500: step 10 | 500-1000: step 50
     private func sliderStep(for value: Int) -> Double {
         switch value {
         case ..<100: return 5
@@ -314,24 +457,17 @@ struct ThreadSettingsSheet: View {
             createdAt: Date(),
             updatedAt: Date()
         ),
-        onSave: { title, settings in
-            print("Save: \(title), context: \(settings.maxMessagesInContext), unlimited: \(settings.isUnlimitedContext)")
+        providers: [
+            AIProvider(
+                id: UUID(),
+                name: "AITunnel",
+                endpoint: "https://api.aitunnel.ru/v1/chat/completions",
+                models: ["claude-sonnet-4-5", "gpt-4o"]
+            )
+        ],
+        onSave: { title, settings, providerId, modelName in
+            print("Save: \(title), provider: \(String(describing: providerId)), model: \(String(describing: modelName))")
         },
-        onDismiss: {}
-    )
-}
-
-#Preview("Unlimited context") {
-    ThreadSettingsSheet(
-        thread: ThreadMetadata(
-            id: UUID(),
-            title: "Без ограничений",
-            settings: ThreadSettings(maxMessagesInContext: 100, isUnlimitedContext: true),
-            projectIds: [],
-            createdAt: Date(),
-            updatedAt: Date()
-        ),
-        onSave: { _, _ in },
         onDismiss: {}
     )
 }
