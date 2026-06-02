@@ -30,6 +30,13 @@
 //   - v2ToolPermissions() is awaited → passed as overrideToolPermissions (orchestrator uses
 //     New.ToolAccessController.check() instead of legacy ToolAccessControl in ToolExecutionService).
 // When flag is OFF, both overrides are nil and the V1 path runs unchanged.
+//
+// B-04 PROVIDER DELETED DURING SEND:
+// send() captures `orchestrator` locally before the Task starts — this is a value-type
+// reference that survives invalidateProviderIfDeleted(). The only reliable fix is to
+// re-check activeProvider on MainActor INSIDE the Task, after all awaits complete.
+// By the time we reach orchestrator.process(), we are back on a background thread and
+// the captured reference is stale. The MainActor check below closes this race window.
 
 import SwiftUI
 import ChappieCore
@@ -71,6 +78,23 @@ extension ChappieViewModel {
             // V1: both nil → orchestrator builds prompt via MemoryManager, ToolExecutionService handles access.
             let systemPromptOverride = await v2SystemPrompt()
             let toolPermissionsOverride = await v2ToolPermissions()
+
+            // B-04: Re-check provider on MainActor after all awaits.
+            // Between send() entry and here, the user may have deleted the active provider.
+            // `orchestrator` was captured before the Task — it is a stale local reference.
+            // Only activeProvider (a @MainActor property) reflects the current ground truth.
+            let providerStillValid = await MainActor.run { self.activeProvider != nil }
+            guard providerStillValid else {
+                print("[ChappieViewModel] Provider was deleted before request started — aborting send()")
+                await MainActor.run {
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+                        self.streamingText = ""
+                        self.currentToolCall = nil
+                        self.isThinking = false
+                    }
+                }
+                return
+            }
 
             do {
                 let result = try await orchestrator.process(
