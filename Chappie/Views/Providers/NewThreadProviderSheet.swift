@@ -17,7 +17,8 @@
 // On confirm → passes (providerId, modelName, threadTitle, ThreadSettings) to ViewModel.
 // On cancel → the pending thread is deleted.
 //
-// ProviderPickRow / ModelPickRow are defined in Shared/ProviderModelPickerRows.swift.
+// POLICY: no auto-selection of model. User must pick explicitly. canConfirm requires
+// both provider and model to be chosen before the "Начать" button is enabled.
 
 import SwiftUI
 import ChappieCore
@@ -40,7 +41,6 @@ struct NewThreadProviderSheet: View {
     @State private var selectedModelName: String = ""
     @State private var manualModelInput: String = ""
 
-    // Thread name + context settings (IT-12)
     @State private var threadTitle: String = ""
     @State private var draftSettings: ThreadSettings = ThreadSettings()
 
@@ -99,7 +99,8 @@ struct NewThreadProviderSheet: View {
                                     isSelected: selectedProviderId == provider.id,
                                     onSelect: {
                                         selectedProviderId = provider.id
-                                        selectedModelName = provider.models.first ?? ""
+                                        // No auto-model: clear selection so user picks explicitly.
+                                        selectedModelName = ""
                                     }
                                 )
                             }
@@ -194,12 +195,16 @@ struct NewThreadProviderSheet: View {
 
                 Spacer()
 
-                // Show selected summary
                 if let provider = selectedProvider, !selectedModelName.isEmpty {
                     Text("\(provider.displayName) · \(selectedModelName)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                } else if selectedProviderId != nil {
+                    // Provider chosen but no model yet — hint the user.
+                    Text("Выберите модель")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                 }
 
                 Button {
@@ -219,11 +224,16 @@ struct NewThreadProviderSheet: View {
         }
         .frame(width: 520)
         .onAppear {
+            // Pre-select provider if one is already active — but do NOT auto-select a model.
+            // User must pick the model explicitly (policy: no silent substitution).
             let preselectedProvider = currentProvider ?? providers.first
             selectedProviderId = preselectedProvider?.id
-            selectedModelName = currentModelName
-                ?? preselectedProvider?.models.first
-                ?? ""
+            // Restore current model only if it's still valid for the pre-selected provider.
+            if let model = currentModelName,
+               let provider = preselectedProvider,
+               provider.models.contains(model) {
+                selectedModelName = model
+            }
         }
     }
 

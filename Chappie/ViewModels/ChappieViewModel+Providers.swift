@@ -2,6 +2,11 @@
 // Chappie
 //
 // Provider and model management: load, switch, reload, user name persistence.
+//
+// POLICY (provider_model_fallback_policy):
+//   NEVER auto-substitute a provider or model on loss.
+//   If active provider or model is missing — set orchestrator/aiClient/activeModelName to nil,
+//   show orange banner, block send(). User must explicitly choose. No silent fallback.
 
 import SwiftUI
 import ChappieCore
@@ -24,16 +29,13 @@ extension ChappieViewModel {
 
     /// Switches the active provider and model.
     ///
+    /// modelName MUST be non-nil and non-empty to create an orchestrator.
+    /// Passing nil explicitly blocks the orchestrator — shows the warning banner.
+    ///
     /// - Parameter persistSettings: When true (default), writes the new provider/model
     ///   to the active thread's settings in the DB. Pass false when the caller already
     ///   manages persistence (e.g. resolveAndApplyProvider, confirmNewThread) to avoid
     ///   overwriting freshly-loaded or not-yet-saved thread settings with stale data.
-    ///
-    /// WHY THIS FLAG EXISTS (B-03):
-    /// switchProvider was always persisting to activeThread, but during selectThread()
-    /// it was called BEFORE activeThreadSettings was fully loaded — so it wrote stale
-    /// settings from the PREVIOUS thread into the NEW thread's DB record.
-    /// After several thread switches all threads ended up with each other's providers.
     func switchProvider(
         _ provider: AIProvider,
         modelName: String?,
@@ -43,25 +45,36 @@ extension ChappieViewModel {
         let provStore = store ?? self.providerStore
         guard let provStore else { return }
 
+        // No model → block orchestrator, show banner. Never fall back to provider.models.first.
+        guard let model = modelName, !model.isEmpty else {
+            await applyProviderWithoutModel(provider, from: provStore)
+            if persistSettings, activeThread != nil {
+                var settings = activeThreadSettings
+                settings.activeProviderId = provider.id
+                settings.activeModelName = nil
+                activeThreadSettings = settings
+                if let threadId = activeThread?.id, let tStore = threadStore {
+                    try? await tStore.updateSettings(settings, forThreadId: threadId)
+                }
+            }
+            return
+        }
+
         let apiKey = await provStore.loadApiKey(for: provider.id) ?? ""
-        let model = modelName ?? provider.models.first ?? ""
         let client = AIClient(endpoint: provider.endpoint, apiKey: apiKey, modelName: model)
         self.aiClient = client
         self.activeProvider = provider
-        self.activeModelName = model.isEmpty ? nil : model
+        self.activeModelName = model
         self.currentBalance = loadBalance(for: provider.id)
 
         if let ts = toolService, let fs = fileSystem, let mm = memoryManager {
             self.orchestrator = AIOrchestrator(aiClient: client, toolService: ts, fileSystem: fs, memoryManager: mm)
         }
 
-        // Only persist when the caller explicitly wants it.
-        // During thread load (resolveAndApplyProvider) — skip: settings are already
-        // loaded from DB and will be written by the caller if healing is needed.
         if persistSettings, activeThread != nil {
             var settings = activeThreadSettings
             settings.activeProviderId = provider.id
-            settings.activeModelName = model.isEmpty ? nil : model
+            settings.activeModelName = model
             activeThreadSettings = settings
             if let threadId = activeThread?.id, let tStore = threadStore {
                 try? await tStore.updateSettings(settings, forThreadId: threadId)
@@ -72,9 +85,10 @@ extension ChappieViewModel {
     }
 
     func switchProvider(id: UUID) {
+        // No auto-model: pass nil so the user sees the banner and picks explicitly.
         guard let provider = providers.first(where: { $0.id == id }),
               let provStore = providerStore else { return }
-        Task { await switchProvider(provider, modelName: provider.models.first, from: provStore) }
+        Task { await switchProvider(provider, modelName: nil, from: provStore) }
     }
 
     func switchModel(to modelName: String) {
@@ -101,10 +115,6 @@ extension ChappieViewModel {
 
     /// Stops any in-flight request and clears aiClient/orchestrator/activeModelName
     /// if the deleted model is currently active on the given provider.
-    ///
-    /// WHY: deleting a model does not remove the provider — reloadProviders() keeps
-    /// activeProvider alive and never touches orchestrator. We must explicitly
-    /// invalidate when the active model itself is removed.
     func invalidateModelIfDeleted(name: String, providerId: UUID) {
         guard activeProvider?.id == providerId,
               activeModelName == name else { return }
@@ -117,7 +127,6 @@ extension ChappieViewModel {
         self.orchestrator = nil
         self.activeModelName = nil
         // Keep activeProvider — the provider still exists, only the model is gone.
-        // The warning banner in the toolbar will show automatically because activeModelName is nil.
     }
 
     // MARK: - Reload
@@ -131,10 +140,9 @@ extension ChappieViewModel {
 
                 if let active = activeProvider {
                     if let updated = loaded.first(where: { $0.id == active.id }) {
-                        // Provider still exists — refresh the local copy.
                         self.activeProvider = updated
                     } else {
-                        // Fallback: invalidate in case invalidateProviderIfDeleted wasn't called.
+                        // Provider gone — invalidate. No auto-fallback to another provider.
                         print("[ChappieViewModel] Active provider gone after reload — invalidating")
                         self.activeProvider = nil
                         self.aiClient = nil
@@ -157,7 +165,6 @@ extension ChappieViewModel {
         guard !trimmed.isEmpty else { return }
 
         guard let store = memoryStore else {
-            // MemoryStore not ready yet — retry after 1 second
             Task {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 self.saveUserName(trimmed)
