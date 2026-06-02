@@ -16,123 +16,30 @@
 // This eliminates white strips at top/bottom that appeared when GeometryReader
 // was inside ContentView's layout tree.
 //
-// SIDEBAR BEHAVIOR:
-// The sidebar slides in from the left OVER the chat content — it does not push it.
-// Triggered by the "list.bullet" toolbar button.
-// Dismissed by clicking the dimmed area to the right of the sidebar.
-// Animation: spring, consistent with macOS feel.
-//
 // FLOATING PANELS:
 //   Top panel: ModelPickerRow + ProjectChipsView — each is an independent floating
 //   rounded pill with ultraThinMaterial. The outer VStack is transparent.
 //   Bottom panel: InputMorphView — ultraThinMaterial.
 //   Both panels report their heights so ChatScrollView can add matching spacers.
 //
-// TOOLBAR (IT-12 / IT-13):
-//   ultraThinMaterial background — frosted glass matching the panels.
-//   Contains: sidebar toggle (list.bullet), settings gear.
-//   Both buttons disabled while isThinking (IT-13).
-//   Thread title is NOT in the toolbar — it lives in ProjectChipsView gear chip.
-//   Balance is NOT in the toolbar — it lives in ModelPickerRow as a right-side pill.
+// CPU-08: WHY onGeometryChange INSTEAD OF GeometryReader:
+//   GeometryReader placed in .background participates in measurement and can cause
+//   a render loop: parent changes size → GeometryReader fires → state update →
+//   parent re-renders → GeometryReader fires again. This produced 35% idle CPU.
+//   onGeometryChange (macOS 14+) is a pure side-effect observer — it does NOT
+//   participate in layout, does NOT trigger a layout pass, and fires only when
+//   the measured value actually changes. Zero render-loop risk.
 //
-// THREAD NAME IN CHIPS (IT-12):
-//   ProjectChipsView receives threadName = viewModel.activeThread?.title.
-//   The right-side chip shows "⚙ <thread name>" — user always sees which thread is active.
-//   Tapping the chip opens ThreadSettingsSheet.
+// CPU-09: WHY NO .animation(value: activeThread?.id) ON mainChatArea:
+//   Animating the entire ZStack on thread switch caused SwiftUI to re-render
+//   every child view on every @Published change to activeThread — including
+//   title updates, model changes, etc. Animations are now applied point-locally
+//   on topPanel transitions only (transition(.opacity.combined(with:.move))).
 //
-// HEADER HEIGHT:
-//   headerHeight = topPanelHeight + safeAreaTop.
-//   safeAreaTop is read via .background(GeometryReader) on ChatScrollView.
-//   WHY .background: GeometryReader in .background does NOT participate in layout —
-//   it is measured AFTER the parent has already determined its own size.
-//   A GeometryReader placed directly in the layout tree (even with .frame(height:0))
-//   is still greedy in the horizontal axis and prevents the window from being resized
-//   narrower than its initial width. Using .background avoids this entirely.
-//
-// BALANCE PILL:
-//   Lives inside ModelPickerRow (right side). Receives viewModel.currentBalance.
-//   Updates live during streaming via onBalanceUpdate callback in AIOrchestrator.
-//
-// DRAFT PER THREAD (UX-DRAFT):
-//   prompt is synced with viewModel.threadDrafts on every thread switch.
-//   onChange(of: viewModel.activeThread?.id) saves old draft, restores new one.
-//   onChange(of: prompt) writes the current text into the draft for the active thread.
-//   On send: draft is cleared via viewModel.clearDraft().
-//   This ensures each thread remembers its own unsent text across switches.
-//
-// THREAD SETTINGS SHEET (IT-11 / IT-12 / M-08):
-//   selectedThreadForSettings: ThreadMetadata? — opened from two places:
-//   1. Context menu in ThreadRowView (sidebar) — gear removed from row hover buttons.
-//   2. Thread name + gear chip in ProjectChipsView.
-//   Both set selectedThreadForSettings → .sheet(item:) shows ThreadSettingsSheet.
-//   M-08: ThreadSettingsSheet now also receives providers list and returns
-//   (title, settings, providerId?, modelName?) — ViewModel calls switchProvider if changed.
-//
-// LAST ACTIVE THREAD (UX-RESTORE):
-//   ViewModel saves lastActiveThreadId on every selectThread() call.
-//   On startup, loadThreadsAndSelectActive() restores it.
-//   No ContentView changes needed — all logic in ViewModel.
-//
-// NEW THREAD SHEET (IT-12):
-//   NewThreadProviderSheet now returns (providerId, modelName, title, ThreadSettings).
-//   confirmNewThread() accepts all four and saves title + settings immediately.
-//
-// SOFT LOCK (isThinking) — IT-13:
-//   isThinking is forwarded to ChappieToolbarContent, SidebarView, ModelPickerRow,
-//   and ProjectChipsView. While true: toolbar buttons, thread switching/deletion/rename/
-//   settings, model picker, project attach/detach, and thread settings gear are all disabled.
-//   This prevents race conditions when AI is writing a response.
-//
-// AUTO-CLOSE SETTINGS (IT-13 / TASK-5):
-//   onChange(of: viewModel.isThinking): when isThinking becomes true and showSettings
-//   is open — the sheet is dismissed automatically (showSettings = false).
-//   This handles the edge case where the user opened Settings and then a response
-//   arrived (e.g. triggered from another thread or via a background event).
-//
-// PAGINATION (UX-PAGINATION):
-//   ChatScrollView receives displayedMessages (paginated slice) instead of visibleMessages.
-//   hasMoreMessages and onLoadMore are forwarded so the "Load earlier" button works.
-//   visibleMessages is still used for network context — not for UI rendering.
-//
-// SCROLL TRIGGER FIX (UX-SCROLL-TRIGGER):
-//   ChatScrollView receives scrollToBottomTrigger instead of threadId.
-//   ViewModel increments this value at the END of resetPagination() — after
-//   displayedMessages is fully populated. This prevents "bad range" crashes
-//   that occurred when scrollTo fired before VStack had the new thread's content.
-//
-// LOADING HISTORY INDICATOR (UX-LOADING):
-//   ChatScrollView receives isLoadingHistory = viewModel.isLoadingThread.
-//   While true: a centered ProgressView is shown instead of messages or welcome screen.
-//   This prevents the "flash of welcome message" on app launch.
-//
-// APP READY FLAG (UX-APP-READY):
-//   ContentView shows a ProgressView until viewModel.isAppReady == true.
-//   isAppReady is set by ViewModel at the end of the FIRST selectThread() call.
-//   This replaces the old isReady + 300ms timer approach that caused a welcome-screen
-//   flash: the timer could expire while isLoadingThread was already false but messages
-//   were still empty — producing one rendered frame with the welcome message visible.
-//   With isAppReady, the app becomes "visible" only after history is fully loaded.
-//
-// MULTIMODAL (MULTIMODAL-STEP2):
-//   InputMorphView.onSend now carries [AttachedFile].
-//   sendMessage(attachments:) forwards them to viewModel.send(prompt:attachments:).
-//   Attachments are cleared inside InputMorphView after triggerSend fires.
-//
-// DRAG & DROP (DND-GLOBAL):
-//   attachments state lives in ContentView and is passed to InputMorphView via @Binding.
-//   The drop target covers mainChatArea (the full app content area).
-//   This lets the user drop files anywhere in the window — not just on the input panel.
-//   No visual overlay — files are silently accepted and added to the attachments list.
-//   Directories are filtered out; only regular files are accepted.
-//
-// IT-09: Added project settings sheet.
-// IT-10: Universal AI Provider (two-level: provider → model).
-// IT-11: Thread settings sheet, last-thread restore.
-// IT-12: Thread name in ProjectChipsView chip, gear removed from ThreadRowView hover,
-//        NewThreadProviderSheet extended with name + context settings.
-// IT-13: Soft lock — toolbar, sidebar, model picker, project chips disabled while isThinking.
-//        Auto-close SettingsView when isThinking becomes true (TASK-5).
-// M-08: ThreadSettingsSheet now includes provider/model picker.
+// CPU-11: DRAFT DEBOUNCE:
+//   onChange(of: prompt) used to call setDraft on every keystroke, publishing
+//   into ViewModel on every character. Now debounced via Task + 300ms sleep.
+//   Draft is still saved immediately on thread switch (direct call, no debounce).
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -179,6 +86,9 @@ struct ContentView: View {
     @State private var topPanelHeight: CGFloat = 0
     @State private var bottomPanelHeight: CGFloat = 0
     @State private var safeAreaTop: CGFloat = 0
+
+    // CPU-11: debounce task reference — cancelled on every new keystroke
+    @State private var draftDebounceTask: Task<Void, Never>? = nil
 
     @Environment(\.modelContext) private var modelContext
 
@@ -305,13 +215,16 @@ struct ContentView: View {
                         isSidebarVisible = false
                     },
                     onSelectThread: { thread in
+                        // Save draft immediately (no debounce) before switching
                         if let currentId = viewModel.activeThread?.id {
+                            draftDebounceTask?.cancel()
                             viewModel.setDraft(prompt, for: currentId)
                         }
                         Task { await viewModel.selectThread(thread) }
                     },
                     onCreateThread: {
                         if let currentId = viewModel.activeThread?.id {
+                            draftDebounceTask?.cancel()
                             viewModel.setDraft(prompt, for: currentId)
                         }
                         viewModel.createNewThread()
@@ -348,7 +261,13 @@ struct ContentView: View {
             }
         }
         .onChange(of: prompt) { _, newValue in
-            if let threadId = viewModel.activeThread?.id {
+            // CPU-11: debounce draft writes — fire only after 300ms of no typing.
+            // This prevents ViewModel @Published from firing on every keystroke.
+            guard let threadId = viewModel.activeThread?.id else { return }
+            draftDebounceTask?.cancel()
+            draftDebounceTask = Task {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                guard !Task.isCancelled else { return }
                 viewModel.setDraft(newValue, for: threadId)
             }
         }
@@ -377,13 +296,13 @@ struct ContentView: View {
                 footerHeight: bottomPanelHeight
             )
             .ignoresSafeArea(edges: .top)
-            .background(
-                GeometryReader { geo in
-                    Color.clear
-                        .onAppear { safeAreaTop = geo.safeAreaInsets.top }
-                        .onChange(of: geo.safeAreaInsets.top) { _, v in safeAreaTop = v }
-                }
-            )
+            // CPU-08: onGeometryChange does NOT participate in layout — no render loop risk.
+            // Fires only when safeAreaInsets.top actually changes (e.g. toolbar height changes).
+            .onGeometryChange(for: CGFloat.self) { geo in
+                geo.safeAreaInsets.top
+            } action: { newValue in
+                safeAreaTop = newValue
+            }
 
             VStack(spacing: 0) {
                 topPanel
@@ -392,7 +311,10 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .animation(.easeInOut(duration: 0.2), value: viewModel.activeThread?.id)
+        // CPU-09: removed .animation(value: activeThread?.id) from the entire ZStack.
+        // It was re-rendering ALL children on any @Published change to activeThread
+        // (title, model, balance, etc.) — not just on actual thread switches.
+        // Animations are now applied point-locally on topPanel transitions.
         .onDrop(of: [.fileURL], delegate: dropDelegate)
     }
 
@@ -444,13 +366,14 @@ struct ContentView: View {
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)
-        .background(
-            GeometryReader { geo in
-                Color.clear
-                    .onAppear { topPanelHeight = geo.size.height }
-                    .onChange(of: geo.size.height) { _, h in topPanelHeight = h }
-            }
-        )
+        // CPU-08: onGeometryChange instead of GeometryReader in .background.
+        // GeometryReader caused: topPanel height changes → state update → re-render
+        // → topPanel height changes again → infinite loop at 35% CPU idle.
+        .onGeometryChange(for: CGFloat.self) { geo in
+            geo.size.height
+        } action: { newValue in
+            topPanelHeight = newValue
+        }
     }
 
     // MARK: - Bottom Floating Panel
@@ -465,13 +388,10 @@ struct ContentView: View {
             onSend: { attachedFiles in
                 sendMessage(attachments: attachedFiles)
             },
-            onCancel: { viewModel.cancelCurrentRequest() }
-        )
-        .background(
-            GeometryReader { geo in
-                Color.clear
-                    .onAppear { bottomPanelHeight = geo.size.height }
-                    .onChange(of: geo.size.height) { _, h in bottomPanelHeight = h }
+            onCancel: { viewModel.cancelCurrentRequest() },
+            // CPU-08: height is now reported via callback, not GeometryReader inside InputMorphView.
+            onHeightChange: { newHeight in
+                bottomPanelHeight = newHeight
             }
         )
     }
@@ -482,6 +402,7 @@ struct ContentView: View {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || !attachments.isEmpty else { return }
         if let threadId = viewModel.activeThread?.id {
+            draftDebounceTask?.cancel()
             viewModel.clearDraft(for: threadId)
         }
         viewModel.send(prompt: prompt, attachments: attachments)

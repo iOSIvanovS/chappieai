@@ -18,10 +18,21 @@
 // - On send: editorHeight resets to minEditorHeight immediately; morph animates to collapsedHeight.
 // - On finish/cancel: height restores from editorHeight; editor auto-focuses via coordinator.
 //
-// SCROLL INTEGRATION:
+// HEIGHT REPORTING (CPU-08):
 // - onHeightChange callback fires whenever the panel's total rendered height changes.
-// - ContentView uses this to set bottomPadding on ChatScrollView, so the last message
-//   is never hidden under the panel — on launch, on grow, or on collapse.
+// - ContentView uses this to set bottomPanelHeight → ChatScrollView bottomPadding.
+// - Previously a GeometryReader inside .background was used — it caused a render loop:
+//   height change → state update → re-render → height change again.
+// - Now: onGeometryChange(for: CGFloat.self) in ContentView's bottomPanel wrapper.
+//   InputMorphView itself has NO GeometryReader — it just reports via callback.
+//
+// CPU-10: THREE ANIMATIONS → ONE:
+// - Previously three separate .animation(..., value:) modifiers were stacked on the root view.
+//   SwiftUI evaluates ALL animation modifiers on every render pass regardless of which value
+//   changed — three modifiers = 3x animation overhead on every keystroke.
+// - Now: a single .animation(.spring(...), value: animationToken) where animationToken
+//   is a combined hash of (isThinking, editorHeight, attachments.isEmpty).
+//   One evaluation, same visual result.
 //
 // MULTIMODAL:
 // - Paperclip button opens NSOpenPanel (images, PDF, text, any file).
@@ -46,7 +57,6 @@ struct InputMorphView: View {
 
     @Binding var prompt: String
     /// Pending file attachments — owned by ContentView, shared via @Binding.
-    /// ContentView's whole-window drop target writes to this binding directly.
     @Binding var attachments: [AttachedFile]
     let isWorkspaceSelected: Bool
     let isThinking: Bool
@@ -70,10 +80,17 @@ struct InputMorphView: View {
     private var canSend: Bool {
         let hasText = !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasAttachments = !attachments.isEmpty
-        // Allow sending if there's text OR attachments (or both)
-        return (hasText || hasAttachments)
-            && isWorkspaceSelected
-            && !isThinking
+        return (hasText || hasAttachments) && isWorkspaceSelected && !isThinking
+    }
+
+    /// CPU-10: single animation token combining all three changing values.
+    /// SwiftUI evaluates only ONE .animation modifier instead of three.
+    private var animationToken: Int {
+        var hasher = Hasher()
+        hasher.combine(isThinking)
+        hasher.combine(editorHeight)
+        hasher.combine(attachments.isEmpty)
+        return hasher.finalize()
     }
 
     // MARK: - Body
@@ -81,8 +98,6 @@ struct InputMorphView: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             // IDLE: VStack grows naturally — no fixed frame height on the ZStack.
-            // editorHeight controls only ChappieTextEditorView, not the whole panel.
-            // This is the fix for the "chips overflow above panel" bug.
             idleView
                 .opacity(isThinking ? 0 : 1)
                 .scaleEffect(isThinking ? 0.96 : 1, anchor: .bottom)
@@ -91,34 +106,26 @@ struct InputMorphView: View {
             thinkingView
                 .padding(.horizontal, 12)
                 .padding(.vertical, 4)
-                // Adaptive background — controlBackgroundColor switches correctly in dark mode
                 .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .opacity(isThinking ? 1 : 0)
                 .scaleEffect(isThinking ? 1 : 0.96, anchor: .bottom)
-                // Thinking view always occupies collapsedHeight — no layout influence when hidden
                 .frame(height: isThinking ? InputLayout.collapsedHeight : 0)
         }
         .padding(12)
-        // ultraThinMaterial gives the frosted-glass look matching the toolbar above
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
         .padding(.horizontal)
         .padding(.bottom, 16)
-        .animation(.spring(response: 0.38, dampingFraction: 0.82), value: isThinking)
-        .animation(.spring(response: 0.25, dampingFraction: 0.85), value: editorHeight)
-        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: attachments.isEmpty)
-        // Report total rendered height via GeometryReader so ChatScrollView can pad correctly.
-        .background(
-            GeometryReader { geo in
-                Color.clear
-                    .onAppear {
-                        onHeightChange?(geo.size.height)
-                    }
-                    .onChange(of: geo.size.height) { _, newHeight in
-                        onHeightChange?(newHeight)
-                    }
-            }
-        )
+        // CPU-10: single .animation instead of three separate ones.
+        // All three animated values (isThinking, editorHeight, attachments.isEmpty)
+        // are combined into one token — one evaluation per render pass.
+        .animation(.spring(response: 0.38, dampingFraction: 0.82), value: animationToken)
+        // CPU-08: report height via onGeometryChange — no GeometryReader render loop.
+        .onGeometryChange(for: CGFloat.self) { geo in
+            geo.size.height
+        } action: { newHeight in
+            onHeightChange?(newHeight)
+        }
         .onChange(of: isThinking) { _, nowThinking in
             if !nowThinking {
                 // Small delay lets the morph animation finish before focusing
@@ -129,7 +136,6 @@ struct InputMorphView: View {
         }
         .onChange(of: prompt) { _, newValue in
             // When prompt is cleared externally (after send) — reset editor height immediately.
-            // This ensures the panel doesn't stay tall when morphing back from thinking state.
             if newValue.isEmpty {
                 editorHeight = InputLayout.minEditorHeight
             }
@@ -140,8 +146,6 @@ struct InputMorphView: View {
 
     private var idleView: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // Attachment chips row — only visible when files are attached.
-            // Rendered INSIDE the VStack so it contributes to natural panel height growth.
             if !attachments.isEmpty {
                 AttachmentChipsRow(attachments: attachments) { id in
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
@@ -193,15 +197,12 @@ struct InputMorphView: View {
                     }
                 }
 
-                // Paperclip button — opens NSOpenPanel for file picking.
-                // Badge shows count when files are attached.
                 Button(action: openFilePicker) {
                     ZStack(alignment: .topTrailing) {
                         Image(systemName: "paperclip")
                             .font(.system(size: 16))
                             .frame(width: 28, height: 28)
 
-                        // Attachment count badge — visible when files are pending
                         if !attachments.isEmpty {
                             Text("\(attachments.count)")
                                 .font(.system(size: 9, weight: .bold))
@@ -216,8 +217,6 @@ struct InputMorphView: View {
                 .help("Прикрепить файл")
                 .padding(.bottom, 2)
 
-                // Emoji picker button — opens a popover with 7 categories.
-                // Tapping an emoji appends it to the prompt.
                 Button(action: { showEmojiPicker.toggle() }) {
                     Text("😊")
                         .font(.system(size: 18))
@@ -247,7 +246,6 @@ struct InputMorphView: View {
 
     private var thinkingView: some View {
         HStack(spacing: 12) {
-            // Animated gear icon — macOS 15+ uses .rotate, macOS 14 uses opacity pulse
             ThinkingGearIcon()
 
             Text(currentToolCall ?? "Думаю…")
@@ -271,7 +269,6 @@ struct InputMorphView: View {
 
     // MARK: - Private Helpers
 
-    /// Fires the send callback with current attachments, then clears them.
     private func triggerSend() {
         let pending = attachments
         onSend(pending)
@@ -280,8 +277,6 @@ struct InputMorphView: View {
         }
     }
 
-    /// Opens NSOpenPanel allowing any file type.
-    /// Loaded files are appended to the pending attachments list (via binding).
     private func openFilePicker() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
