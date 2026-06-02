@@ -21,7 +21,7 @@
 //   rounded pill with ultraThinMaterial. The outer VStack is transparent.
 //   Bottom panel: InputMorphView — ultraThinMaterial.
 //   Top panel reports its height so ChatScrollView can add a matching header spacer.
-//   Bottom panel uses InputLayout.minPanelHeight — reserves space for collapsed panel only.
+//   Bottom panel uses currentPanelHeight — tracks actual panel height for footer spacer.
 //
 // CPU-08: WHY onGeometryChange INSTEAD OF GeometryReader:
 //   GeometryReader placed in .background participates in measurement and can cause
@@ -68,6 +68,14 @@
 //   Sentinel "bottom" uses anchor:.top — TOP of sentinel aligns with BOTTOM of viewport.
 //   This means the last message lands just above the collapsed input panel, not in the
 //   middle of the screen. Footer spacer provides physical clearance from panel chrome.
+//
+// CPU-21: DYNAMIC FOOTER FOR SCROLL CLEARANCE:
+//   currentPanelHeight tracks the actual rendered panel height via @Binding in InputMorphView.
+//   ChatScrollView footerHeight = currentPanelHeight so the scroll area always has enough
+//   room to pull the last message above the expanded panel.
+//   Cost: 1 layout pass per LINE added (not per character) — Coordinator cache ensures this.
+//   Without this: when panel expands to 5+ lines, last message is hidden behind it and
+//   the user can't scroll it into view.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -113,6 +121,10 @@ struct ContentView: View {
 
     @State private var topPanelHeight: CGFloat = 0
     @State private var safeAreaTop: CGFloat = 0
+
+    // CPU-21: tracks actual panel height so ChatScrollView footer grows with the input panel.
+    // Updated only when line count changes (Coordinator cache) — not on every keystroke.
+    @State private var currentPanelHeight: CGFloat = InputLayout.minPanelHeight
 
     // CPU-11: debounce task reference — cancelled on every new keystroke
     @State private var draftDebounceTask: Task<Void, Never>? = nil
@@ -326,9 +338,8 @@ struct ContentView: View {
             // directly — it subscribes to StreamingState, not to ViewModel.
             // ContentView does NOT read any StreamingState property here.
             //
-            // CPU-20: footerHeight is InputLayout.minPanelHeight — collapsed panel height.
-            // Sentinel anchor:.top places last message just above the input panel.
-            // Using maxPanelHeight (268pt) was leaving 180pt of dead space above the panel.
+            // CPU-21: footerHeight = currentPanelHeight — grows with the input panel.
+            // Updated only when line count changes, not on every keystroke.
             ChatScrollView(
                 scrollToBottomTrigger: viewModel.scrollToBottomTrigger,
                 messages: viewModel.displayedMessages,
@@ -337,7 +348,7 @@ struct ContentView: View {
                 streaming: viewModel.streaming,
                 isLoadingHistory: viewModel.isLoadingThread,
                 headerHeight: topPanelHeight + safeAreaTop,
-                footerHeight: InputLayout.minPanelHeight
+                footerHeight: currentPanelHeight
             )
             .ignoresSafeArea(edges: .top)
             // CPU-08: onGeometryChange does NOT participate in layout — no render loop risk.
@@ -422,13 +433,15 @@ struct ContentView: View {
     // InputMorphView reads streaming.isThinking and streaming.currentToolCall directly.
     // ContentView does NOT read those properties here.
     //
-    // CPU-16: onHeightChange REMOVED — InputMorphView no longer reports its height.
-    // footerHeight in ChatScrollView is InputLayout.minPanelHeight (static constant).
+    // CPU-21: panelHeight binding passed to InputMorphView.
+    // InputMorphView writes actual panel height when line count changes.
+    // ChatScrollView footerHeight tracks it so last message is always scrollable into view.
 
     private var bottomPanel: some View {
         InputMorphView(
             prompt: $prompt,
             attachments: $attachments,
+            panelHeight: $currentPanelHeight,
             isWorkspaceSelected: viewModel.workspaceURL != nil,
             streaming: viewModel.streaming,
             onSend: { attachedFiles in
