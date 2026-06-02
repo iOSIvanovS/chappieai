@@ -86,23 +86,10 @@ extension ChappieViewModel {
 
     /// Stops any in-flight request and clears aiClient/orchestrator/activeProvider
     /// if the given provider ID matches the currently active one.
-    ///
-    /// WHY orchestrator.invalidate() AND NOT task.cancel():
-    /// URLSession.AsyncBytes.lines ignores Swift cooperative cancellation while waiting
-    /// for server bytes — task.cancel() simply doesn't reach the stream.
-    /// orchestrator.invalidate() sets an actor-level flag that process() checks at every
-    /// while-loop boundary, guaranteeing abort between agentic steps.
     func invalidateProviderIfDeleted(id: UUID) {
         guard activeProvider?.id == id else { return }
-        print("[ChappieViewModel] Invalidating deleted active provider: \(id)")
 
-        // Poison the orchestrator — it will abort at the next step boundary.
-        // This is the only reliable stop because task.cancel() doesn't reach URLSession streams.
-        if let orch = orchestrator {
-            Task { await orch.invalidate() }
-        }
-
-        // Cancel the task too — belt and suspenders. Works for the pre-stream awaits.
+        print("[ChappieViewModel] Active provider deleted — invalidating client and orchestrator")
         currentRequestTask?.cancel()
         currentRequestTask = nil
 
@@ -110,6 +97,27 @@ extension ChappieViewModel {
         self.aiClient = nil
         self.orchestrator = nil
         self.activeModelName = nil
+    }
+
+    /// Stops any in-flight request and clears aiClient/orchestrator/activeModelName
+    /// if the deleted model is currently active on the given provider.
+    ///
+    /// WHY: deleting a model does not remove the provider — reloadProviders() keeps
+    /// activeProvider alive and never touches orchestrator. We must explicitly
+    /// invalidate when the active model itself is removed.
+    func invalidateModelIfDeleted(name: String, providerId: UUID) {
+        guard activeProvider?.id == providerId,
+              activeModelName == name else { return }
+
+        print("[ChappieViewModel] Active model '\(name)' deleted — invalidating client and orchestrator")
+        currentRequestTask?.cancel()
+        currentRequestTask = nil
+
+        self.aiClient = nil
+        self.orchestrator = nil
+        self.activeModelName = nil
+        // Keep activeProvider — the provider still exists, only the model is gone.
+        // The warning banner in the toolbar will show automatically because activeModelName is nil.
     }
 
     // MARK: - Reload

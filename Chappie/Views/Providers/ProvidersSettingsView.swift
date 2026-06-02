@@ -510,6 +510,12 @@ struct ProviderDetailView: View {
 
     private func deleteModel(_ modelName: String) {
         guard let store = viewModel.providerStore else { return }
+
+        // Synchronously invalidate BEFORE the async delete — same race-condition fix as deleteProvider.
+        // WHY: reloadProviders() runs in a Task; send() could fire in the gap and find
+        // a non-nil orchestrator still configured with the deleted model name.
+        viewModel.invalidateModelIfDeleted(name: modelName, providerId: currentProvider.id)
+
         Task {
             do {
                 try await store.deleteModel(modelName, fromProviderId: currentProvider.id)
