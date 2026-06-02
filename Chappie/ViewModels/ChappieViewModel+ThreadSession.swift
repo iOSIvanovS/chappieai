@@ -35,9 +35,16 @@
 // STALE BOOKMARK HEALTH-CHECK:
 //   Before spending time on bookmark resolution, we verify the resolved URL is:
 //   (a) reachable — fileExists(atPath:) returns true
-//   (b) not in Trash — path does not contain "/.Trashes/"
-//   Stale projects are logged and skipped immediately — no FileManager enumeration attempt.
-//   This prevents a 1–2 minute hang when a project folder was deleted or moved to Trash.
+//   (b) not in Trash — path contains "/.Trash/" (user Trash) or "/.Trashes/" (volume Trash)
+//   Stale projects are marked isUnavailable=true in activeProjects and shown with
+//   an orange icon in ProjectChipsView. This gives the user a clear signal to either
+//   restore the folder or remove the project from the thread.
+//
+// B-05 UNAVAILABILITY:
+//   Projects that fail health-check are NOT removed from activeProjects — the chip stays
+//   visible so the user can see what broke and decide: restore folder or remove project.
+//   isUnavailable=true → orange folder icon + tooltip in ProjectChipsView.
+//   On next sync (thread switch or app restart), if the folder is back → isUnavailable=false.
 
 import Foundation
 import ChappieCore
@@ -115,12 +122,11 @@ extension ChappieViewModel {
     /// If a newer selectThread() cancelled this task — exits without touching isFileSystemReady,
     /// so the new thread's sync takes full ownership of the readiness state.
     ///
-    /// HEALTH-CHECK: after bookmark resolution, each URL is validated before use:
-    ///   - path must not contain "/.Trashes/" (folder was moved to Trash)
+    /// HEALTH-CHECK + B-05: after bookmark resolution, each URL is validated before use:
+    ///   - path must not contain "/.Trash/" or "/.Trashes/" (user/volume Trash)
     ///   - fileExists(atPath:) must return true (folder was deleted or unmounted)
-    ///   Stale projects are marked in ProjectStore and skipped — no FS enumeration attempt.
-    ///   WHY: without this check, a Trash/missing folder causes FileManager to hang for
-    ///   1–2 minutes trying to enumerate a sandbox-restricted or non-existent path.
+    ///   Failed projects are marked isUnavailable=true in activeProjects so the chip
+    ///   turns orange in the UI — user sees exactly which project is broken.
     func syncFileSystemForActiveThread() async {
         guard FeatureFlags.useThreadIsolationV2,
               let ts = toolService else { return }
@@ -147,13 +153,16 @@ extension ChappieViewModel {
         // Resolve bookmark for each project; collect healthy (name, URL) pairs.
         var workspaces: [(name: String, url: URL)] = []
 
-        for project in activeProjects {
+        for i in activeProjects.indices {
             // Check cancellation before each bookmark resolution — each can take 100ms+.
             guard !Task.isCancelled else { return }
 
+            let project = activeProjects[i]
+
             guard let bookmarkData = try? await pStore.loadBookmark(forProjectId: project.id),
                   !bookmarkData.isEmpty else {
-                print("[ChappieViewModel] M-09: No bookmark for '\(project.displayName)' — skipped")
+                print("[ChappieViewModel] M-09: No bookmark for '\(project.displayName)' — marked unavailable")
+                activeProjects[i].isUnavailable = true
                 continue
             }
 
@@ -179,17 +188,21 @@ extension ChappieViewModel {
             }
 
             guard let url = resolvedURL else {
-                print("[ChappieViewModel] M-09: ❌ Could not resolve bookmark for '\(project.displayName)'")
+                print("[ChappieViewModel] M-09: ❌ Could not resolve bookmark for '\(project.displayName)' — marked unavailable")
+                activeProjects[i].isUnavailable = true
                 continue
             }
 
-            // Health-check: reject Trash and missing/unmounted paths immediately.
-            // WHY: FileManager hangs for 1–2 min trying to access these paths.
+            // Health-check: reject Trash and missing/unmounted paths.
+            // WHY: FileManager hangs 1–2 min on these; user needs to see the orange chip.
             if isURLStale(url) {
-                print("[ChappieViewModel] M-09: ⚠️ Stale path for '\(project.displayName)' — skipped (\(url.path))")
+                print("[ChappieViewModel] M-09: ⚠️ Stale path for '\(project.displayName)' — marked unavailable (\(url.path))")
+                activeProjects[i].isUnavailable = true
                 continue
             }
 
+            // Folder is healthy — clear any previous unavailability flag.
+            activeProjects[i].isUnavailable = false
             workspaces.append((name: project.displayName, url: url))
             print("[ChappieViewModel] M-09: ✅ '\(project.displayName)' → \(url.path)")
         }
@@ -199,8 +212,8 @@ extension ChappieViewModel {
         guard !Task.isCancelled else { return }
 
         if workspaces.isEmpty {
-            print("[ChappieViewModel] M-09: No workspaces resolved — keeping current fileSystem")
-            // Still mark ready — user shouldn't be blocked forever on a bad bookmark.
+            print("[ChappieViewModel] M-09: No workspaces resolved — all projects unavailable")
+            // Still mark ready — user shouldn't be blocked forever on bad bookmarks.
             self.isFileSystemReady = true
             await ts.setFileSystemReady(true)
             return
@@ -229,15 +242,21 @@ extension ChappieViewModel {
     /// Returns true if the URL should be rejected without attempting FS access.
     ///
     /// Checks:
-    ///   1. Path contains "/.Trashes/" — folder was moved to macOS Trash.
-    ///   2. fileExists returns false — folder deleted, volume unmounted, or path changed.
+    ///   1. Path contains "/.Trash/" — folder in user's Trash (~/.Trash/).
+    ///   2. Path contains "/.Trashes/" — folder in volume Trash (external drives).
+    ///   3. fileExists returns false — folder deleted, volume unmounted, or path changed.
     ///
     /// WHY NOT use URLResourceValues: resourceValues(forKeys:) itself can hang on
     /// sandbox-restricted paths. fileExists is cheaper and fails fast.
     private func isURLStale(_ url: URL) -> Bool {
         let path = url.path
 
-        // Reject Trash paths immediately — no filesystem access needed.
+        // Reject user Trash — macOS moves items to ~/.Trash/ (no 'es').
+        if path.contains("/.Trash/") {
+            return true
+        }
+
+        // Reject volume Trash — external drives use /.Trashes/.
         if path.contains("/.Trashes/") {
             return true
         }

@@ -32,6 +32,11 @@
 // FS READINESS:
 //   isFileSystemReady=false → project chips show a small spinner instead of folder icon,
 //   addButton is disabled. Cleared once syncFileSystemForActiveThread() completes.
+//
+// B-05 UNAVAILABILITY:
+//   project.isUnavailable=true → chip shows orange warning icon + orange border.
+//   Tooltip explains the folder is missing. User must restore the folder or remove the project.
+//   On next app start / thread switch, if folder is back — chip returns to normal.
 
 import SwiftUI
 import ChappieCore
@@ -151,27 +156,43 @@ struct ProjectChipsView: View {
     // MARK: - Project chip
 
     private func projectChip(for project: ProjectMetadata) -> some View {
-        HStack(spacing: 4) {
-            // Show spinner while FileSystem is syncing, folder icon when ready.
-            // WHY: user sees that projects are being loaded, not silently broken.
-            if !isFileSystemReady {
+        // Unavailable = folder missing/trashed. Orange icon, orange border.
+        // Loading = FS sync in progress. Spinner, no interaction.
+        // Normal = folder healthy. Blue icon, full interaction.
+        let chipColor: Color = project.isUnavailable ? .orange : Color.accentColor
+        let borderOpacity: Double = project.isUnavailable ? 0.6 : (isFileSystemReady ? 0.2 : 0.08)
+        let isInteractive = !isThinking && isFileSystemReady && !project.isUnavailable
+
+        return HStack(spacing: 4) {
+            if project.isUnavailable {
+                // Orange warning icon — folder is missing or in Trash.
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.orange)
+            } else if !isFileSystemReady {
+                // Spinner while FS is syncing.
                 ProgressView()
                     .progressViewStyle(.circular)
                     .scaleEffect(0.55)
                     .frame(width: 10, height: 10)
             } else {
+                // Normal healthy folder icon.
                 Image(systemName: "folder.fill")
                     .font(.system(size: 10))
-                    .foregroundStyle(Color.accentColor.opacity(0.8))
+                    .foregroundStyle(chipColor.opacity(0.8))
             }
 
             Text(project.displayName)
                 .font(.system(size: 12, weight: .medium))
                 .lineLimit(1)
-                .foregroundStyle(.primary)
+                .foregroundStyle(project.isUnavailable ? .orange : .primary)
 
-            roleIndicator(for: project.settings.agentRole)
+            if !project.isUnavailable {
+                roleIndicator(for: project.settings.agentRole)
+            }
 
+            // Show remove button on hover — always available for unavailable projects
+            // so user can clean up broken entries without restoring the folder.
             if hoveredProjectId == project.id && !isThinking && isFileSystemReady {
                 Button {
                     onRemoveProject(project.id)
@@ -186,22 +207,35 @@ struct ProjectChipsView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
-        .overlay(Capsule().stroke(Color.accentColor.opacity(isFileSystemReady ? 0.2 : 0.08), lineWidth: 0.5))
+        .background(Capsule().fill(
+            project.isUnavailable
+                ? Color.orange.opacity(0.08)
+                : Color(NSColor.controlBackgroundColor)
+        ))
+        .overlay(Capsule().stroke(chipColor.opacity(borderOpacity), lineWidth: project.isUnavailable ? 1.0 : 0.5))
         .onHover { isHovered in
             withAnimation(.easeInOut(duration: 0.15)) {
                 hoveredProjectId = isHovered ? project.id : nil
             }
         }
         .onTapGesture {
-            if !isThinking && isFileSystemReady { onOpenSettings(project.id) }
+            if isInteractive { onOpenSettings(project.id) }
         }
         .shakeOnTap(isLocked: isThinking)
-        .help(
-            isFileSystemReady
-                ? "Проект: \(project.displayName) (\(project.settings.agentRole.displayName))\nТап — настройки\(isThinking ? "" : ", × — убрать из треда")"
-                : "Загружаю проекты…"
-        )
+        .help(helpText(for: project))
+    }
+
+    // MARK: - Chip help text
+
+    private func helpText(for project: ProjectMetadata) -> String {
+        if project.isUnavailable {
+            return "Папка «\(project.displayName)» не найдена.\nВерните папку на место или удалите проект из треда (×)."
+        }
+        if !isFileSystemReady {
+            return "Загружаю проекты…"
+        }
+        let removeHint = isThinking ? "" : ", × — убрать из треда"
+        return "Проект: \(project.displayName) (\(project.settings.agentRole.displayName))\nТап — настройки\(removeHint)"
     }
 
     @ViewBuilder
@@ -289,6 +323,29 @@ struct ProjectChipsView: View {
     )
     .padding()
     .frame(width: 300)
+    .background(Color(NSColor.windowBackgroundColor))
+}
+
+#Preview("Недоступный проект") {
+    ProjectChipsView(
+        projects: [
+            ProjectMetadata(id: UUID(), displayName: "Chappie",
+                            settings: ProjectSettings(agentRole: .executor, isProgrammingProject: true),
+                            isUnavailable: false),
+            ProjectMetadata(id: UUID(), displayName: "проба",
+                            settings: ProjectSettings(agentRole: .executor, isProgrammingProject: true),
+                            isUnavailable: true)
+        ],
+        threadName: "Тест",
+        isThinking: false,
+        isFileSystemReady: true,
+        onAddProject: { _ in },
+        onRemoveProject: { _ in },
+        onOpenSettings: { _ in },
+        onOpenThreadSettings: {}
+    )
+    .padding()
+    .frame(width: 350)
     .background(Color(NSColor.windowBackgroundColor))
 }
 

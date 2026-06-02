@@ -270,3 +270,48 @@ extension ProjectEntity {
         return url
     }
 }
+
+// MARK: - ProjectMetadata
+
+/// Sendable DTO for passing project data across the actor boundary.
+///
+/// isUnavailable: runtime-only flag, NOT persisted in SwiftData.
+/// Set to true by syncFileSystemForActiveThread() when the folder is missing or in Trash.
+/// Cleared to false when the folder becomes accessible again on next sync.
+/// WHY: ProjectStore is the source of truth for persistent data — transient
+/// availability state lives only in the ViewModel's activeProjects array.
+public struct ProjectMetadata: Sendable, Identifiable, Hashable {
+
+    public let id: UUID
+    public let displayName: String
+    public let createdAt: Date
+    public let settings: ProjectSettings
+
+    /// Runtime-only: true when the project folder is missing, in Trash, or otherwise inaccessible.
+    /// Not stored in SwiftData — re-evaluated on every syncFileSystemForActiveThread() call.
+    public var isUnavailable: Bool
+
+    /// Internal init from entity — stays inside the actor.
+    init(from entity: ProjectEntity) {
+        self.id = entity.id
+        self.displayName = entity.displayName
+        self.createdAt = entity.createdAt
+        self.settings = entity.settings
+        self.isUnavailable = false
+    }
+
+    /// Public init for Previews, tests, and direct construction.
+    public init(
+        id: UUID = UUID(),
+        displayName: String,
+        createdAt: Date = Date(),
+        settings: ProjectSettings = ProjectSettings(),
+        isUnavailable: Bool = false
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.createdAt = createdAt
+        self.settings = settings
+        self.isUnavailable = isUnavailable
+    }
+}

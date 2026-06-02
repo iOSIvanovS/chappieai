@@ -171,38 +171,3 @@ public actor ProjectStore {
         print("[ProjectStore] 🗑 Deleted project '\(name)'")
     }
 }
-
-// MARK: - ProjectMetadata
-
-/// Sendable DTO for passing project data across the actor boundary.
-///
-/// Why explicit public init: Swift generates memberwise init as internal,
-/// which is inaccessible from the UI target (separate module).
-public struct ProjectMetadata: Sendable, Identifiable, Hashable {
-
-    public let id: UUID
-    public let displayName: String
-    public let createdAt: Date
-    public let settings: ProjectSettings
-
-    /// Internal init from entity — stays inside the actor.
-    init(from entity: ProjectEntity) {
-        self.id = entity.id
-        self.displayName = entity.displayName
-        self.createdAt = entity.createdAt
-        self.settings = entity.settings
-    }
-
-    /// Public init for Previews, tests, and direct construction.
-    public init(
-        id: UUID = UUID(),
-        displayName: String,
-        createdAt: Date = Date(),
-        settings: ProjectSettings = ProjectSettings()
-    ) {
-        self.id = id
-        self.displayName = displayName
-        self.createdAt = createdAt
-        self.settings = settings
-    }
-}
