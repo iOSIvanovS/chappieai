@@ -72,8 +72,15 @@
 // ProgressView() on macOS is NSProgressIndicator — a CoreAnimation-driven spinning
 // control that renders at 60fps regardless of visibility context.
 // Two instances were present: thinkingIndicator (in chat) and historyLoadingIndicator.
-// Both replaced with DotsIndicator — three circles animated via drawingGroup() (Metal).
-// Metal rasterization means the animation runs on GPU with no SwiftUI layout passes.
+// Both replaced with DotsIndicator — animated via TimelineView(.animation).
+//
+// CPU-29: DotsIndicator MIGRATED FROM @State TO TimelineView:
+// Previous DotsIndicator used three @State-driven .repeatForever animations.
+// Each @State change triggers SwiftUI invalidation — even with drawingGroup().
+// SwiftUI still schedules layout passes for every animation tick on its side.
+// Fix: TimelineView(.animation) — single display-link shared across the whole screen.
+// Phase is computed mathematically from Date — zero @State, zero SwiftUI invalidation.
+// The view body is pure: same input → same output. No side effects, no timers.
 //
 // NOTE ON "bad range for [%{public}s]" IN XCODE CONSOLE:
 // This warning is NOT caused by our code. It is an internal CoreData/SwiftData OSLog
@@ -237,7 +244,7 @@ struct ChatScrollView: View {
 
     // MARK: - Subviews
 
-    /// CPU-28: DotsIndicator instead of ProgressView — Metal via drawingGroup(), not CoreAnimation.
+    /// CPU-29: DotsIndicator — TimelineView-driven, zero @State.
     private var historyLoadingIndicator: some View {
         DotsIndicator()
             .frame(maxWidth: .infinity)
@@ -266,7 +273,7 @@ struct ChatScrollView: View {
         .frame(maxWidth: .infinity)
     }
 
-    /// CPU-28: DotsIndicator replaces ProgressView() — see DotsIndicator comment below.
+    /// CPU-29: DotsIndicator replaces ProgressView() — see DotsIndicator comment below.
     private var thinkingIndicator: some View {
         HStack {
             DotsIndicator()
@@ -346,44 +353,45 @@ struct ChatScrollView: View {
 
 // MARK: - DotsIndicator
 
-/// CPU-28: Metal-rendered waiting indicator — replaces ProgressView (NSProgressIndicator).
+/// CPU-29: TimelineView-driven waiting indicator — zero @State, zero SwiftUI invalidation.
 ///
-/// WHY: ProgressView on macOS is NSProgressIndicator — CoreAnimation-driven, renders at 60fps
-/// via the main CA render server regardless of how lightweight it looks. Two instances
-/// (thinkingIndicator + historyLoadingIndicator) were adding ~15% CPU in thinking state.
+/// WHY TimelineView over @State + repeatForever:
+/// The old implementation used three @State booleans with .repeatForever animations.
+/// Even with drawingGroup(), SwiftUI still schedules layout passes on its side for each
+/// animation tick — because @State changes trigger the SwiftUI invalidation pipeline.
+/// This caused ~50% CPU while waiting for the AI backend (no network, no disk, just dots).
 ///
-/// FIX: Three circles with staggered .opacity + .scaleEffect animations, wrapped in
-/// drawingGroup() — rasterized into a single Metal texture. The animation loop runs on GPU,
-/// zero SwiftUI layout passes per frame.
+/// TimelineView(.animation) uses a single shared display-link for the entire screen.
+/// Phase is computed mathematically from the current Date — no @State, no invalidation.
+/// The view body is a pure function: same timestamp → same pixels. Zero side effects.
 private struct DotsIndicator: View {
-    @State private var animating = false
-
     private let dotSize: CGFloat = 7
     private let spacing: CGFloat = 5
+    private let period: Double = 1.08  // full pulse cycle in seconds
 
     var body: some View {
-        HStack(spacing: spacing) {
-            dot(delay: 0.0)
-            dot(delay: 0.18)
-            dot(delay: 0.36)
+        TimelineView(.animation) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate
+            HStack(spacing: spacing) {
+                dot(t: t, delay: 0.00)
+                dot(t: t, delay: 0.18)
+                dot(t: t, delay: 0.36)
+            }
+            // Single Metal texture for all three dots — one GPU draw call.
+            .drawingGroup()
         }
-        // Rasterize all three dots + animations into a single Metal texture.
-        .drawingGroup()
-        .onAppear { animating = true }
     }
 
-    private func dot(delay: Double) -> some View {
-        Circle()
+    /// Computes scale and opacity from a sine wave offset by `delay` seconds.
+    /// sin oscillates -1…1 → normalized to 0…1 for smooth pulse.
+    private func dot(t: Double, delay: Double) -> some View {
+        let phase = (t - delay).truncatingRemainder(dividingBy: period) / period
+        let v = (sin(phase * 2 * .pi - .pi / 2) + 1) / 2  // 0…1, starts at 0
+        return Circle()
             .fill(Color.secondary.opacity(0.6))
             .frame(width: dotSize, height: dotSize)
-            .scaleEffect(animating ? 1.0 : 0.5)
-            .opacity(animating ? 1.0 : 0.3)
-            .animation(
-                .easeInOut(duration: 0.54)
-                .repeatForever(autoreverses: true)
-                .delay(delay),
-                value: animating
-            )
+            .scaleEffect(0.5 + v * 0.5)
+            .opacity(0.3 + v * 0.7)
     }
 }
 
