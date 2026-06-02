@@ -23,4 +23,17 @@ enum InputLayout {
     static var minEditorHeight: CGFloat {
         lineHeight + editorVerticalPadding * 2
     }
+
+    // Static footer height for ChatScrollView bottom padding.
+    // Computed once at compile time — never changes at runtime.
+    // = maxEditorHeight + innerPadding*2 (top+bottom inside panel)
+    //   + outerBottomPadding (panel sits 16pt above window edge)
+    //   + outerHorizontalPadding (visual breathing room below last message)
+    // WHY STATIC: editorHeight growing/shrinking on every keystroke used to
+    // propagate up to ContentView → ChatScrollView, causing a layout pass per character.
+    // The chat always reserves space for the tallest possible panel — user never
+    // sees content hidden behind the input bar.
+    static var maxPanelHeight: CGFloat {
+        maxEditorHeight + innerPadding * 2 + outerBottomPadding + outerHorizontalPadding
+    }
 }

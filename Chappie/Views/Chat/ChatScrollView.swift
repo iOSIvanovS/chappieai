@@ -11,7 +11,18 @@
 // Instead it receives headerHeight and footerHeight — transparent spacers at the
 // top and bottom of the VStack inside ScrollView.
 // This guarantees the first and last messages are always fully readable
-// regardless of the panel heights (including dynamic growth of the input editor).
+// regardless of the panel heights.
+//
+// CPU-16: STATIC FOOTER HEIGHT:
+// footerHeight is now InputLayout.maxPanelHeight — a compile-time constant passed from ContentView.
+// Previously footerHeight was a @State in ContentView updated via onHeightChange callback
+// from InputMorphView on every keystroke. That caused:
+//   editorHeight → onHeightChange → bottomPanelHeight state → ContentView layout pass
+//   → ChatScrollView re-render → footerHeight spacer update → scroll position recalc.
+// Now footerHeight never changes at runtime → no layout pass from typing.
+// onChange(of: footerHeight) removed — it was the "layout ready" guard that triggered
+// initial scroll-to-bottom when the panel first appeared. Since footerHeight is now a
+// constant (non-zero from the first render), we use scrollToBottomTrigger exclusively.
 //
 // VSTACK (PAGINATION OVER LAZYVSTACK):
 // Messages are rendered in a plain VStack — all displayed messages are always in the
@@ -29,18 +40,14 @@
 // with animation only for discrete events (new message, thread switch).
 //
 // AUTO-SCROLL POLICY:
-// Scroll to bottom happens in exactly four cases:
+// Scroll to bottom happens in exactly three cases:
 //   1. scrollToBottomTrigger changes — ViewModel incremented it after displayedMessages
 //      was fully populated (end of resetPagination). Uses .task(id:) instead of onChange
 //      because .task(id:) is guaranteed to run AFTER the view body has been applied to
 //      the layout tree. onChange fires during the render pass — before layout is committed.
 //      A 50ms sleep inside the task gives the VStack time to measure its content.
-//   2. footerHeight becomes non-zero AND messages are already loaded — "layout ready" moment.
-//      Guard: only fires when messages.count > 0 to avoid scrollTo on empty layout.
-//   3. onChange(messages.count) — new message added to the chat.
-//   4. onChange(streaming.streamingText) — Chappie is streaming (throttled to 1/frame).
-// Intentionally NOT scrolling when footerHeight changes after initial scroll
-// so the user can freely read mid-chat while typing a long message.
+//   2. onChange(messages.count) — new message added to the chat.
+//   3. onChange(streaming.streamingText) — Chappie is streaming (throttled to 1/frame).
 //
 // CPU-13: STREAMING ISOLATION:
 // ChatScrollView receives `streaming: StreamingState` as a `let` reference.
@@ -103,11 +110,10 @@ struct ChatScrollView: View {
     let headerHeight: CGFloat
 
     /// Height of the bottom floating panel — transparent footer spacer.
+    /// CPU-16: always InputLayout.maxPanelHeight — never changes at runtime.
     let footerHeight: CGFloat
 
     private let bottomGap: CGFloat = 12
-
-    @State private var initialScrollDone = false
 
     // CPU-05: debounce flag — true while a scroll task is already scheduled.
     // Prevents firing proxy.scrollTo on every streaming token (dozens/sec).
@@ -169,16 +175,7 @@ struct ChatScrollView: View {
             .scrollIndicators(.never)
             .task(id: scrollToBottomTrigger) {
                 guard scrollToBottomTrigger > 0 else { return }
-                initialScrollDone = false
                 try? await Task.sleep(nanoseconds: 50_000_000)
-                withAnimation(.easeOut(duration: 0.3)) {
-                    proxy.scrollTo("bottom", anchor: .bottom)
-                }
-                initialScrollDone = true
-            }
-            .onChange(of: footerHeight) { _, newHeight in
-                guard !initialScrollDone, newHeight > 0, messages.count > 0 else { return }
-                initialScrollDone = true
                 withAnimation(.easeOut(duration: 0.3)) {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
@@ -396,7 +393,7 @@ private struct BlinkingCursor: View {
         streaming: streaming,
         isLoadingHistory: false,
         headerHeight: 80,
-        footerHeight: 80
+        footerHeight: InputLayout.maxPanelHeight
     )
     .frame(width: 650, height: 500)
     .background(Color(NSColor.windowBackgroundColor))
@@ -413,7 +410,7 @@ private struct BlinkingCursor: View {
         streaming: streaming,
         isLoadingHistory: false,
         headerHeight: 60,
-        footerHeight: 80
+        footerHeight: InputLayout.maxPanelHeight
     )
     .frame(width: 650, height: 300)
     .background(Color(NSColor.windowBackgroundColor))

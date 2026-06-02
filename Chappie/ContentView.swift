@@ -16,11 +16,12 @@
 // This eliminates white strips at top/bottom that appeared when GeometryReader
 // was inside ContentView's layout tree.
 //
-// FLOATING PANELS:
+// FLOATING PANELS LAYOUT:
 //   Top panel: ModelPickerRow + ProjectChipsView — each is an independent floating
 //   rounded pill with ultraThinMaterial. The outer VStack is transparent.
 //   Bottom panel: InputMorphView — ultraThinMaterial.
-//   Both panels report their heights so ChatScrollView can add matching spacers.
+//   Top panel reports its height so ChatScrollView can add a matching header spacer.
+//   Bottom panel uses InputLayout.maxPanelHeight — a static constant, never changes at runtime.
 //
 // CPU-08: WHY onGeometryChange INSTEAD OF GeometryReader:
 //   GeometryReader placed in .background participates in measurement and can cause
@@ -54,6 +55,13 @@
 //   ModelPickerRow now receives `streaming` reference and reads streaming.currentBalance
 //   directly — balance updates during streaming no longer invalidate ContentView or topPanel.
 //   ContentView does NOT read streaming.currentBalance — only ModelPickerRow does.
+//
+// CPU-16: STATIC FOOTER HEIGHT:
+//   bottomPanelHeight @State removed entirely. InputMorphView no longer has onHeightChange.
+//   ChatScrollView receives footerHeight: InputLayout.maxPanelHeight — a compile-time constant.
+//   Previously: editorHeight changed on every keystroke → onHeightChange callback →
+//   bottomPanelHeight state update → ContentView layout pass → ChatScrollView re-render.
+//   That chain fired on every character and was the main source of 75% CPU while typing.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -98,7 +106,6 @@ struct ContentView: View {
     @State private var selectedThreadForSettings: ThreadMetadata? = nil
 
     @State private var topPanelHeight: CGFloat = 0
-    @State private var bottomPanelHeight: CGFloat = 0
     @State private var safeAreaTop: CGFloat = 0
 
     // CPU-11: debounce task reference — cancelled on every new keystroke
@@ -154,7 +161,6 @@ struct ContentView: View {
                 )
             }
             .sheet(item: $selectedThreadForSettings) { thread in
-                // M-08: pass providers so user can change provider/model per-thread
                 ThreadSettingsSheet(
                     thread: thread,
                     providers: viewModel.providers,
@@ -313,6 +319,9 @@ struct ContentView: View {
             // ChatScrollView reads streaming.streamingText and streaming.runningCost
             // directly — it subscribes to StreamingState, not to ViewModel.
             // ContentView does NOT read any StreamingState property here.
+            //
+            // CPU-16: footerHeight is InputLayout.maxPanelHeight — a static constant.
+            // No state variable, no callback, no layout pass on typing.
             ChatScrollView(
                 scrollToBottomTrigger: viewModel.scrollToBottomTrigger,
                 messages: viewModel.displayedMessages,
@@ -321,7 +330,7 @@ struct ContentView: View {
                 streaming: viewModel.streaming,
                 isLoadingHistory: viewModel.isLoadingThread,
                 headerHeight: topPanelHeight + safeAreaTop,
-                footerHeight: bottomPanelHeight
+                footerHeight: InputLayout.maxPanelHeight
             )
             .ignoresSafeArea(edges: .top)
             // CPU-08: onGeometryChange does NOT participate in layout — no render loop risk.
@@ -405,6 +414,9 @@ struct ContentView: View {
     // CPU-13: bottomPanel passes streaming object to InputMorphView.
     // InputMorphView reads streaming.isThinking and streaming.currentToolCall directly.
     // ContentView does NOT read those properties here.
+    //
+    // CPU-16: onHeightChange REMOVED — InputMorphView no longer reports its height.
+    // footerHeight in ChatScrollView is InputLayout.maxPanelHeight (static constant).
 
     private var bottomPanel: some View {
         InputMorphView(
@@ -415,11 +427,7 @@ struct ContentView: View {
             onSend: { attachedFiles in
                 sendMessage(attachments: attachedFiles)
             },
-            onCancel: { viewModel.cancelCurrentRequest() },
-            // CPU-08: height is now reported via callback, not GeometryReader inside InputMorphView.
-            onHeightChange: { newHeight in
-                bottomPanelHeight = newHeight
-            }
+            onCancel: { viewModel.cancelCurrentRequest() }
         )
     }
 

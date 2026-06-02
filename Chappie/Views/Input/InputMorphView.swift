@@ -14,24 +14,22 @@
 //   Subclassing is the ONLY guaranteed approach on macOS.
 // - Plain Enter → send. Shift+Enter or Option+Enter → insert newline.
 // - Dynamic height: measured via NSLayoutManager (handles word-wrap correctly),
-//   capped at maxLines, with spring animation.
+//   capped at maxLines, with linear animation (not spring — avoids 60fps timer loop).
 // - On send: editorHeight resets to minEditorHeight immediately; morph animates to collapsedHeight.
 // - On finish/cancel: height restores from editorHeight; editor auto-focuses via coordinator.
 //
-// HEIGHT REPORTING (CPU-08):
-// - onHeightChange callback fires whenever the panel's total rendered height changes.
-// - ContentView uses this to set bottomPanelHeight → ChatScrollView bottomPadding.
-// - Previously a GeometryReader inside .background was used — it caused a render loop:
-//   height change → state update → re-render → height change again.
-// - Now: onGeometryChange(for: CGFloat.self) in ContentView's bottomPanel wrapper.
-//   InputMorphView itself has NO GeometryReader — it just reports via callback.
+// HEIGHT STRATEGY (CPU-16 — STATIC FOOTER):
+// - InputMorphView no longer reports its height to ContentView.
+// - ChatScrollView uses InputLayout.maxPanelHeight as a fixed footer spacer.
+// - Previously: editorHeight changed on every keystroke → onHeightChange callback →
+//   bottomPanelHeight state in ContentView → footerHeight prop in ChatScrollView →
+//   layout pass on every character. This was the main source of 75% CPU while typing.
+// - Now: the footer is always the size of the tallest possible panel. The user never
+//   sees content hidden behind the bar. Zero layout passes from typing.
 //
 // CPU-10: THREE ANIMATIONS → ONE TOKEN (morph-only):
 // - Previously three separate .animation(..., value:) modifiers were stacked on the root view.
-// - Then: a single animationToken combining isThinking + editorHeight + attachments.isEmpty.
-//   BUG: editorHeight changes on every keystroke → animationToken changes → spring animation
-//   fires on every character → spring is timer-driven at 60fps → 100% CPU while typing.
-// - Fix (CPU-14): animationToken now combines ONLY isThinking + attachments.isEmpty.
+// - Fix (CPU-14): animationToken combines ONLY isThinking + attachments.isEmpty.
 //   editorHeight is animated separately via its own .animation modifier scoped to the editor frame.
 //   Morph (thinking↔idle) still gets the full spring. Typing no longer triggers root animation.
 //
@@ -39,8 +37,6 @@
 // - InputMorphView receives `streaming: StreamingState` instead of separate isThinking
 //   and currentToolCall parameters. It reads streaming.isThinking and streaming.currentToolCall
 //   directly — subscribing to StreamingState, NOT to ViewModel.
-// - ContentView's bottomPanel does NOT read any StreamingState property — it only passes
-//   the reference. So keystroke-driven ViewModel updates do NOT re-render bottomPanel.
 //
 // MULTIMODAL:
 // - Paperclip button opens NSOpenPanel (images, PDF, text, any file).
@@ -73,10 +69,6 @@ struct InputMorphView: View {
 
     let onSend: ([AttachedFile]) -> Void
     let onCancel: () -> Void
-
-    /// Called whenever the panel's total rendered height changes.
-    /// ContentView uses this to update ChatScrollView's bottom padding.
-    var onHeightChange: ((CGFloat) -> Void)? = nil
 
     // MARK: - Private State
 
@@ -133,12 +125,9 @@ struct InputMorphView: View {
         // CPU-14: only morph transitions are animated at root level (thinking↔idle, attachments appear).
         // editorHeight is NOT in morphToken — typing no longer triggers this spring.
         .animation(.spring(response: 0.38, dampingFraction: 0.82), value: morphToken)
-        // CPU-08: report height via onGeometryChange — no GeometryReader render loop.
-        .onGeometryChange(for: CGFloat.self) { geo in
-            geo.size.height
-        } action: { newHeight in
-            onHeightChange?(newHeight)
-        }
+        // CPU-16: onHeightChange callback REMOVED.
+        // ContentView no longer tracks bottomPanelHeight — uses InputLayout.maxPanelHeight instead.
+        // This eliminates the layout pass chain: editorHeight → ContentView state → ChatScrollView.
         .onChange(of: streaming.isThinking) { _, nowThinking in
             if !nowThinking {
                 // Small delay lets the morph animation finish before focusing
