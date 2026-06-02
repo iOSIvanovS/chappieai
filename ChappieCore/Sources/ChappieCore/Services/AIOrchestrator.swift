@@ -61,6 +61,12 @@ public actor AIOrchestrator {
     private let memoryManager: MemoryManager
     private let defaultConfig: AppConfig
 
+    // B-04: invalidate() sets this flag; process() checks it before each agentic step.
+    // WHY NOT task.cancel(): URLSession.AsyncBytes.lines ignores Swift cooperative cancellation
+    // while waiting for server bytes — the stream simply never throws CancellationError.
+    // An explicit actor-level flag is the only reliable way to abort between steps.
+    private var isInvalidated: Bool = false
+
     // MARK: - Base System Prompt
     // English — tokenizes 1.5–2x more efficiently than Cyrillic (~3000 tokens saved per request).
 
@@ -228,6 +234,20 @@ public actor AIOrchestrator {
         self.defaultConfig = config
     }
 
+    // MARK: - Invalidation (B-04)
+
+    /// Marks this orchestrator as dead. process() will throw CancellationError on the next step boundary.
+    ///
+    /// WHY THIS EXISTS:
+    /// task.cancel() is unreliable here — URLSession.AsyncBytes.lines does not respond to
+    /// Swift cooperative cancellation while waiting for server bytes. The stream just hangs.
+    /// An explicit actor-level flag is checked at every while-loop iteration, giving us
+    /// a guaranteed abort point between agentic steps.
+    public func invalidate() {
+        isInvalidated = true
+        print("[AIOrchestrator] Invalidated — will abort at next step boundary")
+    }
+
     // MARK: - Public API
 
     /// Runs the full agentic loop for the given prompt.
@@ -261,6 +281,12 @@ public actor AIOrchestrator {
         onBalanceUpdate: (@Sendable (Double) -> Void)? = nil
     ) async throws -> AIOrchestratorResult {
 
+        // B-04: abort immediately if invalidated before we even start.
+        guard !isInvalidated else {
+            print("[AIOrchestrator] process() called on invalidated orchestrator — aborting")
+            throw CancellationError()
+        }
+
         // V2: use pre-built prompt from ThreadSession; V1: build via MemoryManager.
         let systemPrompt: String
         if let override = overrideSystemPrompt {
@@ -287,6 +313,14 @@ public actor AIOrchestrator {
         let maxSteps = config.maxOrchestratorSteps
 
         while stepCount < maxSteps {
+            // B-04: check invalidation at every step boundary.
+            // This fires when the provider was deleted while the previous step was running.
+            // The current step (URLSession stream) has already finished — we abort cleanly here.
+            guard !isInvalidated else {
+                print("[AIOrchestrator] Aborted at step \(stepCount) — orchestrator was invalidated")
+                throw CancellationError()
+            }
+
             stepCount += 1
 
             let tools = await toolService.availableTools

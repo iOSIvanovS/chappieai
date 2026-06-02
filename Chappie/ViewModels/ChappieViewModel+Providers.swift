@@ -84,28 +84,27 @@ extension ChappieViewModel {
 
     // MARK: - Immediate invalidation (B-04)
 
-    /// Cancels any in-flight request and clears aiClient/orchestrator/activeProvider
+    /// Stops any in-flight request and clears aiClient/orchestrator/activeProvider
     /// if the given provider ID matches the currently active one.
     ///
-    /// WHY CANCEL currentRequestTask:
-    /// AIOrchestrator is an actor — it holds its own private `let aiClient` reference.
-    /// Nulling `self.orchestrator` does NOT stop an already-running process() call,
-    /// because the Task captured its own local reference at launch time.
-    /// The only way to stop the in-flight URLSession request is to cancel the Task
-    /// that owns it — Swift structured concurrency propagates cancellation into
-    /// the async chain and URLSession throws CancellationError.
+    /// WHY orchestrator.invalidate() AND NOT task.cancel():
+    /// URLSession.AsyncBytes.lines ignores Swift cooperative cancellation while waiting
+    /// for server bytes — task.cancel() simply doesn't reach the stream.
+    /// orchestrator.invalidate() sets an actor-level flag that process() checks at every
+    /// while-loop boundary, guaranteeing abort between agentic steps.
     func invalidateProviderIfDeleted(id: UUID) {
         guard activeProvider?.id == id else { return }
         print("[ChappieViewModel] Invalidating deleted active provider: \(id)")
 
-        // Cancel the in-flight request first — this is the only reliable stop.
-        // Nulling orchestrator alone doesn't help: the Task already captured its
-        // own reference to aiClient inside the actor's private storage.
-        if let task = currentRequestTask {
-            print("[ChappieViewModel] Cancelling in-flight request due to provider deletion")
-            task.cancel()
-            currentRequestTask = nil
+        // Poison the orchestrator — it will abort at the next step boundary.
+        // This is the only reliable stop because task.cancel() doesn't reach URLSession streams.
+        if let orch = orchestrator {
+            Task { await orch.invalidate() }
         }
+
+        // Cancel the task too — belt and suspenders. Works for the pre-stream awaits.
+        currentRequestTask?.cancel()
+        currentRequestTask = nil
 
         self.activeProvider = nil
         self.aiClient = nil
