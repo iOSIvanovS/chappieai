@@ -39,6 +39,12 @@
 //   window is narrow the text clips in the middle: "deepseek-v4-pro"
 //   Both pills compress gracefully — right pill is fixedSize, left pill gets
 //   the remaining space via layoutPriority(1).
+//
+// MK-07: 3-COLUMN POPOVER (provider / key / model):
+//   ModelPickerPopover now has a middle "Key" column.
+//   When user hovers a provider, its keys are shown immediately.
+//   Key auto-selects if provider has exactly one key.
+//   onSelectProvider signature extended to (providerId, keyId, modelName).
 
 import SwiftUI
 import ChappieCore
@@ -52,12 +58,13 @@ struct ModelPickerRow: View {
 
     let activeProvider: AIProvider?
     let activeModelName: String?
+    let activeKeyId: UUID?
     let providers: [AIProvider]
     let isOrphaned: Bool
     /// CPU-15: streaming reference — reads .currentBalance and .isThinking directly.
-    /// This view subscribes to StreamingState, not to ChappieViewModel.
     let streaming: StreamingState
-    let onSelectProvider: (UUID, String) -> Void
+    /// MK-07: keyId added — caller must pass the selected key along with provider+model.
+    let onSelectProvider: (UUID, UUID?, String) -> Void
 
     // MARK: - State
 
@@ -72,7 +79,6 @@ struct ModelPickerRow: View {
             modelPill
                 .layoutPriority(1)
 
-            // Spacer pushes the two pills to opposite edges
             Spacer(minLength: 8)
 
             // RIGHT PILL: balance — shown only when a value is available, always fixed size
@@ -87,7 +93,6 @@ struct ModelPickerRow: View {
 
     private var modelPill: some View {
         HStack(spacing: 6) {
-            // "Модель" static label — never truncates
             Text("Модель")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
@@ -95,13 +100,8 @@ struct ModelPickerRow: View {
                 .fixedSize()
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(
-                    Capsule()
-                        .fill(Color(NSColor.controlBackgroundColor))
-                )
+                .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
 
-            // Model selector button — shrinks and truncates in the middle.
-            // No .fixedSize() here — button must compress when window narrows.
             Button {
                 showPopover.toggle()
             } label: {
@@ -120,11 +120,7 @@ struct ModelPickerRow: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                // Adaptive background — controlBackgroundColor switches correctly in dark mode
-                .background(
-                    Capsule()
-                        .fill(Color(NSColor.controlBackgroundColor))
-                )
+                .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
                 .overlay(
                     Capsule()
                         .stroke(
@@ -136,16 +132,16 @@ struct ModelPickerRow: View {
                 )
             }
             .buttonStyle(.plain)
-            // Soft lock: shake on tap when locked — replaces old opacity(0.5) + .disabled()
             .shakeOnTap(isLocked: streaming.isThinking)
             .help(streaming.isThinking ? "Нельзя менять модель пока Чаппи думает" : "")
             .popover(isPresented: $showPopover, arrowEdge: .top) {
                 ModelPickerPopover(
                     providers: providers,
                     activeProviderId: activeProvider?.id,
+                    activeKeyId: activeKeyId,
                     activeModelName: activeModelName,
-                    onSelect: { providerId, modelName in
-                        onSelectProvider(providerId, modelName)
+                    onSelect: { providerId, keyId, modelName in
+                        onSelectProvider(providerId, keyId, modelName)
                         showPopover = false
                     }
                 )
@@ -155,15 +151,11 @@ struct ModelPickerRow: View {
         .padding(.vertical, 8)
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        // Prevent vertical growth but allow horizontal compression
         .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: - Right Pill (Balance)
 
-    /// Balance pill tied to the active provider.
-    /// Green creditcard icon + formatted RUB amount.
-    /// Updates in real time as onBalanceUpdate fires during streaming.
     private func balancePill(balance: Double) -> some View {
         HStack(spacing: 5) {
             Image(systemName: "creditcard.fill")
@@ -175,12 +167,10 @@ struct ModelPickerRow: View {
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .fixedSize()
-                // Animate digit changes so the number visibly ticks down during streaming
                 .contentTransition(.numericText())
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        // Adaptive background — controlBackgroundColor switches correctly in dark mode
         .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .padding(.horizontal, 14)
@@ -195,21 +185,18 @@ struct ModelPickerRow: View {
     @ViewBuilder
     private var chipLabel: some View {
         if isOrphaned {
-            // Model was deleted — prompt user to pick another
             Text("Модель недоступна — выберите другую")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.orange)
                 .lineLimit(1)
                 .truncationMode(.middle)
         } else if let model = activeModelName {
-            // Show only the model name — provider name is redundant and makes the chip too long
             Text(model)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .truncationMode(.middle)
         } else if activeProvider != nil {
-            // Provider set but no model selected yet
             Text("Выберите модель")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.orange)
@@ -225,17 +212,20 @@ struct ModelPickerRow: View {
 
 // MARK: - ModelPickerPopover
 
-/// Two-level popover: left = providers, right = models of selected provider.
+/// Three-column popover: providers → keys of hovered provider → models of hovered provider.
+/// Key column auto-selects when provider has exactly one key.
 private struct ModelPickerPopover: View {
 
     let providers: [AIProvider]
     let activeProviderId: UUID?
+    let activeKeyId: UUID?
     let activeModelName: String?
-    let onSelect: (UUID, String) -> Void
+    let onSelect: (UUID, UUID?, String) -> Void
 
     @State private var hoveredProviderId: UUID?
+    @State private var selectedKeyId: UUID?
 
-    // Provider shown on the right panel: hovered > active > first
+    // Provider shown in key+model columns: hovered > active > first
     private var displayedProvider: AIProvider? {
         if let hovered = hoveredProviderId {
             return providers.first { $0.id == hovered }
@@ -249,82 +239,152 @@ private struct ModelPickerPopover: View {
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
 
-            // Left: provider list
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Провайдер")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 10)
-                    .padding(.bottom, 6)
-
-                Divider()
-
-                ScrollView {
-                    VStack(spacing: 0) {
-                        ForEach(providers) { provider in
-                            PopoverProviderRow(
-                                provider: provider,
-                                isActive: provider.id == activeProviderId,
-                                isHovered: hoveredProviderId == provider.id
-                            )
-                            .onHover { hovering in
-                                if hovering { hoveredProviderId = provider.id }
-                            }
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-                .frame(maxHeight: 280)
-            }
-            .frame(width: 180)
+            // Column 1: providers
+            providerColumn
 
             Divider()
 
-            // Right: model list for displayed provider
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Модель")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 10)
-                    .padding(.bottom, 6)
+            // Column 2: keys for displayed provider
+            keyColumn
 
-                Divider()
+            Divider()
 
-                if let provider = displayedProvider {
-                    if provider.models.isEmpty {
-                        VStack {
-                            Spacer()
-                            Text("Нет моделей")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Spacer()
+            // Column 3: models for displayed provider
+            modelColumn
+        }
+        .frame(width: 540)
+        .padding(.bottom, 4)
+        .onAppear {
+            // Restore active key as initial selection
+            selectedKeyId = activeKeyId
+        }
+        .onChange(of: hoveredProviderId) { _, newProviderId in
+            guard let provider = providers.first(where: { $0.id == newProviderId }) else { return }
+            // Auto-select key when switching providers: single key → select it, multiple → clear
+            selectedKeyId = provider.keys.count == 1 ? provider.keys.first?.id : nil
+        }
+    }
+
+    // MARK: - Provider Column
+
+    private var providerColumn: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            columnHeader("Провайдер")
+
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(providers) { provider in
+                        PopoverProviderRow(
+                            provider: provider,
+                            isActive: provider.id == activeProviderId,
+                            isHovered: hoveredProviderId == provider.id
+                        )
+                        .onHover { hovering in
+                            if hovering { hoveredProviderId = provider.id }
                         }
-                        .frame(maxWidth: .infinity, maxHeight: 280)
-                    } else {
-                        ScrollView {
-                            VStack(spacing: 0) {
-                                ForEach(provider.models, id: \.self) { model in
-                                    PopoverModelRow(
-                                        model: model,
-                                        isActive: provider.id == activeProviderId && model == activeModelName,
-                                        onSelect: { onSelect(provider.id, model) }
-                                    )
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            .frame(maxHeight: 280)
+        }
+        .frame(width: 170)
+    }
+
+    // MARK: - Key Column
+
+    private var keyColumn: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            columnHeader("Ключ")
+
+            if let provider = displayedProvider {
+                if provider.keys.isEmpty {
+                    emptyColumnState(icon: "key.slash", text: "Нет ключей")
+                } else {
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            ForEach(provider.keys) { key in
+                                PopoverKeyRow(
+                                    key: key,
+                                    isActive: key.id == activeKeyId && provider.id == activeProviderId,
+                                    isSelected: key.id == selectedKeyId
+                                ) {
+                                    selectedKeyId = key.id
                                 }
                             }
-                            .padding(.vertical, 4)
                         }
-                        .frame(maxHeight: 280)
+                        .padding(.vertical, 4)
                     }
-                } else {
-                    Spacer()
+                    .frame(maxHeight: 280)
                 }
+            } else {
+                emptyColumnState(icon: "arrow.left", text: "Выберите провайдера")
             }
-            .frame(width: 220)
         }
-        .frame(width: 400)
-        .padding(.bottom, 4)
+        .frame(width: 160)
+    }
+
+    // MARK: - Model Column
+
+    private var modelColumn: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            columnHeader("Модель")
+
+            if let provider = displayedProvider {
+                if provider.models.isEmpty {
+                    emptyColumnState(icon: "square.stack.3d.up.slash", text: "Нет моделей")
+                } else {
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            ForEach(provider.models, id: \.self) { model in
+                                PopoverModelRow(
+                                    model: model,
+                                    // Active only when both provider and key match current active
+                                    isActive: provider.id == activeProviderId
+                                        && model == activeModelName
+                                        && selectedKeyId == activeKeyId
+                                ) {
+                                    onSelect(provider.id, selectedKeyId, model)
+                                }
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .frame(maxHeight: 280)
+                }
+            } else {
+                emptyColumnState(icon: "arrow.left", text: "Выберите провайдера")
+            }
+        }
+        .frame(width: 210)
+    }
+
+    // MARK: - Helpers
+
+    private func columnHeader(_ title: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+                .padding(.bottom, 6)
+            Divider()
+        }
+    }
+
+    private func emptyColumnState(icon: String, text: String) -> some View {
+        VStack(spacing: 8) {
+            Spacer()
+            Image(systemName: icon)
+                .font(.system(size: 20))
+                .foregroundStyle(.secondary.opacity(0.3))
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: 280)
     }
 }
 
@@ -369,6 +429,51 @@ private struct PopoverProviderRow: View {
                       : Color.clear)
                 .padding(.horizontal, 4)
         )
+    }
+}
+
+// MARK: - PopoverKeyRow
+
+private struct PopoverKeyRow: View {
+
+    let key: APIKey
+    let isActive: Bool    // currently active in this thread
+    let isSelected: Bool  // selected in this popover session
+    let onSelect: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 8) {
+                Image(systemName: isActive ? "checkmark.circle.fill" : (isSelected ? "circle.fill" : "circle"))
+                    .font(.system(size: 13))
+                    .foregroundStyle(
+                        isActive
+                            ? Color.accentColor
+                            : (isSelected ? Color.accentColor.opacity(0.6) : Color.secondary.opacity(0.3))
+                    )
+                    .frame(width: 16)
+
+                Text(key.name)
+                    .font(.system(size: 12, weight: isActive ? .semibold : .regular))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(isSelected || isActive
+                          ? Color.accentColor.opacity(0.08)
+                          : (isHovered ? Color.primary.opacity(0.04) : Color.clear))
+                    .padding(.horizontal, 4)
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
     }
 }
 

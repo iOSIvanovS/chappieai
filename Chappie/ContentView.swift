@@ -79,6 +79,10 @@
 //   AppState is @Observable singleton — SwiftUI tracks reads automatically.
 //   @State var appState = AppState.shared ensures SwiftUI subscribes to changes.
 //   Debug: AppState.shared.debugForceOnboarding = true to force re-show onboarding.
+//
+// MK-07: MODEL PICKER POPOVER — 3 COLUMNS:
+//   ModelPickerRow.onSelectProvider now receives (providerId, keyId, modelName).
+//   ContentView passes all three into switchProvider() — full thread-isolated key selection.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -183,7 +187,7 @@ struct ContentView: View {
                 )
             }
             .sheet(item: $selectedThreadForSettings) { thread in
-                // MK-06: onSave now receives keyId — full provider+key+model selection
+                // MK-06: onSave receives keyId — full provider+key+model selection
                 ThreadSettingsSheet(
                     thread: thread,
                     providers: viewModel.providers,
@@ -368,17 +372,18 @@ struct ContentView: View {
                 ModelPickerRow(
                     activeProvider: viewModel.activeProvider,
                     activeModelName: viewModel.activeModelName,
+                    activeKeyId: viewModel.activeKeyId,
                     providers: viewModel.providers,
                     isOrphaned: viewModel.isThreadOrphaned,
                     streaming: viewModel.streaming,
-                    onSelectProvider: { providerId, modelName in
+                    onSelectProvider: { providerId, keyId, modelName in
+                        // MK-07: full provider+key+model selection from inline popover
                         if let provider = viewModel.providers.first(where: { $0.id == providerId }),
                            let store = viewModel.providerStore {
                             Task {
-                                // MK-07: key picker in ModelPickerRow popover — pass activeKeyId for now
                                 await viewModel.switchProvider(
                                     provider,
-                                    keyId: viewModel.activeKeyId,
+                                    keyId: keyId,
                                     modelName: modelName,
                                     from: store
                                 )
