@@ -1,16 +1,16 @@
 // SettingsView.swift
 // Chappie
 //
-// Application settings sheet.
-// Contains: user name field (saved to global memory), AI providers shortcut.
+// General application settings sheet.
 //
-// USER NAME:
-//   On appear — reads current name from global SwiftData memory (key "user_name").
-//   Parses JSON string {"name": "..."} to extract the value.
-//   On save — calls viewModel.saveUserName() which writes back to global memory.
+// SECTIONS:
+//   - User name: saved to global memory, used in system prompt.
+//   - AI providers: shortcut to ProvidersSettingsView (the directory).
+//   - Security: Keychain info.
 //
-// NOTE: API key management moved to ProvidersSettingsView / AddProviderSheet.
-// SettingsView is now a lightweight general settings panel.
+// NOTE: There is no "active provider" concept at the global level.
+// Provider + key + model selection happens per-thread in ThreadSettingsSheet.
+// ProvidersSettingsView is purely a directory — add/edit/delete, no selection.
 
 import SwiftUI
 import ChappieCore
@@ -99,24 +99,19 @@ struct SettingsView: View {
                         Label("AI-провайдеры", systemImage: "cpu")
                             .font(.headline)
 
-                        Text("Управляйте провайдерами и списками моделей для каждого из них.")
+                        Text("Справочник провайдеров: ключи и модели для каждого из них. Выбор провайдера и модели происходит в настройках треда.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
 
                         HStack(spacing: 12) {
-                            if let provider = viewModel.activeProvider {
-                                HStack(spacing: 8) {
+                            // Summary pill: how many providers are configured
+                            let count = viewModel.providers.count
+                            if count > 0 {
+                                HStack(spacing: 6) {
                                     Image(systemName: "checkmark.circle.fill")
                                         .foregroundStyle(.green)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(provider.displayName)
-                                            .font(.system(size: 13, weight: .semibold))
-                                        if let model = viewModel.activeModelName {
-                                            Text(model)
-                                                .font(.system(size: 11, design: .monospaced))
-                                                .foregroundStyle(.secondary)
-                                        }
-                                    }
+                                    Text("\(count) \(providersLabel(count))")
+                                        .font(.system(size: 13, weight: .medium))
                                 }
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
@@ -125,7 +120,7 @@ struct SettingsView: View {
                                 HStack(spacing: 8) {
                                     Image(systemName: "exclamationmark.circle.fill")
                                         .foregroundStyle(.orange)
-                                    Text("Нет настроенного провайдера")
+                                    Text("Нет настроенных провайдеров")
                                         .font(.system(size: 13))
                                         .foregroundStyle(.orange)
                                 }
@@ -187,15 +182,23 @@ struct SettingsView: View {
         .onAppear { loadCurrentName() }
     }
 
+    // MARK: - Helpers
+
+    private func providersLabel(_ count: Int) -> String {
+        switch count {
+        case 1: return "провайдер"
+        case 2...4: return "провайдера"
+        default: return "провайдеров"
+        }
+    }
+
     // MARK: - Actions
 
     private func saveName() {
         let trimmed = userName.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
         viewModel.saveUserName(trimmed)
-        withAnimation {
-            nameSaved = true
-        }
+        withAnimation { nameSaved = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             withAnimation { nameSaved = false }
         }
@@ -203,7 +206,6 @@ struct SettingsView: View {
 
     private func loadCurrentName() {
         // providerStore being non-nil means ModelContainer is connected and memoryStore is ready.
-        // If not ready yet — retry after a short delay.
         guard viewModel.providerStore != nil else {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { loadCurrentName() }
             return

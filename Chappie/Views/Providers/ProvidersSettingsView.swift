@@ -1,24 +1,26 @@
 // ProvidersSettingsView.swift
 // Chappie
 //
-// Two-level settings for AI providers.
+// Two-level directory view for AI providers.
+// This is a READ/MANAGE view — no active provider selection happens here.
+// Selection of provider+key+model happens at the thread level.
 //
 // LEVEL 1 — Provider list:
 //   Shows all configured providers. Tap → drill into provider detail.
-//   Add / delete providers freely (no "can't delete last" guard).
+//   Add / delete providers freely.
 //
 // LEVEL 2 — Provider detail (ProviderDetailView):
-//   Shows provider info (name, endpoint).
-//   Shows list of saved models — add new ones, delete existing ones.
-//   Edit provider (name, endpoint, key) via AddProviderSheet.
+//   Keys section: list of named API keys with add/edit/delete.
+//   Models section: list of saved models with add (via AddModelSheet) / delete.
+//   Edit provider metadata (name, endpoint) via AddProviderSheet.
 //
 // NAVIGATION:
 //   Uses if/else state switch instead of NavigationStack — NavigationStack
-//   inside a sheet on macOS does not behave as drill-down navigation,
-//   it creates a full navigation window which breaks the sheet layout.
+//   inside a sheet on macOS does not behave as drill-down, it creates a full
+//   navigation window which breaks the sheet layout.
 //
 // ORPHANED THREADS:
-//   Deleting a provider or model is always allowed.
+//   Deleting a provider, key, or model is always allowed.
 //   Affected threads show a warning banner in the chat view.
 
 import SwiftUI
@@ -55,7 +57,7 @@ struct ProvidersSettingsView: View {
                 providerListView
             }
         }
-        .frame(width: 560, height: 440)
+        .frame(width: 560, height: 480)
         .sheet(isPresented: $showAddProvider) {
             AddProviderSheet(
                 providerStore: viewModel.providerStore,
@@ -76,7 +78,7 @@ struct ProvidersSettingsView: View {
             }
             Button("Отмена", role: .cancel) { deleteConfirmId = nil }
         } message: {
-            Text("Провайдер и его API-ключ будут удалены. Треды, использующие этого провайдера, покажут предупреждение.")
+            Text("Провайдер и все его ключи будут удалены. Треды, использующие этого провайдера, покажут предупреждение.")
         }
     }
 
@@ -147,7 +149,6 @@ struct ProvidersSettingsView: View {
             ForEach(viewModel.providers) { provider in
                 ProviderListRow(
                     provider: provider,
-                    isActive: viewModel.activeProvider?.id == provider.id,
                     onTap: { selectedProvider = provider },
                     onDelete: { deleteConfirmId = provider.id }
                 )
@@ -180,10 +181,9 @@ struct ProvidersSettingsView: View {
     private func deleteProvider(id: UUID) {
         guard let store = viewModel.providerStore else { return }
 
-        // Synchronously clear aiClient/orchestrator BEFORE the async delete completes.
-        // WHY: reloadProviders() spawns an internal Task — there is a race window where
-        // send() can fire and find a non-nil orchestrator still pointing at the deleted
-        // provider. Calling this synchronously closes the race immediately on the MainActor.
+        // Synchronously clear aiClient/orchestrator BEFORE the async delete.
+        // WHY: reloadProviders() spawns a Task — there is a race window where
+        // send() can fire and find a non-nil orchestrator pointing at the deleted provider.
         viewModel.invalidateProviderIfDeleted(id: id)
 
         Task {
@@ -202,7 +202,6 @@ struct ProvidersSettingsView: View {
 private struct ProviderListRow: View {
 
     let provider: AIProvider
-    let isActive: Bool
     let onTap: () -> Void
     let onDelete: () -> Void
 
@@ -211,27 +210,19 @@ private struct ProviderListRow: View {
     var body: some View {
         HStack(spacing: 12) {
 
-            Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 16))
-                .foregroundStyle(isActive ? Color.accentColor : Color.secondary.opacity(0.25))
-
             VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(provider.displayName)
-                        .font(.system(size: 13, weight: .semibold))
-
-                    if isActive {
-                        Text("активный")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.accentColor.opacity(0.12), in: Capsule())
-                    }
-                }
+                Text(provider.displayName)
+                    .font(.system(size: 13, weight: .semibold))
 
                 HStack(spacing: 6) {
                     Text(provider.displayHost)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+
+                    Text("·")
+                        .foregroundStyle(.secondary.opacity(0.5))
+
+                    Text("\(provider.keys.count) \(keysLabel(provider.keys.count))")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
 
@@ -260,10 +251,18 @@ private struct ProviderListRow: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary.opacity(0.4))
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
         .onTapGesture { onTap() }
+    }
+
+    private func keysLabel(_ count: Int) -> String {
+        switch count {
+        case 1: return "ключ"
+        case 2...4: return "ключа"
+        default: return "ключей"
+        }
     }
 
     private func modelsLabel(_ count: Int) -> String {
@@ -289,8 +288,10 @@ struct ProviderDetailView: View {
 
     @State private var currentProvider: AIProvider
     @State private var showEditProvider: Bool = false
-    @State private var newModelName: String = ""
-    @State private var showAddModelAlert: Bool = false
+    @State private var showAddKey: Bool = false
+    @State private var editingKey: APIKey? = nil
+    @State private var deleteKeyId: UUID? = nil
+    @State private var showAddModel: Bool = false
     @State private var deleteModelName: String? = nil
     @State private var errorMessage: String? = nil
 
@@ -340,33 +341,19 @@ struct ProviderDetailView: View {
 
             Divider()
 
-            // Models section header
-            HStack {
-                Text("Модели")
-                    .font(.headline)
-                Text("(\(currentProvider.models.count))")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    keysSection
+                        .padding(.bottom, 8)
 
-                Spacer()
+                    Divider()
+                        .padding(.vertical, 8)
 
-                Button {
-                    showAddModelAlert = true
-                } label: {
-                    Label("Добавить", systemImage: "plus")
-                        .font(.subheadline)
+                    modelsSection
+                        .padding(.bottom, 8)
                 }
-                .buttonStyle(.bordered)
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 10)
-
-            Divider()
-
-            if currentProvider.models.isEmpty {
-                modelsEmptyState
-            } else {
-                modelsList
+                .padding(.horizontal, 24)
+                .padding(.top, 8)
             }
 
             if let err = errorMessage {
@@ -376,8 +363,6 @@ struct ProviderDetailView: View {
                     .padding(.horizontal, 24)
                     .padding(.vertical, 8)
             }
-
-            Spacer(minLength: 0)
         }
         .sheet(isPresented: $showEditProvider) {
             AddProviderSheet(
@@ -391,12 +376,55 @@ struct ProviderDetailView: View {
                 onCancel: { showEditProvider = false }
             )
         }
-        .alert("Добавить модель", isPresented: $showAddModelAlert) {
-            TextField("Название модели", text: $newModelName)
-            Button("Добавить") { addModel() }
-            Button("Отмена", role: .cancel) { newModelName = "" }
+        .sheet(isPresented: $showAddKey) {
+            EditKeySheet(
+                provider: currentProvider,
+                editingKey: nil,
+                providerStore: viewModel.providerStore,
+                onSaved: {
+                    showAddKey = false
+                    viewModel.reloadProviders()
+                    refreshCurrentProvider()
+                },
+                onCancel: { showAddKey = false }
+            )
+        }
+        .sheet(item: $editingKey) { key in
+            EditKeySheet(
+                provider: currentProvider,
+                editingKey: key,
+                providerStore: viewModel.providerStore,
+                onSaved: {
+                    editingKey = nil
+                    viewModel.reloadProviders()
+                    refreshCurrentProvider()
+                },
+                onCancel: { editingKey = nil }
+            )
+        }
+        .sheet(isPresented: $showAddModel) {
+            AddModelSheet(
+                provider: currentProvider,
+                existingModels: currentProvider.models,
+                providerStore: viewModel.providerStore,
+                onSaved: { newModels in
+                    showAddModel = false
+                    addModels(newModels)
+                },
+                onCancel: { showAddModel = false }
+            )
+        }
+        .alert("Удалить ключ?", isPresented: Binding(
+            get: { deleteKeyId != nil },
+            set: { if !$0 { deleteKeyId = nil } }
+        )) {
+            Button("Удалить", role: .destructive) {
+                if let id = deleteKeyId { deleteKey(id: id) }
+                deleteKeyId = nil
+            }
+            Button("Отмена", role: .cancel) { deleteKeyId = nil }
         } message: {
-            Text("Введите точное название модели, например: claude-sonnet-4-5")
+            Text("Ключ будет удалён из Keychain. Треды, использующие этот ключ, покажут предупреждение.")
         }
         .alert("Удалить модель?", isPresented: Binding(
             get: { deleteModelName != nil },
@@ -421,19 +449,8 @@ struct ProviderDetailView: View {
                 .foregroundStyle(Color.accentColor.opacity(0.8))
 
             VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Text(currentProvider.displayName)
-                        .font(.system(size: 15, weight: .semibold))
-
-                    if viewModel.activeProvider?.id == currentProvider.id {
-                        Text("активный")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.accentColor.opacity(0.12), in: Capsule())
-                    }
-                }
+                Text(currentProvider.displayName)
+                    .font(.system(size: 15, weight: .semibold))
 
                 Text(currentProvider.endpoint)
                     .font(.system(size: 11, design: .monospaced))
@@ -449,57 +466,118 @@ struct ProviderDetailView: View {
         .padding(.horizontal, 24)
     }
 
-    // MARK: - Models List
+    // MARK: - Keys Section
 
-    private var modelsList: some View {
-        List {
-            ForEach(currentProvider.models, id: \.self) { model in
-                ModelListRow(
-                    model: model,
-                    isActive: viewModel.activeProvider?.id == currentProvider.id
-                                && viewModel.activeModelName == model,
-                    onSelect: { selectModel(model) },
-                    onDelete: { deleteModelName = model }
-                )
+    private var keysSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Ключи")
+                    .font(.headline)
+                Text("(\(currentProvider.keys.count))")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button { showAddKey = true } label: {
+                    Label("Добавить", systemImage: "plus")
+                        .font(.subheadline)
+                }
+                .buttonStyle(.bordered)
+            }
+
+            if currentProvider.keys.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text("Нет ключей — провайдер недоступен для использования в тредах.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                .padding(10)
+                .background(Color.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+            } else {
+                VStack(spacing: 2) {
+                    ForEach(currentProvider.keys) { key in
+                        KeyRow(
+                            key: key,
+                            onEdit: { editingKey = key },
+                            onDelete: { deleteKeyId = key.id }
+                        )
+                    }
+                }
+                .padding(8)
+                .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
             }
         }
-        .listStyle(.inset)
     }
 
-    // MARK: - Models Empty State
+    // MARK: - Models Section
 
-    private var modelsEmptyState: some View {
-        VStack(spacing: 10) {
-            Spacer()
-            Image(systemName: "square.stack.3d.up.slash")
-                .font(.system(size: 32))
-                .foregroundStyle(.secondary.opacity(0.4))
-            Text("Нет сохранённых моделей")
-                .font(.subheadline.bold())
-                .foregroundStyle(.secondary)
-            Text("Нажмите «Добавить» чтобы добавить модель")
-                .font(.caption)
-                .foregroundStyle(.secondary.opacity(0.7))
-            Spacer()
+    private var modelsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Модели")
+                    .font(.headline)
+                Text("(\(currentProvider.models.count))")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button { showAddModel = true } label: {
+                    Label("Добавить", systemImage: "plus")
+                        .font(.subheadline)
+                }
+                .buttonStyle(.bordered)
+            }
+
+            if currentProvider.models.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "square.stack.3d.up.slash")
+                        .font(.system(size: 28))
+                        .foregroundStyle(.secondary.opacity(0.4))
+                    Text("Нет сохранённых моделей")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
+            } else {
+                VStack(spacing: 2) {
+                    ForEach(currentProvider.models, id: \.self) { model in
+                        ModelRow(
+                            model: model,
+                            onDelete: { deleteModelName = model }
+                        )
+                    }
+                }
+                .padding(8)
+                .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+            }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
     }
 
     // MARK: - Actions
 
-    private func selectModel(_ modelName: String) {
-        viewModel.switchModel(to: modelName)
-    }
-
-    private func addModel() {
-        let trimmed = newModelName.trimmingCharacters(in: .whitespaces)
-        newModelName = ""
-        guard !trimmed.isEmpty, let store = viewModel.providerStore else { return }
-
+    private func addModels(_ models: [String]) {
+        guard let store = viewModel.providerStore else { return }
         Task {
             do {
-                try await store.addModel(trimmed, toProviderId: currentProvider.id)
+                for model in models {
+                    try await store.addModel(model, toProviderId: currentProvider.id)
+                }
+                viewModel.reloadProviders()
+                refreshCurrentProvider()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func deleteKey(id: UUID) {
+        guard let store = viewModel.providerStore else { return }
+        // Synchronously invalidate if this key is currently active
+        viewModel.invalidateKeyIfDeleted(keyId: id, providerId: currentProvider.id)
+        Task {
+            do {
+                try await store.deleteKey(id: id, fromProviderId: currentProvider.id)
                 viewModel.reloadProviders()
                 refreshCurrentProvider()
             } catch {
@@ -510,12 +588,7 @@ struct ProviderDetailView: View {
 
     private func deleteModel(_ modelName: String) {
         guard let store = viewModel.providerStore else { return }
-
-        // Synchronously invalidate BEFORE the async delete — same race-condition fix as deleteProvider.
-        // WHY: reloadProviders() runs in a Task; send() could fire in the gap and find
-        // a non-nil orchestrator still configured with the deleted model name.
         viewModel.invalidateModelIfDeleted(name: modelName, providerId: currentProvider.id)
-
         Task {
             do {
                 try await store.deleteModel(modelName, fromProviderId: currentProvider.id)
@@ -534,40 +607,75 @@ struct ProviderDetailView: View {
     }
 }
 
-// MARK: - ModelListRow
+// MARK: - KeyRow
 
-private struct ModelListRow: View {
+private struct KeyRow: View {
 
-    let model: String
-    let isActive: Bool
-    let onSelect: () -> Void
+    let key: APIKey
+    let onEdit: () -> Void
     let onDelete: () -> Void
 
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
+            Image(systemName: "key.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(Color.accentColor.opacity(0.7))
 
-            Button(action: onSelect) {
-                Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 16))
-                    .foregroundStyle(isActive ? Color.accentColor : Color.secondary.opacity(0.25))
+            Text(key.name)
+                .font(.system(size: 13, weight: .medium))
+
+            Text("••••••••")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary.opacity(0.5))
+
+            Spacer()
+
+            HStack(spacing: 8) {
+                Button(action: onEdit) {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Редактировать ключ")
+
+                Button(action: onDelete) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.red.opacity(0.7))
+                }
+                .buttonStyle(.plain)
+                .help("Удалить ключ")
             }
-            .buttonStyle(.plain)
-            .help(isActive ? "Активная модель" : "Использовать эту модель")
+            .opacity(isHovered ? 1 : 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - ModelRow
+
+private struct ModelRow: View {
+
+    let model: String
+    let onDelete: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "cpu")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary.opacity(0.5))
 
             Text(model)
                 .font(.system(size: 13, design: .monospaced))
                 .foregroundStyle(.primary)
-
-            if isActive {
-                Text("активная")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.accentColor.opacity(0.12), in: Capsule())
-            }
 
             Spacer()
 
@@ -580,7 +688,9 @@ private struct ModelListRow: View {
             .help("Удалить модель")
             .opacity(isHovered ? 1 : 0)
         }
-        .padding(.vertical, 4)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .contentShape(Rectangle())
         .onHover { isHovered = $0 }
     }
 }
