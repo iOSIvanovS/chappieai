@@ -2,7 +2,23 @@
 // Chappie
 //
 // Memory context: build MemoryContext for system prompt, sync to ToolExecutionService.
-// V2: invalidates ThreadSession cache after context rebuild so next send() gets fresh prompt.
+//
+// SETTINGS CHANGE FLOW:
+//   updateProjectSettings → loadProjectsForThread → buildAndSyncMemoryContext
+//   → rebuildThreadSessionOnly() — creates new ThreadSession with fresh projectMetas.
+//
+// WHY NOT invalidateCache():
+//   ThreadSession captures projectMetas by value at init time (immutable let in actor).
+//   Invalidating the cache only clears the built prompt string — old settings DTOs remain.
+//   A full session rebuild is required to pick up new settings values.
+//
+// WHY NOT assembleThreadSession():
+//   That triggers syncFileSystemForActiveThread() — expensive bookmark resolution
+//   (100ms–1s per project). Unnecessary when only settings change, not project membership.
+//
+// MEMORY WRITE FLOW (memorize/recall tool calls during conversation):
+//   memory changes → invalidateActiveThreadSession() — clears cached prompt only.
+//   projectMetas are unchanged, so invalidation is sufficient here.
 
 import ChappieCore
 
@@ -16,8 +32,11 @@ extension ChappieViewModel {
         }
         self.activeMemoryContext = MemoryContext(threadId: activeThread?.id, projectInfos: projectInfos)
 
-        // V2: memory context changed — cached system prompt is stale
-        invalidateActiveThreadSession()
+        // Rebuild ThreadSession with fresh projectMetas so new settings take effect immediately.
+        // rebuildThreadSessionOnly skips bookmark resolution — safe for settings-only changes.
+        if let thread = activeThread {
+            Task { await rebuildThreadSessionOnly(for: thread) }
+        }
     }
 
     func syncActiveMemoryContext() async {
@@ -29,7 +48,7 @@ extension ChappieViewModel {
         let context = ActiveMemoryContext(threadId: activeThread?.id, projects: projectInfos)
         await ts.setActiveMemoryContext(context)
 
-        // Also push project settings so ToolExecutionService can enforce permissions
+        // Push project settings so ToolExecutionService can enforce permissions.
         let settingsMap = Dictionary(uniqueKeysWithValues: activeProjects.map { ($0.id, $0.settings) })
         await ts.setProjectSettings(settingsMap)
     }

@@ -10,7 +10,14 @@
 // FLOW:
 //   selectThread() → assembleThreadSession() → ThreadSession stored in _activeThreadSession
 //   send() reads activeThreadSession?.systemPrompt() → passes as overrideSystemPrompt to orchestrator
-//   memory/project changes → invalidateActiveThreadSession() resets the cache
+//   memory/project changes → rebuildThreadSessionOnly() rebuilds session with fresh projectMetas
+//   project add/remove → assembleThreadSession() (full rebuild including FS sync)
+//
+// WHY rebuildThreadSessionOnly() EXISTS:
+//   ThreadSession captures projectMetas by value at init time — they are immutable in the actor.
+//   invalidateCache() alone does NOT pick up new settings because the old DTOs are still in place.
+//   rebuildThreadSessionOnly() creates a new ThreadSession with fresh activeProjects but skips
+//   the expensive bookmark resolution (syncFileSystemForActiveThread) — safe for settings-only changes.
 //
 // M-09 WORKSPACE ISOLATION (B-01 FIX):
 //   syncFileSystemForActiveThread() resolves bookmarks for ALL attached projects
@@ -65,10 +72,10 @@ extension ChappieViewModel {
         set { _activeThreadSession = newValue }
     }
 
-    // MARK: - Assemble
+    // MARK: - Assemble (full — includes FS sync)
 
-    /// Builds a fresh ThreadSession for the given thread.
-    /// Called from selectThread() after projects are loaded.
+    /// Builds a fresh ThreadSession + syncs FileSystem for the given thread.
+    /// Called from selectThread() and when projects are added/removed.
     func assembleThreadSession(for thread: ThreadMetadata) async {
         guard let store = memoryStore else { return }
 
@@ -84,7 +91,7 @@ extension ChappieViewModel {
             projectMetas: activeProjects,
             memoryStore: store,
             promptBuilder: builder,
-            userName: nil // wired when AppSettings gets a userName field
+            userName: nil
         )
 
         self._activeThreadSession = session
@@ -97,10 +104,39 @@ extension ChappieViewModel {
         registerProjectUnavailableCallback()
     }
 
+    // MARK: - Rebuild (settings-only — skips FS sync)
+
+    /// Rebuilds ThreadSession with fresh projectMetas WITHOUT re-resolving bookmarks.
+    /// Use when only project settings changed (role, comments, terminal access, etc.).
+    ///
+    /// WHY NOT invalidateCache(): ThreadSession captures projectMetas by value at init time.
+    /// Invalidating the cache only clears the built prompt string — the old DTOs remain in place.
+    /// A full session rebuild is required to pick up new settings values.
+    ///
+    /// WHY NOT assembleThreadSession(): that triggers syncFileSystemForActiveThread() which
+    /// re-resolves bookmarks — expensive (100ms–1s per project) and unnecessary for settings changes.
+    func rebuildThreadSessionOnly(for thread: ThreadMetadata) async {
+        guard let store = memoryStore else { return }
+
+        let builder = SystemPromptBuilder(personaBlock: Self.v2PersonaBlock)
+
+        let session = ThreadSession(
+            thread: thread,
+            projectMetas: activeProjects,
+            memoryStore: store,
+            promptBuilder: builder,
+            userName: nil
+        )
+
+        self._activeThreadSession = session
+        print("[ChappieViewModel] ThreadSession rebuilt (settings-only) for '\(thread.title)'")
+    }
+
     // MARK: - Invalidate
 
     /// Clears the cached prompt inside the active session.
-    /// Call after any memory write or project settings change.
+    /// Use only when memory entries change but projectMetas stay the same
+    /// (e.g. memorize/recall tool calls during a conversation).
     func invalidateActiveThreadSession() {
         Task { await _activeThreadSession?.invalidateCache() }
     }
