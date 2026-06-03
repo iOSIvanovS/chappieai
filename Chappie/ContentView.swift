@@ -84,11 +84,11 @@
 //   ModelPickerRow.onSelectProvider now receives (providerId, keyId, modelName).
 //   ContentView passes all three into switchProvider() — full thread-isolated key selection.
 //
-// BUG-01: LOAD MORE SCROLL FIX:
-//   ChatScrollView now receives isLoadingMore + firstLoadedMessageId + onLoadMoreScrollDone.
-//   When user taps Load More, ViewModel sets isLoadingMore=true and records the first new
-//   message ID before prepending. ChatScrollView skips bottom-scroll and anchors to that ID.
-//   onLoadMoreScrollDone() resets isLoadingMore in ViewModel after scroll.
+// BUG-01: LOAD MORE SCROLL FIX (v3):
+//   loadMoreAnchorId replaces the old isLoadingMore + firstLoadedMessageId pair.
+//   ViewModel sets loadMoreAnchorId to the first currently-visible message BEFORE prepend.
+//   ChatScrollView uses scrollPosition(id:) to anchor there after the VStack updates.
+//   ContentView resets loadMoreAnchorId via onLoadMoreScrollDone after scroll is applied.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -352,12 +352,10 @@ struct ContentView: View {
                 isLoadingHistory: viewModel.isLoadingThread,
                 headerHeight: topPanelHeight + safeAreaTop,
                 footerHeight: currentPanelHeight,
-                isLoadingMore: viewModel.isLoadingMore,
-                firstLoadedMessageId: viewModel.firstLoadedMessageId,
+                loadMoreAnchorId: viewModel.loadMoreAnchorId,
                 onLoadMoreScrollDone: {
-                    // BUG-01: reset flag after ChatScrollView has anchored to the new message.
-                    viewModel.isLoadingMore = false
-                    viewModel.firstLoadedMessageId = nil
+                    // BUG-01: reset anchor after ChatScrollView has applied scrollPosition.
+                    viewModel.loadMoreAnchorId = nil
                 }
             )
             .ignoresSafeArea(edges: .top)

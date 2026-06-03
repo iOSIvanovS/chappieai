@@ -17,16 +17,16 @@
 // This means the last message lands just above the sentinel — just above the
 // input panel. The footer spacer (footerHeight) below the sentinel provides
 // physical clearance from the actual panel chrome.
-// WHY NOT anchor: .bottom — that would align the BOTTOM of the sentinel with
-// the viewport bottom, placing it below the panel — last message gets covered.
 //
-// FOOTER HEIGHT (CPU-22):
-// footerHeight = currentPanelHeight, measured via onGeometryChange in ContentView.
-// This is the exact rendered height of InputMorphView — no manual formula, no gap.
-// When the panel grows (multi-line text, attachment row), footerHeight grows too,
-// so the user can always scroll the last message above the expanded panel.
-// Previously: minPanelHeight (88pt) was static — expanding panel covered messages
-// and the user couldn't scroll them into view.
+// BUG-01: LOAD MORE SCROLL FIX (v3 — scrollPosition API):
+// Previous attempts used proxy.scrollTo(targetId) or isLoadingMore flag —
+// both failed because VStack inside ScrollView does NOT preserve position on prepend.
+// Fix: scrollPosition(id:) modifier + @State scrolledID.
+// When loadMoreAnchorId is set (first visible message before prepend),
+// scrolledID is assigned that ID — SwiftUI natively anchors the viewport to it.
+// After one render pass scrolledID is reset to nil so normal auto-scroll resumes.
+// WHY scrollPosition works here: it drives the ScrollView's internal position tracker,
+// which is evaluated AFTER layout — unlike proxy.scrollTo which fires during render.
 //
 // VSTACK (PAGINATION OVER LAZYVSTACK):
 // Messages are rendered in a plain VStack — all displayed messages are always in the
@@ -44,19 +44,8 @@
 //      the layout tree. onChange fires during the render pass — before layout is committed.
 //      A 150ms sleep gives the VStack time to measure its content on cold start.
 //   2. onChange(messages.count) — new message added to the chat.
-//      EXCEPTION: skipped entirely when isLoadingMore=true (Load More prepend).
-//      SwiftUI preserves scroll position automatically when content is prepended to a VStack
-//      — no explicit scroll call needed. We just reset the flag.
+//      EXCEPTION: skipped when loadMoreAnchorId != nil (Load More prepend in progress).
 //   3. onChange(streaming.streamingText) — Chappie is streaming (throttled to 1/frame).
-//
-// BUG-01: LOAD MORE SCROLL FIX:
-// When the user taps "Load earlier messages", loadMoreMessages() sets isLoadingMore=true
-// BEFORE mutating displayedMessages. ChatScrollView sees messages.count change, checks
-// isLoadingMore, and does NOT call proxy.scrollTo at all — SwiftUI's ScrollView naturally
-// keeps the viewport anchored to the content that was already visible when items are
-// prepended to the top of a VStack. onLoadMoreScrollDone() resets the flag.
-// WHY NOT proxy.scrollTo(targetId, anchor: .top) — that explicitly jumps to the target
-// message and places it at the TOP of the screen, which is the opposite of what we want.
 //
 // CPU-13: STREAMING ISOLATION:
 // ChatScrollView receives `streaming: StreamingState` as a `let` reference.
@@ -175,15 +164,17 @@ struct ChatScrollView: View {
     /// CPU-22: measured via onGeometryChange in ContentView, grows dynamically.
     let footerHeight: CGFloat
 
-    /// BUG-01: True while loadMoreMessages() is prepending older messages.
-    /// When true: skip bottom-scroll entirely — SwiftUI preserves position automatically.
-    let isLoadingMore: Bool
+    /// BUG-01: ID of the first previously-visible message before Load More prepend.
+    /// When non-nil, scrolledID is set to this value so the viewport stays anchored.
+    /// Reset to nil by ViewModel after one render pass.
+    let loadMoreAnchorId: UUID?
 
-    /// BUG-01: Unused after fix — kept for API compatibility, will be removed in cleanup.
-    let firstLoadedMessageId: UUID?
-
-    /// Called after Load More completes — resets isLoadingMore in ViewModel.
+    /// Called after Load More anchor scroll is applied — resets loadMoreAnchorId in ViewModel.
     let onLoadMoreScrollDone: () -> Void
+
+    // BUG-01: scrollPosition(id:) binding — drives native anchor after Load More prepend.
+    // Set to loadMoreAnchorId when it appears, then reset to nil.
+    @State private var scrolledID: UUID? = nil
 
     // CPU-05: debounce flag — true while a scroll task is already scheduled.
     // Prevents firing proxy.scrollTo on every streaming token (dozens/sec).
@@ -244,6 +235,9 @@ struct ChatScrollView: View {
                 .padding(.horizontal, 16)
             }
             .scrollIndicators(.never)
+            // BUG-01: native scroll position anchor — SwiftUI evaluates this AFTER layout,
+            // so the viewport correctly stays on the anchor message after VStack prepend.
+            .scrollPosition(id: $scrolledID)
             .task(id: scrollToBottomTrigger) {
                 guard scrollToBottomTrigger > 0 else { return }
                 // 150ms — enough for VStack to measure content on cold start.
@@ -253,13 +247,16 @@ struct ChatScrollView: View {
                 }
             }
             .onChange(of: messages.count) { _, _ in
-                if isLoadingMore {
-                    // BUG-01: Load More prepend — do NOT scroll at all.
-                    // SwiftUI ScrollView naturally keeps the viewport anchored when
-                    // items are prepended to a VStack — no explicit scroll needed.
-                    // Any proxy.scrollTo call here would jump the user to a different
-                    // position, which is exactly the bug we're fixing.
-                    onLoadMoreScrollDone()
+                // BUG-01: Load More prepend — anchor to the first previously-visible message.
+                // scrollPosition(id:) keeps the viewport on that message after prepend.
+                if let anchorId = loadMoreAnchorId {
+                    scrolledID = anchorId
+                    // Reset after one pass so normal auto-scroll can resume.
+                    Task {
+                        try? await Task.sleep(nanoseconds: 50_000_000)
+                        scrolledID = nil
+                        onLoadMoreScrollDone()
+                    }
                 } else {
                     withAnimation(.easeOut(duration: 0.3)) {
                         proxy.scrollTo("bottom", anchor: .top)
@@ -488,8 +485,7 @@ private struct BlinkingCursor: View {
         isLoadingHistory: false,
         headerHeight: 80,
         footerHeight: InputLayout.minPanelHeight,
-        isLoadingMore: false,
-        firstLoadedMessageId: nil,
+        loadMoreAnchorId: nil,
         onLoadMoreScrollDone: {}
     )
     .frame(width: 650, height: 500)
@@ -508,8 +504,7 @@ private struct BlinkingCursor: View {
         isLoadingHistory: false,
         headerHeight: 60,
         footerHeight: InputLayout.minPanelHeight,
-        isLoadingMore: false,
-        firstLoadedMessageId: nil,
+        loadMoreAnchorId: nil,
         onLoadMoreScrollDone: {}
     )
     .frame(width: 650, height: 300)
@@ -519,7 +514,6 @@ private struct BlinkingCursor: View {
 #Preview("Thinking — waiting for first token") {
     let streaming = StreamingState()
     streaming.isThinking = true
-    // streamingText is empty — no bubble shown, bottom panel handles the indicator.
 
     return ChatScrollView(
         scrollToBottomTrigger: 0,
@@ -532,8 +526,7 @@ private struct BlinkingCursor: View {
         isLoadingHistory: false,
         headerHeight: 60,
         footerHeight: InputLayout.minPanelHeight,
-        isLoadingMore: false,
-        firstLoadedMessageId: nil,
+        loadMoreAnchorId: nil,
         onLoadMoreScrollDone: {}
     )
     .frame(width: 650, height: 300)
