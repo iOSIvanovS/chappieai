@@ -163,7 +163,7 @@ public actor AIOrchestrator {
 
             let tools = await toolService.availableTools
 
-            let streamResult = try await streamWithStallRetry(
+            let streamResult = try await streamWithRetry(
                 systemPrompt: systemPrompt,
                 sessionHistory: sessionHistory,
                 tools: tools,
@@ -217,16 +217,19 @@ public actor AIOrchestrator {
         )
     }
 
-    // MARK: - Private: Stall Retry Wrapper
+    // MARK: - Private: Unified Retry Wrapper (Stall + Timeout)
 
-    /// Wraps streamRequestWithTools() with stall detection and continuation retry.
+    /// Wraps streamRequestWithTools() with two recovery layers:
     ///
-    /// Recovery flow:
-    /// 1. AIClient throws StallError(partialText:) after stallTimeout seconds of silence.
-    /// 2. Partial assistant message is appended to a LOCAL copy of sessionHistory.
-    /// 3. A continuation prompt is injected — model sees its own partial output and continues.
-    /// 4. Retries up to maxStallRetries times, then throws a clear network error.
-    private func streamWithStallRetry(
+    /// Layer 1 — Stall retry (StallError):
+    ///   No tokens for stallTimeout seconds → inject continuation prompt → retry.
+    ///   Up to maxStallRetries times.
+    ///
+    /// Layer 2 — Timeout retry (URLError.timedOut / networkError):
+    ///   Full connection timeout → 1 silent retry after 2s delay.
+    ///   If second attempt also times out → send a lightweight diagnostic request to AI
+    ///   and return a structured explanation instead of a raw error.
+    private func streamWithRetry(
         systemPrompt: String,
         sessionHistory: [AIMessage],
         tools: [AITool],
@@ -237,8 +240,18 @@ public actor AIOrchestrator {
         var retryHistory = sessionHistory
         var stallRetryCount = 0
         var accumulatedPartialText = ""
+        var timeoutAttempt = 0
 
         while true {
+            // Build RequestLog snapshot before the network call.
+            let log = RequestLog(
+                attemptNumber: timeoutAttempt + 1,
+                messageCount: retryHistory.count,
+                estimatedTokens: retryHistory.reduce(0) { $0 + estimateTokens($1) },
+                toolCount: tools.count,
+                recentFilePaths: extractRecentFilePaths(from: retryHistory)
+            )
+
             do {
                 let result = try await aiClient.streamRequestWithTools(
                     systemPrompt: systemPrompt,
@@ -260,11 +273,12 @@ public actor AIOrchestrator {
                 }
 
             } catch let stallError as StallError {
+                // Layer 1: stall retry — model went silent mid-stream.
                 stallRetryCount += 1
-
                 print("[AIOrchestrator] Stall retry \(stallRetryCount)/\(config.maxStallRetries). Partial: \(stallError.partialText.count) chars.")
 
                 if stallRetryCount > config.maxStallRetries {
+                    // Stall retries exhausted — escalate to timeout diagnostic.
                     throw ChappieError.networkError(
                         "Stream stalled \(config.maxStallRetries) times in a row. " +
                         "The provider may be overloaded. Please try again."
@@ -286,11 +300,124 @@ public actor AIOrchestrator {
                 ))
 
                 print("[AIOrchestrator] Retrying with continuation prompt. History: \(retryHistory.count) msgs.")
+
+            } catch {
+                // Layer 2: check if this is a timeout error worth retrying silently.
+                guard isTimeoutError(error) else { throw error }
+
+                timeoutAttempt += 1
+                print("[AIOrchestrator] Timeout on attempt \(timeoutAttempt). Error: \(error.localizedDescription)")
+
+                if timeoutAttempt == 1 {
+                    // First timeout — silent retry after a short pause.
+                    print("[AIOrchestrator] Silent retry in 2s...")
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
+
+                    // Re-check invalidation after sleep — user may have cancelled.
+                    guard !isInvalidated else { throw CancellationError() }
+                    continue
+                }
+
+                // Second timeout — run diagnostic and return a helpful message.
+                print("[AIOrchestrator] Double timeout. Running diagnostic request...")
+                let diagnosis = await runDiagnosticRequest(log: log, systemPrompt: systemPrompt)
+                return AIStreamResult(text: diagnosis, toolCalls: nil, cost: nil, balance: nil)
             }
         }
     }
 
-    // MARK: - Smart Context Window
+    // MARK: - Private: Timeout Detection
+
+    /// Returns true if the error represents a connection or request timeout.
+    private func isTimeoutError(_ error: Error) -> Bool {
+        if let urlError = error as? URLError {
+            return urlError.code == .timedOut || urlError.code == .networkConnectionLost
+        }
+        if case .networkError(let msg) = error as? ChappieError {
+            let lower = msg.lowercased()
+            return lower.contains("timed out") || lower.contains("timeout") || lower.contains("time out")
+        }
+        return false
+    }
+
+    // MARK: - Private: Diagnostic Request
+
+    /// Sends a lightweight diagnostic request to the AI with RequestLog metadata.
+    ///
+    /// WHY LIGHTWEIGHT: we don't send the full context — it may be the cause of the timeout.
+    /// Instead we send only the log summary and ask the AI to diagnose.
+    /// If the diagnostic request also fails — we return a static fallback message.
+    private func runDiagnosticRequest(log: RequestLog, systemPrompt: String) async -> String {
+        let diagnosticPrompt = """
+        A user's request to you timed out twice in a row. Here are the request metadata:
+
+        \(log.diagnosticSummary)
+
+        Based on this metadata, provide a SHORT (3-5 sentences) diagnosis in Russian:
+        1. What likely caused the timeout (context too large, file too big, task too complex, etc.)
+        2. A concrete recommendation for the user (split the task, start a new thread, reduce context, etc.)
+
+        Be specific and practical. Do NOT apologize excessively. Just diagnose and advise.
+        """
+
+        let diagnosticHistory = [AIMessage(role: "user", content: diagnosticPrompt)]
+
+        do {
+            // Minimal tools — we only need a text response.
+            let result = try await aiClient.streamRequestWithTools(
+                systemPrompt: "You are a helpful AI assistant diagnosing a timeout issue.",
+                chatHistory: diagnosticHistory,
+                tools: [],
+                stallTimeout: 30, // short timeout for diagnostic — if this fails too, we give up
+                onToken: nil
+            )
+            let diagnosis = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !diagnosis.isEmpty {
+                return "⏱️ **Запрос завис дважды. Вот что я думаю:**\n\n\(diagnosis)"
+            }
+        } catch {
+            print("[AIOrchestrator] Diagnostic request also failed: \(error.localizedDescription)")
+        }
+
+        // Static fallback if diagnostic request also fails.
+        return """
+        ⏱️ **Запрос завис дважды подряд.**
+
+        Возможные причины:
+        • Контекст слишком большой (\(log.estimatedTokens) ≈ токенов, \(log.messageCount) сообщений)
+        • Провайдер перегружен или недоступен
+        • Задача слишком объёмная для одного запроса
+
+        **Рекомендации:** начни новый тред, уменьши контекст в настройках треда, или раздели задачу на части.
+        """
+    }
+
+    // MARK: - Private: Extract Recent File Paths
+
+    /// Scans the last few tool result messages in history for file paths.
+    /// Used to populate RequestLog.recentFilePaths for diagnostic context.
+    private func extractRecentFilePaths(from history: [AIMessage]) -> [String] {
+        let recentMessages = history.suffix(6)
+        var paths: [String] = []
+
+        for message in recentMessages {
+            guard let content = message.contentString else { continue }
+            // Look for path-like strings: starts with a letter/dot, contains slashes.
+            let words = content.components(separatedBy: .whitespacesAndNewlines)
+            for word in words {
+                let clean = word.trimmingCharacters(in: CharacterSet(charactersIn: "\"',()[]{}"))
+                if clean.contains("/") && clean.count > 3 && clean.count < 200 {
+                    paths.append(clean)
+                }
+            }
+        }
+
+        // Deduplicate and limit to 5 most recent.
+        var seen = Set<String>()
+        return paths.filter { seen.insert($0).inserted }.prefix(5).map { $0 }
+    }
+
+    // MARK: - Private: Smart Context Window
 
     /// Builds the context window from history + current user message.
     ///
