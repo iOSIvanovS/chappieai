@@ -17,11 +17,11 @@
 // was inside ContentView's layout tree.
 //
 // FLOATING PANELS LAYOUT:
-//   Top panel: ModelPickerRow (top) + ProjectChipsView (bottom) — each is an independent
-//   floating rounded pill with ultraThinMaterial. The outer VStack is transparent.
-//   ModelPickerRow is shown only when a provider is configured; balance pill inside it
-//   is shown only when the active provider returns a balance value.
-//   ProjectChipsView is always shown when a thread is active (gear chip always visible).
+//   Top panel: two rows, each an independent floating rounded pill with ultraThinMaterial.
+//     Row 1 (ModelPickerRow): model selector (left) + thread settings gear (right).
+//                             Shown only when a provider is configured.
+//     Row 2 (ProjectChipsView): project chips (left) + balance pill (right, nil = hidden).
+//                               Always shown when a thread is active.
 //   Bottom panel: InputMorphView — ultraThinMaterial.
 //   Top panel reports its height so ChatScrollView can add a matching header spacer.
 //   Bottom panel height is measured via onGeometryChange — exact, no manual math.
@@ -54,10 +54,10 @@
 //   bottomPanel, or any other ContentView subtree.
 //
 // CPU-15: BALANCE ISOLATION:
-//   currentBalance moved from ChappieViewModel into StreamingState.
-//   ModelPickerRow now receives `streaming` reference and reads streaming.currentBalance
-//   directly — balance updates during streaming no longer invalidate ContentView or topPanel.
-//   ContentView does NOT read streaming.currentBalance — only ModelPickerRow does.
+//   currentBalance lives in StreamingState. ProjectChipsView receives `streaming`
+//   reference and reads streaming.currentBalance directly — balance updates during
+//   streaming no longer invalidate ContentView or topPanel.
+//   ContentView does NOT read streaming.currentBalance — only ProjectChipsView does.
 //
 // CPU-20: SCROLL ANCHOR FIX:
 //   footerHeight changed from maxPanelHeight (268pt) to minPanelHeight (88pt).
@@ -382,8 +382,8 @@ struct ContentView: View {
 
     private var topPanel: some View {
         VStack(spacing: 6) {
-            // Model picker + balance pill — shown only when a provider is configured.
-            // Balance pill inside ModelPickerRow is hidden when provider returns no balance.
+            // Row 1: model selector (left) + thread settings gear (right).
+            // Hidden when no provider is configured.
             if viewModel.activeThread != nil && !viewModel.providers.isEmpty {
                 ModelPickerRow(
                     activeProvider: viewModel.activeProvider,
@@ -391,6 +391,7 @@ struct ContentView: View {
                     activeKeyId: viewModel.activeKeyId,
                     providers: viewModel.providers,
                     isOrphaned: viewModel.isThreadOrphaned,
+                    threadName: viewModel.activeThread?.title,
                     streaming: viewModel.streaming,
                     onSelectProvider: { providerId, keyId, modelName in
                         // MK-07: full provider+key+model selection from inline popover
@@ -405,29 +406,31 @@ struct ContentView: View {
                                 )
                             }
                         }
+                    },
+                    onOpenThreadSettings: {
+                        if let thread = viewModel.activeThread {
+                            let fresh = viewModel.threads.first(where: { $0.id == thread.id }) ?? thread
+                            selectedThreadForSettings = fresh
+                        }
                     }
                 )
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
-            // Thread settings chip — always visible when thread is active.
+            // Row 2: project chips (left) + balance pill (right, nil = hidden).
+            // Always visible when a thread is active.
             if viewModel.activeThread != nil {
                 ProjectChipsView(
                     projects: viewModel.activeProjects,
                     threadName: viewModel.activeThread?.title,
                     isThinking: viewModel.streaming.isThinking,
                     isFileSystemReady: viewModel.isFileSystemReady,
+                    balance: viewModel.streaming.currentBalance,
                     onAddProject: { url in viewModel.addProject(url: url) },
                     onRemoveProject: { projectId in viewModel.removeProject(id: projectId) },
                     onOpenSettings: { projectId in
                         if let project = viewModel.activeProjects.first(where: { $0.id == projectId }) {
                             selectedProjectForSettings = project
-                        }
-                    },
-                    onOpenThreadSettings: {
-                        if let thread = viewModel.activeThread {
-                            let fresh = viewModel.threads.first(where: { $0.id == thread.id }) ?? thread
-                            selectedThreadForSettings = fresh
                         }
                     }
                 )

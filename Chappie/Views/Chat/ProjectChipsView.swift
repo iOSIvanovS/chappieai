@@ -8,7 +8,8 @@
 //   ZStack approach:
 //     - Bottom layer: leftPill with frame(maxWidth: .infinity) — fills all available width.
 //       FlowLayout receives a finite proposal and wraps chips correctly.
-//     - Top layer (trailing): threadSettingsButton with fixedSize() — floats over the right edge.
+//     - Top layer (trailing): balancePill with fixedSize() — floats over the right edge.
+//                              Shown only when balance is non-nil.
 //
 //   WHY NOT HStack + Spacer:
 //     HStack first asks leftPill for its intrinsic size (proposal.width = nil).
@@ -19,12 +20,8 @@
 //     ZStack offers ALL subviews the SAME proposal (the full available width).
 //     leftPill gets frame(maxWidth: .infinity) → FlowLayout receives the full width
 //     as its proposal → wraps correctly when chips don't fit.
-//     threadSettingsButton has fixedSize() → takes only its intrinsic width,
+//     balancePill has fixedSize() → takes only its intrinsic width,
 //     aligned to the trailing edge via ZStack(alignment: .topTrailing).
-//
-// THREAD SETTINGS CHIP (IT-12):
-//   Right-side pill shows gear icon + thread name.
-//   Tap → onOpenThreadSettings() → ContentView shows ThreadSettingsSheet.
 //
 // IT-09: Tap on chip opens ProjectSettingsSheet.
 // IT-13: Soft lock — shake animation instead of opacity dimming.
@@ -37,6 +34,11 @@
 //   project.isUnavailable=true → chip shows orange warning icon + orange border.
 //   Tooltip explains the folder is missing. User must restore the folder or remove the project.
 //   On next app start / thread switch, if folder is back — chip returns to normal.
+//
+// CPU-15: BALANCE ISOLATION:
+//   balance is passed as Double? from StreamingState.currentBalance in ContentView.
+//   Balance pill is hidden when nil — provider doesn't support balance or hasn't returned one.
+//   Balance updates do NOT invalidate ContentView — only ProjectChipsView re-renders.
 
 import SwiftUI
 import ChappieCore
@@ -53,13 +55,14 @@ struct ProjectChipsView: View {
     let threadName: String?
     let isThinking: Bool
     let isFileSystemReady: Bool
+    /// Current provider balance — nil when provider doesn't return balance.
+    let balance: Double?
 
     // MARK: - Callbacks
 
     let onAddProject: (URL) -> Void
     let onRemoveProject: (UUID) -> Void
     let onOpenSettings: (UUID) -> Void
-    let onOpenThreadSettings: () -> Void
 
     // MARK: - State
 
@@ -70,30 +73,28 @@ struct ProjectChipsView: View {
     // MARK: - Body
 
     var body: some View {
-        // ZStack: leftPill fills full width, rightPill floats top-trailing.
+        // ZStack: leftPill fills full width, balancePill floats top-trailing.
         // Both receive the same width proposal from ZStack = full available width.
         ZStack(alignment: .topTrailing) {
 
             // LEFT PILL: fills full width, FlowLayout wraps chips.
-            // frame(maxWidth: .infinity) ensures FlowLayout always gets a finite proposal.
-            // padding on the right side reserves space so chips don't hide under rightPill.
+            // Padding on the right side reserves space so chips don't hide under balancePill.
             leftPill
                 .frame(maxWidth: .infinity, alignment: .leading)
-                // Reserve space for the right pill so chips don't overlap it
-                .padding(.trailing, rightPillWidth + 8)
+                .padding(.trailing, balance != nil ? rightPillWidth + 8 : 0)
 
-            // RIGHT PILL: gear + thread name — intrinsic width only.
-            // fixedSize() prevents it from stretching.
-            // Background GeometryReader measures its width for the left pill's padding.
-            threadSettingsButton
-                .fixedSize()
-                .background(
-                    GeometryReader { geo in
-                        Color.clear
-                            .onAppear { rightPillWidth = geo.size.width }
-                            .onChange(of: geo.size.width) { _, w in rightPillWidth = w }
-                    }
-                )
+            // RIGHT PILL: balance — shown only when a value is available.
+            if let balance {
+                balancePill(balance: balance)
+                    .fixedSize()
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear
+                                .onAppear { rightPillWidth = geo.size.width }
+                                .onChange(of: geo.size.width) { _, w in rightPillWidth = w }
+                        }
+                    )
+            }
         }
     }
 
@@ -124,33 +125,30 @@ struct ProjectChipsView: View {
             .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
     }
 
-    // MARK: - Thread settings button (right pill)
+    // MARK: - Right Pill (Balance)
 
-    private var threadSettingsButton: some View {
-        Button(action: onOpenThreadSettings) {
-            HStack(spacing: 5) {
-                Image(systemName: "gear")
-                    .font(.system(size: 10, weight: .medium))
+    private func balancePill(balance: Double) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "creditcard.fill")
+                .font(.system(size: 10))
+                .foregroundStyle(.green)
 
-                if let threadName {
-                    Text(threadName)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                        .fixedSize()
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(.ultraThinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            Text(String(format: "%.2f ₽", balance))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .fixedSize()
+                .contentTransition(.numericText())
         }
-        .buttonStyle(.plain)
-        .shakeOnTap(isLocked: isThinking)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .animation(.easeInOut(duration: 0.3), value: balance)
     }
 
     // MARK: - Project chip
@@ -316,10 +314,29 @@ struct ProjectChipsView: View {
         threadName: "Разработка Chappie",
         isThinking: false,
         isFileSystemReady: true,
+        balance: 2120.09,
         onAddProject: { _ in },
         onRemoveProject: { _ in },
-        onOpenSettings: { _ in },
-        onOpenThreadSettings: {}
+        onOpenSettings: { _ in }
+    )
+    .padding()
+    .frame(width: 300)
+    .background(Color(NSColor.windowBackgroundColor))
+}
+
+#Preview("Без баланса") {
+    ProjectChipsView(
+        projects: [
+            ProjectMetadata(id: UUID(), displayName: "Chappie",
+                            settings: ProjectSettings(agentRole: .executor, isProgrammingProject: true))
+        ],
+        threadName: "Разработка Chappie",
+        isThinking: false,
+        isFileSystemReady: true,
+        balance: nil,
+        onAddProject: { _ in },
+        onRemoveProject: { _ in },
+        onOpenSettings: { _ in }
     )
     .padding()
     .frame(width: 300)
@@ -339,34 +356,13 @@ struct ProjectChipsView: View {
         threadName: "Тест",
         isThinking: false,
         isFileSystemReady: true,
+        balance: nil,
         onAddProject: { _ in },
         onRemoveProject: { _ in },
-        onOpenSettings: { _ in },
-        onOpenThreadSettings: {}
+        onOpenSettings: { _ in }
     )
     .padding()
     .frame(width: 350)
-    .background(Color(NSColor.windowBackgroundColor))
-}
-
-#Preview("Загрузка проектов") {
-    ProjectChipsView(
-        projects: [
-            ProjectMetadata(id: UUID(), displayName: "Chappie",
-                            settings: ProjectSettings(agentRole: .executor, isProgrammingProject: true)),
-            ProjectMetadata(id: UUID(), displayName: "MyApp",
-                            settings: ProjectSettings(agentRole: .advisor))
-        ],
-        threadName: "Разработка Chappie",
-        isThinking: false,
-        isFileSystemReady: false,
-        onAddProject: { _ in },
-        onRemoveProject: { _ in },
-        onOpenSettings: { _ in },
-        onOpenThreadSettings: {}
-    )
-    .padding()
-    .frame(width: 300)
     .background(Color(NSColor.windowBackgroundColor))
 }
 
@@ -379,10 +375,10 @@ struct ProjectChipsView: View {
         threadName: "Разработка Chappie",
         isThinking: true,
         isFileSystemReady: true,
+        balance: 82.69,
         onAddProject: { _ in },
         onRemoveProject: { _ in },
-        onOpenSettings: { _ in },
-        onOpenThreadSettings: {}
+        onOpenSettings: { _ in }
     )
     .padding()
     .background(Color(NSColor.windowBackgroundColor))

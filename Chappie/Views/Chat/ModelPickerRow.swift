@@ -1,23 +1,18 @@
 // ModelPickerRow.swift
 // Chappie
 //
-// Row displayed above ProjectChipsView showing the active AI model,
-// and — on the right — the current account balance from the active provider.
+// Top floating row: model selector pill (left) + thread settings pill (right).
 //
 // LAYOUT:
 //   Left pill  — "Модель:" label + model chip (ultraThinMaterial).
 //   Spacer     — pushes the two pills to opposite edges.
-//   Right pill — creditcard icon + balance amount (ultraThinMaterial).
-//                Visible only when balance is non-nil.
-//                Updates live during streaming via onBalanceUpdate in AIOrchestrator.
+//   Right pill — gear icon + thread name (ultraThinMaterial).
+//                Always visible when a thread is active.
 //
 // CPU-15: STREAMING REFERENCE INSTEAD OF SCALAR PROPS:
-//   Previously: balance: Double? and isThinking: Bool were passed as value copies.
-//   ContentView read viewModel.currentBalance → subscribed ViewModel → topPanel re-rendered
-//   on every balance update during streaming.
-//   Now: streaming: StreamingState is passed as a let reference. ModelPickerRow reads
-//   streaming.currentBalance and streaming.isThinking directly — only this view re-renders
-//   when balance or isThinking changes. ContentView and topPanel are not invalidated.
+//   streaming: StreamingState is passed as a let reference. ModelPickerRow reads
+//   streaming.isThinking directly — only this view re-renders on that change.
+//   ContentView and topPanel are not invalidated.
 //
 // CHIP STYLE:
 //   Only the inner HStack gets ultraThinMaterial pill background.
@@ -29,29 +24,26 @@
 //
 // SOFT LOCK (IT-13):
 //   When isThinking == true the model picker button is locked via shakeOnTap().
-//   Tapping it triggers a spring-shake animation ("I don't want to be pressed!")
-//   instead of the old opacity(0.5) dimming — element stays fully visible.
-//   Uses shakeOnTap (allowsHitTesting) instead of .disabled() to avoid
-//   SwiftUI's automatic opacity(0.5) side effect.
+//   Tapping it triggers a spring-shake animation instead of opacity(0.5) dimming.
 //
 // TRUNCATION:
 //   The model label uses .truncationMode(.middle) so that when the
-//   window is narrow the text clips in the middle: "deepseek-v4-pro"
+//   window is narrow the text clips in the middle.
 //   Both pills compress gracefully — right pill is fixedSize, left pill gets
 //   the remaining space via layoutPriority(1).
 //
 // MK-07: 3-COLUMN POPOVER (provider / key / model):
-//   ModelPickerPopover now has a middle "Key" column.
+//   ModelPickerPopover has a middle "Key" column.
 //   When user hovers a provider, its keys are shown immediately.
 //   Key auto-selects if provider has exactly one key.
-//   onSelectProvider signature extended to (providerId, keyId, modelName).
+//   onSelectProvider signature: (providerId, keyId, modelName).
 
 import SwiftUI
 import ChappieCore
 
 // MARK: - ModelPickerRow
 
-/// Horizontal row with two floating pills: model selector (left) and balance (right).
+/// Top row: model selector pill (left) + thread settings pill (right).
 struct ModelPickerRow: View {
 
     // MARK: - Input
@@ -61,10 +53,12 @@ struct ModelPickerRow: View {
     let activeKeyId: UUID?
     let providers: [AIProvider]
     let isOrphaned: Bool
-    /// CPU-15: streaming reference — reads .currentBalance and .isThinking directly.
+    let threadName: String?
+    /// CPU-15: streaming reference — reads .isThinking directly.
     let streaming: StreamingState
     /// MK-07: keyId added — caller must pass the selected key along with provider+model.
     let onSelectProvider: (UUID, UUID?, String) -> Void
+    let onOpenThreadSettings: () -> Void
 
     // MARK: - State
 
@@ -81,15 +75,13 @@ struct ModelPickerRow: View {
 
             Spacer(minLength: 8)
 
-            // RIGHT PILL: balance — shown only when a value is available, always fixed size
-            if let balance = streaming.currentBalance {
-                balancePill(balance: balance)
-                    .fixedSize()
-            }
+            // RIGHT PILL: thread settings gear — always shown when thread is active
+            threadSettingsPill
+                .fixedSize()
         }
     }
 
-    // MARK: - Left Pill
+    // MARK: - Left Pill (Model)
 
     private var modelPill: some View {
         HStack(spacing: 6) {
@@ -154,30 +146,34 @@ struct ModelPickerRow: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    // MARK: - Right Pill (Balance)
+    // MARK: - Right Pill (Thread Settings)
 
-    private func balancePill(balance: Double) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: "creditcard.fill")
-                .font(.system(size: 10))
-                .foregroundStyle(.green)
+    private var threadSettingsPill: some View {
+        Button(action: onOpenThreadSettings) {
+            HStack(spacing: 5) {
+                Image(systemName: "gear")
+                    .font(.system(size: 10, weight: .medium))
 
-            Text(String(format: "%.2f ₽", balance))
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .fixedSize()
-                .contentTransition(.numericText())
+                if let threadName {
+                    Text(threadName)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .animation(.easeInOut(duration: 0.3), value: balance)
+        .buttonStyle(.plain)
+        .shakeOnTap(isLocked: streaming.isThinking)
+        .help(streaming.isThinking ? "Нельзя менять настройки пока Чаппи думает" : "Настройки треда")
     }
 
     // MARK: - Chip Label
