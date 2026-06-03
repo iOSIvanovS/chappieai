@@ -232,7 +232,9 @@ struct InputMorphView: View {
                 .help("Вставить эмодзи")
                 .popover(isPresented: $showEmojiPicker, arrowEdge: .top) {
                     EmojiPickerView { emoji in
-                        prompt += emoji
+                        // Insert at cursor position via NSTextView, not string append.
+                        // prompt += emoji was always appending to the end, ignoring cursor.
+                        editorCoordinator?.insertAtCursor(emoji)
                         showEmojiPicker = false
                     }
                 }

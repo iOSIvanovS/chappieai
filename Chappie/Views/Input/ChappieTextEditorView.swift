@@ -169,5 +169,19 @@ struct ChappieTextEditorView: NSViewRepresentable {
         func focus() {
             textView?.window?.makeFirstResponder(textView)
         }
+
+        /// Inserts text at the current cursor position (selectedRange), replacing any selection.
+        /// Falls back to appending if the textView is unavailable.
+        /// WHY: emoji picker was doing `prompt += emoji` which always appends to the end,
+        /// ignoring cursor position. NSTextView.insertText respects selectedRange correctly.
+        func insertAtCursor(_ string: String) {
+            guard let tv = textView else {
+                parent.text += string
+                return
+            }
+            // insertText(_:replacementRange:) replaces the current selection (or inserts at cursor)
+            // and fires textDidChange automatically — no need to update parent.text manually.
+            tv.insertText(string, replacementRange: tv.selectedRange())
+        }
     }
 }
