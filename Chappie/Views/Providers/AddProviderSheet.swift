@@ -29,6 +29,8 @@
 //   API key field shows placeholder (existing key preserved if left empty).
 //   Key name field editable — rename the key without changing the secret.
 //   Models list is editable — add/remove individual models.
+//   Duplicate key name check: if the new name collides with another key → alert, no save.
+//   Duplicate key value check: if the new value matches another key → alert, no save.
 //
 // SAVE BEHAVIOUR:
 //   Onboarding → calls providerStore.mergeProvider (safe upsert, no alerts).
@@ -94,10 +96,11 @@ struct AddProviderSheet: View {
     @State private var saveError: String? = nil
     @State private var modelSearchText: String = ""
 
-    // MARK: - Duplicate Alerts (directory mode)
+    // MARK: - Duplicate Alerts
 
     @State private var duplicateHostAlert: Bool = false
-    @State private var duplicateKeyAlert: Bool = false
+    @State private var duplicateKeyValueAlert: Bool = false
+    @State private var duplicateKeyNameAlert: Bool = false
 
     // MARK: - Computed
 
@@ -108,7 +111,6 @@ struct AddProviderSheet: View {
         let endpointOk = !endpoint.trimmingCharacters(in: .whitespaces).isEmpty
         if isEditing { return endpointOk }
         if isOnboarding {
-            // At least one key with a non-empty value
             return endpointOk && pendingKeys.contains(where: {
                 !$0.value.trimmingCharacters(in: .whitespaces).isEmpty
             })
@@ -128,7 +130,6 @@ struct AddProviderSheet: View {
         return combined
     }
 
-    // Filtered by search text
     private var filteredModels: [String] {
         let q = modelSearchText.trimmingCharacters(in: .whitespaces).lowercased()
         guard !q.isEmpty else { return allModels }
@@ -141,7 +142,6 @@ struct AddProviderSheet: View {
         !filteredModels.isEmpty && filteredModels.allSatisfy { selectedModels.contains($0) }
     }
 
-    // First non-empty key value for validation
     private var firstValidKeyValue: String {
         if isOnboarding {
             return pendingKeys.first(where: { !$0.value.trimmingCharacters(in: .whitespaces).isEmpty })?.value ?? ""
@@ -198,10 +198,15 @@ struct AddProviderSheet: View {
         } message: {
             Text("Провайдер с таким адресом уже добавлен в справочник.")
         }
-        .alert("Ключ уже существует", isPresented: $duplicateKeyAlert) {
+        .alert("Ключ уже существует", isPresented: $duplicateKeyValueAlert) {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Ключ с таким значением уже добавлен у этого провайдера.")
+        }
+        .alert("Название занято", isPresented: $duplicateKeyNameAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Ключ с таким названием уже существует у этого провайдера. Выберите другое имя.")
         }
     }
 
@@ -222,7 +227,6 @@ struct AddProviderSheet: View {
                         .font(.system(.body, design: .monospaced))
                 }
 
-                // Keys section — single in directory mode, multi in onboarding
                 if isOnboarding {
                     multiKeySection
                 } else {
@@ -718,18 +722,51 @@ struct AddProviderSheet: View {
                     let trimmedKeyValue = apiKeyValue.trimmingCharacters(in: .whitespaces)
                     let resolvedKeyName = apiKeyName.trimmingCharacters(in: .whitespaces)
 
-                    if !trimmedKeyValue.isEmpty, let firstKey = finalProvider.keys.first {
+                    if let firstKey = finalProvider.keys.first {
+                        // Check name uniqueness against all OTHER keys of this provider
+                        if !resolvedKeyName.isEmpty {
+                            let otherKeys = finalProvider.keys.filter { $0.id != firstKey.id }
+                            let nameCollision = otherKeys.contains(where: {
+                                $0.name.lowercased() == resolvedKeyName.lowercased()
+                            })
+                            if nameCollision {
+                                await MainActor.run {
+                                    isSaving = false
+                                    duplicateKeyNameAlert = true
+                                }
+                                return
+                            }
+                        }
+
+                        // Check value uniqueness against all OTHER keys of this provider
+                        if !trimmedKeyValue.isEmpty {
+                            let otherKeys = finalProvider.keys.filter { $0.id != firstKey.id }
+                            var valueCollision = false
+                            for other in otherKeys {
+                                if let stored = await store.loadApiKey(for: other.id), stored == trimmedKeyValue {
+                                    valueCollision = true
+                                    break
+                                }
+                            }
+                            if valueCollision {
+                                await MainActor.run {
+                                    isSaving = false
+                                    duplicateKeyValueAlert = true
+                                }
+                                return
+                            }
+                        }
+
                         var updatedKey = firstKey
                         if !resolvedKeyName.isEmpty { updatedKey.name = resolvedKeyName }
-                        try await store.updateKey(updatedKey, newValue: trimmedKeyValue, forProviderId: finalProvider.id)
-                    } else if !resolvedKeyName.isEmpty, let firstKey = finalProvider.keys.first {
-                        var updatedKey = firstKey
-                        updatedKey.name = resolvedKeyName
-                        try await store.updateKey(updatedKey, newValue: nil, forProviderId: finalProvider.id)
+                        try await store.updateKey(
+                            updatedKey,
+                            newValue: trimmedKeyValue.isEmpty ? nil : trimmedKeyValue,
+                            forProviderId: finalProvider.id
+                        )
                     }
 
                 } else if isOnboarding {
-                    // Onboarding: merge provider + all pending keys
                     let validKeys = pendingKeys.filter {
                         !$0.value.trimmingCharacters(in: .whitespaces).isEmpty
                     }
@@ -741,7 +778,6 @@ struct AddProviderSheet: View {
                         return
                     }
 
-                    // Merge with first key — creates or updates provider
                     let providerId = try await store.mergeProvider(
                         finalProvider,
                         keyName: firstKey.name.trimmingCharacters(in: .whitespaces).isEmpty ? "Default" : firstKey.name,
@@ -749,7 +785,7 @@ struct AddProviderSheet: View {
                         models: modelsToSave
                     )
 
-                    // Merge remaining keys one by one
+                    // Merge remaining keys — models already added on first merge
                     for key in validKeys.dropFirst() {
                         let name = key.name.trimmingCharacters(in: .whitespaces)
                         let value = key.value.trimmingCharacters(in: .whitespaces)
@@ -757,17 +793,14 @@ struct AddProviderSheet: View {
                             AIProvider(id: providerId, name: finalProvider.name, endpoint: finalProvider.endpoint),
                             keyName: name.isEmpty ? "Key" : name,
                             keyValue: value,
-                            models: [] // models already added on first merge
+                            models: []
                         )
                     }
 
                 } else {
-                    // Directory: strict add — duplicate host already checked in validateAndProceed
+                    // Directory: new provider — no existing keys, no duplicates possible
                     let trimmedKeyValue = apiKeyValue.trimmingCharacters(in: .whitespaces)
                     let resolvedKeyName = apiKeyName.trimmingCharacters(in: .whitespaces)
-
-                    // Check key value uniqueness — requires knowing provider id first.
-                    // For a new provider there are no existing keys, so no duplicate possible.
                     let keyName = resolvedKeyName.isEmpty ? "Default" : resolvedKeyName
                     try await store.addProvider(finalProvider, firstKeyName: keyName, firstKeyValue: trimmedKeyValue)
                 }
