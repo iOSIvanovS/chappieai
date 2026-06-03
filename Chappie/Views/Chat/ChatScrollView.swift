@@ -18,7 +18,7 @@
 // input panel. The footer spacer (footerHeight) below the sentinel provides
 // physical clearance from the actual panel chrome.
 //
-// BUG-01: LOAD MORE SCROLL FIX (v5 — anchor: .center):
+// BUG-01: LOAD MORE SCROLL FIX (v6 — dedicated onChange on loadMoreAnchorId):
 // Previous attempts:
 //   v1: isLoadingMore flag + no scroll — VStack doesn't preserve position on prepend.
 //   v2: proxy.scrollTo(anchorId) immediately — fires during render, before layout.
@@ -26,8 +26,13 @@
 //       causing a 1-2 message upward drift.
 //   v4: proxy.scrollTo(anchorId, anchor: .top) after 80ms — lands at top edge,
 //       user sees the anchor message at the very top of the screen.
-// Fix v5: anchor: .center — the first previously-visible message is centered
-// in the viewport after Load More prepend. More natural UX, no edge-hugging.
+//   v5: onChange(of: messages.count) + loadMoreAnchorId check — race condition:
+//       SwiftUI batches @Observable updates; messages.count change fires before
+//       loadMoreAnchorId is committed to the view, so anchorId reads as nil on
+//       second and subsequent Load More taps → falls through to scroll-to-bottom.
+// Fix v6: dedicated onChange(of: loadMoreAnchorId) — fires exactly when the anchor
+// is set, independent of message count. anchor: .center keeps the anchor message
+// centered in the viewport. onLoadMoreScrollDone() resets anchorId to nil after scroll.
 //
 // VSTACK (PAGINATION OVER LAZYVSTACK):
 // Messages are rendered in a plain VStack — all displayed messages are always in the
@@ -165,8 +170,8 @@ struct ChatScrollView: View {
     /// CPU-22: measured via onGeometryChange in ContentView, grows dynamically.
     let footerHeight: CGFloat
 
-    /// BUG-01 v5: ID of the first previously-visible message before Load More prepend.
-    /// When non-nil, a delayed proxy.scrollTo fires after VStack layout completes.
+    /// BUG-01 v6: ID of the first previously-visible message before Load More prepend.
+    /// onChange(of: loadMoreAnchorId) fires a delayed proxy.scrollTo after VStack layout.
     /// anchor: .center — anchor message lands in the middle of the viewport.
     /// Reset to nil by ViewModel after scroll is applied.
     let loadMoreAnchorId: UUID?
@@ -240,22 +245,26 @@ struct ChatScrollView: View {
                     proxy.scrollTo("bottom", anchor: .top)
                 }
             }
+            // BUG-01 v6: dedicated onChange on loadMoreAnchorId — fires exactly when
+            // ViewModel sets the anchor, independent of message count changes.
+            // Fixes the race condition in v5 where onChange(messages.count) could fire
+            // before loadMoreAnchorId was committed, causing nil-read → scroll-to-bottom.
+            .onChange(of: loadMoreAnchorId) { _, newAnchorId in
+                guard let anchorId = newAnchorId else { return }
+                Task {
+                    // 80ms — VStack needs time to measure the prepended batch before scroll.
+                    try? await Task.sleep(nanoseconds: 80_000_000)
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(anchorId, anchor: .center)
+                    }
+                    onLoadMoreScrollDone()
+                }
+            }
             .onChange(of: messages.count) { _, _ in
-                // BUG-01 v5: Load More prepend — wait for VStack layout, then scroll to anchor.
-                // 80ms gives VStack time to finish measuring the prepended batch before we scroll.
-                // anchor: .center — anchor message is centered in the viewport (not edge-hugging).
-                if let anchorId = loadMoreAnchorId {
-                    Task {
-                        try? await Task.sleep(nanoseconds: 80_000_000)
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            proxy.scrollTo(anchorId, anchor: .center)
-                        }
-                        onLoadMoreScrollDone()
-                    }
-                } else {
-                    withAnimation(.easeOut(duration: 0.3)) {
-                        proxy.scrollTo("bottom", anchor: .top)
-                    }
+                // Skip scroll-to-bottom during Load More prepend — anchorId onChange handles it.
+                guard loadMoreAnchorId == nil else { return }
+                withAnimation(.easeOut(duration: 0.3)) {
+                    proxy.scrollTo("bottom", anchor: .top)
                 }
             }
             .onChange(of: streaming.isThinking) { _, isThinking in
