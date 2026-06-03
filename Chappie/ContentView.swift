@@ -17,8 +17,11 @@
 // was inside ContentView's layout tree.
 //
 // FLOATING PANELS LAYOUT:
-//   Top panel: ModelPickerRow + ProjectChipsView — each is an independent floating
-//   rounded pill with ultraThinMaterial. The outer VStack is transparent.
+//   Top panel: ProjectChipsView (top) + ModelPickerRow (bottom) — each is an independent
+//   floating rounded pill with ultraThinMaterial. The outer VStack is transparent.
+//   ProjectChipsView is always shown when a thread is active (gear chip always visible).
+//   ModelPickerRow is shown only when a provider is configured; balance pill inside it
+//   is shown only when the active provider returns a balance value.
 //   Bottom panel: InputMorphView — ultraThinMaterial.
 //   Top panel reports its height so ChatScrollView can add a matching header spacer.
 //   Bottom panel height is measured via onGeometryChange — exact, no manual math.
@@ -379,6 +382,32 @@ struct ContentView: View {
 
     private var topPanel: some View {
         VStack(spacing: 6) {
+            // Thread settings chip is always on top — always visible when thread is active.
+            if viewModel.activeThread != nil {
+                ProjectChipsView(
+                    projects: viewModel.activeProjects,
+                    threadName: viewModel.activeThread?.title,
+                    isThinking: viewModel.streaming.isThinking,
+                    isFileSystemReady: viewModel.isFileSystemReady,
+                    onAddProject: { url in viewModel.addProject(url: url) },
+                    onRemoveProject: { projectId in viewModel.removeProject(id: projectId) },
+                    onOpenSettings: { projectId in
+                        if let project = viewModel.activeProjects.first(where: { $0.id == projectId }) {
+                            selectedProjectForSettings = project
+                        }
+                    },
+                    onOpenThreadSettings: {
+                        if let thread = viewModel.activeThread {
+                            let fresh = viewModel.threads.first(where: { $0.id == thread.id }) ?? thread
+                            selectedThreadForSettings = fresh
+                        }
+                    }
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            // Model picker + balance pill — shown only when a provider is configured.
+            // Balance pill inside ModelPickerRow is hidden when provider returns no balance.
             if viewModel.activeThread != nil && !viewModel.providers.isEmpty {
                 ModelPickerRow(
                     activeProvider: viewModel.activeProvider,
@@ -399,29 +428,6 @@ struct ContentView: View {
                                     from: store
                                 )
                             }
-                        }
-                    }
-                )
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-
-            if viewModel.activeThread != nil {
-                ProjectChipsView(
-                    projects: viewModel.activeProjects,
-                    threadName: viewModel.activeThread?.title,
-                    isThinking: viewModel.streaming.isThinking,
-                    isFileSystemReady: viewModel.isFileSystemReady,
-                    onAddProject: { url in viewModel.addProject(url: url) },
-                    onRemoveProject: { projectId in viewModel.removeProject(id: projectId) },
-                    onOpenSettings: { projectId in
-                        if let project = viewModel.activeProjects.first(where: { $0.id == projectId }) {
-                            selectedProjectForSettings = project
-                        }
-                    },
-                    onOpenThreadSettings: {
-                        if let thread = viewModel.activeThread {
-                            let fresh = viewModel.threads.first(where: { $0.id == thread.id }) ?? thread
-                            selectedThreadForSettings = fresh
                         }
                     }
                 )

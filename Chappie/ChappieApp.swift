@@ -48,6 +48,10 @@ struct ChappieApp: App {
 
     @NSApplicationDelegateAdaptor(ChappieAppDelegate.self) var appDelegate
 
+    // MARK: - View Model
+    // Создаем экземпляр ViewModel для всего жизненного цикла приложения
+    @State private var viewModel = ChappieViewModel()
+
     // MARK: - SwiftData Container
 
     /// SwiftData container for the entire application.
@@ -102,6 +106,12 @@ struct ChappieApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                // Передаем ViewModel в окружение текущего окна
+                .environment(viewModel)
+                .onAppear {
+                    // Подключаем базу данных (ModelContainer) к ViewModel при загрузке окна
+                    viewModel.setModelContainer(modelContainer)
+                }
                 // Background image via .background — does NOT participate in layout,
                 // does NOT affect window minimum size, covers full window including toolbar.
                 .background(
