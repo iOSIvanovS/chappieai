@@ -7,28 +7,22 @@
 // v1: @State + withAnimation(.repeatForever) — CADisplayLink at 60fps, ~50% CPU
 // v2: TimelineView(.animation) — still 60fps display-link, ~25% CPU
 // v3: TimelineView(.periodic, 20fps) — capped at 20fps, ~25% CPU (no improvement)
-// v4 (current): animation commented out for CPU diagnosis.
-//    Static gear = 0% CPU. If CPU drops to ~0% — TimelineView was the culprit.
-//    Deployment target is macOS 14.0 — symbolEffect(.rotate) requires macOS 15+.
+// v4: animation commented out for CPU diagnosis → confirmed 1% CPU (TimelineView was the culprit)
+// v5 (current): TimelineView(.periodic, 8fps / 0.125s) — ~2x faster than blinker, target ~2-3% CPU
 
 import SwiftUI
 
 struct ThinkingGearIcon: View {
 
     var body: some View {
-        // CPU DIAGNOSIS: animation commented out to isolate 25% CPU source.
-        // If CPU drops to ~0% while thinking — TimelineView(.periodic) was the cause.
-        // Restore animation block below once diagnosis is complete.
-        Image(systemName: "gearshape.arrow.triangle.2.circlepath")
-            .font(.system(size: 13))
-
-        // --- ANIMATION (commented for CPU diagnosis) ---
-        // TimelineView(.periodic(from: .now, by: 1.0 / 20.0)) { timeline in
-        //     let t = timeline.date.timeIntervalSinceReferenceDate
-        //     let angle = (t.truncatingRemainder(dividingBy: 2.0) / 2.0) * 360.0
-        //     Image(systemName: "gearshape.arrow.triangle.2.circlepath")
-        //         .font(.system(size: 13))
-        //         .rotationEffect(.degrees(angle))
-        // }
+        // 8fps: smooth enough to look alive, cheap enough to not hurt CPU.
+        // Full rotation every 2 seconds (360° / 8 steps = 45° per frame).
+        TimelineView(.periodic(from: .now, by: 0.125)) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate
+            let angle = (t.truncatingRemainder(dividingBy: 2.0) / 2.0) * 360.0
+            Image(systemName: "gearshape.arrow.triangle.2.circlepath")
+                .font(.system(size: 13))
+                .rotationEffect(.degrees(angle))
+        }
     }
 }
