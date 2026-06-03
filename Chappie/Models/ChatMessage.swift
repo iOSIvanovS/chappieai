@@ -25,10 +25,16 @@
 // Attachments are stored inline (base64 in JSON) for persistence simplicity.
 // The API layer (AIOrchestrator) reads attachments and builds multimodal content blocks.
 // MessageBubbleView renders image thumbnails inline and file chips for other types.
+//
+// CHANGE (TERMINAL-CONFIRM):
+// Added .terminalConfirmation case for inline run/cancel UI when terminal is in confirm mode.
+// This case is NOT persisted to disk (filtered on save/load) — it's ephemeral UI state.
+// When the user approves or cancels, the case is replaced with a .message result.
 
 import Foundation
 
-/// A single unit of chat history — either a text message or a tool-call log.
+/// A single unit of chat history — either a text message, a tool-call log,
+/// or an inline terminal confirmation prompt.
 ///
 /// WHY ENUM, NOT STRUCT WITH FLAG: An enum with associated values makes it impossible
 /// to create an "invalid" state. You can't accidentally create a message with
@@ -69,6 +75,20 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
     /// - targetPath: File path or memory key (empty string if none)
     case toolCall(id: UUID = UUID(), toolName: String, targetPath: String)
 
+    /// Inline terminal confirmation prompt — shown when terminalAccess == .confirm.
+    ///
+    /// WHY A SEPARATE CASE: The confirmation UI is fundamentally different from a
+    /// text message — it has action buttons and is ephemeral (not persisted to disk).
+    /// Encoding it as a .message with special text would require fragile string parsing.
+    ///
+    /// - command: The shell command awaiting user approval.
+    /// - threadId: The thread whose shell session will execute the command.
+    ///
+    /// LIFECYCLE: Inserted into messages[] when PendingTerminalCommand is detected.
+    /// Replaced with a .message (result or "cancelled") when the user decides.
+    /// Filtered out on save so it never pollutes persistent history.
+    case terminalConfirmation(id: UUID = UUID(), command: String, threadId: UUID)
+
     // MARK: - Identifiable
 
     /// Unique identifier — needed for ForEach and ScrollViewReader.scrollTo()
@@ -76,6 +96,7 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
         switch self {
         case .message(let id, _, _, _, _, _): return id
         case .toolCall(let id, _, _): return id
+        case .terminalConfirmation(let id, _, _): return id
         }
     }
 
@@ -86,6 +107,7 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
         switch self {
         case .message(_, let isUser, _, _, _, _): return isUser
         case .toolCall: return false
+        case .terminalConfirmation: return false
         }
     }
 
@@ -94,6 +116,7 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
         switch self {
         case .message(_, _, let text, _, _, _): return text
         case .toolCall: return nil
+        case .terminalConfirmation: return nil
         }
     }
 
@@ -102,6 +125,7 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
         switch self {
         case .message(_, _, _, let cost, _, _): return cost
         case .toolCall: return nil
+        case .terminalConfirmation: return nil
         }
     }
 
@@ -113,6 +137,7 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
         switch self {
         case .message(_, _, _, _, let summary, _): return summary
         case .toolCall: return nil
+        case .terminalConfirmation: return nil
         }
     }
 
@@ -121,12 +146,19 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
         switch self {
         case .message(_, _, _, _, _, let attachments): return attachments
         case .toolCall: return []
+        case .terminalConfirmation: return []
         }
     }
 
     /// Whether this is a tool-call log entry.
     public var isToolCall: Bool {
         if case .toolCall = self { return true }
+        return false
+    }
+
+    /// Whether this is an ephemeral terminal confirmation prompt.
+    public var isTerminalConfirmation: Bool {
+        if case .terminalConfirmation = self { return true }
         return false
     }
 
@@ -137,10 +169,11 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
 
     private enum CodingKeys: String, CodingKey {
         case type, id, isUser, text, cost, summary, attachments, toolName, targetPath
+        case command, threadId
     }
 
     private enum MessageType: String, Codable {
-        case message, toolCall
+        case message, toolCall, terminalConfirmation
     }
 
     public init(from decoder: Decoder) throws {
@@ -153,9 +186,7 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
             let isUser      = try container.decode(Bool.self, forKey: .isUser)
             let text        = try container.decode(String.self, forKey: .text)
             let cost        = try container.decodeIfPresent(Double.self, forKey: .cost)
-            // summary decoded optionally — old records without this field get nil (correct)
             let summary     = try container.decodeIfPresent(String.self, forKey: .summary)
-            // attachments decoded optionally — old records without this field get [] (correct)
             let attachments = try container.decodeIfPresent([AttachedFile].self, forKey: .attachments) ?? []
             self = .message(id: id, isUser: isUser, text: text, cost: cost, summary: summary, attachments: attachments)
 
@@ -163,6 +194,12 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
             let toolName   = try container.decode(String.self, forKey: .toolName)
             let targetPath = try container.decodeIfPresent(String.self, forKey: .targetPath) ?? ""
             self = .toolCall(id: id, toolName: toolName, targetPath: targetPath)
+
+        case .terminalConfirmation:
+            // Ephemeral — should never be decoded from disk, but handle gracefully.
+            let command  = try container.decodeIfPresent(String.self, forKey: .command) ?? ""
+            let threadId = try container.decodeIfPresent(UUID.self, forKey: .threadId) ?? UUID()
+            self = .terminalConfirmation(id: id, command: command, threadId: threadId)
         }
     }
 
@@ -176,9 +213,7 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
             try container.encode(isUser, forKey: .isUser)
             try container.encode(text,   forKey: .text)
             try container.encodeIfPresent(cost,    forKey: .cost)
-            // Save summary only if present — saves space in JSON
             try container.encodeIfPresent(summary, forKey: .summary)
-            // Save attachments only if non-empty — old messages stay compact
             if !attachments.isEmpty {
                 try container.encode(attachments, forKey: .attachments)
             }
@@ -188,6 +223,14 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
             try container.encode(id,         forKey: .id)
             try container.encode(toolName,   forKey: .toolName)
             try container.encode(targetPath, forKey: .targetPath)
+
+        case .terminalConfirmation(let id, let command, let threadId):
+            // Ephemeral — encode as a placeholder so it round-trips if needed,
+            // but ViewModel filters these out before saving to disk.
+            try container.encode(MessageType.terminalConfirmation, forKey: .type)
+            try container.encode(id,       forKey: .id)
+            try container.encode(command,  forKey: .command)
+            try container.encode(threadId, forKey: .threadId)
         }
     }
 }

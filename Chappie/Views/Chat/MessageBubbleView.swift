@@ -14,6 +14,12 @@
 // Each attachment is one row: icon + filename + file size.
 // Images open via QuickLook on click. Other files open via NSWorkspace.
 // Benefits: no layout complexity, no GeometryReader, window can resize freely.
+//
+// TERMINAL CONFIRMATION (TERMINAL-CONFIRM):
+// .terminalConfirmation case renders an inline Run/Cancel prompt.
+// The bubble shows the command in a monospaced code block and two action buttons.
+// Buttons call viewModel.approveTerminalCommand / rejectTerminalCommand.
+// The bubble is replaced with the result after the user decides.
 
 import SwiftUI
 import QuickLook
@@ -29,10 +35,19 @@ private let bubbleMaxWidth: CGFloat = 500
 struct MessageBubbleView: View {
 
     let msg: ChatMessage
+    @Environment(ChappieViewModel.self) private var viewModel
 
     var body: some View {
-        if case .message(_, let isUser, let text, let cost, _, let attachments) = msg {
+        switch msg {
+        case .message(_, let isUser, let text, let cost, _, let attachments):
             messageBubble(isUser: isUser, text: text, cost: cost, attachments: attachments)
+
+        case .terminalConfirmation(let id, let command, let threadId):
+            terminalConfirmationBubble(id: id, command: command, threadId: threadId)
+
+        case .toolCall:
+            // Tool call logs are rendered by ChatScrollView directly — not here.
+            EmptyView()
         }
     }
 
@@ -57,6 +72,88 @@ struct MessageBubbleView: View {
             if !isUser { Spacer(minLength: 24) }
         }
         // Smooth slide-in from bottom on insertion, fade on removal.
+        .transition(
+            .asymmetric(
+                insertion: .move(edge: .bottom).combined(with: .opacity),
+                removal: .opacity
+            )
+        )
+        .id(msg.id)
+    }
+
+    // MARK: - Terminal Confirmation Bubble
+
+    @ViewBuilder
+    private func terminalConfirmationBubble(id: UUID, command: String, threadId: UUID) -> some View {
+        HStack(alignment: .bottom, spacing: 0) {
+            VStack(alignment: .leading, spacing: 10) {
+                // Header
+                HStack(spacing: 6) {
+                    Image(systemName: "terminal.fill")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.orange)
+                    Text("Terminal — confirmation required")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.primary)
+                }
+
+                // Command block
+                Text(command)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                // Action buttons
+                HStack(spacing: 8) {
+                    Button {
+                        viewModel.approveTerminalCommand(messageId: id, command: command)
+                    } label: {
+                        Label("Run", systemImage: "play.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .controlSize(.small)
+
+                    Button {
+                        viewModel.rejectTerminalCommand(messageId: id, command: command)
+                    } label: {
+                        Text("Cancel")
+                            .font(.system(size: 12))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(Color(NSColor.textBackgroundColor))
+            .clipShape(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 12,
+                    bottomLeadingRadius: 4,
+                    bottomTrailingRadius: 12,
+                    topTrailingRadius: 12
+                )
+            )
+            .overlay(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 12,
+                    bottomLeadingRadius: 4,
+                    bottomTrailingRadius: 12,
+                    topTrailingRadius: 12
+                )
+                .stroke(Color.orange.opacity(0.4), lineWidth: 1.5)
+            )
+            .frame(maxWidth: bubbleMaxWidth, alignment: .leading)
+
+            Spacer(minLength: 24)
+        }
         .transition(
             .asymmetric(
                 insertion: .move(edge: .bottom).combined(with: .opacity),
@@ -262,10 +359,9 @@ private struct AttachmentRowView: View {
                 text: "Got it! I'll analyze both files.",
                 cost: 0.45
             ))
-            MessageBubbleView(msg: .message(
-                isUser: true,
-                text: "",
-                attachments: [sampleImage, sampleImage, sampleImage, sampleImage, sampleImage]
+            MessageBubbleView(msg: .terminalConfirmation(
+                command: "swift test --filter ToolExecutionServiceTests",
+                threadId: UUID()
             ))
             MessageBubbleView(msg: .message(
                 isUser: true,

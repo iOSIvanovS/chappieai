@@ -34,6 +34,12 @@
 // showNoProviderAlert instead of injecting a system message into chat history.
 // WHY: system messages pollute AI context and confuse history. An alert is ephemeral UI —
 // it informs the user without leaving noise in the conversation.
+//
+// TERMINAL CONFIRMATION:
+// When the orchestrator response contains a PendingTerminalCommand marker, the normal
+// .message bubble is NOT added. Instead, a .terminalConfirmation bubble is inserted —
+// MessageBubbleView renders Run/Cancel buttons. After the user decides, the bubble is
+// replaced with the command result (see ChappieViewModel+Terminal.swift).
 
 import SwiftUI
 import ChappieCore
@@ -109,6 +115,22 @@ extension ChappieViewModel {
                 )
 
                 let rawResponse = self.cleanAIResponse(result.finalResponse)
+
+                // TERMINAL CONFIRMATION: if the response is a pending command marker,
+                // show inline Run/Cancel UI instead of a normal message bubble.
+                if let pending = PendingTerminalCommand.decode(from: rawResponse) {
+                    Task { @MainActor in
+                        withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+                            self.streamingText = ""
+                            self.currentToolCall = nil
+                            self.isThinking = false
+                        }
+                        self.insertTerminalConfirmation(command: pending.command, threadId: pending.threadId)
+                    }
+                    self.currentRequestTask = nil
+                    return
+                }
+
                 let (displayText, summary) = self.extractAndCleanSummary(from: rawResponse)
                 let aiMessage = ChatMessage.message(isUser: false, text: displayText, cost: result.totalCost, summary: summary)
 
