@@ -34,7 +34,7 @@ struct StatusBarView: View {
         // slides in from the bottom and fades out without abrupt layout shifts.
         if let toolCall = toolCall {
             HStack(spacing: 6) {
-                // Spinning gear icon — universal "working" symbol
+                // Gear icon with CoreAnimation-based symbol effect — zero CPU cost
                 GearIconView()
 
                 // Text like "read_file → ContentView.swift"
@@ -67,27 +67,24 @@ struct StatusBarView: View {
 
 // MARK: - Gear Icon
 
-/// Gear icon with rotation animation.
-/// Uses .rotate symbolEffect on macOS 15+, falls back to a simple opacity pulse on macOS 14.
+/// Gear icon using CoreAnimation-based symbolEffect — zero CPU overhead.
+/// macOS 15+: .rotate (full spin)
+/// macOS 14:  .pulse (brightness pulse — also CoreAnimation, no SwiftUI timer)
 private struct GearIconView: View {
-    // Fallback animation state for macOS 14
-    @State private var pulsing = false
 
     var body: some View {
         if #available(macOS 15.0, *) {
             Image(systemName: "gearshape.arrow.triangle.2.circlepath")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
-                // Rotation effect signals ongoing work — available macOS 15+
+                // CoreAnimation spin — available macOS 15+
                 .symbolEffect(.rotate, options: .repeating)
         } else {
-            // macOS 14 fallback: gentle opacity pulse instead of rotation
+            // macOS 14: .pulse is CoreAnimation-based, no @State timer needed
             Image(systemName: "gearshape.arrow.triangle.2.circlepath")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
-                .opacity(pulsing ? 0.4 : 1.0)
-                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulsing)
-                .onAppear { pulsing = true }
+                .symbolEffect(.pulse, options: .repeating)
         }
     }
 }
