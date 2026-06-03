@@ -37,13 +37,14 @@
 //
 // CPU-23: currentToolCall is throttled to 200ms in StreamingState.
 //
-// CPU-28: ThinkingGearIcon replaced from DotsIndicator back to gear, but now uses
-// rotationEffect instead of symbolEffect(.rotate, .repeating) — see ThinkingGearIcon.swift.
-//
 // CPU-29: .animation(.easeInOut, value: currentToolCall) removed from toolCall Text.
 // Even with 200ms throttle, SwiftUI cross-fade animation runs two render passes
 // simultaneously (old text + new text) on every tool call update.
 // Text simply updates instantly — imperceptible at 200ms cadence, zero render cost.
+//
+// CPU-30: ThinkingGearIcon (TimelineView-based) replaced with ProgressView().
+// ProgressView on macOS wraps NSProgressIndicator — animated via CoreAnimation/GPU,
+// CPU cost ≈ 0%. TimelineView was the confirmed culprit of ~25% idle CPU.
 //
 // MULTIMODAL:
 // - Paperclip button opens NSOpenPanel (images, PDF, text, any file).
@@ -111,8 +112,8 @@ struct InputMorphView: View {
                 .opacity(streaming.isThinking ? 0 : 1)
                 .scaleEffect(streaming.isThinking ? 0.96 : 1, anchor: .bottom)
 
-            // THINKING: rendered conditionally — ThinkingGearIcon rotation animator
-            // is created on onAppear and destroyed on disappear. No idle cost.
+            // THINKING: rendered conditionally — ProgressView lifecycle is managed by SwiftUI.
+            // No idle cost when not thinking.
             if streaming.isThinking {
                 thinkingView
                     .padding(.horizontal, 12)
@@ -251,7 +252,12 @@ struct InputMorphView: View {
 
     private var thinkingView: some View {
         HStack(spacing: 12) {
-            ThinkingGearIcon()
+            // CPU-30: NSProgressIndicator under the hood — GPU/CoreAnimation animated, ~0% CPU.
+            // Previously ThinkingGearIcon used TimelineView which was confirmed ~25% CPU culprit.
+            ProgressView()
+                .progressViewStyle(.circular)
+                .scaleEffect(0.7)
+                .frame(width: 16, height: 16)
 
             // CPU-23: currentToolCall throttled to 200ms in StreamingState — at most 5 redraws/sec.
             // CPU-29: NO .animation here — cross-fade runs two render passes simultaneously.
