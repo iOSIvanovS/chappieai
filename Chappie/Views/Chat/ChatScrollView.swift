@@ -18,15 +18,17 @@
 // input panel. The footer spacer (footerHeight) below the sentinel provides
 // physical clearance from the actual panel chrome.
 //
-// BUG-01: LOAD MORE SCROLL FIX (v3 — scrollPosition API):
-// Previous attempts used proxy.scrollTo(targetId) or isLoadingMore flag —
-// both failed because VStack inside ScrollView does NOT preserve position on prepend.
-// Fix: scrollPosition(id:) modifier + @State scrolledID.
-// When loadMoreAnchorId is set (first visible message before prepend),
-// scrolledID is assigned that ID — SwiftUI natively anchors the viewport to it.
-// After one render pass scrolledID is reset to nil so normal auto-scroll resumes.
-// WHY scrollPosition works here: it drives the ScrollView's internal position tracker,
-// which is evaluated AFTER layout — unlike proxy.scrollTo which fires during render.
+// BUG-01: LOAD MORE SCROLL FIX (v4 — proxy.scrollTo after layout):
+// Previous attempts:
+//   v1: isLoadingMore flag + no scroll — VStack doesn't preserve position on prepend.
+//   v2: proxy.scrollTo(anchorId) immediately — fires during render, before layout.
+//   v3: scrollPosition(id:) — applies anchor before VStack finishes measuring,
+//       causing a 1-2 message upward drift.
+// Fix v4: after prepend, wait 80ms for VStack to finish layout, THEN call
+// proxy.scrollTo(anchorId, anchor: .top). This fires AFTER the layout pass,
+// so the scroll lands exactly on the right message with no drift.
+// WHY 80ms: VStack layout on macOS typically completes within one runloop pass
+// (~16ms), but 80ms gives headroom for slow machines and large message batches.
 //
 // VSTACK (PAGINATION OVER LAZYVSTACK):
 // Messages are rendered in a plain VStack — all displayed messages are always in the
@@ -76,7 +78,7 @@
 // historyLoadingIndicator replaced with DotsIndicator — animated via TimelineView(.animation).
 //
 // CPU-29: DotsIndicator MIGRATED FROM @State TO TimelineView:
-// Previous DotsIndicator used three @State-driven .repeatForever animations.
+// Previous DotsIndicator used three @State booleans with .repeatForever animations.
 // Each @State change triggers SwiftUI invalidation — even with drawingGroup().
 // SwiftUI still schedules layout passes for every animation tick on its side.
 // Fix: TimelineView(.animation) — single display-link shared across the whole screen.
@@ -164,20 +166,15 @@ struct ChatScrollView: View {
     /// CPU-22: measured via onGeometryChange in ContentView, grows dynamically.
     let footerHeight: CGFloat
 
-    /// BUG-01: ID of the first previously-visible message before Load More prepend.
-    /// When non-nil, scrolledID is set to this value so the viewport stays anchored.
-    /// Reset to nil by ViewModel after one render pass.
+    /// BUG-01 v4: ID of the first previously-visible message before Load More prepend.
+    /// When non-nil, a delayed proxy.scrollTo fires after VStack layout completes.
+    /// Reset to nil by ViewModel after scroll is applied.
     let loadMoreAnchorId: UUID?
 
     /// Called after Load More anchor scroll is applied — resets loadMoreAnchorId in ViewModel.
     let onLoadMoreScrollDone: () -> Void
 
-    // BUG-01: scrollPosition(id:) binding — drives native anchor after Load More prepend.
-    // Set to loadMoreAnchorId when it appears, then reset to nil.
-    @State private var scrolledID: UUID? = nil
-
     // CPU-05: debounce flag — true while a scroll task is already scheduled.
-    // Prevents firing proxy.scrollTo on every streaming token (dozens/sec).
     @State private var scrollPending = false
 
     var body: some View {
@@ -235,9 +232,6 @@ struct ChatScrollView: View {
                 .padding(.horizontal, 16)
             }
             .scrollIndicators(.never)
-            // BUG-01: native scroll position anchor — SwiftUI evaluates this AFTER layout,
-            // so the viewport correctly stays on the anchor message after VStack prepend.
-            .scrollPosition(id: $scrolledID)
             .task(id: scrollToBottomTrigger) {
                 guard scrollToBottomTrigger > 0 else { return }
                 // 150ms — enough for VStack to measure content on cold start.
@@ -247,14 +241,14 @@ struct ChatScrollView: View {
                 }
             }
             .onChange(of: messages.count) { _, _ in
-                // BUG-01: Load More prepend — anchor to the first previously-visible message.
-                // scrollPosition(id:) keeps the viewport on that message after prepend.
+                // BUG-01 v4: Load More prepend — wait for VStack layout, then scroll to anchor.
+                // 80ms gives VStack time to finish measuring the prepended batch before we scroll.
+                // Firing proxy.scrollTo immediately (v2) or via scrollPosition(v3) both
+                // execute before layout is committed, causing 1-2 message drift.
                 if let anchorId = loadMoreAnchorId {
-                    scrolledID = anchorId
-                    // Reset after one pass so normal auto-scroll can resume.
                     Task {
-                        try? await Task.sleep(nanoseconds: 50_000_000)
-                        scrolledID = nil
+                        try? await Task.sleep(nanoseconds: 80_000_000)
+                        proxy.scrollTo(anchorId, anchor: .top)
                         onLoadMoreScrollDone()
                     }
                 } else {
