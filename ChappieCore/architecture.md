@@ -16,7 +16,7 @@ ChappieCore/
 └── Sources/ChappieCore/
     ├── ChappieCore.swift               # Public API re-exports
     ├── Models/
-    │   ├── AIProviderModels.swift       # AIProvider, AIProviderEntity (SwiftData)
+    │   ├── AIProviderModels.swift       # AIProvider, APIKey, AIProviderEntity (SwiftData)
     │   ├── AITunnelModels.swift         # AIMessage, AIStreamChunk, AIUsage
     │   ├── AppConfig.swift             # Centralized config (dynamic, per-thread)
     │   ├── AppSettings.swift           # AppSettings SwiftData model (singleton record)
@@ -27,7 +27,7 @@ ChappieCore/
     └── Services/
         ├── AIClient.swift              # HTTP client for AI APIs (provider-agnostic)
         ├── AIOrchestrator.swift        # Reasoning loop: prompt → tools → response
-        ├── AIProviderStore.swift       # CRUD for AIProviderEntity + Keychain
+        ├── AIProviderStore.swift       # CRUD for AIProviderEntity + Keychain (multi-key)
         ├── AppSettingsStore.swift      # Actor-based CRUD for singleton AppSettings
         ├── ChatHistoryManager.swift    # JSON-based message history (legacy + migration)
         ├── FileSystemManager.swift     # Secure file system access (sandbox)
@@ -61,7 +61,7 @@ graph TD
         TM["ThreadModels\n(ThreadEntity, ThreadSettings\nThreadMetadata)"]
         PM["ProjectModels\n(ProjectEntity, ProjectMetadata\nProjectSettings)"]
         MM["MemoryModels\n(MemoryEntity, MemoryEntry)"]
-        APM["AIProviderModels\n(AIProvider, AIProviderEntity)"]
+        APM["AIProviderModels\n(AIProvider, APIKey\nAIProviderEntity)"]
         AS["AppSettings\n(singleton SwiftData record)"]
         AC["AppConfig\n(dynamic, per-thread)"]
         ATM["AITunnelModels\n(AIMessage, AIStreamChunk\nAIUsage)"]
@@ -75,7 +75,7 @@ graph TD
         TS["ThreadStore\nSwiftData CRUD"]
         PS["ProjectStore\nSwiftData CRUD"]
         MS["MemoryStore\nSwiftData CRUD"]
-        APS["AIProviderStore\nSwiftData + Keychain"]
+        APS["AIProviderStore\nSwiftData + Keychain\nmulti-key"]
         ASS["AppSettingsStore\nSingleton AppSettings"]
         MemM["MemoryManager\nSemantic memory"]
         SPB["SystemPromptBuilder\nDeterministic prompt assembly"]
@@ -91,7 +91,7 @@ graph TD
 
     subgraph Storage["Persistence"]
         SD["SwiftData\n(ThreadEntity, ProjectEntity\nMemoryEntity, AIProviderEntity\nAppSettings)"]
-        KC["Keychain\n(API keys)"]
+        KC["Keychain\n(API key secrets, keyed by APIKey.id)"]
         FS["File System\n(JSON legacy)"]
     end
 
@@ -146,6 +146,40 @@ graph TD
 Exactly one record per container. `AppSettingsStore.load()` creates it on first launch.
 Previously stored as `"New.AppSettings"` — `AppSettingsMigrationPlan` handles the rename.
 
+### AIProvider / APIKey (multi-key schema)
+
+```swift
+struct AIProvider: Codable {
+    var id: UUID
+    var name: String          // user-defined display name
+    var endpoint: String      // full URL
+    var keys: [APIKey]        // named keys; secrets in Keychain
+    var models: [String]      // saved model names
+}
+
+struct APIKey: Codable {
+    var id: UUID              // Keychain entry key = apiKey.id.uuidString
+    var name: String          // user-defined label ("Work", "Personal", "Client X")
+}
+```
+
+**Keychain storage:** each `APIKey` secret stored under `apiKey.id.uuidString`.
+**Migration from single-key schema:** `loadProviders()` detects `keys.isEmpty`, reads old secret
+from `provider.id.uuidString`, creates `APIKey(name: "Default")`, migrates automatically.
+
+### AIProviderEntity (SwiftData)
+
+```swift
+@Model final class AIProviderEntity {
+    var id: UUID
+    var json: String    // AIProvider serialized as JSON — no graph, no migrations
+    var isDefault: Bool
+    var createdAt: Date
+}
+```
+
+JSON pattern: `AIProvider` evolves freely as a `Codable` struct — no SwiftData migrations needed.
+
 ### ThreadEntity (SwiftData)
 
 ```swift
@@ -160,8 +194,6 @@ Previously stored as `"New.AppSettings"` — `AppSettingsMigrationPlan` handles 
 }
 ```
 
-All complex objects serialized to `Data` via JSONEncoder — SwiftData schema stays stable as models evolve.
-
 ### ThreadSettings (Codable)
 
 ```swift
@@ -169,6 +201,7 @@ struct ThreadSettings: Codable, Sendable {
     var maxMessagesInContext: Int   // 10...1000, default 20
     var isUnlimitedContext: Bool
     var activeProviderId: UUID?
+    var activeKeyId: UUID?         // which APIKey to use for this thread
     var activeModelName: String?
 
     var tokenBudget: Int { isUnlimitedContext ? Int.max : maxMessagesInContext * 500 }
@@ -239,7 +272,48 @@ Actor guarantees sequential access to `ModelContext` (not Sendable).
 
 ---
 
-## 7. AIOrchestrator — Reasoning Loop
+## 7. AIProviderStore (actor)
+
+```swift
+public actor AIProviderStore {
+    // Providers
+    func loadProviders() async throws -> [AIProvider]        // includes single-key migration
+    func addProvider(_:firstKeyName:firstKeyValue:) async throws -> UUID
+    func updateProvider(_:) async throws
+    func deleteProvider(id:) async throws                    // always allowed, deletes all keys
+
+    // Keys
+    func addKey(name:value:toProviderId:) async throws -> APIKey
+    func updateKey(_:newValue:forProviderId:) async throws
+    func deleteKey(id:fromProviderId:) async throws
+
+    // Models
+    func addModel(_:toProviderId:) async throws
+    func deleteModel(_:fromProviderId:) async throws
+
+    // Default
+    func setDefault(id:) async throws
+    func loadDefaultProvider() async throws -> AIProvider?
+
+    // Keychain
+    func loadApiKey(for keyId: UUID) -> String?
+
+    // Onboarding upsert
+    func mergeProvider(_:keyName:keyValue:models:) async throws -> UUID
+
+    // UI validation helpers
+    func providerHostExists(_:) async -> Bool
+    func keyValueExists(_:inProviderId:) async -> Bool
+}
+```
+
+**Cache:** `cachedProviders` in RAM — zero SwiftData hits on hot path. Invalidated on every write.
+**Deletion policy:** always allowed, even last provider. Orphaned threads show warning banner.
+**mergeProvider:** safe upsert — provider matched by host, key matched by Keychain value, models deduplicated.
+
+---
+
+## 8. AIOrchestrator — Reasoning Loop
 
 ```
 process(prompt, history, config, memoryContext)
@@ -257,7 +331,7 @@ Context trimming: take last `maxMessagesInContext` messages, drop oldest if over
 
 ---
 
-## 8. SystemPromptBuilder
+## 9. SystemPromptBuilder
 
 Pure value transformer — no async, no SwiftData, no side effects.
 
@@ -281,7 +355,7 @@ No projects → `ToolPermissions.readOnly` (safe fallback).
 
 ---
 
-## 9. ToolAccessController
+## 10. ToolAccessController
 
 Hard gate before every tool execution. Pure static function — no async, no side effects.
 
@@ -302,7 +376,7 @@ The AI receives this as a tool result and explains the situation to the user nat
 
 ---
 
-## 10. ThreadSession (actor)
+## 11. ThreadSession (actor)
 
 Runtime container for one active thread. NOT persisted — assembled from SwiftData on activation.
 
@@ -330,7 +404,7 @@ User switches thread
 
 ---
 
-## 11. AppSettingsStore (actor)
+## 12. AppSettingsStore (actor)
 
 ```swift
 public actor AppSettingsStore {
@@ -346,24 +420,6 @@ public actor AppSettingsStore {
 
 Singleton record pattern: exactly one `AppSettings` row per container.
 All write methods use `fetchOrCreate()` — safe to call in any order.
-
----
-
-## 12. AIProviderStore
-
-```swift
-public actor AIProviderStore {
-    func loadProviders() throws -> [AIProvider]
-    func addProvider(_:apiKey:) throws -> UUID
-    func deleteProvider(id:) throws
-    func updateProvider(_:) throws
-    func loadApiKey(for:) async -> String?
-    func loadDefaultProvider() async throws -> AIProvider?
-}
-```
-
-API keys stored in Keychain (not SwiftData). `AIProviderEntity` holds only the UUID reference.
-Keychain key format: `provider.id.uuidString`.
 
 ---
 

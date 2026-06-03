@@ -28,6 +28,7 @@ Chappie/
 ├── ContentView.swift                   # Conductor: assembles components, manages sheets
 ├── MCPHelperLauncher.swift             # Launches ChappieMCP child process
 ├── Models/
+│   ├── AppState.swift                  # @Observable singleton: onboarding state (MK-04)
 │   ├── ChatMessage.swift               # UI message model (enum: .message / .toolCall)
 │   ├── AttachedFile.swift              # Attached file model for input
 │   └── AppSettingsMigration.swift      # SwiftData migration: "New.AppSettings" → AppSettings
@@ -36,13 +37,13 @@ Chappie/
 │   ├── ChappieViewModel+Send.swift     # send() — AI request pipeline
 │   ├── ChappieViewModel+Threads.swift  # Thread CRUD + selectThread()
 │   ├── ChappieViewModel+ThreadSession.swift  # ThreadSession lifecycle
-│   ├── ChappieViewModel+Providers.swift      # Provider switching + balance
+│   ├── ChappieViewModel+Providers.swift      # Provider/key switching + balance
 │   ├── ChappieViewModel+AppSettings.swift    # AppSettings read/write via AppSettingsStore
 │   ├── ChappieViewModel+Memory.swift         # Memory tool callbacks
 │   ├── ChappieViewModel+Projects.swift       # Project CRUD + settings
 │   └── StreamingState.swift            # Streaming state model (isolated from ViewModel)
 ├── Settings/
-│   └── SettingsView.swift              # App settings sheet
+│   └── SettingsView.swift              # App settings sheet (+ onboarding reset button)
 └── Views/
     ├── Chat/
     │   ├── ChatScrollView.swift         # Message feed (LazyVStack, anti-jump streaming)
@@ -51,7 +52,7 @@ Chappie/
     │   ├── StatusBarView.swift          # Status bar (current tool)
     │   ├── ProjectChipsView.swift       # Project chips + gear chip for thread settings
     │   ├── ProjectSettingsSheet.swift   # Project settings sheet
-    │   ├── ThreadSettingsSheet.swift    # Thread settings sheet (name, context depth)
+    │   ├── ThreadSettingsSheet.swift    # Thread settings: name, provider+key+model, context
     │   └── Markdown/
     │       ├── MarkdownModels.swift
     │       ├── MarkdownTextView.swift
@@ -67,9 +68,11 @@ Chappie/
     │   ├── ThinkingGearIcon.swift       # Animated thinking indicator
     │   └── InputLayoutConstants.swift  # Layout constants
     ├── Providers/
-    │   ├── ProvidersSettingsView.swift  # Provider list
-    │   ├── AddProviderSheet.swift       # Add provider sheet
-    │   └── NewThreadProviderSheet.swift # Provider picker when creating a thread
+    │   ├── ProvidersSettingsView.swift  # Provider list + ProviderDetailView (keys + models)
+    │   ├── AddProviderSheet.swift       # Add/edit provider (2-step: endpoint → models)
+    │   ├── EditKeySheet.swift           # Add/edit a named API key on a provider
+    │   ├── AddModelSheet.swift          # Add models to a provider (fetch list + manual)
+    │   └── NewThreadProviderSheet.swift # Provider+key+model picker when creating a thread
     ├── Sidebar/
     │   ├── SidebarView.swift            # Sidebar container
     │   ├── ThreadListView.swift         # Thread list
@@ -77,11 +80,11 @@ Chappie/
     ├── Toolbar/
     │   └── ToolbarContent.swift         # Toolbar: sidebar toggle + thread title + settings gear
     ├── Shared/
-    │   ├── ProviderModelPickerRows.swift # Shared provider/model picker rows
+    │   ├── ProviderModelPickerRows.swift # Shared: ProviderPickRow, ModelPickRow
     │   ├── ShakeEffect.swift            # Shake animation modifier
     │   └── FlowLayout.swift             # Flow layout for chips
     └── Onboarding/
-        └── OnboardingView.swift         # Onboarding on first launch
+        └── OnboardingView.swift         # Onboarding: welcome step + provider setup step
 ```
 
 ---
@@ -92,6 +95,7 @@ Chappie/
 graph TD
     subgraph Entry["App Entry"]
         App["ChappieApp\n@main, ModelContainer\nAppSettingsMigrationPlan"]
+        AS["AppState\n@Observable singleton\nonboarding flag"]
     end
 
     subgraph UI["UI Layer (@MainActor)"]
@@ -108,6 +112,8 @@ graph TD
         Input["ChappieTextEditorView\nInputMorphView"]
         Chips["ProjectChipsView\nModelPickerRow\nStatusBarView"]
         Sheets["ThreadSettingsSheet\nProjectSettingsSheet\nNewThreadProviderSheet"]
+        Providers["ProvidersSettingsView\nAddProviderSheet\nEditKeySheet\nAddModelSheet"]
+        Onboarding["OnboardingView"]
         Toolbar["ToolbarContent"]
     end
 
@@ -120,7 +126,7 @@ graph TD
         TS["ThreadStore"]
         PS["ProjectStore"]
         MS["MemoryStore"]
-        APS["AIProviderStore"]
+        APS["AIProviderStore\nmulti-key + Keychain"]
         ASS["AppSettingsStore"]
         TES["ToolExecutionService"]
     end
@@ -130,11 +136,14 @@ graph TD
     end
 
     App --> CV
+    App --> AS
     CV --> Sidebar
     CV --> Chat
     CV --> Input
     CV --> Chips
     CV --> Sheets
+    CV --> Providers
+    CV --> Onboarding
     CV --> Toolbar
 
     VM --> Orch
@@ -173,7 +182,26 @@ Without this the helper stays alive as an orphan and the next launch fails on so
 
 ---
 
-## 5. ChappieViewModel
+## 5. AppState (MK-04)
+
+`@Observable final class AppState` — singleton, `AppState.shared`.
+
+```swift
+var onboardingCompleted: Bool   // persisted in UserDefaults
+var debugForceOnboarding: Bool  // in-memory, debug only
+
+var shouldShowOnboarding: Bool { !onboardingCompleted || debugForceOnboarding }
+
+func completeOnboarding()       // sets onboardingCompleted = true
+func resetOnboarding()          // sets onboardingCompleted = false (debug/settings)
+```
+
+`ContentView` reads `appState.shouldShowOnboarding` to switch between `OnboardingView` and main content.
+`@State var appState = AppState.shared` in ContentView ensures SwiftUI subscribes to @Observable changes.
+
+---
+
+## 6. ChappieViewModel
 
 `@Observable @MainActor final class ChappieViewModel`
 
@@ -185,7 +213,7 @@ Split across multiple extensions for maintainability:
 | `+Send.swift` | `send()` — AI request pipeline |
 | `+Threads.swift` | Thread CRUD, `selectThread()`, `loadThreadsAndSelectActive()` |
 | `+ThreadSession.swift` | `ThreadSession` lifecycle — activate, invalidate |
-| `+Providers.swift` | Provider switching, balance loading |
+| `+Providers.swift` | Provider/key switching, balance loading, invalidation |
 | `+AppSettings.swift` | `AppSettingsStore` read/write |
 | `+Memory.swift` | Memory tool callbacks |
 | `+Projects.swift` | Project CRUD, `updateProjectSettings()` |
@@ -204,8 +232,22 @@ Split across multiple extensions for maintainability:
 | `runningCost` | `Double` | Accumulated request cost |
 | `currentBalance` | `Double?` | Active provider balance |
 | `activeProvider` | `AIProvider?` | Active AI provider |
+| `activeKeyId` | `UUID?` | Active API key ID (multi-key) |
 | `activeModelName` | `String?` | Selected model |
 | `activeThreadSettings` | `ThreadSettings` | Settings of the active thread |
+
+### Provider / Key / Model Selection
+
+`switchProvider(_ provider:, keyId:, modelName:)` is the single entry point for all provider changes.
+
+- Both `keyId` and `modelName` MUST be non-nil to create an `AIClient`/`AIOrchestrator`.
+- Missing either → `applyProviderWithoutModel()` → blocks orchestrator, shows orange banner.
+- `persistSettings: Bool` flag — when true (default), writes `(providerId, keyId, modelName)` to thread settings in DB.
+
+**Invalidation methods** (called synchronously before async delete):
+- `invalidateProviderIfDeleted(id:)` — clears everything if active provider deleted
+- `invalidateModelIfDeleted(name:providerId:)` — clears aiClient/orchestrator if active model deleted
+- `invalidateKeyIfDeleted(keyId:providerId:)` — clears aiClient/orchestrator if active key deleted
 
 ### Data Flow on Thread Switch
 
@@ -222,11 +264,62 @@ selectThread()
 
 Previously `switchProvider()` was skipped if `activeProvider != nil`.
 This caused the AI model to be set globally instead of per-thread.
-Now: always called with the thread's saved provider — guarantees correct model and balance per thread.
+Now: always called with the thread's saved provider — guarantees correct model, key and balance per thread.
 
 ---
 
-## 6. AppSettingsMigration.swift
+## 7. Multi-Key Provider System (MK-01..MK-09)
+
+### Data Model
+
+```
+AIProvider
+  └── keys: [APIKey]          — named keys, secrets in Keychain
+  └── models: [String]        — saved model names
+
+APIKey
+  ├── id: UUID                — Keychain entry key = apiKey.id.uuidString
+  └── name: String            — user-defined label ("Work", "Personal", "Client X")
+
+ThreadSettings
+  ├── activeProviderId: UUID?
+  ├── activeKeyId: UUID?      — which key to use for this thread
+  └── activeModelName: String?
+```
+
+### Deduplication Rules (enforced in UI, not in store)
+
+| Check | Where | Action |
+|-------|-------|--------|
+| Duplicate provider host | AddProviderSheet (directory) | Alert, block save |
+| Duplicate key value (same provider) | EditKeySheet, AddProviderSheet (edit) | Alert/inline error |
+| Duplicate key name (same provider) | EditKeySheet, AddProviderSheet (edit) | Alert/inline error |
+| Duplicate model name (same provider) | AddModelSheet | Greyed out in list |
+
+**Merge rules (onboarding / `mergeProvider`):**
+- Provider: match by host → update name, reuse id
+- Key: match by Keychain value → update name only; name collision → auto-suffix (Key 2, Key 3…)
+- Models: add only those not already present
+
+### Key Selection UX
+
+Three-column picker appears in:
+- `NewThreadProviderSheet` — when creating a new thread
+- `ThreadSettingsSheet` — when editing thread settings
+- `ModelPickerRow` popover — inline in the top bar
+
+Auto-select: if provider has exactly one key → it is pre-selected automatically.
+No auto-select when provider has multiple keys — user must choose explicitly.
+
+### Onboarding Trigger
+
+`AppState.shouldShowOnboarding` drives the gate in `ContentView`.
+`AddProviderSheet(isOnboarding: true)` → multi-key UI + `mergeProvider` save.
+`SettingsView` has a debug section to reset onboarding via `AppState.resetOnboarding()`.
+
+---
+
+## 8. AppSettingsMigration.swift
 
 **⚠️ DO NOT REMOVE** — SwiftData stores the entity name history in the database.
 Removing `AppSettingsMigrationPlan` causes a schema conflict crash on next launch for existing users.
@@ -236,7 +329,7 @@ It runs once on first launch after the rename and is a no-op on all subsequent l
 
 ---
 
-## 7. Provider Balance
+## 9. Provider Balance
 
 **Storage:** `AppSettings.balancesJSON` via `AppSettingsStore`
 **Load:** `switchProvider()` → `AppSettingsStore.loadBalances()`
@@ -245,7 +338,7 @@ It runs once on first launch after the rename and is a no-op on all subsequent l
 
 ---
 
-## 8. ChatScrollView — LazyVStack + Anti-Jump Streaming
+## 10. ChatScrollView — LazyVStack + Anti-Jump Streaming
 
 **Problem:** during streaming, `withAnimation` on every token triggered layout recalculation → jumps.
 
@@ -261,7 +354,7 @@ It runs once on first launch after the rename and is a no-op on all subsequent l
 
 ---
 
-## 9. ProjectSettingsSheet
+## 11. ProjectSettingsSheet
 
 **Pattern:** "dumb component" — knows nothing about SwiftData.
 - Receives `ProjectMetadata` and `onSave: (ProjectSettings) -> Void`
@@ -281,22 +374,25 @@ It runs once on first launch after the rename and is a no-op on all subsequent l
 
 ---
 
-## 10. ThreadSettingsSheet
+## 12. ThreadSettingsSheet
 
-**Pattern:** same "dumb component" pattern as ProjectSettingsSheet.
-- Receives `ThreadMetadata`
-- Edits `@State draftTitle: String` and `@State draftSettings: ThreadSettings`
-- On "Save" → `onSave(newTitle, newSettings)` → `viewModel.updateThreadSettings()`
+**Pattern:** "dumb component" — receives `ThreadMetadata` + `[AIProvider]`, returns via `onSave`.
+
+```swift
+onSave: (String, ThreadSettings, UUID?, UUID?, String?) -> Void
+//        title   settings        providerId keyId   modelName
+```
 
 **Settings:**
 - Thread name (inline TextField)
+- Provider + Key + Model (3-column picker)
 - Context depth: slider 10...1000 messages (adaptive step: 5 / 10 / 50)
 - Unlimited context toggle
 - Info box: token budget (messages × 500) and chat display depth (messages × 10)
 
 ---
 
-## 11. Last Active Thread Restore
+## 13. Last Active Thread Restore
 
 `selectThread()` saves `thread.id` via `AppSettingsStore.save(lastActiveThreadId:)`.
 `loadThreadsAndSelectActive()` on startup:
@@ -305,7 +401,7 @@ It runs once on first launch after the rename and is a no-op on all subsequent l
 
 ---
 
-## 12. ContentView — Sheet Management
+## 14. ContentView — Sheet Management
 
 ```swift
 .sheet(isPresented: $showSettings) { SettingsView() }
@@ -315,17 +411,24 @@ It runs once on first launch after the rename and is a no-op on all subsequent l
 }
 
 .sheet(item: $selectedThreadForSettings) { thread in
-    ThreadSettingsSheet(onSave: { title, settings in
-        viewModel.updateThreadSettings(settings, newTitle: title, forThreadId: thread.id)
+    // MK-06: onSave receives keyId — full provider+key+model selection
+    ThreadSettingsSheet(onSave: { title, settings, providerId, keyId, modelName in
+        viewModel.updateThreadSettings(settings, newTitle: title, forThreadId: thread.id,
+            newProviderId: providerId, newKeyId: newKeyId, newModelName: modelName)
     }, ...)
 }
 
-.sheet(isPresented: $viewModel.showNewThreadProviderPicker) { NewThreadProviderSheet(...) }
+.sheet(isPresented: $viewModel.showNewThreadProviderPicker) {
+    // MK-07: onConfirm receives keyId
+    NewThreadProviderSheet(onConfirm: { providerId, keyId, modelName, title, settings in
+        viewModel.confirmNewThread(with: providerId, keyId: keyId, ...)
+    }, ...)
+}
 ```
 
 ---
 
-## 13. MCPHelperLauncher
+## 15. MCPHelperLauncher
 
 Manages the lifecycle of the ChappieMCP child process.
 
@@ -336,7 +439,7 @@ Manages the lifecycle of the ChappieMCP child process.
 
 ---
 
-## 14. Security-Scoped Bookmarks
+## 16. Security-Scoped Bookmarks
 
 A security-scoped bookmark is created for each project folder.
 Stored in `ProjectEntity.bookmarkData` (SwiftData).
@@ -349,6 +452,7 @@ User adds via UI with a real bookmark.
 
 | Date | Change |
 |------|--------|
+| 2026-07-XX | MK-01..09 complete: multi-key provider system — APIKey struct, per-thread key selection, onboarding with mergeProvider, full deduplication across all entry points |
 | 2026-07-XX | M-10 complete: removed SettingsManager, KeychainManager, FeatureFlags, all V1 branches; AppSettings migrated from New namespace |
 | 2026-07-XX | Added AppSettingsMigration.swift section; updated storage map to AppSettingsStore |
 | 2026-07-XX | ViewModel split into extensions (+Send, +Threads, +ThreadSession, +Providers, +AppSettings, +Memory, +Projects) |
