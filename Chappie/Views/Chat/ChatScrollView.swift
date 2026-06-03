@@ -18,17 +18,16 @@
 // input panel. The footer spacer (footerHeight) below the sentinel provides
 // physical clearance from the actual panel chrome.
 //
-// BUG-01: LOAD MORE SCROLL FIX (v4 — proxy.scrollTo after layout):
+// BUG-01: LOAD MORE SCROLL FIX (v5 — anchor: .center):
 // Previous attempts:
 //   v1: isLoadingMore flag + no scroll — VStack doesn't preserve position on prepend.
 //   v2: proxy.scrollTo(anchorId) immediately — fires during render, before layout.
 //   v3: scrollPosition(id:) — applies anchor before VStack finishes measuring,
 //       causing a 1-2 message upward drift.
-// Fix v4: after prepend, wait 80ms for VStack to finish layout, THEN call
-// proxy.scrollTo(anchorId, anchor: .top). This fires AFTER the layout pass,
-// so the scroll lands exactly on the right message with no drift.
-// WHY 80ms: VStack layout on macOS typically completes within one runloop pass
-// (~16ms), but 80ms gives headroom for slow machines and large message batches.
+//   v4: proxy.scrollTo(anchorId, anchor: .top) after 80ms — lands at top edge,
+//       user sees the anchor message at the very top of the screen.
+// Fix v5: anchor: .center — the first previously-visible message is centered
+// in the viewport after Load More prepend. More natural UX, no edge-hugging.
 //
 // VSTACK (PAGINATION OVER LAZYVSTACK):
 // Messages are rendered in a plain VStack — all displayed messages are always in the
@@ -112,7 +111,7 @@
 // LOAD MORE (PAGINATION):
 // A "Load earlier messages" button appears at the top when hasMoreMessages == true.
 // Tapping it calls onLoadMore() which prepends the previous batch.
-// After loading, scroll position is preserved — no jump to top or bottom.
+// After loading, scroll position is preserved — anchor message centered in viewport.
 //
 // SCROLLBAR:
 // Hidden via scrollIndicators(.never) — not needed in this chat UI aesthetic.
@@ -166,8 +165,9 @@ struct ChatScrollView: View {
     /// CPU-22: measured via onGeometryChange in ContentView, grows dynamically.
     let footerHeight: CGFloat
 
-    /// BUG-01 v4: ID of the first previously-visible message before Load More prepend.
+    /// BUG-01 v5: ID of the first previously-visible message before Load More prepend.
     /// When non-nil, a delayed proxy.scrollTo fires after VStack layout completes.
+    /// anchor: .center — anchor message lands in the middle of the viewport.
     /// Reset to nil by ViewModel after scroll is applied.
     let loadMoreAnchorId: UUID?
 
@@ -241,14 +241,15 @@ struct ChatScrollView: View {
                 }
             }
             .onChange(of: messages.count) { _, _ in
-                // BUG-01 v4: Load More prepend — wait for VStack layout, then scroll to anchor.
+                // BUG-01 v5: Load More prepend — wait for VStack layout, then scroll to anchor.
                 // 80ms gives VStack time to finish measuring the prepended batch before we scroll.
-                // Firing proxy.scrollTo immediately (v2) or via scrollPosition(v3) both
-                // execute before layout is committed, causing 1-2 message drift.
+                // anchor: .center — anchor message is centered in the viewport (not edge-hugging).
                 if let anchorId = loadMoreAnchorId {
                     Task {
                         try? await Task.sleep(nanoseconds: 80_000_000)
-                        proxy.scrollTo(anchorId, anchor: .top)
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo(anchorId, anchor: .center)
+                        }
                         onLoadMoreScrollDone()
                     }
                 } else {
