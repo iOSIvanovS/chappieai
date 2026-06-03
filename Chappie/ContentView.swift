@@ -183,16 +183,17 @@ struct ContentView: View {
                 )
             }
             .sheet(item: $selectedThreadForSettings) { thread in
+                // MK-06: onSave now receives keyId — full provider+key+model selection
                 ThreadSettingsSheet(
                     thread: thread,
                     providers: viewModel.providers,
-                    onSave: { newTitle, newSettings, newProviderId, newModelName in
+                    onSave: { newTitle, newSettings, newProviderId, newKeyId, newModelName in
                         viewModel.updateThreadSettings(
                             newSettings,
                             newTitle: newTitle,
                             forThreadId: thread.id,
                             newProviderId: newProviderId,
-                            newKeyId: nil,       // MK-08: key picker in ThreadSettingsSheet
+                            newKeyId: newKeyId,
                             newModelName: newModelName
                         )
                         selectedThreadForSettings = nil
@@ -374,7 +375,7 @@ struct ContentView: View {
                         if let provider = viewModel.providers.first(where: { $0.id == providerId }),
                            let store = viewModel.providerStore {
                             Task {
-                                // MK-07: key picker in popover — pass activeKeyId for now
+                                // MK-07: key picker in ModelPickerRow popover — pass activeKeyId for now
                                 await viewModel.switchProvider(
                                     provider,
                                     keyId: viewModel.activeKeyId,

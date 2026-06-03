@@ -10,7 +10,7 @@
 //
 // SETTINGS:
 // - Thread name (inline rename)
-// - Provider + model (M-08: per-thread provider override)
+// - Provider + key + model (3-column picker, per-thread isolation)
 // - Context depth: slider 10...1000 messages
 //   Token budget = messages × 500 (displayed as info, not editable)
 // - Unlimited context toggle: bypasses all trimming
@@ -28,7 +28,7 @@ struct ThreadSettingsSheet: View {
 
     let thread: ThreadMetadata
     let providers: [AIProvider]
-    let onSave: (String, ThreadSettings, UUID?, String?) -> Void
+    let onSave: (String, ThreadSettings, UUID?, UUID?, String?) -> Void
     let onDismiss: () -> Void
 
     // MARK: - Local draft state
@@ -36,6 +36,7 @@ struct ThreadSettingsSheet: View {
     @State private var draftTitle: String
     @State private var draftSettings: ThreadSettings
     @State private var selectedProviderId: UUID?
+    @State private var selectedKeyId: UUID?
     @State private var selectedModelName: String
     @State private var manualModelInput: String = ""
 
@@ -50,7 +51,7 @@ struct ThreadSettingsSheet: View {
     init(
         thread: ThreadMetadata,
         providers: [AIProvider],
-        onSave: @escaping (String, ThreadSettings, UUID?, String?) -> Void,
+        onSave: @escaping (String, ThreadSettings, UUID?, UUID?, String?) -> Void,
         onDismiss: @escaping () -> Void
     ) {
         self.thread = thread
@@ -60,6 +61,7 @@ struct ThreadSettingsSheet: View {
         self._draftTitle = State(initialValue: thread.title)
         self._draftSettings = State(initialValue: thread.settings)
         self._selectedProviderId = State(initialValue: thread.settings.activeProviderId)
+        self._selectedKeyId = State(initialValue: thread.settings.activeKeyId)
         self._selectedModelName = State(initialValue: thread.settings.activeModelName ?? "")
     }
 
@@ -86,7 +88,7 @@ struct ThreadSettingsSheet: View {
             Divider()
             footerView
         }
-        .frame(width: 440)
+        .frame(width: 520)
         .frame(minHeight: 400)
     }
 
@@ -134,7 +136,7 @@ struct ThreadSettingsSheet: View {
         }
     }
 
-    // MARK: - Provider Section (M-08)
+    // MARK: - Provider Section (3-column: provider / key / model)
 
     private var providerSection: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -157,7 +159,8 @@ struct ThreadSettingsSheet: View {
                                     isSelected: selectedProviderId == provider.id,
                                     onSelect: {
                                         selectedProviderId = provider.id
-                                        // Auto-select first model of this provider
+                                        // Auto-select key if provider has exactly one
+                                        selectedKeyId = provider.keys.count == 1 ? provider.keys.first?.id : nil
                                         selectedModelName = provider.models.first ?? ""
                                     }
                                 )
@@ -165,9 +168,43 @@ struct ThreadSettingsSheet: View {
                         }
                         .padding(.horizontal, 4)
                     }
-                    .frame(maxHeight: 160)
+                    .frame(maxHeight: 150)
                 }
-                .frame(width: 180)
+                .frame(width: 160)
+
+                Divider()
+                    .padding(.horizontal, 8)
+
+                // Middle: keys
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Ключ")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                        .padding(.bottom, 4)
+
+                    if let provider = selectedProvider {
+                        if provider.keys.isEmpty {
+                            keysEmptyState
+                        } else {
+                            ScrollView {
+                                VStack(spacing: 2) {
+                                    ForEach(provider.keys) { key in
+                                        KeyPickRow(
+                                            key: key,
+                                            isSelected: selectedKeyId == key.id,
+                                            onSelect: { selectedKeyId = key.id }
+                                        )
+                                    }
+                                }
+                                .padding(.horizontal, 4)
+                            }
+                            .frame(maxHeight: 150)
+                        }
+                    } else {
+                        noProviderHint
+                    }
+                }
+                .frame(width: 140)
 
                 Divider()
                     .padding(.horizontal, 8)
@@ -195,7 +232,7 @@ struct ThreadSettingsSheet: View {
                                 }
                                 .padding(.horizontal, 4)
                             }
-                            .frame(maxHeight: 160)
+                            .frame(maxHeight: 150)
                         }
 
                         // Manual model input
@@ -211,14 +248,7 @@ struct ThreadSettingsSheet: View {
                                 .disabled(manualModelInput.trimmingCharacters(in: .whitespaces).isEmpty)
                         }
                     } else {
-                        VStack {
-                            Spacer()
-                            Text("← Выберите провайдера")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                        }
-                        .frame(maxWidth: .infinity)
+                        noProviderHint
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -228,15 +258,43 @@ struct ThreadSettingsSheet: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
 
             // Summary of current selection
-            if let provider = selectedProvider, !selectedModelName.isEmpty {
+            selectionSummary
+        }
+    }
+
+    // MARK: - Selection Summary
+
+    @ViewBuilder
+    private var selectionSummary: some View {
+        if let provider = selectedProvider {
+            if !selectedModelName.isEmpty, let keyId = selectedKeyId,
+               let key = provider.keys.first(where: { $0.id == keyId }) {
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 11))
                         .foregroundStyle(.green)
-                    Text("\(provider.displayName) · \(selectedModelName)")
+                    Text("\(provider.displayName) · \(key.name) · \(selectedModelName)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                }
+            } else if selectedKeyId == nil {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.circle")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                    Text("Выберите ключ")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            } else if selectedModelName.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.circle")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                    Text("Выберите модель")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                 }
             }
         }
@@ -340,13 +398,27 @@ struct ThreadSettingsSheet: View {
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
-    // MARK: - Models Empty State
+    // MARK: - Empty / Hint States
+
+    private var keysEmptyState: some View {
+        VStack(spacing: 6) {
+            Spacer()
+            Image(systemName: "key.slash")
+                .font(.system(size: 20))
+                .foregroundStyle(.secondary.opacity(0.4))
+            Text("Нет ключей")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: 80)
+    }
 
     private var modelsEmptyState: some View {
         VStack(spacing: 6) {
             Spacer()
             Image(systemName: "square.stack.3d.up.slash")
-                .font(.system(size: 22))
+                .font(.system(size: 20))
                 .foregroundStyle(.secondary.opacity(0.4))
             Text("Нет сохранённых моделей")
                 .font(.caption)
@@ -354,6 +426,17 @@ struct ThreadSettingsSheet: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: 80)
+    }
+
+    private var noProviderHint: some View {
+        VStack {
+            Spacer()
+            Text("← Выберите провайдера")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Footer
@@ -371,11 +454,11 @@ struct ThreadSettingsSheet: View {
             Button("Сохранить") {
                 let trimmedTitle = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
                 let finalTitle = trimmedTitle.isEmpty ? thread.title : trimmedTitle
-                // Always pass current picker selection — ViewModel compares and decides if switchProvider is needed
                 onSave(
                     finalTitle,
                     draftSettings,
                     selectedProviderId,
+                    selectedKeyId,
                     selectedModelName.isEmpty ? nil : selectedModelName
                 )
             }
@@ -445,6 +528,45 @@ struct ThreadSettingsSheet: View {
     }
 }
 
+// MARK: - KeyPickRow
+
+private struct KeyPickRow: View {
+
+    let key: APIKey
+    let isSelected: Bool
+    let onSelect: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 8) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 13))
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.3))
+                    .frame(width: 16)
+
+                Text(key.name)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isSelected
+                          ? Color.accentColor.opacity(0.07)
+                          : (isHovered ? Color.primary.opacity(0.04) : Color.clear))
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
+}
+
 // MARK: - Preview
 
 #Preview("Default settings") {
@@ -462,11 +584,12 @@ struct ThreadSettingsSheet: View {
                 id: UUID(),
                 name: "AITunnel",
                 endpoint: "https://api.aitunnel.ru/v1/chat/completions",
+                keys: [APIKey(name: "Рабочий"), APIKey(name: "Личный")],
                 models: ["claude-sonnet-4-5", "gpt-4o"]
             )
         ],
-        onSave: { title, settings, providerId, modelName in
-            print("Save: \(title), provider: \(String(describing: providerId)), model: \(String(describing: modelName))")
+        onSave: { title, settings, providerId, keyId, modelName in
+            print("Save: \(title), provider: \(String(describing: providerId)), key: \(String(describing: keyId)), model: \(String(describing: modelName))")
         },
         onDismiss: {}
     )
