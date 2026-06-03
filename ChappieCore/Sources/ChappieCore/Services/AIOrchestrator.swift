@@ -112,7 +112,7 @@ public actor AIOrchestrator {
     /// overrideSystemPrompt: pre-built by ThreadSession (v2SystemPrompt()). When nil —
     /// falls back to baseSystemPrompt (cold-start race condition guard).
     ///
-    /// overrideToolPermissions: when provided, New.ToolAccessController.check() is called
+    /// overrideToolPermissions: when provided, ToolAccessController.check() is called
     /// before every tool execution. When nil — ToolExecutionService handles access checks.
     ///
     /// currentMessage: optional pre-built AIMessage for multimodal content (images/files).
@@ -124,7 +124,7 @@ public actor AIOrchestrator {
         config: AppConfig = .shared,
         memoryContext: MemoryContext = .empty,
         overrideSystemPrompt: String? = nil,
-        overrideToolPermissions: New.ToolPermissions? = nil,
+        overrideToolPermissions: ToolPermissions? = nil,
         onToolCall: @escaping @Sendable (String, String) -> Void,
         onToken: (@Sendable (String) -> Void)? = nil,
         onCostUpdate: (@Sendable (Double) -> Void)? = nil,
@@ -414,7 +414,7 @@ public actor AIOrchestrator {
         _ toolCalls: [AIToolCall],
         sessionHistory: inout [AIMessage],
         lastToolSignature: inout String?,
-        overrideToolPermissions: New.ToolPermissions?,
+        overrideToolPermissions: ToolPermissions?,
         onToolCall: @Sendable (String, String) -> Void
     ) async throws {
         for toolCall in toolCalls {
@@ -432,7 +432,7 @@ public actor AIOrchestrator {
                 """
                 print("[AIOrchestrator] Loop detected: \(toolName) called twice in a row with same args")
             } else if let permissions = overrideToolPermissions {
-                let access = New.ToolAccessController.check(toolName: toolName, permissions: permissions)
+                let access = ToolAccessController.check(toolName: toolName, permissions: permissions)
                 if case .denied = access {
                     resultString = access.denialJSON(toolName: toolName)
                     print("[AIOrchestrator] V2 access denied for '\(toolName)'")

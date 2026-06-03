@@ -1,8 +1,8 @@
 // ChappieViewModel+AppSettings.swift
 // Chappie
 //
-// V2: SwiftData-backed app settings — balance, last active thread, workspace bookmark.
-// All state is persisted via New.AppSettingsStore (SwiftData), no UserDefaults.
+// SwiftData-backed app settings — balance, last active thread, workspace bookmark.
+// All state is persisted via AppSettingsStore (SwiftData), no UserDefaults.
 
 import Foundation
 import SwiftData
@@ -10,12 +10,12 @@ import ChappieCore
 
 extension ChappieViewModel {
 
-    // MARK: - V2 Store
+    // MARK: - Store
 
     /// Wires AppSettingsStore into the ViewModel after ModelContainer is ready.
     /// Called from setModelContainer(_:).
     func connectAppSettingsStore(container: ModelContainer) {
-        self.appSettingsStore = New.AppSettingsStore(modelContainer: container)
+        self.appSettingsStore = AppSettingsStore(modelContainer: container)
     }
 
     // MARK: - Balance Storage

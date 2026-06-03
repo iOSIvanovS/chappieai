@@ -22,7 +22,8 @@
 // - ProjectEntity: projects with security-scoped bookmarks
 // - MemoryEntity: three-level memory (global/project/thread)
 // - AIProviderEntity: AI provider configurations
-// - New.AppSettings: V2 global settings (balance, last active thread, workspace bookmark)
+// - AppSettings: global settings (balance, last active thread, workspace bookmark)
+//   Previously stored as "New.AppSettings" — AppSettingsMigrationPlan handles the rename.
 //
 // WINDOW SIZE:
 // .defaultSize(width:height:) sets the initial window size on first launch.
@@ -56,28 +57,26 @@ struct ChappieApp: App {
     /// not in ViewModel, to guarantee a single instance throughout the app's lifetime.
     /// Creating multiple ModelContainers for the same schema causes conflicts and data loss.
     ///
+    /// MIGRATION:
+    /// AppSettings was previously stored as "New.AppSettings" (namespace wrapper).
+    /// AppSettingsMigrationPlan maps the old entity name to the new one on first launch.
+    ///
     /// ERROR HANDLING:
     /// If the container cannot be created — this is a critical error (corrupted DB).
-    /// In this case we try to recreate from scratch (deleteExistingFile: true).
-    /// This means data loss, but it's better than a full app crash.
+    /// In this case we try to recreate from scratch. This means data loss,
+    /// but it's better than a full app crash.
     let modelContainer: ModelContainer = {
-        let schema = Schema([
-            ThreadEntity.self,
-            ProjectEntity.self,
-            MemoryEntity.self,
-            AIProviderEntity.self,
-            New.AppSettings.self
-        ])
-
-        let modelConfiguration = ModelConfiguration(
-            schema: schema,
-            isStoredInMemoryOnly: false
-        )
+        let schema = Schema(AppSettingsSchemaV1.models)
+        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
         do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            return try ModelContainer(
+                for: schema,
+                migrationPlan: AppSettingsMigrationPlan.self,
+                configurations: [config]
+            )
         } catch {
-            print("[ChappieApp] Failed to create ModelContainer: \(error)")
+            print("[ChappieApp] Failed to create ModelContainer with migration: \(error)")
             print("[ChappieApp] Attempting to recreate database...")
 
             let recoveryConfig = ModelConfiguration(
@@ -87,7 +86,11 @@ struct ChappieApp: App {
             )
 
             do {
-                return try ModelContainer(for: schema, configurations: [recoveryConfig])
+                return try ModelContainer(
+                    for: schema,
+                    migrationPlan: AppSettingsMigrationPlan.self,
+                    configurations: [recoveryConfig]
+                )
             } catch {
                 fatalError("[ChappieApp] Critical: cannot create ModelContainer: \(error)")
             }

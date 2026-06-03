@@ -28,8 +28,8 @@ struct SystemPromptBuilderTests {
 
     private let persona = "You are Chappie."
 
-    private func makeBuilder() -> New.SystemPromptBuilder {
-        New.SystemPromptBuilder(personaBlock: persona)
+    private func makeBuilder() -> SystemPromptBuilder {
+        SystemPromptBuilder(personaBlock: persona)
     }
 
     // MARK: - Basic structure
@@ -42,21 +42,21 @@ struct SystemPromptBuilderTests {
 
     @Test("userName is injected when present")
     func userNameIsInjected() {
-        let ctx = New.PromptContext(userName: "Sergey")
+        let ctx = PromptContext(userName: "Sergey")
         let prompt = makeBuilder().build(context: ctx)
         #expect(prompt.contains("The user's name is Sergey."))
     }
 
     @Test("Empty userName is NOT injected")
     func emptyUserNameIsNotInjected() {
-        let ctx = New.PromptContext(userName: "")
+        let ctx = PromptContext(userName: "")
         let prompt = makeBuilder().build(context: ctx)
         #expect(!prompt.contains("The user's name is"))
     }
 
     @Test("nil userName is NOT injected")
     func nilUserNameIsNotInjected() {
-        let ctx = New.PromptContext(userName: nil)
+        let ctx = PromptContext(userName: nil)
         let prompt = makeBuilder().build(context: ctx)
         #expect(!prompt.contains("The user's name is"))
     }
@@ -65,7 +65,7 @@ struct SystemPromptBuilderTests {
 
     @Test("Global memory section appears when non-empty")
     func globalMemorySectionAppearsWhenNonEmpty() {
-        let ctx = New.PromptContext(globalMemory: [makeEntry(key: "test_rule", type: "rule")])
+        let ctx = PromptContext(globalMemory: [makeEntry(key: "test_rule", type: "rule")])
         let prompt = makeBuilder().build(context: ctx)
         #expect(prompt.contains("## Global Memory"))
         #expect(prompt.contains("test_rule"))
@@ -73,13 +73,13 @@ struct SystemPromptBuilderTests {
 
     @Test("Global memory section is OMITTED when empty")
     func globalMemorySectionOmittedWhenEmpty() {
-        let prompt = makeBuilder().build(context: New.PromptContext(globalMemory: []))
+        let prompt = makeBuilder().build(context: PromptContext(globalMemory: []))
         #expect(!prompt.contains("## Global Memory"))
     }
 
     @Test("Thread memory section appears when non-empty")
     func threadMemorySectionAppearsWhenNonEmpty() {
-        let ctx = New.PromptContext(threadMemory: [makeEntry(key: "task_context")])
+        let ctx = PromptContext(threadMemory: [makeEntry(key: "task_context")])
         let prompt = makeBuilder().build(context: ctx)
         #expect(prompt.contains("## Thread Context"))
         #expect(prompt.contains("task_context"))
@@ -87,7 +87,7 @@ struct SystemPromptBuilderTests {
 
     @Test("Thread memory section is OMITTED when empty")
     func threadMemorySectionOmittedWhenEmpty() {
-        let prompt = makeBuilder().build(context: New.PromptContext(threadMemory: []))
+        let prompt = makeBuilder().build(context: PromptContext(threadMemory: []))
         #expect(!prompt.contains("## Thread Context"))
     }
 
@@ -97,18 +97,18 @@ struct SystemPromptBuilderTests {
     func projectMemoryIsIsolatedBetweenProjects() {
         let builder = makeBuilder()
 
-        let ctxA = New.PromptContext.ProjectContext(
+        let ctxA = PromptContext.ProjectContext(
             name: "ProjectA",
             settings: ProjectSettings(agentRole: .executor),
             memory: [makeEntry(key: "secret_a", value: "only for project A")]
         )
-        let ctxB = New.PromptContext.ProjectContext(
+        let ctxB = PromptContext.ProjectContext(
             name: "ProjectB",
             settings: ProjectSettings(agentRole: .executor),
             memory: [makeEntry(key: "secret_b", value: "only for project B")]
         )
 
-        let prompt = builder.build(context: New.PromptContext(projects: [ctxA, ctxB]))
+        let prompt = builder.build(context: PromptContext(projects: [ctxA, ctxB]))
 
         // Both project settings blocks present
         #expect(prompt.contains("Project Settings: ProjectA"))
@@ -149,7 +149,7 @@ struct SystemPromptBuilderTests {
 
     @Test("No projects attached → no project settings block in prompt")
     func noProjectsProducesNoProjectBlock() {
-        let ctx = New.PromptContext(userName: "Sergey")
+        let ctx = PromptContext(userName: "Sergey")
         let prompt = makeBuilder().build(context: ctx)
         #expect(!prompt.contains("## Project Settings"))
         #expect(!prompt.contains("## Project Memory"))
@@ -157,12 +157,12 @@ struct SystemPromptBuilderTests {
 
     @Test("Project with empty memory → no project memory block")
     func projectWithEmptyMemoryHasNoMemoryBlock() {
-        let projectCtx = New.PromptContext.ProjectContext(
+        let projectCtx = PromptContext.ProjectContext(
             name: "EmptyProject",
             settings: ProjectSettings(agentRole: .advisor),
             memory: []
         )
-        let prompt = makeBuilder().build(context: New.PromptContext(projects: [projectCtx]))
+        let prompt = makeBuilder().build(context: PromptContext(projects: [projectCtx]))
         #expect(prompt.contains("Project Settings: EmptyProject"))
         #expect(!prompt.contains("## Project Memory: EmptyProject"))
     }
@@ -173,11 +173,11 @@ struct SystemPromptBuilderTests {
     func twoContextsAreCompletelyIndependent() {
         let builder = makeBuilder()
 
-        let ctx1 = New.PromptContext(
+        let ctx1 = PromptContext(
             userName: "Alice",
             threadMemory: [makeEntry(key: "thread1_key", value: "thread 1 data")]
         )
-        let ctx2 = New.PromptContext(
+        let ctx2 = PromptContext(
             userName: "Bob",
             threadMemory: [makeEntry(key: "thread2_key", value: "thread 2 data")]
         )
@@ -204,7 +204,7 @@ struct SystemPromptBuilderTests {
 
     @Test("Advisor role → read files only, no write/git/tests")
     func advisorRoleGivesReadOnlyPermissions() {
-        let ctx = New.PromptContext(projects: [
+        let ctx = PromptContext(projects: [
             .init(name: "P", settings: ProjectSettings(agentRole: .advisor), memory: [])
         ])
         let perms = makeBuilder().toolPermissions(for: ctx)
@@ -221,7 +221,7 @@ struct SystemPromptBuilderTests {
             isProgrammingProject: true,
             gitAccess: .full
         )
-        let ctx = New.PromptContext(projects: [
+        let ctx = PromptContext(projects: [
             .init(name: "Dev", settings: settings, memory: [])
         ])
         let perms = makeBuilder().toolPermissions(for: ctx)
@@ -241,7 +241,7 @@ struct SystemPromptBuilderTests {
             isProgrammingProject: true,
             gitAccess: .full
         )
-        let ctx = New.PromptContext(projects: [
+        let ctx = PromptContext(projects: [
             .init(name: "A", settings: settingsA, memory: []),
             .init(name: "B", settings: settingsB, memory: [])
         ])
@@ -256,7 +256,7 @@ struct SystemPromptBuilderTests {
 struct ToolAccessControllerTests {
 
     // Full permissions — used to test iron prohibitions that bypass everything.
-    private let maxPerms = New.ToolPermissions(
+    private let maxPerms = ToolPermissions(
         canReadFiles: true,
         canWriteFiles: true,
         gitLevel: .full,
@@ -269,7 +269,7 @@ struct ToolAccessControllerTests {
 
     @Test("git_diff is ALWAYS denied — iron prohibition, no override")
     func gitDiffIsAlwaysDenied() {
-        let result = New.ToolAccessController.check(toolName: "git_diff", permissions: maxPerms)
+        let result = ToolAccessController.check(toolName: "git_diff", permissions: maxPerms)
         #expect(!result.isAllowed, "git_diff must be denied regardless of permissions")
         if case .denied(let reason) = result {
             #expect(reason.contains("FORBIDDEN"), "Denial reason must mention FORBIDDEN")
@@ -278,7 +278,7 @@ struct ToolAccessControllerTests {
 
     @Test("git_diff denial JSON is valid JSON with correct fields")
     func gitDiffDenialJSONIsWellFormed() {
-        let result = New.ToolAccessController.check(toolName: "git_diff", permissions: maxPerms)
+        let result = ToolAccessController.check(toolName: "git_diff", permissions: maxPerms)
         let json = result.denialJSON(toolName: "git_diff")
         let data = json.data(using: .utf8)!
         let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -292,20 +292,20 @@ struct ToolAccessControllerTests {
     @Test("Memory tools always allowed regardless of permissions")
     func memoryToolsAlwaysAllowed() {
         for tool in ["memorize", "recall", "search_memory", "delete_memory"] {
-            let result = New.ToolAccessController.check(toolName: tool, permissions: .none)
+            let result = ToolAccessController.check(toolName: tool, permissions: .none)
             #expect(result.isAllowed, "\(tool) must always be allowed")
         }
     }
 
     @Test("web_fetch always allowed regardless of permissions")
     func webFetchAlwaysAllowed() {
-        #expect(New.ToolAccessController.check(toolName: "web_fetch", permissions: .none).isAllowed)
+        #expect(ToolAccessController.check(toolName: "web_fetch", permissions: .none).isAllowed)
     }
 
     @Test("Thread project management tools always allowed")
     func threadProjectToolsAlwaysAllowed() {
         for tool in ["add_project_to_thread", "remove_project_from_thread", "list_thread_projects"] {
-            let result = New.ToolAccessController.check(toolName: tool, permissions: .none)
+            let result = ToolAccessController.check(toolName: tool, permissions: .none)
             #expect(result.isAllowed, "\(tool) must always be allowed")
         }
     }
@@ -314,130 +314,130 @@ struct ToolAccessControllerTests {
 
     @Test("list_files denied when canReadFiles = false")
     func listFilesDeniedWithoutReadAccess() {
-        #expect(!New.ToolAccessController.check(toolName: "list_files", permissions: .none).isAllowed)
+        #expect(!ToolAccessController.check(toolName: "list_files", permissions: .none).isAllowed)
     }
 
     @Test("read_file denied when canReadFiles = false")
     func readFileDeniedWithoutReadAccess() {
-        #expect(!New.ToolAccessController.check(toolName: "read_file", permissions: .none).isAllowed)
+        #expect(!ToolAccessController.check(toolName: "read_file", permissions: .none).isAllowed)
     }
 
     @Test("list_files allowed when canReadFiles = true")
     func listFilesAllowedWithReadAccess() {
-        #expect(New.ToolAccessController.check(toolName: "list_files", permissions: .readOnly).isAllowed)
+        #expect(ToolAccessController.check(toolName: "list_files", permissions: .readOnly).isAllowed)
     }
 
     @Test("read_file allowed when canReadFiles = true")
     func readFileAllowedWithReadAccess() {
-        #expect(New.ToolAccessController.check(toolName: "read_file", permissions: .readOnly).isAllowed)
+        #expect(ToolAccessController.check(toolName: "read_file", permissions: .readOnly).isAllowed)
     }
 
     // MARK: - Write tools
 
     @Test("write_file denied when canWriteFiles = false")
     func writeFileDeniedWithoutWriteAccess() {
-        #expect(!New.ToolAccessController.check(toolName: "write_file", permissions: .readOnly).isAllowed)
+        #expect(!ToolAccessController.check(toolName: "write_file", permissions: .readOnly).isAllowed)
     }
 
     @Test("delete_file denied when canWriteFiles = false")
     func deleteFileDeniedWithoutWriteAccess() {
-        #expect(!New.ToolAccessController.check(toolName: "delete_file", permissions: .readOnly).isAllowed)
+        #expect(!ToolAccessController.check(toolName: "delete_file", permissions: .readOnly).isAllowed)
     }
 
     @Test("write_file allowed when canWriteFiles = true")
     func writeFileAllowedWithWriteAccess() {
-        let perms = New.ToolPermissions(
+        let perms = ToolPermissions(
             canReadFiles: true, canWriteFiles: true,
             gitLevel: .none, canRunTests: false, canWriteTests: false, canReadBuildLog: false
         )
-        #expect(New.ToolAccessController.check(toolName: "write_file", permissions: perms).isAllowed)
+        #expect(ToolAccessController.check(toolName: "write_file", permissions: perms).isAllowed)
     }
 
     // MARK: - Git tools by level
 
     @Test("git_status denied when gitLevel = none")
     func gitStatusDeniedWithNoGit() {
-        #expect(!New.ToolAccessController.check(toolName: "git_status", permissions: .none).isAllowed)
+        #expect(!ToolAccessController.check(toolName: "git_status", permissions: .none).isAllowed)
     }
 
     @Test("git_status allowed when gitLevel = statusOnly")
     func gitStatusAllowedWithStatusOnly() {
-        let perms = New.ToolPermissions(
+        let perms = ToolPermissions(
             canReadFiles: true, canWriteFiles: false,
             gitLevel: .statusOnly, canRunTests: false, canWriteTests: false, canReadBuildLog: false
         )
-        #expect(New.ToolAccessController.check(toolName: "git_status", permissions: perms).isAllowed)
+        #expect(ToolAccessController.check(toolName: "git_status", permissions: perms).isAllowed)
     }
 
     @Test("git_commit denied when gitLevel = statusOnly")
     func gitCommitDeniedWithStatusOnly() {
-        let perms = New.ToolPermissions(
+        let perms = ToolPermissions(
             canReadFiles: true, canWriteFiles: true,
             gitLevel: .statusOnly, canRunTests: false, canWriteTests: false, canReadBuildLog: false
         )
-        #expect(!New.ToolAccessController.check(toolName: "git_commit", permissions: perms).isAllowed)
+        #expect(!ToolAccessController.check(toolName: "git_commit", permissions: perms).isAllowed)
     }
 
     @Test("git_commit allowed when gitLevel = write")
     func gitCommitAllowedWithWriteLevel() {
-        let perms = New.ToolPermissions(
+        let perms = ToolPermissions(
             canReadFiles: true, canWriteFiles: true,
             gitLevel: .write, canRunTests: false, canWriteTests: false, canReadBuildLog: false
         )
-        #expect(New.ToolAccessController.check(toolName: "git_commit", permissions: perms).isAllowed)
+        #expect(ToolAccessController.check(toolName: "git_commit", permissions: perms).isAllowed)
     }
 
     @Test("git_revert denied when gitLevel = write (requires full)")
     func gitRevertDeniedWithWriteLevel() {
-        let perms = New.ToolPermissions(
+        let perms = ToolPermissions(
             canReadFiles: true, canWriteFiles: true,
             gitLevel: .write, canRunTests: false, canWriteTests: false, canReadBuildLog: false
         )
-        #expect(!New.ToolAccessController.check(toolName: "git_revert", permissions: perms).isAllowed)
+        #expect(!ToolAccessController.check(toolName: "git_revert", permissions: perms).isAllowed)
     }
 
     @Test("git_revert allowed when gitLevel = full")
     func gitRevertAllowedWithFullLevel() {
-        let perms = New.ToolPermissions(
+        let perms = ToolPermissions(
             canReadFiles: true, canWriteFiles: true,
             gitLevel: .full, canRunTests: false, canWriteTests: false, canReadBuildLog: false
         )
-        #expect(New.ToolAccessController.check(toolName: "git_revert", permissions: perms).isAllowed)
+        #expect(ToolAccessController.check(toolName: "git_revert", permissions: perms).isAllowed)
     }
 
     // MARK: - Build/test tools
 
     @Test("build_project denied when canRunTests = false")
     func buildProjectDeniedWithoutTestAccess() {
-        #expect(!New.ToolAccessController.check(toolName: "build_project", permissions: .none).isAllowed)
+        #expect(!ToolAccessController.check(toolName: "build_project", permissions: .none).isAllowed)
     }
 
     @Test("run_tests denied when canRunTests = false")
     func runTestsDeniedWithoutTestAccess() {
-        #expect(!New.ToolAccessController.check(toolName: "run_tests", permissions: .none).isAllowed)
+        #expect(!ToolAccessController.check(toolName: "run_tests", permissions: .none).isAllowed)
     }
 
     @Test("build_project allowed when canRunTests = true")
     func buildProjectAllowedWithTestAccess() {
-        let perms = New.ToolPermissions(
+        let perms = ToolPermissions(
             canReadFiles: true, canWriteFiles: true,
             gitLevel: .full, canRunTests: true, canWriteTests: false, canReadBuildLog: true
         )
-        #expect(New.ToolAccessController.check(toolName: "build_project", permissions: perms).isAllowed)
+        #expect(ToolAccessController.check(toolName: "build_project", permissions: perms).isAllowed)
     }
 
     @Test("read_build_log denied when canReadBuildLog = false")
     func readBuildLogDeniedWithoutAccess() {
-        #expect(!New.ToolAccessController.check(toolName: "read_build_log", permissions: .none).isAllowed)
+        #expect(!ToolAccessController.check(toolName: "read_build_log", permissions: .none).isAllowed)
     }
 
     @Test("read_build_log allowed when canReadBuildLog = true")
     func readBuildLogAllowedWithAccess() {
-        let perms = New.ToolPermissions(
+        let perms = ToolPermissions(
             canReadFiles: true, canWriteFiles: false,
             gitLevel: .none, canRunTests: false, canWriteTests: false, canReadBuildLog: true
         )
-        #expect(New.ToolAccessController.check(toolName: "read_build_log", permissions: perms).isAllowed)
+        #expect(ToolAccessController.check(toolName: "read_build_log", permissions: perms).isAllowed)
     }
 
     // MARK: - Forward compatibility
@@ -445,7 +445,7 @@ struct ToolAccessControllerTests {
     @Test("Unknown tool is allowed by default (forward-compatible)")
     func unknownToolAllowedByDefault() {
         // New tools added in the future must not be silently blocked.
-        let result = New.ToolAccessController.check(
+        let result = ToolAccessController.check(
             toolName: "some_future_tool_xyz",
             permissions: .none
         )
@@ -456,16 +456,16 @@ struct ToolAccessControllerTests {
 
     @Test("allowed result: isAllowed = true")
     func allowedResultIsAllowed() {
-        #expect(New.AccessResult.allowed.isAllowed == true)
+        #expect(AccessResult.allowed.isAllowed == true)
     }
 
     @Test("denied result: isAllowed = false")
     func deniedResultIsNotAllowed() {
-        #expect(New.AccessResult.denied(reason: "test").isAllowed == false)
+        #expect(AccessResult.denied(reason: "test").isAllowed == false)
     }
 
     @Test("denialJSON on .allowed returns empty object {}")
     func denialJSONOnAllowedReturnsEmptyObject() {
-        #expect(New.AccessResult.allowed.denialJSON(toolName: "test_tool") == "{}")
+        #expect(AccessResult.allowed.denialJSON(toolName: "test_tool") == "{}")
     }
 }

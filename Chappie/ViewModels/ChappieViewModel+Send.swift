@@ -27,7 +27,7 @@
 // V2 SYSTEM PROMPT + TOOL PERMISSIONS:
 // v2SystemPrompt() is awaited → passed as overrideSystemPrompt (AIOrchestrator skips MemoryManager).
 // v2ToolPermissions() is awaited → passed as overrideToolPermissions (orchestrator uses
-// New.ToolAccessController.check() instead of legacy ToolAccessControl in ToolExecutionService).
+// ToolAccessController.check() instead of legacy ToolAccessControl in ToolExecutionService).
 //
 // NO PROVIDER ALERT:
 // When orchestrator is nil (model/provider deleted from under the thread), send() triggers
@@ -221,7 +221,7 @@ extension ChappieViewModel {
     // MARK: - V2 Tool Permissions
 
     /// Returns ToolPermissions from the active ThreadSession, nil if no session.
-    func v2ToolPermissions() async -> New.ToolPermissions? {
+    func v2ToolPermissions() async -> ToolPermissions? {
         guard let session = _activeThreadSession else { return nil }
         return try? await session.toolPermissions()
     }

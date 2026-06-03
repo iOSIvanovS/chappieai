@@ -196,7 +196,7 @@ final class ChappieViewModel {
     // MARK: - AppSettingsStore + caches
 
     /// SwiftData-backed settings store.
-    var appSettingsStore: New.AppSettingsStore?
+    var appSettingsStore: AppSettingsStore?
 
     /// In-memory cache for provider balances.
     /// Populated by refreshBalanceCacheIfNeeded() on startup.
@@ -209,7 +209,7 @@ final class ChappieViewModel {
     // MARK: - ThreadSession (backing storage for computed var in +ThreadSession extension)
 
     /// Backing store for activeThreadSession. Use the computed var from +ThreadSession.
-    var _activeThreadSession: New.ThreadSession?
+    var _activeThreadSession: ThreadSession?
 
     // MARK: - Init
 

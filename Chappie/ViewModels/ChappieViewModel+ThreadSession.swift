@@ -8,7 +8,7 @@
 //   We use Sendable ProjectMetadata DTOs instead — all @Model data stays on MainActor.
 //
 // FLOW:
-//   selectThread() → assembleThreadSession() → New.ThreadSession stored in _activeThreadSession
+//   selectThread() → assembleThreadSession() → ThreadSession stored in _activeThreadSession
 //   send() reads activeThreadSession?.systemPrompt() → passes as overrideSystemPrompt to orchestrator
 //   memory/project changes → invalidateActiveThreadSession() resets the cache
 //
@@ -60,7 +60,7 @@ extension ChappieViewModel {
     // MARK: - Computed accessor
 
     /// Active ThreadSession. Nil when no thread is selected.
-    var activeThreadSession: New.ThreadSession? {
+    var activeThreadSession: ThreadSession? {
         get { _activeThreadSession }
         set { _activeThreadSession = newValue }
     }
@@ -76,10 +76,10 @@ extension ChappieViewModel {
         // already cancelled this task, bail out immediately.
         guard !Task.isCancelled else { return }
 
-        let builder = New.SystemPromptBuilder(personaBlock: Self.v2PersonaBlock)
+        let builder = SystemPromptBuilder(personaBlock: Self.v2PersonaBlock)
 
         // Pass Sendable ProjectMetadata DTOs — no SwiftData @Model crosses actor boundary.
-        let session = New.ThreadSession(
+        let session = ThreadSession(
             thread: thread,
             projectMetas: activeProjects,
             memoryStore: store,
