@@ -6,19 +6,22 @@
 // LEVEL 1 — Provider selection:
 //   List of all configured providers. User picks one.
 //
-// LEVEL 2 — Model selection:
-//   List of models saved for the selected provider.
-//   User picks one (or types manually if list is empty).
+// LEVEL 2 — Key + Model selection:
+//   Keys saved for the selected provider — user picks one (Variant B: picker under provider).
+//   Models saved for the selected provider — user picks one.
+//   Manual model input available if list is empty.
 //
-// LEVEL 3 — Thread setup (IT-12):
+// LEVEL 3 — Thread setup:
 //   Thread name, context depth slider, unlimited context toggle.
-//   Mirrors ThreadSettingsSheet controls so the user configures everything upfront.
 //
-// On confirm → passes (providerId, modelName, threadTitle, ThreadSettings) to ViewModel.
+// On confirm → passes (providerId, keyId, modelName, threadTitle, ThreadSettings) to ViewModel.
 // On cancel → the pending thread is deleted.
 //
-// POLICY: no auto-selection of model. User must pick explicitly. canConfirm requires
-// both provider and model to be chosen before the "Начать" button is enabled.
+// POLICY: no auto-selection of key or model. User must pick explicitly.
+// canConfirm requires provider + key + model before "Начать" is enabled.
+//
+// NOTE MK-07: Key picker is shown here but key selection UI is minimal until
+// MK-07 full implementation. For providers with a single key it auto-selects.
 
 import SwiftUI
 import ChappieCore
@@ -32,12 +35,13 @@ struct NewThreadProviderSheet: View {
     let providers: [AIProvider]
     let currentProvider: AIProvider?
     let currentModelName: String?
-    let onConfirm: (UUID, String, String, ThreadSettings) -> Void
+    let onConfirm: (UUID, UUID?, String, String, ThreadSettings) -> Void
     let onCancel: () -> Void
 
     // MARK: - State
 
     @State private var selectedProviderId: UUID?
+    @State private var selectedKeyId: UUID?
     @State private var selectedModelName: String = ""
     @State private var manualModelInput: String = ""
 
@@ -51,7 +55,7 @@ struct NewThreadProviderSheet: View {
     }
 
     private var canConfirm: Bool {
-        selectedProviderId != nil && !selectedModelName.isEmpty
+        selectedProviderId != nil && selectedKeyId != nil && !selectedModelName.isEmpty
     }
 
     // MARK: - Body
@@ -67,7 +71,7 @@ struct NewThreadProviderSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Новый тред")
                         .font(.title2.bold())
-                    Text("Выберите провайдера, модель и настройте тред")
+                    Text("Выберите провайдера, ключ, модель и настройте тред")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -79,7 +83,7 @@ struct NewThreadProviderSheet: View {
 
             Divider()
 
-            // Provider + Model picker (two-column layout)
+            // Provider + Key + Model picker
             HStack(alignment: .top, spacing: 0) {
 
                 // Left column: providers
@@ -99,8 +103,9 @@ struct NewThreadProviderSheet: View {
                                     isSelected: selectedProviderId == provider.id,
                                     onSelect: {
                                         selectedProviderId = provider.id
-                                        // No auto-model: clear selection so user picks explicitly.
                                         selectedModelName = ""
+                                        // Auto-select key if provider has exactly one
+                                        selectedKeyId = provider.keys.count == 1 ? provider.keys.first?.id : nil
                                     }
                                 )
                             }
@@ -109,7 +114,42 @@ struct NewThreadProviderSheet: View {
                         .padding(.bottom, 8)
                     }
                 }
-                .frame(width: 200)
+                .frame(width: 180)
+
+                Divider()
+
+                // Middle column: keys
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Ключ")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                        .padding(.bottom, 6)
+
+                    if let provider = selectedProvider {
+                        if provider.keys.isEmpty {
+                            keysEmptyState
+                        } else {
+                            ScrollView {
+                                VStack(spacing: 2) {
+                                    ForEach(provider.keys) { key in
+                                        KeyPickRow(
+                                            key: key,
+                                            isSelected: selectedKeyId == key.id,
+                                            onSelect: { selectedKeyId = key.id }
+                                        )
+                                    }
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.bottom, 8)
+                            }
+                        }
+                    } else {
+                        noProviderHint
+                    }
+                }
+                .frame(width: 160)
 
                 Divider()
 
@@ -141,7 +181,6 @@ struct NewThreadProviderSheet: View {
                             }
                         }
 
-                        // Manual input always available
                         Divider()
                         HStack(spacing: 6) {
                             TextField("Ввести вручную…", text: $manualModelInput)
@@ -157,15 +196,7 @@ struct NewThreadProviderSheet: View {
                         .padding(.vertical, 8)
 
                     } else {
-                        // No provider selected yet
-                        VStack {
-                            Spacer()
-                            Text("← Выберите провайдера")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                        }
-                        .frame(maxWidth: .infinity)
+                        noProviderHint
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -174,7 +205,7 @@ struct NewThreadProviderSheet: View {
 
             Divider()
 
-            // IT-12: Thread name + context settings
+            // Thread name + context settings
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     threadNameSection
@@ -195,23 +226,30 @@ struct NewThreadProviderSheet: View {
 
                 Spacer()
 
-                if let provider = selectedProvider, !selectedModelName.isEmpty {
-                    Text("\(provider.displayName) · \(selectedModelName)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                } else if selectedProviderId != nil {
-                    // Provider chosen but no model yet — hint the user.
-                    Text("Выберите модель")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
+                // Selection summary
+                if let provider = selectedProvider {
+                    if !selectedModelName.isEmpty, let keyId = selectedKeyId,
+                       let key = provider.keys.first(where: { $0.id == keyId }) {
+                        Text("\(provider.displayName) · \(key.name) · \(selectedModelName)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    } else if selectedKeyId == nil {
+                        Text("Выберите ключ")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    } else {
+                        Text("Выберите модель")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
                 }
 
                 Button {
                     guard let id = selectedProviderId, !selectedModelName.isEmpty else { return }
                     let title = threadTitle.trimmingCharacters(in: .whitespacesAndNewlines)
                     let finalTitle = title.isEmpty ? "Новый тред" : title
-                    onConfirm(id, selectedModelName, finalTitle, draftSettings)
+                    onConfirm(id, selectedKeyId, selectedModelName, finalTitle, draftSettings)
                 } label: {
                     Text("Начать")
                 }
@@ -222,13 +260,15 @@ struct NewThreadProviderSheet: View {
             .padding(.horizontal, 24)
             .padding(.vertical, 16)
         }
-        .frame(width: 520)
+        .frame(width: 560)
         .onAppear {
-            // Pre-select provider if one is already active — but do NOT auto-select a model.
-            // User must pick the model explicitly (policy: no silent substitution).
             let preselectedProvider = currentProvider ?? providers.first
             selectedProviderId = preselectedProvider?.id
-            // Restore current model only if it's still valid for the pre-selected provider.
+            // Auto-select key if provider has exactly one
+            if let provider = preselectedProvider {
+                selectedKeyId = provider.keys.count == 1 ? provider.keys.first?.id : nil
+            }
+            // Restore current model only if still valid
             if let model = currentModelName,
                let provider = preselectedProvider,
                provider.models.contains(model) {
@@ -302,13 +342,9 @@ struct NewThreadProviderSheet: View {
             .accentColor(Color.accentColor)
 
             HStack {
-                Text("10")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                Text("10").font(.caption2).foregroundStyle(.secondary)
                 Spacer()
-                Text("1 000")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                Text("1 000").font(.caption2).foregroundStyle(.secondary)
             }
         }
     }
@@ -332,20 +368,45 @@ struct NewThreadProviderSheet: View {
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
-    // MARK: - Models Empty State
+    // MARK: - Empty States
+
+    private var keysEmptyState: some View {
+        VStack(spacing: 8) {
+            Spacer()
+            Image(systemName: "key.slash")
+                .font(.system(size: 24))
+                .foregroundStyle(.secondary.opacity(0.4))
+            Text("Нет ключей")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
 
     private var modelsEmptyState: some View {
         VStack(spacing: 8) {
             Spacer()
             Image(systemName: "square.stack.3d.up.slash")
-                .font(.system(size: 28))
+                .font(.system(size: 24))
                 .foregroundStyle(.secondary.opacity(0.4))
-            Text("Нет сохранённых моделей")
+            Text("Нет моделей")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("Введите вручную")
+                .font(.caption2)
+                .foregroundStyle(.secondary.opacity(0.7))
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var noProviderHint: some View {
+        VStack {
+            Spacer()
+            Text("← Выберите провайдера")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            Text("Введите название вручную")
-                .font(.caption)
-                .foregroundStyle(.secondary.opacity(0.7))
             Spacer()
         }
         .frame(maxWidth: .infinity)
@@ -362,15 +423,8 @@ struct NewThreadProviderSheet: View {
 
     private func infoRow(icon: String, color: Color, text: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 11))
-                .foregroundStyle(color)
-                .frame(width: 14)
-                .padding(.top, 1)
-            Text(text)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            Image(systemName: icon).font(.system(size: 11)).foregroundStyle(color).frame(width: 14).padding(.top, 1)
+            Text(text).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -391,6 +445,45 @@ struct NewThreadProviderSheet: View {
     }
 }
 
+// MARK: - KeyPickRow
+
+private struct KeyPickRow: View {
+
+    let key: APIKey
+    let isSelected: Bool
+    let onSelect: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 8) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 13))
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.3))
+                    .frame(width: 16)
+
+                Text(key.name)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isSelected
+                          ? Color.accentColor.opacity(0.07)
+                          : (isHovered ? Color.primary.opacity(0.04) : Color.clear))
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
+}
+
 // MARK: - Preview
 
 #Preview {
@@ -400,19 +493,14 @@ struct NewThreadProviderSheet: View {
                 id: UUID(),
                 name: "AITunnel",
                 endpoint: "https://api.aitunnel.ru/v1/chat/completions",
-                models: ["claude-sonnet-4-5", "gpt-4o", "gemini-1.5-pro"]
-            ),
-            AIProvider(
-                id: UUID(),
-                name: "Local Ollama",
-                endpoint: "http://localhost:11434/v1/chat/completions",
-                models: ["llama3.2", "mistral"]
+                keys: [APIKey(name: "Рабочий"), APIKey(name: "Личный")],
+                models: ["claude-sonnet-4-5", "gpt-4o"]
             )
         ],
         currentProvider: nil,
         currentModelName: nil,
-        onConfirm: { _, _, title, settings in
-            print("Confirm: \(title), context: \(settings.maxMessagesInContext)")
+        onConfirm: { _, _, _, title, settings in
+            print("Confirm: \(title)")
         },
         onCancel: {}
     )

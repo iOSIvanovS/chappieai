@@ -120,8 +120,6 @@ struct ContentView: View {
     @State private var safeAreaTop: CGFloat = 0
 
     // CPU-22: measured directly from rendered InputMorphView via onGeometryChange.
-    // Exact regardless of content (attachment row, multi-line, thinking state).
-    // Replaces manual formula in updatePanelHeight() which missed attachment row height.
     @State private var currentPanelHeight: CGFloat = InputLayout.minPanelHeight
 
     // CPU-11: debounce task reference — cancelled on every new keystroke
@@ -147,8 +145,6 @@ struct ContentView: View {
         .onAppear {
             viewModel.setModelContainer(modelContext.container)
 
-            // CPU-13: isThinkingGetter reads from StreamingState directly,
-            // not from ViewModel — avoids creating a ViewModel subscription here.
             dropDelegate.isThinkingGetter = { [self] in viewModel.streaming.isThinking }
             dropDelegate.onFilesDropped = { [self] providers in
                 resolveDroppedFiles(providers)
@@ -186,6 +182,7 @@ struct ContentView: View {
                             newTitle: newTitle,
                             forThreadId: thread.id,
                             newProviderId: newProviderId,
+                            newKeyId: nil,       // MK-08: key picker in ThreadSettingsSheet
                             newModelName: newModelName
                         )
                         selectedThreadForSettings = nil
@@ -200,10 +197,11 @@ struct ContentView: View {
                     providers: viewModel.providers,
                     currentProvider: viewModel.activeProvider,
                     currentModelName: viewModel.activeModelName,
-                    onConfirm: { providerId, modelName, title, settings in
+                    onConfirm: { providerId, keyId, modelName, title, settings in
                         Task {
                             await viewModel.confirmNewThread(
                                 with: providerId,
+                                keyId: keyId,
                                 modelName: modelName,
                                 title: title,
                                 settings: settings
@@ -215,8 +213,6 @@ struct ContentView: View {
                     }
                 )
             }
-            // Alert: user tried to send a message but no provider/model is configured.
-            // Shown instead of injecting a system message into chat history.
             .alert("Нет активной модели", isPresented: $viewModel.showNoProviderAlert) {
                 Button("Открыть настройки") { showSettings = true }
                 Button("Отмена", role: .cancel) { }
@@ -235,11 +231,6 @@ struct ContentView: View {
                     ChappieToolbarContent(
                         isApiKeyValid: !viewModel.providers.isEmpty,
                         isSidebarVisible: $isSidebarVisible,
-                        // CPU-13: read isThinking from StreamingState, not ViewModel.
-                        // This toolbar modifier is evaluated by ContentView's body —
-                        // reading from ViewModel here would subscribe ContentView to
-                        // every token update. StreamingState is read only at call-site
-                        // inside ChappieToolbarContent which owns its own subscription.
                         isThinking: viewModel.streaming.isThinking,
                         onOpenSettings: { showSettings = true }
                     )
@@ -260,14 +251,12 @@ struct ContentView: View {
                     threads: viewModel.threads,
                     selectedThreadId: viewModel.activeThread?.id,
                     orphanedThreadIds: orphanedThreadIds,
-                    // CPU-13: same pattern — StreamingState read, not ViewModel.
                     isThinking: viewModel.streaming.isThinking,
                     onOpenSettings: {
                         showSettings = true
                         isSidebarVisible = false
                     },
                     onSelectThread: { thread in
-                        // Save draft immediately (no debounce) before switching
                         if let currentId = viewModel.activeThread?.id {
                             draftDebounceTask?.cancel()
                             viewModel.setDraft(prompt, for: currentId)
@@ -313,8 +302,6 @@ struct ContentView: View {
             }
         }
         .onChange(of: prompt) { _, newValue in
-            // CPU-11: debounce draft writes — fire only after 300ms of no typing.
-            // This prevents ViewModel @Published from firing on every keystroke.
             guard let threadId = viewModel.activeThread?.id else { return }
             draftDebounceTask?.cancel()
             draftDebounceTask = Task {
@@ -323,10 +310,6 @@ struct ContentView: View {
                 viewModel.setDraft(newValue, for: threadId)
             }
         }
-        // CPU-13: observe isThinking via StreamingState, not ViewModel.
-        // NOTE: this onChange DOES subscribe ContentView to StreamingState.isThinking,
-        // but isThinking changes only twice per request (true/false) — not 30x/sec.
-        // Cost: 2 re-renders per request vs 30+ without isolation. Acceptable.
         .onChange(of: viewModel.streaming.isThinking) { _, thinking in
             if thinking && showSettings {
                 showSettings = false
@@ -339,13 +322,6 @@ struct ContentView: View {
     private var mainChatArea: some View {
         ZStack(alignment: .top) {
 
-            // CPU-13: ChatScrollView receives streaming as a whole object reference.
-            // ChatScrollView reads streaming.streamingText and streaming.runningCost
-            // directly — it subscribes to StreamingState, not to ViewModel.
-            // ContentView does NOT read any StreamingState property here.
-            //
-            // CPU-22: footerHeight = currentPanelHeight — measured via onGeometryChange
-            // on bottomPanel. Exact regardless of content (attachment row, multi-line, etc).
             ChatScrollView(
                 scrollToBottomTrigger: viewModel.scrollToBottomTrigger,
                 messages: viewModel.displayedMessages,
@@ -357,7 +333,6 @@ struct ContentView: View {
                 footerHeight: currentPanelHeight
             )
             .ignoresSafeArea(edges: .top)
-            // CPU-08: onGeometryChange does NOT participate in layout — no render loop risk.
             .onGeometryChange(for: CGFloat.self) { geo in
                 geo.safeAreaInsets.top
             } action: { newValue in
@@ -375,11 +350,6 @@ struct ContentView: View {
     }
 
     // MARK: - Top Floating Panel
-    // CPU-13/15: topPanel does NOT read any StreamingState properties.
-    // isThinking and currentBalance are passed via the `streaming` reference —
-    // ModelPickerRow and ProjectChipsView subscribe to StreamingState directly.
-    // ContentView only reads: activeThread, providers, activeProvider, activeModelName,
-    // isThreadOrphaned, activeProjects, isFileSystemReady — none change during streaming.
 
     private var topPanel: some View {
         VStack(spacing: 6) {
@@ -394,7 +364,13 @@ struct ContentView: View {
                         if let provider = viewModel.providers.first(where: { $0.id == providerId }),
                            let store = viewModel.providerStore {
                             Task {
-                                await viewModel.switchProvider(provider, modelName: modelName, from: store)
+                                // MK-07: key picker in popover — pass activeKeyId for now
+                                await viewModel.switchProvider(
+                                    provider,
+                                    keyId: viewModel.activeKeyId,
+                                    modelName: modelName,
+                                    from: store
+                                )
                             }
                         }
                     }
@@ -427,7 +403,6 @@ struct ContentView: View {
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)
-        // CPU-08: onGeometryChange instead of GeometryReader in .background.
         .onGeometryChange(for: CGFloat.self) { geo in
             geo.size.height
         } action: { newValue in
@@ -436,14 +411,6 @@ struct ContentView: View {
     }
 
     // MARK: - Bottom Floating Panel
-    // CPU-13: bottomPanel passes streaming object to InputMorphView.
-    // InputMorphView reads streaming.isThinking and streaming.currentToolCall directly.
-    // ContentView does NOT read those properties here.
-    //
-    // CPU-22: onGeometryChange measures the actual rendered height of InputMorphView.
-    // currentPanelHeight is updated only when height actually changes (line added/removed,
-    // attachment row appears/disappears). ChatScrollView footerHeight tracks it so the
-    // last message is always scrollable above the panel.
 
     private var bottomPanel: some View {
         InputMorphView(
@@ -456,8 +423,6 @@ struct ContentView: View {
             },
             onCancel: { viewModel.cancelCurrentRequest() }
         )
-        // CPU-22: measure actual panel height — fires only when size changes.
-        // onGeometryChange is a pure observer: no layout participation, no render loop.
         .onGeometryChange(for: CGFloat.self) { geo in
             geo.size.height
         } action: { newValue in

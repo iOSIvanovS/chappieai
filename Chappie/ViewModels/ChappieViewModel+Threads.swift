@@ -88,36 +88,44 @@ extension ChappieViewModel {
 
     // MARK: - Provider Resolution
 
-    /// Resolves which provider/model to use for a thread.
+    /// Resolves which provider/key/model to use for a thread.
     ///
-    /// POLICY: never auto-substitute. If provider or model is missing — block orchestrator,
+    /// POLICY: never auto-substitute. If provider, key, or model is missing — block orchestrator,
     /// show banner. User must pick explicitly.
     ///
     /// Cases:
-    ///   1. Saved provider+model both valid → apply normally.
-    ///   2. Saved provider valid, model missing/deleted → block orchestrator, show banner.
+    ///   1. Saved provider+key+model all valid → apply normally.
+    ///   2. Saved provider valid, key or model missing/deleted → block orchestrator, show banner.
     ///   3. Saved provider UUID not found (deleted) → block orchestrator, show banner.
     ///   4. No saved provider → block orchestrator, show banner.
     private func resolveAndApplyProvider(for thread: ThreadMetadata, settings: ThreadSettings) async {
         guard let provStore = providerStore else { return }
 
-        // Case 1 & 2: saved provider UUID found in loaded providers.
         if let savedId = settings.activeProviderId,
            let provider = providers.first(where: { $0.id == savedId }) {
 
+            let savedKeyId = settings.activeKeyId
             let savedModelName = settings.activeModelName
+
+            // Validate key still exists on provider
+            let actualKeyId = savedKeyId.flatMap { id in
+                provider.keys.contains(where: { $0.id == id }) ? id : nil
+            }
+
+            // Validate model still exists
             let validatedModel = savedModelName.flatMap {
                 provider.models.contains($0) ? $0 : nil
             }
 
-            if savedModelName != nil, validatedModel == nil {
-                // Case 2: model was saved but is now deleted.
-                print("[ChappieViewModel] ⚠️ B-04: Model '\(savedModelName!)' not found in '\(provider.displayName)' — blocking orchestrator")
+            // If key or model was saved but is now gone — block orchestrator
+            if (savedKeyId != nil && actualKeyId == nil) || (savedModelName != nil && validatedModel == nil) {
+                let reason = (savedKeyId != nil && actualKeyId == nil) ? "Key" : "Model"
+                print("[ChappieViewModel] ⚠️ \(reason) missing for provider '\(provider.displayName)' — blocking orchestrator")
 
-                // Heal DB so next restart is also clean.
                 if let tStore = threadStore {
                     var healed = settings
-                    healed.activeModelName = nil
+                    if actualKeyId == nil { healed.activeKeyId = nil }
+                    if validatedModel == nil { healed.activeModelName = nil }
                     try? await tStore.updateSettings(healed, forThreadId: thread.id)
                 }
 
@@ -125,47 +133,54 @@ extension ChappieViewModel {
                 return
             }
 
-            // Case 1: both provider and model are valid (or no model was ever saved).
-            await switchProvider(provider, modelName: validatedModel, from: provStore, persistSettings: false)
+            // All valid — apply
+            await switchProvider(
+                provider,
+                keyId: actualKeyId ?? savedKeyId,
+                modelName: validatedModel,
+                from: provStore,
+                persistSettings: false
+            )
             return
         }
 
         // Case 3: UUID is set but provider was deleted.
         if let orphanedId = settings.activeProviderId {
-            print("[ChappieViewModel] ⚠️ B-03: Provider \(orphanedId) not found for thread '\(thread.title)' — showing banner, user must pick")
-            // Clear stale provider reference so banner fires.
+            print("[ChappieViewModel] ⚠️ Provider \(orphanedId) not found for thread '\(thread.title)' — showing banner")
             self.activeProvider = nil
+            self.activeKeyId = nil
             self.aiClient = nil
             self.orchestrator = nil
             self.activeModelName = nil
-            // Heal DB — remove orphaned UUID so next restart doesn't repeat this path.
             if let tStore = threadStore {
                 var healed = settings
                 healed.activeProviderId = nil
+                healed.activeKeyId = nil
                 healed.activeModelName = nil
                 try? await tStore.updateSettings(healed, forThreadId: thread.id)
             }
             return
         }
 
-        // Case 4: brand-new thread with no provider saved yet — show banner, user picks.
+        // Case 4: brand-new thread with no provider saved yet.
         print("[ChappieViewModel] No saved provider for thread '\(thread.title)' — showing banner")
         self.activeProvider = nil
+        self.activeKeyId = nil
         self.aiClient = nil
         self.orchestrator = nil
         self.activeModelName = nil
     }
 
     /// Sets activeProvider without creating aiClient or orchestrator.
-    /// Used when the saved model was deleted — toolbar shows the warning banner,
-    /// send() is blocked, but provider identity is preserved for the picker.
+    /// Used when key or model is missing — toolbar shows warning banner, send() is blocked.
     func applyProviderWithoutModel(_ provider: AIProvider, from store: AIProviderStore) async {
         self.activeProvider = provider
         self.activeModelName = nil
+        self.activeKeyId = nil
         self.aiClient = nil
         self.orchestrator = nil
         self.currentBalance = loadBalance(for: provider.id)
-        print("[ChappieViewModel] B-04: Applied provider '\(provider.displayName)' with no model — orchestrator blocked")
+        print("[ChappieViewModel] Applied provider '\(provider.displayName)' with no key/model — orchestrator blocked")
     }
 
     // MARK: - Create / Confirm / Cancel
@@ -199,13 +214,24 @@ extension ChappieViewModel {
         }
     }
 
-    func confirmNewThread(with providerId: UUID, modelName: String, title: String, settings: ThreadSettings) async {
+    func confirmNewThread(
+        with providerId: UUID,
+        keyId: UUID?,
+        modelName: String,
+        title: String,
+        settings: ThreadSettings
+    ) async {
         guard let thread = pendingNewThread, let store = threadStore else { return }
         self.pendingNewThread = nil
         self.showNewThreadProviderPicker = false
 
         if let provider = providers.first(where: { $0.id == providerId }) {
-            await switchProvider(provider, modelName: modelName.isEmpty ? nil : modelName, persistSettings: false)
+            await switchProvider(
+                provider,
+                keyId: keyId,
+                modelName: modelName.isEmpty ? nil : modelName,
+                persistSettings: false
+            )
         }
 
         let finalTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -214,6 +240,7 @@ extension ChappieViewModel {
 
         var updatedSettings = settings
         updatedSettings.activeProviderId = providerId
+        updatedSettings.activeKeyId = keyId
         updatedSettings.activeModelName = modelName.isEmpty ? nil : modelName
         try? await store.updateSettings(updatedSettings, forThreadId: thread.id)
 
@@ -325,6 +352,7 @@ extension ChappieViewModel {
         newTitle: String,
         forThreadId threadId: UUID,
         newProviderId: UUID? = nil,
+        newKeyId: UUID? = nil,
         newModelName: String? = nil
     ) {
         guard let store = threadStore else { return }
@@ -337,13 +365,14 @@ extension ChappieViewModel {
 
                 if let providerId = newProviderId,
                    let provider = providers.first(where: { $0.id == providerId }) {
-                    // Use exactly what the user picked — no auto-fallback to models.first.
                     let model = newModelName.flatMap { $0.isEmpty ? nil : $0 }
-                    await switchProvider(provider, modelName: model, persistSettings: false)
+                    await switchProvider(provider, keyId: newKeyId, modelName: model, persistSettings: false)
                     updatedSettings.activeProviderId = providerId
+                    updatedSettings.activeKeyId = newKeyId
                     updatedSettings.activeModelName = model
                 } else {
                     updatedSettings.activeProviderId = activeThreadSettings.activeProviderId
+                    updatedSettings.activeKeyId = activeThreadSettings.activeKeyId
                     updatedSettings.activeModelName = activeThreadSettings.activeModelName
                 }
 

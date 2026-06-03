@@ -4,7 +4,7 @@
 // Two-step sheet for adding a new AI provider.
 //
 // STEP 1 — Provider:
-//   Enter endpoint URL, API key, optional name.
+//   Enter endpoint URL, API key (with user-defined name), optional provider name.
 //   Validate provider (GET /v1/models — no model name needed).
 //   On success → proceed to step 2.
 //
@@ -13,12 +13,12 @@
 //   User can select from the list OR type model names manually.
 //   Search bar filters the visible list in real time.
 //   "Select all / deselect all" toggle at the top.
-//   Each added model is saved to provider.models list.
 //   Must add at least one model to proceed.
 //
 // EDIT MODE:
 //   Opens directly on step 1 pre-filled with existing data.
 //   API key field shows placeholder (existing key preserved if left empty).
+//   Key name field editable — rename the key without changing the secret.
 //   Models list is editable — add/remove individual models.
 
 import SwiftUI
@@ -44,7 +44,8 @@ struct AddProviderSheet: View {
 
     @State private var providerName: String = ""
     @State private var endpoint: String = ""
-    @State private var apiKey: String = ""
+    @State private var apiKeyValue: String = ""
+    @State private var apiKeyName: String = ""
     @State private var isKeyVisible: Bool = false
     @State private var isValidating: Bool = false
     @State private var validationError: String? = nil
@@ -68,7 +69,7 @@ struct AddProviderSheet: View {
 
     private var canValidate: Bool {
         !endpoint.trimmingCharacters(in: .whitespaces).isEmpty &&
-        (!apiKey.trimmingCharacters(in: .whitespaces).isEmpty || isEditing)
+        (!apiKeyValue.trimmingCharacters(in: .whitespaces).isEmpty || isEditing)
     }
 
     // All models: fetched + manually added + existing (for edit mode)
@@ -91,7 +92,6 @@ struct AddProviderSheet: View {
 
     private var canSave: Bool { !selectedModels.isEmpty }
 
-    // Whether all visible (filtered) models are selected
     private var allFilteredSelected: Bool {
         !filteredModels.isEmpty && filteredModels.allSatisfy { selectedModels.contains($0) }
     }
@@ -127,7 +127,6 @@ struct AddProviderSheet: View {
 
             Divider()
 
-            // Step content
             switch step {
             case .provider: providerStep
             case .models:   modelsStep
@@ -148,7 +147,7 @@ struct AddProviderSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
 
-                fieldSection(label: "Название", icon: "tag", hint: "Необязательно. Например: «Work OpenAI» или «Personal Groq»") {
+                fieldSection(label: "Название провайдера", icon: "tag", hint: "Необязательно. Например: «Work OpenAI» или «Personal Groq»") {
                     TextField("Мой провайдер", text: $providerName)
                         .textFieldStyle(.roundedBorder)
                 }
@@ -160,6 +159,15 @@ struct AddProviderSheet: View {
                 }
 
                 fieldSection(
+                    label: "Название ключа",
+                    icon: "tag.fill",
+                    hint: "Понятное имя для этого ключа. Например: «Рабочий», «Личный», «Клиент X»"
+                ) {
+                    TextField(isEditing ? "Новое название ключа" : "Рабочий ключ", text: $apiKeyName)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                fieldSection(
                     label: "API-ключ",
                     icon: "key.fill",
                     hint: isEditing ? "Оставьте пустым чтобы сохранить текущий ключ" : "Ключ будет сохранён в системном Keychain"
@@ -167,9 +175,9 @@ struct AddProviderSheet: View {
                     HStack(spacing: 8) {
                         Group {
                             if isKeyVisible {
-                                TextField(isEditing ? "Новый ключ (необязательно)" : "sk-...", text: $apiKey)
+                                TextField(isEditing ? "Новый ключ (необязательно)" : "sk-...", text: $apiKeyValue)
                             } else {
-                                SecureField(isEditing ? "Новый ключ (необязательно)" : "sk-...", text: $apiKey)
+                                SecureField(isEditing ? "Новый ключ (необязательно)" : "sk-...", text: $apiKeyValue)
                             }
                         }
                         .textFieldStyle(.roundedBorder)
@@ -196,7 +204,6 @@ struct AddProviderSheet: View {
     private var modelsStep: some View {
         VStack(alignment: .leading, spacing: 0) {
 
-            // Top controls: fetch + counters
             HStack(spacing: 12) {
                 Button {
                     fetchModels()
@@ -241,7 +248,6 @@ struct AddProviderSheet: View {
             Divider()
 
             if !allModels.isEmpty {
-                // Search bar
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
@@ -264,7 +270,6 @@ struct AddProviderSheet: View {
                 .padding(.vertical, 8)
                 .background(Color.primary.opacity(0.04))
 
-                // Select all / deselect all
                 Button {
                     toggleSelectAll()
                 } label: {
@@ -291,7 +296,6 @@ struct AddProviderSheet: View {
                 Divider()
             }
 
-            // Models list
             if allModels.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "cpu")
@@ -343,7 +347,6 @@ struct AddProviderSheet: View {
 
             Divider()
 
-            // Manual input
             HStack(spacing: 8) {
                 Image(systemName: "keyboard")
                     .foregroundStyle(.secondary)
@@ -454,16 +457,16 @@ struct AddProviderSheet: View {
         providerName = provider.name
         endpoint = provider.endpoint
         selectedModels = Set(provider.models)
+        // Pre-fill key name from the first key if available
+        apiKeyName = provider.keys.first?.name ?? ""
     }
 
     // MARK: - Select All Toggle
 
     private func toggleSelectAll() {
         if allFilteredSelected {
-            // Deselect all visible
             for m in filteredModels { selectedModels.remove(m) }
         } else {
-            // Select all visible
             for m in filteredModels { selectedModels.insert(m) }
         }
     }
@@ -472,7 +475,7 @@ struct AddProviderSheet: View {
 
     private func validateAndProceed() {
         let trimmedEndpoint = endpoint.trimmingCharacters(in: .whitespaces)
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespaces)
+        let trimmedKey = apiKeyValue.trimmingCharacters(in: .whitespaces)
 
         guard !trimmedEndpoint.isEmpty else {
             validationError = "Введите URL эндпойнта."
@@ -485,8 +488,10 @@ struct AddProviderSheet: View {
         Task {
             let keyToUse: String
             if isEditing && trimmedKey.isEmpty, let existing = editingProvider,
-               let store = providerStore {
-                keyToUse = await store.loadApiKey(for: existing.id) ?? ""
+               let store = providerStore,
+               let firstKeyId = existing.keys.first?.id {
+                // Load existing key secret for validation
+                keyToUse = await store.loadApiKey(for: firstKeyId) ?? ""
             } else {
                 keyToUse = trimmedKey
             }
@@ -507,6 +512,7 @@ struct AddProviderSheet: View {
                     id: editingProvider?.id ?? UUID(),
                     name: providerName.trimmingCharacters(in: .whitespaces),
                     endpoint: trimmedEndpoint,
+                    keys: editingProvider?.keys ?? [],
                     models: editingProvider?.models ?? []
                 )
 
@@ -530,7 +536,7 @@ struct AddProviderSheet: View {
 
     private func fetchModels() {
         guard let provider = validatedProvider ?? editingProvider.map({
-            AIProvider(id: $0.id, name: $0.name, endpoint: endpoint.trimmingCharacters(in: .whitespaces), models: $0.models)
+            AIProvider(id: $0.id, name: $0.name, endpoint: endpoint.trimmingCharacters(in: .whitespaces), keys: $0.keys, models: $0.models)
         }) else { return }
 
         isFetchingModels = true
@@ -538,10 +544,11 @@ struct AddProviderSheet: View {
 
         Task {
             let keyToUse: String
-            let trimmedKey = apiKey.trimmingCharacters(in: .whitespaces)
+            let trimmedKey = apiKeyValue.trimmingCharacters(in: .whitespaces)
             if isEditing && trimmedKey.isEmpty, let existing = editingProvider,
-               let store = providerStore {
-                keyToUse = await store.loadApiKey(for: existing.id) ?? ""
+               let store = providerStore,
+               let firstKeyId = existing.keys.first?.id {
+                keyToUse = await store.loadApiKey(for: firstKeyId) ?? ""
             } else {
                 keyToUse = trimmedKey
             }
@@ -556,7 +563,6 @@ struct AddProviderSheet: View {
                 } else {
                     fetchedModels = models
                     fetchError = nil
-                    // Auto-select all fetched only if nothing was pre-selected (new provider)
                     if selectedModels.isEmpty {
                         selectedModels = Set(models)
                     }
@@ -586,7 +592,8 @@ struct AddProviderSheet: View {
         isSaving = true
         saveError = nil
 
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespaces)
+        let trimmedKeyValue = apiKeyValue.trimmingCharacters(in: .whitespaces)
+        let resolvedKeyName = apiKeyName.trimmingCharacters(in: .whitespaces)
         let modelsToSave = Array(selectedModels).sorted()
 
         Task {
@@ -595,10 +602,24 @@ struct AddProviderSheet: View {
                 finalProvider.models = modelsToSave
 
                 if isEditing {
-                    let keyArg: String? = trimmedKey.isEmpty ? nil : trimmedKey
-                    try await store.updateProvider(finalProvider, apiKey: keyArg)
+                    // Update provider config (name, endpoint, models) — keys managed separately
+                    try await store.updateProvider(finalProvider)
+
+                    // If user entered a new key value — update the first key's secret
+                    if !trimmedKeyValue.isEmpty, let firstKey = finalProvider.keys.first {
+                        var updatedKey = firstKey
+                        if !resolvedKeyName.isEmpty { updatedKey.name = resolvedKeyName }
+                        try await store.updateKey(updatedKey, newValue: trimmedKeyValue, forProviderId: finalProvider.id)
+                    } else if !resolvedKeyName.isEmpty, let firstKey = finalProvider.keys.first {
+                        // Rename key only
+                        var updatedKey = firstKey
+                        updatedKey.name = resolvedKeyName
+                        try await store.updateKey(updatedKey, newValue: nil, forProviderId: finalProvider.id)
+                    }
                 } else {
-                    try await store.addProvider(finalProvider, apiKey: trimmedKey)
+                    // New provider — create with first key
+                    let keyName = resolvedKeyName.isEmpty ? "Default" : resolvedKeyName
+                    try await store.addProvider(finalProvider, firstKeyName: keyName, firstKeyValue: trimmedKeyValue)
                 }
 
                 await MainActor.run {

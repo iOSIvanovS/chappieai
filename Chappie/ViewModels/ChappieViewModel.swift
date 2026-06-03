@@ -158,6 +158,11 @@ final class ChappieViewModel {
 
     var providers: [AIProvider] = []
     var activeProvider: AIProvider? = nil
+
+    /// UUID of the active API key for the current thread.
+    /// Stored per-thread in ThreadSettings.activeKeyId — loaded on thread switch.
+    var activeKeyId: UUID? = nil
+
     var activeModelName: String? = nil
 
     var isThreadOrphaned: Bool {
@@ -165,6 +170,8 @@ final class ChappieViewModel {
             return activeThreadSettings.activeProviderId != nil
         }
         guard providers.contains(where: { $0.id == provider.id }) else { return true }
+        // Key missing
+        if let keyId = activeKeyId, !provider.keys.contains(where: { $0.id == keyId }) { return true }
         if let model = activeModelName { return !provider.models.contains(model) }
         return false
     }

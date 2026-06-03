@@ -85,7 +85,13 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
     /// WHY UUID, NOT INLINE PROVIDER: avoids duplication — thread always reflects latest provider config.
     public var activeProviderId: UUID?
 
-    /// Model name for this thread. nil = first model from provider.
+    /// UUID of the active API key for this thread. nil = use first available key from the provider.
+    ///
+    /// WHY UUID, NOT KEY VALUE: thread stores only the reference — actual secret loaded from Keychain.
+    /// Tread isolation: each thread carries its own key reference, never shared across threads.
+    public var activeKeyId: UUID?
+
+    /// Model name for this thread. nil = no model selected.
     /// If the model is deleted from the provider, the thread shows a warning banner.
     public var activeModelName: String?
 
@@ -93,12 +99,14 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
         maxMessagesInContext: Int = 20,
         isUnlimitedContext: Bool = false,
         activeProviderId: UUID? = nil,
+        activeKeyId: UUID? = nil,
         activeModelName: String? = nil
     ) {
         // Clamp to valid range — guard against corrupted JSON values
         self.maxMessagesInContext = max(10, min(1000, maxMessagesInContext))
         self.isUnlimitedContext = isUnlimitedContext
         self.activeProviderId = activeProviderId
+        self.activeKeyId = activeKeyId
         self.activeModelName = activeModelName
     }
 }

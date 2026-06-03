@@ -7,6 +7,11 @@
 //   NEVER auto-substitute a provider or model on loss.
 //   If active provider or model is missing — set orchestrator/aiClient/activeModelName to nil,
 //   show orange banner, block send(). User must explicitly choose. No silent fallback.
+//
+// MULTI-KEY SCHEMA:
+//   Each provider has a list of APIKey entries. Thread settings store activeKeyId.
+//   switchProvider() resolves the key secret from Keychain using activeKeyId.
+//   If activeKeyId is nil or key not found — orchestrator is blocked, banner shown.
 
 import SwiftUI
 import ChappieCore
@@ -27,17 +32,17 @@ extension ChappieViewModel {
 
     // MARK: - Switch Provider / Model
 
-    /// Switches the active provider and model.
+    /// Switches the active provider, key, and model for the current thread.
     ///
-    /// modelName MUST be non-nil and non-empty to create an orchestrator.
-    /// Passing nil explicitly blocks the orchestrator — shows the warning banner.
+    /// Both keyId and modelName MUST be non-nil to create an orchestrator.
+    /// Missing either → blocks orchestrator and shows warning banner.
     ///
-    /// - Parameter persistSettings: When true (default), writes the new provider/model
+    /// - Parameter persistSettings: When true (default), writes the new provider/key/model
     ///   to the active thread's settings in the DB. Pass false when the caller already
-    ///   manages persistence (e.g. resolveAndApplyProvider, confirmNewThread) to avoid
-    ///   overwriting freshly-loaded or not-yet-saved thread settings with stale data.
+    ///   manages persistence to avoid overwriting freshly-loaded settings.
     func switchProvider(
         _ provider: AIProvider,
+        keyId: UUID?,
         modelName: String?,
         from store: AIProviderStore? = nil,
         persistSettings: Bool = true
@@ -45,13 +50,17 @@ extension ChappieViewModel {
         let provStore = store ?? self.providerStore
         guard let provStore else { return }
 
-        // No model → block orchestrator, show banner. Never fall back to provider.models.first.
-        guard let model = modelName, !model.isEmpty else {
+        // Both key and model required — block orchestrator if either is missing
+        guard let resolvedKeyId = keyId,
+              let model = modelName, !model.isEmpty,
+              let apiKey = await provStore.loadApiKey(for: resolvedKeyId),
+              !apiKey.isEmpty else {
             await applyProviderWithoutModel(provider, from: provStore)
             if persistSettings, activeThread != nil {
                 var settings = activeThreadSettings
                 settings.activeProviderId = provider.id
-                settings.activeModelName = nil
+                settings.activeKeyId = keyId
+                settings.activeModelName = modelName?.isEmpty == false ? modelName : nil
                 activeThreadSettings = settings
                 if let threadId = activeThread?.id, let tStore = threadStore {
                     try? await tStore.updateSettings(settings, forThreadId: threadId)
@@ -60,10 +69,10 @@ extension ChappieViewModel {
             return
         }
 
-        let apiKey = await provStore.loadApiKey(for: provider.id) ?? ""
         let client = AIClient(endpoint: provider.endpoint, apiKey: apiKey, modelName: model)
         self.aiClient = client
         self.activeProvider = provider
+        self.activeKeyId = resolvedKeyId
         self.activeModelName = model
         self.currentBalance = loadBalance(for: provider.id)
 
@@ -74,6 +83,7 @@ extension ChappieViewModel {
         if persistSettings, activeThread != nil {
             var settings = activeThreadSettings
             settings.activeProviderId = provider.id
+            settings.activeKeyId = resolvedKeyId
             settings.activeModelName = model
             activeThreadSettings = settings
             if let threadId = activeThread?.id, let tStore = threadStore {
@@ -81,22 +91,22 @@ extension ChappieViewModel {
             }
         }
 
-        print("[ChappieViewModel] Switched to provider: \(provider.displayName) / model: \(model)")
+        print("[ChappieViewModel] Switched to provider: \(provider.displayName) / key: \(resolvedKeyId) / model: \(model)")
     }
 
     func switchProvider(id: UUID) {
-        // No auto-model: pass nil so the user sees the banner and picks explicitly.
+        // No auto-key/model: pass nil so the user sees the banner and picks explicitly.
         guard let provider = providers.first(where: { $0.id == id }),
               let provStore = providerStore else { return }
-        Task { await switchProvider(provider, modelName: nil, from: provStore) }
+        Task { await switchProvider(provider, keyId: nil, modelName: nil, from: provStore) }
     }
 
     func switchModel(to modelName: String) {
         guard let provider = activeProvider, let provStore = providerStore else { return }
-        Task { await switchProvider(provider, modelName: modelName, from: provStore) }
+        Task { await switchProvider(provider, keyId: activeKeyId, modelName: modelName, from: provStore) }
     }
 
-    // MARK: - Immediate invalidation (B-04)
+    // MARK: - Immediate invalidation
 
     /// Stops any in-flight request and clears aiClient/orchestrator/activeProvider
     /// if the given provider ID matches the currently active one.
@@ -108,6 +118,7 @@ extension ChappieViewModel {
         currentRequestTask = nil
 
         self.activeProvider = nil
+        self.activeKeyId = nil
         self.aiClient = nil
         self.orchestrator = nil
         self.activeModelName = nil
@@ -126,7 +137,23 @@ extension ChappieViewModel {
         self.aiClient = nil
         self.orchestrator = nil
         self.activeModelName = nil
-        // Keep activeProvider — the provider still exists, only the model is gone.
+        // Keep activeProvider and activeKeyId — only the model is gone.
+    }
+
+    /// Stops any in-flight request and clears aiClient/orchestrator
+    /// if the deleted key is currently active on the given provider.
+    func invalidateKeyIfDeleted(keyId: UUID, providerId: UUID) {
+        guard activeProvider?.id == providerId,
+              activeKeyId == keyId else { return }
+
+        print("[ChappieViewModel] Active key deleted — invalidating client and orchestrator")
+        currentRequestTask?.cancel()
+        currentRequestTask = nil
+
+        self.aiClient = nil
+        self.orchestrator = nil
+        self.activeKeyId = nil
+        // Keep activeProvider and activeModelName — only the key is gone.
     }
 
     // MARK: - Reload
@@ -141,10 +168,20 @@ extension ChappieViewModel {
                 if let active = activeProvider {
                     if let updated = loaded.first(where: { $0.id == active.id }) {
                         self.activeProvider = updated
+
+                        // Validate activeKeyId is still present on the updated provider
+                        if let keyId = activeKeyId,
+                           !updated.keys.contains(where: { $0.id == keyId }) {
+                            print("[ChappieViewModel] Active key gone after reload — invalidating")
+                            self.aiClient = nil
+                            self.orchestrator = nil
+                            self.activeKeyId = nil
+                        }
                     } else {
-                        // Provider gone — invalidate. No auto-fallback to another provider.
+                        // Provider gone — full invalidation
                         print("[ChappieViewModel] Active provider gone after reload — invalidating")
                         self.activeProvider = nil
+                        self.activeKeyId = nil
                         self.aiClient = nil
                         self.orchestrator = nil
                         self.activeModelName = nil
