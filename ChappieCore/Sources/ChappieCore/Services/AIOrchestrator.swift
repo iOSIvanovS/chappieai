@@ -79,6 +79,16 @@ public actor AIOrchestrator {
     You execute what the user delegates, but always act in their best interest.
     Consult. Advise. Listen. Speak up.
     Together you go from first idea to final result.
+
+    TOOL PRIORITY (CRITICALLY IMPORTANT — NEVER VIOLATE):
+    Always use the most specialized tool available. Fall back to run_terminal ONLY when
+    no specialized tool exists for the task.
+    - File navigation: list_files, read_file — NEVER run_terminal for grep/find/ls.
+    - Version control: git_status, git_log, git_add, git_commit, etc. — NEVER run_terminal for git.
+    - Build & tests: build_project, run_tests, read_build_log — NEVER run_terminal for xcodebuild/swift test.
+    - run_terminal is for: scripts, package installs, CLI tools, and operations with no dedicated tool.
+    When asking user permission for run_terminal — always state the exact command AND the reason why
+    no specialized tool can handle it.
     """
 
     // MARK: - Init

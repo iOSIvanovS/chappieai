@@ -4,6 +4,10 @@
 // WHY THIS FILE:
 // All AITool definitions exposed to the AI model.
 // Separated from execution logic to keep tool metadata easy to scan and update.
+//
+// TOOL ORDER MATTERS: LLMs tend to reach for tools listed first.
+// Specialized tools (file system, memory, git, build) are listed before run_terminal.
+// run_terminal is intentionally last — it is the tool of last resort.
 
 import Foundation
 
@@ -68,26 +72,6 @@ extension ToolExecutionService {
                         "selector": AIToolProperty(type: "string", description: "Опциональный CSS-селектор для извлечения конкретного блока: имя тега ('article'), '.class-name' или '#element-id'. Если не указан — обрабатывается вся страница.")
                     ],
                     required: ["url"]
-                )
-            )),
-
-            // MARK: - Terminal
-
-            AITool(function: AIFunctionDefinition(
-                name: "run_terminal",
-                description: """
-                Выполнить команду в терминале в рабочей директории проекта.
-                Сессия персистентна — команда cd запоминается между вызовами.
-                Используй для запуска скриптов, установки зависимостей, сборки через CLI, и любых shell-операций.
-                ВАЖНО: если режим 'С подтверждением' — СНАЧАЛА спроси пользователя, потом вызывай инструмент.
-                Опасные команды (rm -rf /, sudo rm, mkfs и др.) заблокированы безусловно.
-                """,
-                parameters: AIToolParameters(
-                    properties: [
-                        "command": AIToolProperty(type: "string", description: "Shell-команда для выполнения."),
-                        "timeout": AIToolProperty(type: "string", description: "Таймаут в секундах (по умолчанию 30). Увеличь для долгих операций (сборка, npm install).")
-                    ],
-                    required: ["command"]
                 )
             )),
 
@@ -322,6 +306,32 @@ extension ToolExecutionService {
                 name: "list_thread_projects",
                 description: "Показать список проектов, привязанных к текущему треду. Используй чтобы узнать какие проекты уже добавлены перед add/remove операциями.",
                 parameters: AIToolParameters(properties: [:], required: [])
+            )),
+
+            // MARK: - Terminal (LAST RESORT)
+            // WHY LAST: run_terminal is a universal hammer — it can do anything.
+            // That's exactly why it must be the last option, not the first.
+            // Always prefer specialized tools: list_files/read_file for navigation,
+            // git_* for version control, build_project/run_tests for builds.
+            // Use run_terminal ONLY when no specialized tool exists for the task.
+
+            AITool(function: AIFunctionDefinition(
+                name: "run_terminal",
+                description: """
+                Выполнить команду в терминале в рабочей директории проекта.
+                Сессия персистентна — команда cd запоминается между вызовами.
+                ТОЛЬКО КОГДА НЕТ СПЕЦИАЛИЗИРОВАННОГО ИНСТРУМЕНТА: для навигации по файлам используй list_files/read_file; для git — git_* инструменты; для сборки — build_project/run_tests.
+                Используй run_terminal для: запуска скриптов, установки зависимостей, CLI-утилит, и операций без специального инструмента.
+                ВАЖНО: если режим 'С подтверждением' — СНАЧАЛА спроси пользователя с точным описанием команды и причины, потом вызывай инструмент.
+                Опасные команды (rm -rf /, sudo rm, mkfs и др.) заблокированы безусловно.
+                """,
+                parameters: AIToolParameters(
+                    properties: [
+                        "command": AIToolProperty(type: "string", description: "Shell-команда для выполнения."),
+                        "timeout": AIToolProperty(type: "string", description: "Таймаут в секундах (по умолчанию 30). Увеличь для долгих операций (сборка, npm install).")
+                    ],
+                    required: ["command"]
+                )
             ))
         ]
     }
