@@ -71,6 +71,26 @@ extension ToolExecutionService {
                 )
             )),
 
+            // MARK: - Terminal
+
+            AITool(function: AIFunctionDefinition(
+                name: "run_terminal",
+                description: """
+                Выполнить команду в терминале в рабочей директории проекта.
+                Сессия персистентна — команда cd запоминается между вызовами.
+                Используй для запуска скриптов, установки зависимостей, сборки через CLI, и любых shell-операций.
+                ВАЖНО: если режим 'С подтверждением' — СНАЧАЛА спроси пользователя, потом вызывай инструмент.
+                Опасные команды (rm -rf /, sudo rm, mkfs и др.) заблокированы безусловно.
+                """,
+                parameters: AIToolParameters(
+                    properties: [
+                        "command": AIToolProperty(type: "string", description: "Shell-команда для выполнения."),
+                        "timeout": AIToolProperty(type: "string", description: "Таймаут в секундах (по умолчанию 30). Увеличь для долгих операций (сборка, npm install).")
+                    ],
+                    required: ["command"]
+                )
+            )),
+
             // MARK: - Long-term memory (IT-08)
 
             AITool(function: AIFunctionDefinition(

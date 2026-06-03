@@ -7,10 +7,11 @@
 //
 // ARCHITECTURE OVERVIEW — see each extension file for details:
 //   ToolDefinitions.swift   — availableTools array
-//   ToolAccessControl.swift — IT-09 access check (role, git, tests)
+//   ToolAccessControl.swift — IT-09 access check (role, git, tests, terminal)
 //   MemoryTools.swift       — IT-08 scope resolution + memory execution cases
 //   FileTools.swift         — file system + web_fetch execution
 //   GitBuildTools.swift     — git + build/test execution
+//   TerminalTools.swift     — persistent bash session + run_terminal execution
 //
 // MCP CONNECTION:
 // MCPToolBridge is created with a socketPath injected via init().
@@ -26,17 +27,23 @@
 // Scope resolution: resolveScope() in MemoryTools.swift.
 //
 // ACCESS CONTROL (IT-09):
-// execute() checks ProjectSettings before running any file/git/build tool.
+// execute() checks ProjectSettings before running any file/git/build/terminal tool.
 // Full check logic in ToolAccessControl.swift.
 //
 // FILE TOOL PROTECTION (PROJECT GUARD):
-// File/git/build tools require at least one project attached to the thread.
+// File/git/build/terminal tools require at least one project attached to the thread.
 // Checked via hasActiveProjects before checkToolAccess().
 //
 // FILE SYSTEM READINESS GUARD:
 // File/git/build tools are blocked while syncFileSystemForActiveThread() is running.
 // isFileSystemReady flag is set to false before sync starts, true after it completes.
 // Prevents stale or empty FileSystemManager from answering tool calls during thread switch.
+//
+// TERMINAL TOOL:
+// run_terminal uses a persistent bash session per thread (ShellSession in TerminalTools.swift).
+// In .confirm mode the tool returns a PendingTerminalCommand marker — ViewModel renders
+// an inline confirmation UI and calls executeConfirmedCommand() after user approval.
+// In .auto mode the command runs immediately.
 //
 // IRON ENGLISH BARRIER (MEMORY-ENGLISH):
 // memorize validates all fields for Cyrillic — code-level barrier, not prompt-level.
@@ -100,7 +107,7 @@ public actor ToolExecutionService {
     // MARK: - Live unavailability callback (B-05)
 
     /// Called on MainActor when a FS tool fails for a specific project.
-    /// ViewModel registers this to mark the project chip orange immediately.
+    /// ViewModel uses this to mark the project chip orange in real time.
     var onProjectUnavailable: (@MainActor (String) -> Void)?
 
     // MARK: - IT-09: Project settings cache
@@ -201,7 +208,7 @@ public actor ToolExecutionService {
     ///
     /// CHECK ORDER:
     /// 1. FS READINESS GUARD — block file/git/build tools while FileSystem is syncing.
-    /// 2. PROJECT GUARD — require attached project for file/git/build tools.
+    /// 2. PROJECT GUARD — require attached project for file/git/build/terminal tools.
     /// 3. TOOL ACCESS CHECK — check rights from ProjectSettings (IT-09).
     /// 4. Dispatch to the appropriate execution handler.
     public func execute(call: AIToolCall) async -> String {
@@ -212,12 +219,11 @@ public actor ToolExecutionService {
             "list_files", "read_file", "write_file", "delete_file",
             "git_status", "git_diff", "git_add", "git_commit",
             "git_log", "git_reset", "git_revert", "git_checkout",
-            "build_project", "run_tests", "read_build_log"
+            "build_project", "run_tests", "read_build_log",
+            "run_terminal"
         ]
 
-        // FS READINESS GUARD: block file/git/build tools while FileSystem is syncing on thread switch.
-        // WHY: bookmark resolution takes 100ms–1s per project; during that window FileSystemManager
-        // may point at stale or empty workspace. Better to delay than to silently return wrong data.
+        // FS READINESS GUARD: block file/git/build/terminal tools while FileSystem is syncing.
         if projectRequiredTools.contains(name) && !isFileSystemReady {
             return """
             ⏳ Проекты ещё загружаются — файловые инструменты временно недоступны.
@@ -225,7 +231,7 @@ public actor ToolExecutionService {
             """
         }
 
-        // PROJECT GUARD: block file/git/build tools without an attached project.
+        // PROJECT GUARD: block file/git/build/terminal tools without an attached project.
         if projectRequiredTools.contains(name) && !hasActiveProjects {
             return """
             ❌ Инструмент '\(name)' недоступен: к текущему треду не привязан ни один проект.
@@ -257,6 +263,9 @@ public actor ToolExecutionService {
                  "git_log", "git_reset", "git_revert", "git_checkout",
                  "build_project", "run_tests", "read_build_log":
                 return try await executeGitBuildTool(name: name, argsData: argsData)
+
+            case "run_terminal":
+                return try await executeTerminalTool(argsData: argsData)
 
             case "add_project_to_thread":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),

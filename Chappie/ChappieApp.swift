@@ -108,6 +108,7 @@ struct ChappieApp: App {
                     Image("Chappie")
                         .resizable()
                         .scaledToFill()
+                        .background(.black)
                         .opacity(0.5)
                         .ignoresSafeArea()
                 )

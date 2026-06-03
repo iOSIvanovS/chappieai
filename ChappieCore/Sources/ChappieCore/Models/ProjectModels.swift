@@ -115,6 +115,46 @@ public enum TestsAccessLevel: String, Codable, Sendable, CaseIterable {
     public var canReadLog: Bool { self != .none }
 }
 
+// MARK: - TerminalAccessLevel
+
+/// Controls how the AI can use run_terminal.
+///
+/// WHY THREE LEVELS:
+/// - none: terminal is completely off (default, safe).
+/// - confirm: every command requires explicit user confirmation before execution.
+/// - auto: commands run immediately. User chose to trust the agent fully.
+///
+/// There is no "safe commands only" auto-mode — the boundary between safe and dangerous
+/// is too fuzzy in practice (e.g. `npm install` can run postinstall scripts).
+/// Better to give the user a clear binary choice: confirm everything or trust fully.
+public enum TerminalAccessLevel: String, Codable, Sendable, CaseIterable {
+    case none
+    case confirm
+    case auto
+
+    public var displayName: String {
+        switch self {
+        case .none:    return "Нет доступа"
+        case .confirm: return "С подтверждением"
+        case .auto:    return "Автоматически"
+        }
+    }
+
+    public var description: String {
+        switch self {
+        case .none:
+            return "Терминал недоступен агенту."
+        case .confirm:
+            return "Каждая команда требует подтверждения в чате перед выполнением."
+        case .auto:
+            return "Агент выполняет команды без подтверждения. Используй только если доверяешь агенту полностью."
+        }
+    }
+
+    public var isEnabled: Bool { self != .none }
+    public var requiresConfirmation: Bool { self == .confirm }
+}
+
 // MARK: - ProjectLanguage
 
 public enum ProjectLanguage: String, Codable, Sendable, CaseIterable {
@@ -138,7 +178,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
     public var agentRole: AgentRole
     public var preferredLanguage: String?
 
-    // Unlocks git/tests/architecture/comments settings in the UI and prompt.
+    // Unlocks git/tests/architecture/comments/terminal settings in the UI and prompt.
     public var isProgrammingProject: Bool
 
     public var gitAccess: GitAccessLevel
@@ -147,6 +187,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
     public var architectureLanguage: ProjectLanguage
     public var commentsEnabled: Bool
     public var commentsLanguage: ProjectLanguage
+    public var terminalAccess: TerminalAccessLevel
 
     public init(
         agentRole: AgentRole = .advisor,
@@ -157,7 +198,8 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         architectureEnabled: Bool = false,
         architectureLanguage: ProjectLanguage = .english,
         commentsEnabled: Bool = false,
-        commentsLanguage: ProjectLanguage = .english
+        commentsLanguage: ProjectLanguage = .english,
+        terminalAccess: TerminalAccessLevel = .none
     ) {
         self.agentRole = agentRole
         self.preferredLanguage = preferredLanguage
@@ -168,6 +210,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         self.architectureLanguage = architectureLanguage
         self.commentsEnabled = commentsEnabled
         self.commentsLanguage = commentsLanguage
+        self.terminalAccess = terminalAccess
     }
 
     /// Resets all access flags when downgrading to advisor role.
@@ -177,6 +220,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         testsAccess = .none
         architectureEnabled = false
         commentsEnabled = false
+        terminalAccess = .none
     }
 }
 
@@ -190,7 +234,7 @@ extension ProjectSettings {
         lines.append("- Role: \(agentRole.rawValue.uppercased())")
 
         if agentRole == .advisor {
-            lines.append("- Access: read-only (list_files, read_file). All write/git/test tools are BLOCKED.")
+            lines.append("- Access: read-only (list_files, read_file). All write/git/test/terminal tools are BLOCKED.")
             lines.append("- To unlock tools: go to project settings → change role to Executor.")
             return lines.joined(separator: "\n")
         }
@@ -227,8 +271,19 @@ extension ProjectSettings {
             } else {
                 lines.append("- Code comments: DISABLED (enable in project settings)")
             }
+
+            switch terminalAccess {
+            case .none:
+                lines.append("- Terminal: BLOCKED (enable in project settings)")
+            case .confirm:
+                // Remind the agent that it must ask before executing — the confirmation
+                // mechanism is enforced in the tool itself, but the prompt reinforces it.
+                lines.append("- Terminal: enabled with confirmation. BEFORE running any command you MUST ask the user for explicit approval in chat. Do NOT call run_terminal until user says 'yes', 'go ahead', or equivalent.")
+            case .auto:
+                lines.append("- Terminal: enabled, auto-execute (no confirmation needed). Use responsibly.")
+            }
         } else {
-            lines.append("- Advanced settings (git, tests, architecture, comments): locked. Enable 'Programming project' in settings.")
+            lines.append("- Advanced settings (git, tests, architecture, comments, terminal): locked. Enable 'Programming project' in settings.")
         }
 
         return lines.joined(separator: "\n")

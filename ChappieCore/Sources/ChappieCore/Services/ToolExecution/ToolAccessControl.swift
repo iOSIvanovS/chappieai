@@ -2,7 +2,7 @@
 // ChappieCore
 //
 // WHY THIS FILE:
-// IT-09 access control: checks agent role, git level, and test level
+// IT-09 access control: checks agent role, git level, test level, and terminal level
 // before any tool is executed. Isolated here so rules are easy to audit.
 //
 // CHECK ORDER in checkToolAccess():
@@ -12,7 +12,8 @@
 //    a. Git tools — require isProgrammingProject + GitAccessLevel.allowedTools.
 //    b. Build/test tools — require isProgrammingProject + TestsAccessLevel.canRun.
 //    c. read_build_log — requires TestsAccessLevel.canReadLog.
-//    d. Everything else — allowed.
+//    d. run_terminal — requires isProgrammingProject + TerminalAccessLevel.isEnabled.
+//    e. Everything else — allowed.
 //
 // PROJECT SETTINGS RESOLUTION:
 // Uses first project in activeMemoryContext (MVP simplification).
@@ -109,6 +110,23 @@ extension ToolExecutionService {
                 return .denied("""
                 ❌ Tool 'read_build_log' is blocked: tests access is disabled.
                 Open project settings → Tests → enable at least 'Read logs'.
+                """)
+            }
+            return .allowed
+        }
+
+        // run_terminal — requires programming project + terminal access enabled.
+        if toolName == "run_terminal" {
+            if !settings.isProgrammingProject {
+                return .denied("""
+                ❌ Tool 'run_terminal' requires 'Programming project' flag.
+                Open project settings → enable 'Programming project'.
+                """)
+            }
+            if !settings.terminalAccess.isEnabled {
+                return .denied("""
+                ❌ Tool 'run_terminal' is blocked: terminal access is disabled.
+                Open project settings → Terminal → choose 'С подтверждением' or 'Автоматически'.
                 """)
             }
             return .allowed

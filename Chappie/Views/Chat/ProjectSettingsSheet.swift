@@ -60,6 +60,8 @@ struct ProjectSettingsSheet: View {
                             testsSection
                             architectureSection
                             commentsSection
+                            Divider().padding(.vertical, 4)
+                            terminalSection
                         }
                     }
                 }
@@ -80,7 +82,7 @@ struct ProjectSettingsSheet: View {
                 pendingRoleChange = nil
             }
         } message: {
-            Text("При смене роли на «Советник» все права доступа (git, тесты, архитектура, комментарии) будут сброшены. Продолжить?")
+            Text("При смене роли на «Советник» все права доступа (git, тесты, архитектура, комментарии, терминал) будут сброшены. Продолжить?")
         }
     }
 
@@ -155,7 +157,7 @@ struct ProjectSettingsSheet: View {
                 .foregroundStyle(.blue)
                 .padding(.top, 1)
 
-            Text("В роли советника доступны только **read_file** и **list_files**. Все инструменты записи, git и тесты заблокированы.")
+            Text("В роли советника доступны только **read_file** и **list_files**. Все инструменты записи, git, тесты и терминал заблокированы.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -201,7 +203,7 @@ struct ProjectSettingsSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Программистский проект")
                         .font(.callout)
-                    Text("Разблокирует настройки git, тестов, архитектуры и комментариев")
+                    Text("Разблокирует настройки git, тестов, архитектуры, комментариев и терминала")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -336,6 +338,62 @@ struct ProjectSettingsSheet: View {
         }
     }
 
+    // MARK: - Секция терминала
+
+    private var terminalSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("Терминал", systemImage: "terminal.fill")
+
+            Picker("Доступ к терминалу", selection: $draft.terminalAccess) {
+                ForEach(TerminalAccessLevel.allCases, id: \.self) { level in
+                    Text(level.displayName).tag(level)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Text(draft.terminalAccess.description)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // Warning for auto mode — user should understand the risk.
+            if draft.terminalAccess == .auto {
+                autoTerminalWarningView
+            }
+
+            // Info about the safety net for enabled modes.
+            if draft.terminalAccess != .none {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "shield.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.green)
+                        .padding(.top, 1)
+                    Text("Деструктивные команды (rm -rf /, sudo rm, mkfs и др.) заблокированы безусловно.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private var autoTerminalWarningView: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(.orange)
+                .padding(.top, 1)
+
+            Text("Агент будет выполнять команды **без подтверждения**. Убедись, что доверяешь текущей модели и провайдеру.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
     // MARK: - Кнопки действий
 
     private var footerView: some View {
@@ -393,7 +451,24 @@ struct ProjectSettingsSheet: View {
                 architectureEnabled: true,
                 architectureLanguage: .english,
                 commentsEnabled: true,
-                commentsLanguage: .english
+                commentsLanguage: .english,
+                terminalAccess: .confirm
+            )
+        ),
+        onSave: { settings in print("Сохранено: \(settings)") },
+        onDismiss: {}
+    )
+}
+
+#Preview("Терминал — авто") {
+    ProjectSettingsSheet(
+        project: ProjectMetadata(
+            id: UUID(),
+            displayName: "Chappie",
+            settings: ProjectSettings(
+                agentRole: .executor,
+                isProgrammingProject: true,
+                terminalAccess: .auto
             )
         ),
         onSave: { settings in print("Сохранено: \(settings)") },
