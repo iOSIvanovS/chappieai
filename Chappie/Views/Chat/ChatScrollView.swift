@@ -72,7 +72,7 @@
 // ProgressView() on macOS is NSProgressIndicator — a CoreAnimation-driven spinning
 // control that renders at 60fps regardless of visibility context.
 // Two instances were present: thinkingIndicator (in chat) and historyLoadingIndicator.
-// Both replaced with DotsIndicator — animated via TimelineView(.animation).
+// historyLoadingIndicator replaced with DotsIndicator — animated via TimelineView(.animation).
 //
 // CPU-29: DotsIndicator MIGRATED FROM @State TO TimelineView:
 // Previous DotsIndicator used three @State-driven .repeatForever animations.
@@ -88,6 +88,17 @@
 // on every @State toggle (~2/sec) — AttributeGraph diff + layout pass on macOS.
 // Fix: TimelineView(.periodic(from:by:)) — cursor phase computed from Date.
 // Zero @State, zero SwiftUI invalidation. Same visual result, ~50% less CPU.
+//
+// CPU-31: thinkingIndicator (DotsIndicator bubble) REMOVED:
+// While isThinking=true and streamingText.isEmpty, the DotsIndicator bubble was rendered.
+// DotsIndicator uses TimelineView(.animation) — a 60fps display-link that runs
+// continuously regardless of visibility, causing ~50% CPU during AI "thinking" pauses
+// (no network, no disk, just waiting for the backend to respond).
+// The bubble was visually redundant: the bottom InputMorphView panel already shows
+// the gear icon + current action label during thinking. The dots bubble was hidden
+// behind the panel or invisible in most layouts.
+// Fix: removed thinkingIndicator entirely. Only streamingBubble is shown when
+// isThinking=true — and only once text actually starts arriving.
 //
 // NOTE ON "bad range for [%{public}s]" IN XCODE CONSOLE:
 // This warning is NOT caused by our code. It is an internal CoreData/SwiftData OSLog
@@ -181,22 +192,17 @@ struct ChatScrollView: View {
                                 .id(msg.id)
                         }
 
-                        // CPU-25: thinking indicator animates independently — not the whole VStack.
-                        if streaming.isThinking {
-                            if streaming.streamingText.isEmpty {
-                                thinkingIndicator
-                                    .transition(.opacity)
-                                    .animation(.easeInOut(duration: 0.25), value: streaming.isThinking)
-                                    .id("thinking-spinner")
-                            } else {
-                                streamingBubble
-                                    .transition(.asymmetric(
-                                        insertion: .move(edge: .bottom).combined(with: .opacity),
-                                        removal: .opacity
-                                    ))
-                                    .animation(.easeInOut(duration: 0.3), value: streaming.streamingText.isEmpty)
-                                    .id("thinking-streaming")
-                            }
+                        // CPU-31: thinkingIndicator (DotsIndicator bubble) removed.
+                        // Only show streamingBubble once text actually arrives.
+                        // The bottom panel already indicates thinking state visually.
+                        if streaming.isThinking && !streaming.streamingText.isEmpty {
+                            streamingBubble
+                                .transition(.asymmetric(
+                                    insertion: .move(edge: .bottom).combined(with: .opacity),
+                                    removal: .opacity
+                                ))
+                                .animation(.easeInOut(duration: 0.3), value: streaming.streamingText.isEmpty)
+                                .id("thinking-streaming")
                         }
                     }
 
@@ -280,35 +286,6 @@ struct ChatScrollView: View {
         .frame(maxWidth: .infinity)
     }
 
-    /// CPU-29: DotsIndicator replaces ProgressView() — see DotsIndicator comment below.
-    private var thinkingIndicator: some View {
-        HStack {
-            DotsIndicator()
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(Color(NSColor.textBackgroundColor))
-                .clipShape(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 12,
-                        bottomLeadingRadius: 4,
-                        bottomTrailingRadius: 12,
-                        topTrailingRadius: 12
-                    )
-                )
-                .overlay(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 12,
-                        bottomLeadingRadius: 4,
-                        bottomTrailingRadius: 12,
-                        topTrailingRadius: 12
-                    )
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                )
-
-            Spacer(minLength: 40)
-        }
-    }
-
     /// Live streaming bubble — plain text during stream, no Markdown parsing.
     /// CPU-24: MarkdownTextView.init() calls MarkdownParser.parse() on every render.
     /// During streaming that means full re-parse on every token (30+/sec), growing text.
@@ -371,6 +348,9 @@ struct ChatScrollView: View {
 /// TimelineView(.animation) uses a single shared display-link for the entire screen.
 /// Phase is computed mathematically from the current Date — no @State, no invalidation.
 /// The view body is a pure function: same timestamp → same pixels. Zero side effects.
+///
+/// NOTE: DotsIndicator is only used for historyLoadingIndicator (loading old messages).
+/// The thinkingIndicator bubble was removed (CPU-31) — the bottom panel shows thinking state.
 private struct DotsIndicator: View {
     private let dotSize: CGFloat = 7
     private let spacing: CGFloat = 5
@@ -499,9 +479,10 @@ private struct BlinkingCursor: View {
     .background(Color(NSColor.windowBackgroundColor))
 }
 
-#Preview("Thinking — dots") {
+#Preview("Thinking — waiting for first token") {
     let streaming = StreamingState()
     streaming.isThinking = true
+    // streamingText is empty — no bubble shown, bottom panel handles the indicator.
 
     return ChatScrollView(
         scrollToBottomTrigger: 0,
