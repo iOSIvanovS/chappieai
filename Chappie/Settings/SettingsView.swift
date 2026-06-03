@@ -6,6 +6,7 @@
 // SECTIONS:
 //   - User name: saved to global memory, used in system prompt.
 //   - AI providers: shortcut to ProvidersSettingsView (the directory).
+//   - Onboarding: manual re-run trigger (calls AppState.resetOnboarding).
 //   - Security: Keychain info.
 //
 // NOTE: There is no "active provider" concept at the global level.
@@ -28,6 +29,7 @@ struct SettingsView: View {
     @State private var userName: String = ""
     @State private var showProviders: Bool = false
     @State private var nameSaved: Bool = false
+    @State private var showOnboardingConfirm: Bool = false
 
     @Environment(\.dismiss) private var dismiss
 
@@ -104,7 +106,6 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
 
                         HStack(spacing: 12) {
-                            // Summary pill: how many providers are configured
                             let count = viewModel.providers.count
                             if count > 0 {
                                 HStack(spacing: 6) {
@@ -142,6 +143,25 @@ struct SettingsView: View {
 
                     Divider()
 
+                    // MARK: Onboarding
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("Онбординг", systemImage: "wand.and.stars")
+                            .font(.headline)
+
+                        Text("Повторно запустить мастер первоначальной настройки. Существующие данные не удаляются — провайдеры, ключи и модели только дополняются.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+
+                        Button {
+                            showOnboardingConfirm = true
+                        } label: {
+                            Label("Запустить онбординг", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    Divider()
+
                     // MARK: Security info
                     VStack(alignment: .leading, spacing: 8) {
                         Label("Безопасность", systemImage: "lock.shield.fill")
@@ -175,9 +195,21 @@ struct SettingsView: View {
             .padding(.horizontal, 24)
             .padding(.vertical, 16)
         }
-        .frame(width: 500, height: 440)
+        .frame(width: 500, height: 480)
         .sheet(isPresented: $showProviders) {
             ProvidersSettingsView(viewModel: viewModel)
+        }
+        .alert("Запустить онбординг?", isPresented: $showOnboardingConfirm) {
+            Button("Запустить") {
+                dismiss()
+                // Small delay so settings sheet dismisses before onboarding appears
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    AppState.shared.resetOnboarding()
+                }
+            }
+            Button("Отмена", role: .cancel) {}
+        } message: {
+            Text("Мастер настройки откроется снова. Ваши данные, треды и провайдеры сохранятся.")
         }
         .onAppear { loadCurrentName() }
     }
@@ -205,7 +237,6 @@ struct SettingsView: View {
     }
 
     private func loadCurrentName() {
-        // providerStore being non-nil means ModelContainer is connected and memoryStore is ready.
         guard viewModel.providerStore != nil else {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { loadCurrentName() }
             return

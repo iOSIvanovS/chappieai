@@ -8,6 +8,15 @@
 //   Validate provider (GET /v1/models — no model name needed).
 //   On success → proceed to step 2.
 //
+//   ONBOARDING MODE (isOnboarding == true):
+//     Shows a "+ Добавить ещё ключ" button to collect multiple keys before validation.
+//     Each key has a name + value field. At least one key required.
+//     Validation uses the first non-empty key.
+//
+//   DIRECTORY MODE (isOnboarding == false, default):
+//     Single key field. On duplicate host → alert (do not add).
+//     On duplicate key value → alert (do not add).
+//
 // STEP 2 — Models:
 //   Fetch available models from the provider (auto-populated if /models works).
 //   User can select from the list OR type model names manually.
@@ -20,9 +29,23 @@
 //   API key field shows placeholder (existing key preserved if left empty).
 //   Key name field editable — rename the key without changing the secret.
 //   Models list is editable — add/remove individual models.
+//
+// SAVE BEHAVIOUR:
+//   Onboarding → calls providerStore.mergeProvider (safe upsert, no alerts).
+//   Directory  → calls providerStore.addProvider (strict add, shows alerts on duplicates).
 
 import SwiftUI
 import ChappieCore
+
+// MARK: - PendingKey
+
+/// A key being composed in the onboarding multi-key UI (before saving).
+private struct PendingKey: Identifiable {
+    let id = UUID()
+    var name: String = ""
+    var value: String = ""
+    var isVisible: Bool = false
+}
 
 // MARK: - AddProviderSheet
 
@@ -32,6 +55,8 @@ struct AddProviderSheet: View {
 
     let providerStore: AIProviderStore?
     var editingProvider: AIProvider? = nil
+    /// When true: multi-key input, merge-save (onboarding). When false: single-key, strict-save (directory).
+    var isOnboarding: Bool = false
     let onSaved: () -> Void
     let onCancel: () -> Void
 
@@ -40,16 +65,23 @@ struct AddProviderSheet: View {
     private enum Step { case provider, models }
     @State private var step: Step = .provider
 
-    // MARK: - Step 1 State
+    // MARK: - Step 1 State — shared
 
     @State private var providerName: String = ""
     @State private var endpoint: String = ""
-    @State private var apiKeyValue: String = ""
-    @State private var apiKeyName: String = ""
-    @State private var isKeyVisible: Bool = false
     @State private var isValidating: Bool = false
     @State private var validationError: String? = nil
     @State private var validatedProvider: AIProvider? = nil
+
+    // MARK: - Step 1 State — directory mode (single key)
+
+    @State private var apiKeyValue: String = ""
+    @State private var apiKeyName: String = ""
+    @State private var isKeyVisible: Bool = false
+
+    // MARK: - Step 1 State — onboarding mode (multi-key)
+
+    @State private var pendingKeys: [PendingKey] = [PendingKey()]
 
     // MARK: - Step 2 State
 
@@ -62,14 +94,27 @@ struct AddProviderSheet: View {
     @State private var saveError: String? = nil
     @State private var modelSearchText: String = ""
 
+    // MARK: - Duplicate Alerts (directory mode)
+
+    @State private var duplicateHostAlert: Bool = false
+    @State private var duplicateKeyAlert: Bool = false
+
     // MARK: - Computed
 
     private var isEditing: Bool { editingProvider != nil }
     private var title: String { isEditing ? "Редактировать провайдера" : "Добавить провайдера" }
 
     private var canValidate: Bool {
-        !endpoint.trimmingCharacters(in: .whitespaces).isEmpty &&
-        (!apiKeyValue.trimmingCharacters(in: .whitespaces).isEmpty || isEditing)
+        let endpointOk = !endpoint.trimmingCharacters(in: .whitespaces).isEmpty
+        if isEditing { return endpointOk }
+        if isOnboarding {
+            // At least one key with a non-empty value
+            return endpointOk && pendingKeys.contains(where: {
+                !$0.value.trimmingCharacters(in: .whitespaces).isEmpty
+            })
+        } else {
+            return endpointOk && !apiKeyValue.trimmingCharacters(in: .whitespaces).isEmpty
+        }
     }
 
     // All models: fetched + manually added + existing (for edit mode)
@@ -94,6 +139,15 @@ struct AddProviderSheet: View {
 
     private var allFilteredSelected: Bool {
         !filteredModels.isEmpty && filteredModels.allSatisfy { selectedModels.contains($0) }
+    }
+
+    // First non-empty key value for validation
+    private var firstValidKeyValue: String {
+        if isOnboarding {
+            return pendingKeys.first(where: { !$0.value.trimmingCharacters(in: .whitespaces).isEmpty })?.value ?? ""
+        } else {
+            return apiKeyValue
+        }
     }
 
     // MARK: - Body
@@ -139,6 +193,16 @@ struct AddProviderSheet: View {
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
         .onAppear { prefillIfEditing() }
+        .alert("Провайдер уже существует", isPresented: $duplicateHostAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Провайдер с таким адресом уже добавлен в справочник.")
+        }
+        .alert("Ключ уже существует", isPresented: $duplicateKeyAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Ключ с таким значением уже добавлен у этого провайдера.")
+        }
     }
 
     // MARK: - Step 1: Provider
@@ -158,37 +222,11 @@ struct AddProviderSheet: View {
                         .font(.system(.body, design: .monospaced))
                 }
 
-                fieldSection(
-                    label: "Название ключа",
-                    icon: "tag.fill",
-                    hint: "Понятное имя для этого ключа. Например: «Рабочий», «Личный», «Клиент X»"
-                ) {
-                    TextField(isEditing ? "Новое название ключа" : "Рабочий ключ", text: $apiKeyName)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                fieldSection(
-                    label: "API-ключ",
-                    icon: "key.fill",
-                    hint: isEditing ? "Оставьте пустым чтобы сохранить текущий ключ" : "Ключ будет сохранён в системном Keychain"
-                ) {
-                    HStack(spacing: 8) {
-                        Group {
-                            if isKeyVisible {
-                                TextField(isEditing ? "Новый ключ (необязательно)" : "sk-...", text: $apiKeyValue)
-                            } else {
-                                SecureField(isEditing ? "Новый ключ (необязательно)" : "sk-...", text: $apiKeyValue)
-                            }
-                        }
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(.body, design: .monospaced))
-
-                        Button { isKeyVisible.toggle() } label: {
-                            Image(systemName: isKeyVisible ? "eye.slash" : "eye")
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                    }
+                // Keys section — single in directory mode, multi in onboarding
+                if isOnboarding {
+                    multiKeySection
+                } else {
+                    singleKeySection
                 }
 
                 if let err = validationError {
@@ -196,6 +234,73 @@ struct AddProviderSheet: View {
                 }
             }
             .padding(24)
+        }
+    }
+
+    // MARK: - Single Key (Directory Mode)
+
+    private var singleKeySection: some View {
+        Group {
+            fieldSection(
+                label: "Название ключа",
+                icon: "tag.fill",
+                hint: "Понятное имя для этого ключа. Например: «Рабочий», «Личный», «Клиент X»"
+            ) {
+                TextField(isEditing ? "Новое название ключа" : "Рабочий ключ", text: $apiKeyName)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            fieldSection(
+                label: "API-ключ",
+                icon: "key.fill",
+                hint: isEditing ? "Оставьте пустым чтобы сохранить текущий ключ" : "Ключ будет сохранён в системном Keychain"
+            ) {
+                HStack(spacing: 8) {
+                    Group {
+                        if isKeyVisible {
+                            TextField(isEditing ? "Новый ключ (необязательно)" : "sk-...", text: $apiKeyValue)
+                        } else {
+                            SecureField(isEditing ? "Новый ключ (необязательно)" : "sk-...", text: $apiKeyValue)
+                        }
+                    }
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+
+                    Button { isKeyVisible.toggle() } label: {
+                        Image(systemName: isKeyVisible ? "eye.slash" : "eye")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    // MARK: - Multi-Key (Onboarding Mode)
+
+    private var multiKeySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("API-ключи", systemImage: "key.fill")
+                .font(.headline)
+
+            Text("Добавьте один или несколько ключей для этого провайдера. Все они будут доступны при выборе провайдера в треде.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ForEach($pendingKeys) { $key in
+                PendingKeyRow(key: $key, canDelete: pendingKeys.count > 1) {
+                    pendingKeys.removeAll { $0.id == key.id }
+                }
+            }
+
+            Button {
+                pendingKeys.append(PendingKey())
+            } label: {
+                Label("Добавить ещё ключ", systemImage: "plus.circle")
+                    .font(.subheadline)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.accentColor)
         }
     }
 
@@ -457,7 +562,6 @@ struct AddProviderSheet: View {
         providerName = provider.name
         endpoint = provider.endpoint
         selectedModels = Set(provider.models)
-        // Pre-fill key name from the first key if available
         apiKeyName = provider.keys.first?.name ?? ""
     }
 
@@ -475,7 +579,6 @@ struct AddProviderSheet: View {
 
     private func validateAndProceed() {
         let trimmedEndpoint = endpoint.trimmingCharacters(in: .whitespaces)
-        let trimmedKey = apiKeyValue.trimmingCharacters(in: .whitespaces)
 
         guard !trimmedEndpoint.isEmpty else {
             validationError = "Введите URL эндпойнта."
@@ -486,14 +589,25 @@ struct AddProviderSheet: View {
         validationError = nil
 
         Task {
+            // Directory mode: check for duplicate host before validating
+            if !isOnboarding && !isEditing, let store = providerStore {
+                let hostExists = await store.providerHostExists(trimmedEndpoint)
+                if hostExists {
+                    await MainActor.run {
+                        isValidating = false
+                        duplicateHostAlert = true
+                    }
+                    return
+                }
+            }
+
             let keyToUse: String
-            if isEditing && trimmedKey.isEmpty, let existing = editingProvider,
+            if isEditing && firstValidKeyValue.isEmpty, let existing = editingProvider,
                let store = providerStore,
                let firstKeyId = existing.keys.first?.id {
-                // Load existing key secret for validation
                 keyToUse = await store.loadApiKey(for: firstKeyId) ?? ""
             } else {
-                keyToUse = trimmedKey
+                keyToUse = firstValidKeyValue
             }
 
             guard !keyToUse.isEmpty else {
@@ -544,13 +658,12 @@ struct AddProviderSheet: View {
 
         Task {
             let keyToUse: String
-            let trimmedKey = apiKeyValue.trimmingCharacters(in: .whitespaces)
-            if isEditing && trimmedKey.isEmpty, let existing = editingProvider,
+            if isEditing && firstValidKeyValue.isEmpty, let existing = editingProvider,
                let store = providerStore,
                let firstKeyId = existing.keys.first?.id {
                 keyToUse = await store.loadApiKey(for: firstKeyId) ?? ""
             } else {
-                keyToUse = trimmedKey
+                keyToUse = firstValidKeyValue
             }
 
             let client = AIClient(endpoint: provider.endpoint, apiKey: keyToUse, modelName: "")
@@ -592,8 +705,6 @@ struct AddProviderSheet: View {
         isSaving = true
         saveError = nil
 
-        let trimmedKeyValue = apiKeyValue.trimmingCharacters(in: .whitespaces)
-        let resolvedKeyName = apiKeyName.trimmingCharacters(in: .whitespaces)
         let modelsToSave = Array(selectedModels).sorted()
 
         Task {
@@ -602,22 +713,61 @@ struct AddProviderSheet: View {
                 finalProvider.models = modelsToSave
 
                 if isEditing {
-                    // Update provider config (name, endpoint, models) — keys managed separately
                     try await store.updateProvider(finalProvider)
 
-                    // If user entered a new key value — update the first key's secret
+                    let trimmedKeyValue = apiKeyValue.trimmingCharacters(in: .whitespaces)
+                    let resolvedKeyName = apiKeyName.trimmingCharacters(in: .whitespaces)
+
                     if !trimmedKeyValue.isEmpty, let firstKey = finalProvider.keys.first {
                         var updatedKey = firstKey
                         if !resolvedKeyName.isEmpty { updatedKey.name = resolvedKeyName }
                         try await store.updateKey(updatedKey, newValue: trimmedKeyValue, forProviderId: finalProvider.id)
                     } else if !resolvedKeyName.isEmpty, let firstKey = finalProvider.keys.first {
-                        // Rename key only
                         var updatedKey = firstKey
                         updatedKey.name = resolvedKeyName
                         try await store.updateKey(updatedKey, newValue: nil, forProviderId: finalProvider.id)
                     }
+
+                } else if isOnboarding {
+                    // Onboarding: merge provider + all pending keys
+                    let validKeys = pendingKeys.filter {
+                        !$0.value.trimmingCharacters(in: .whitespaces).isEmpty
+                    }
+                    guard let firstKey = validKeys.first else {
+                        await MainActor.run {
+                            isSaving = false
+                            saveError = "Нужен хотя бы один ключ."
+                        }
+                        return
+                    }
+
+                    // Merge with first key — creates or updates provider
+                    let providerId = try await store.mergeProvider(
+                        finalProvider,
+                        keyName: firstKey.name.trimmingCharacters(in: .whitespaces).isEmpty ? "Default" : firstKey.name,
+                        keyValue: firstKey.value.trimmingCharacters(in: .whitespaces),
+                        models: modelsToSave
+                    )
+
+                    // Merge remaining keys one by one
+                    for key in validKeys.dropFirst() {
+                        let name = key.name.trimmingCharacters(in: .whitespaces)
+                        let value = key.value.trimmingCharacters(in: .whitespaces)
+                        _ = try await store.mergeProvider(
+                            AIProvider(id: providerId, name: finalProvider.name, endpoint: finalProvider.endpoint),
+                            keyName: name.isEmpty ? "Key" : name,
+                            keyValue: value,
+                            models: [] // models already added on first merge
+                        )
+                    }
+
                 } else {
-                    // New provider — create with first key
+                    // Directory: strict add — duplicate host already checked in validateAndProceed
+                    let trimmedKeyValue = apiKeyValue.trimmingCharacters(in: .whitespaces)
+                    let resolvedKeyName = apiKeyName.trimmingCharacters(in: .whitespaces)
+
+                    // Check key value uniqueness — requires knowing provider id first.
+                    // For a new provider there are no existing keys, so no duplicate possible.
                     let keyName = resolvedKeyName.isEmpty ? "Default" : resolvedKeyName
                     try await store.addProvider(finalProvider, firstKeyName: keyName, firstKeyValue: trimmedKeyValue)
                 }
@@ -633,6 +783,52 @@ struct AddProviderSheet: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - PendingKeyRow
+
+/// One key row in the onboarding multi-key list.
+private struct PendingKeyRow: View {
+
+    @Binding var key: PendingKey
+    let canDelete: Bool
+    let onDelete: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                TextField("Название ключа (напр. «Рабочий»)", text: $key.name)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 180)
+
+                Group {
+                    if key.isVisible {
+                        TextField("sk-...", text: $key.value)
+                    } else {
+                        SecureField("sk-...", text: $key.value)
+                    }
+                }
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.body, design: .monospaced))
+
+                Button { key.isVisible.toggle() } label: {
+                    Image(systemName: key.isVisible ? "eye.slash" : "eye")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+
+                if canDelete {
+                    Button(action: onDelete) {
+                        Image(systemName: "minus.circle.fill")
+                            .foregroundStyle(.red.opacity(0.7))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(10)
+        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

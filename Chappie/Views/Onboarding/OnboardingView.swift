@@ -5,9 +5,9 @@
 //
 // FLOW:
 // Step 1: User name (optional) — saved directly to global memory via viewModel.saveUserName()
-// Step 2: First AI provider setup (required) — uses AddProviderSheet
-//         Cannot proceed until at least one provider is validated and saved.
-// Step 3 (future MK-05): allow adding multiple keys per provider.
+// Step 2: First AI provider setup (required) — uses AddProviderSheet in onboarding mode.
+//         Cannot proceed until at least one provider is saved.
+//         Multi-key input is available — user can add several keys at once.
 //
 // TRIGGER:
 // Shown when AppState.shared.shouldShowOnboarding == true.
@@ -72,20 +72,17 @@ struct OnboardingView: View {
         .sheet(isPresented: $showAddProvider) {
             AddProviderSheet(
                 providerStore: viewModel.providerStore,
+                isOnboarding: true,
                 onSaved: {
                     showAddProvider = false
                     viewModel.reloadProviders()
+                    // Complete onboarding as soon as provider is saved
+                    AppState.shared.completeOnboarding()
                 },
                 onCancel: {
                     showAddProvider = false
                 }
             )
-        }
-        // When providers become non-empty after AddProviderSheet — complete onboarding
-        .onChange(of: viewModel.providers.count) { _, newCount in
-            if newCount > 0 {
-                AppState.shared.completeOnboarding()
-            }
         }
     }
 
@@ -159,7 +156,7 @@ struct OnboardingView: View {
                 Text("Настройте AI-провайдера")
                     .font(.largeTitle.bold())
 
-                Text("Чаппи работает с любым сервисом, совместимым с протоколом OpenAI.\nДобавьте эндпойнт, ключ и выберите модели.")
+                Text("Чаппи работает с любым сервисом, совместимым с протоколом OpenAI.\nДобавьте эндпойнт, ключи и выберите модели.")
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

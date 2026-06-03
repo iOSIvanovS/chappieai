@@ -58,6 +58,7 @@ import Security
 /// - setDefault(id:)
 /// - loadDefaultProvider() → AIProvider?
 /// - loadApiKey(for keyId:) → String?
+/// - mergeProvider(_:keyName:keyValue:models:) — onboarding upsert with merge rules
 public actor AIProviderStore {
 
     // MARK: - Dependencies
@@ -179,6 +180,130 @@ public actor AIProviderStore {
 
         print("[AIProviderStore] Added provider '\(providerWithKey.displayName)' with key '\(firstKey.name)'")
         return providerWithKey.id
+    }
+
+    // MARK: - Merge Provider (Onboarding)
+
+    /// Onboarding upsert — safe to call multiple times without destroying existing data.
+    ///
+    /// MERGE RULES:
+    /// - Provider match: by displayHost (URL host). If found → update name only, reuse existing id.
+    ///   If not found → create new provider.
+    /// - Key match: by Keychain value within the provider. If value already exists → update name only.
+    ///   If name already exists (different value) → rename incoming key with a suffix.
+    ///   If neither exists → add as new key.
+    /// - Models: add only models not already present for this provider (by name).
+    ///   Models are provider-scoped — same name at different providers is fine.
+    ///
+    /// Returns the UUID of the provider that was created or updated.
+    @discardableResult
+    public func mergeProvider(
+        _ incoming: AIProvider,
+        keyName: String,
+        keyValue: String,
+        models: [String]
+    ) async throws -> UUID {
+        let existing = try getProviders()
+        let incomingHost = URL(string: incoming.endpoint)?.host ?? incoming.endpoint
+
+        // Find provider by host
+        if var matched = existing.first(where: { provider in
+            (URL(string: provider.endpoint)?.host ?? provider.endpoint) == incomingHost
+        }) {
+            // Provider exists — update display name if incoming has one
+            if !incoming.name.isEmpty {
+                matched.name = incoming.name
+            }
+
+            // Merge key
+            let trimmedValue = keyValue.trimmingCharacters(in: .whitespaces)
+            if !trimmedValue.isEmpty {
+                // Check if this key value already exists
+                var valueExists = false
+                for existingKey in matched.keys {
+                    if let stored = keychainLoad(key: existingKey.id.uuidString), stored == trimmedValue {
+                        // Value duplicate — update name only
+                        var updatedKey = existingKey
+                        if !keyName.isEmpty { updatedKey.name = keyName }
+                        if let idx = matched.keys.firstIndex(where: { $0.id == existingKey.id }) {
+                            matched.keys[idx] = updatedKey
+                        }
+                        valueExists = true
+                        break
+                    }
+                }
+
+                if !valueExists {
+                    // New key value — check name uniqueness, add suffix if collision
+                    let resolvedName = resolveKeyName(keyName, existingKeys: matched.keys)
+                    let newKey = APIKey(name: resolvedName)
+                    saveApiKey(trimmedValue, for: newKey.id)
+                    matched.keys.append(newKey)
+                }
+            }
+
+            // Merge models — add only those not already present
+            let existingModelSet = Set(matched.models)
+            let newModels = models.filter { !existingModelSet.contains($0) }
+            matched.models.append(contentsOf: newModels)
+
+            try persistProvider(matched)
+            try refreshCache()
+
+            print("[AIProviderStore] Merged provider '\(matched.displayName)' (host: \(incomingHost))")
+            return matched.id
+
+        } else {
+            // Provider not found — create new
+            let id = try await addProvider(incoming, firstKeyName: keyName, firstKeyValue: keyValue)
+
+            // Add models (addProvider only sets up keys, not models)
+            if var newProvider = try getProviders().first(where: { $0.id == id }) {
+                newProvider.models = models
+                try persistProvider(newProvider)
+                try refreshCache()
+            }
+
+            return id
+        }
+    }
+
+    /// Resolves key name uniqueness within a provider — appends suffix if collision.
+    private func resolveKeyName(_ name: String, existingKeys: [APIKey]) -> String {
+        let base = name.isEmpty ? "Key" : name
+        guard existingKeys.contains(where: { $0.name.lowercased() == base.lowercased() }) else {
+            return base
+        }
+        var suffix = 2
+        while existingKeys.contains(where: { $0.name.lowercased() == "\(base) \(suffix)".lowercased() }) {
+            suffix += 1
+        }
+        return "\(base) \(suffix)"
+    }
+
+    // MARK: - Duplicate Check Helpers (for UI validation)
+
+    /// Returns true if a provider with the same host already exists.
+    /// Used by the directory (non-onboarding) add flow to show an alert.
+    public func providerHostExists(_ endpoint: String) async -> Bool {
+        let host = URL(string: endpoint)?.host ?? endpoint
+        return (try? getProviders().contains(where: { provider in
+            (URL(string: provider.endpoint)?.host ?? provider.endpoint) == host
+        })) ?? false
+    }
+
+    /// Returns true if a key with the same value already exists for the given provider.
+    /// Used by the directory add flow to show an alert.
+    public func keyValueExists(_ value: String, inProviderId providerId: UUID) async -> Bool {
+        guard let provider = (try? getProviders().first(where: { $0.id == providerId })) else {
+            return false
+        }
+        for key in provider.keys {
+            if let stored = keychainLoad(key: key.id.uuidString), stored == value {
+                return true
+            }
+        }
+        return false
     }
 
     // MARK: - Update Provider
