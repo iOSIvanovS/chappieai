@@ -24,39 +24,62 @@ All business logic lives in ChappieCore. The UI target is responsible only for:
 
 ```
 Chappie/
-├── ChappieApp.swift                    # @main, ModelContainer, onAppear
+├── ChappieApp.swift                    # @main, ModelContainer, AppDelegate
 ├── ContentView.swift                   # Conductor: assembles components, manages sheets
-├── ChappieViewModel.swift              # @Observable @MainActor ViewModel
 ├── MCPHelperLauncher.swift             # Launches ChappieMCP child process
 ├── Models/
-│   └── ChatMessage.swift               # UI message model (enum: .message / .toolCall)
+│   ├── ChatMessage.swift               # UI message model (enum: .message / .toolCall)
+│   ├── AttachedFile.swift              # Attached file model for input
+│   └── AppSettingsMigration.swift      # SwiftData migration: "New.AppSettings" → AppSettings
+├── ViewModels/
+│   ├── ChappieViewModel.swift          # @Observable @MainActor ViewModel (core state)
+│   ├── ChappieViewModel+Send.swift     # send() — AI request pipeline
+│   ├── ChappieViewModel+Threads.swift  # Thread CRUD + selectThread()
+│   ├── ChappieViewModel+ThreadSession.swift  # ThreadSession lifecycle
+│   ├── ChappieViewModel+Providers.swift      # Provider switching + balance
+│   ├── ChappieViewModel+AppSettings.swift    # AppSettings read/write via AppSettingsStore
+│   ├── ChappieViewModel+Memory.swift         # Memory tool callbacks
+│   ├── ChappieViewModel+Projects.swift       # Project CRUD + settings
+│   └── StreamingState.swift            # Streaming state model (isolated from ViewModel)
 ├── Settings/
-│   ├── SettingsView.swift              # App settings sheet (API key)
-│   ├── SettingsManager.swift           # UserDefaults + Keychain for API key
-│   └── KeychainManager.swift           # Keychain wrapper
+│   └── SettingsView.swift              # App settings sheet
 └── Views/
     ├── Chat/
     │   ├── ChatScrollView.swift         # Message feed (LazyVStack, anti-jump streaming)
-    │   ├── MessageBubbleView.swift      # Single message bubble (+ cost chip in cloud)
-    │   ├── MarkdownTextView.swift       # Markdown → NSAttributedString renderer
+    │   ├── MessageBubbleView.swift      # Single message bubble (+ cost chip)
     │   ├── ModelPickerRow.swift         # Provider/model picker + balance chip
     │   ├── StatusBarView.swift          # Status bar (current tool)
-    │   ├── ProjectChipsView.swift       # [IT-06, IT-09] Project chips + gear chip for thread settings
-    │   ├── ProjectSettingsSheet.swift   # [IT-09] Project settings sheet
-    │   └── ThreadSettingsSheet.swift    # [IT-11] Thread settings sheet (name, context depth)
+    │   ├── ProjectChipsView.swift       # Project chips + gear chip for thread settings
+    │   ├── ProjectSettingsSheet.swift   # Project settings sheet
+    │   ├── ThreadSettingsSheet.swift    # Thread settings sheet (name, context depth)
+    │   └── Markdown/
+    │       ├── MarkdownModels.swift
+    │       ├── MarkdownTextView.swift
+    │       ├── CodeBlockView.swift
+    │       ├── SyntaxEngine.swift
+    │       ├── SyntaxTheme.swift
+    │       └── SyntaxNSTheme.swift
     ├── Input/
-    │   ├── InputBarView.swift           # Input field + send button
-    │   └── InputMorphView.swift         # Morphing input container
+    │   ├── ChappieTextEditorView.swift  # Multi-line text input
+    │   ├── InputMorphView.swift         # Morphing input container
+    │   ├── AttachmentViews.swift        # File attachment UI
+    │   ├── EmojiPickerView.swift        # Emoji picker
+    │   ├── ThinkingGearIcon.swift       # Animated thinking indicator
+    │   └── InputLayoutConstants.swift  # Layout constants
     ├── Providers/
     │   ├── ProvidersSettingsView.swift  # Provider list
     │   ├── AddProviderSheet.swift       # Add provider sheet
-    │   └── NewThreadProviderSheet.swift # Provider picker sheet when creating a thread
+    │   └── NewThreadProviderSheet.swift # Provider picker when creating a thread
     ├── Sidebar/
-    │   ├── SidebarView.swift            # Sidebar container (header: "Треды" + "Новый" button)
+    │   ├── SidebarView.swift            # Sidebar container
     │   ├── ThreadListView.swift         # Thread list
     │   └── ThreadRowView.swift          # Single thread row (gear + trash on hover)
     ├── Toolbar/
     │   └── ToolbarContent.swift         # Toolbar: sidebar toggle + thread title + settings gear
+    ├── Shared/
+    │   ├── ProviderModelPickerRows.swift # Shared provider/model picker rows
+    │   ├── ShakeEffect.swift            # Shake animation modifier
+    │   └── FlowLayout.swift             # Flow layout for chips
     └── Onboarding/
         └── OnboardingView.swift         # Onboarding on first launch
 ```
@@ -68,38 +91,37 @@ Chappie/
 ```mermaid
 graph TD
     subgraph Entry["App Entry"]
-        App["ChappieApp\n@main, ModelContainer"]
+        App["ChappieApp\n@main, ModelContainer\nAppSettingsMigrationPlan"]
     end
 
     subgraph UI["UI Layer (@MainActor)"]
         CV["ContentView\nConductor, sheet management"]
         VM["ChappieViewModel\n@Observable @MainActor"]
+        SS["StreamingState\nisolated streaming model"]
         CV -->|reads/calls| VM
+        VM --> SS
     end
 
     subgraph Views["Views"]
         Sidebar["SidebarView\nThreadListView\nThreadRowView"]
         Chat["ChatScrollView\nMessageBubbleView\nMarkdownTextView"]
-        Input["InputBarView\nInputMorphView"]
+        Input["ChappieTextEditorView\nInputMorphView"]
         Chips["ProjectChipsView\nModelPickerRow\nStatusBarView"]
         Sheets["ThreadSettingsSheet\nProjectSettingsSheet\nNewThreadProviderSheet"]
         Toolbar["ToolbarContent"]
     end
 
-    subgraph Settings["Settings"]
-        SV["SettingsView"]
-        SM["SettingsManager"]
-        KM["KeychainManager"]
-        SM --> KM
-    end
-
     subgraph Core["ChappieCore (Swift Package)"]
         direction TB
         Orch["AIOrchestrator"]
+        TSess["ThreadSession"]
+        SPB["SystemPromptBuilder"]
+        TAC["ToolAccessController"]
         TS["ThreadStore"]
         PS["ProjectStore"]
         MS["MemoryStore"]
         APS["AIProviderStore"]
+        ASS["AppSettingsStore"]
         TES["ToolExecutionService"]
     end
 
@@ -114,23 +136,59 @@ graph TD
     CV --> Chips
     CV --> Sheets
     CV --> Toolbar
-    CV --> SV
 
     VM --> Orch
+    VM --> TSess
     VM --> TS
     VM --> PS
     VM --> MS
     VM --> APS
+    VM --> ASS
     VM --> TES
+
+    TSess --> SPB
+    Orch --> TAC
 
     TES -->|Unix Socket| MCPL
 ```
 
 ---
 
-## 4. ChappieViewModel
+## 4. ChappieApp — Entry Point
+
+`@main struct ChappieApp` owns the single `ModelContainer` for the entire app lifetime.
+Creating multiple containers for the same schema causes conflicts and data loss.
+
+**SwiftData schema:**
+```swift
+Schema(AppSettingsSchemaV1.models)
+// Contains: ThreadEntity, ProjectEntity, MemoryEntity, AIProviderEntity, AppSettings
+```
+
+**Migration:** `AppSettingsMigrationPlan` maps `"New.AppSettings"` → `AppSettings` on first launch.
+See `Chappie/Models/AppSettingsMigration.swift` — **DO NOT REMOVE** this migration plan.
+
+**AppDelegate:** `applicationWillTerminate` → `MCPHelperLauncher.shared.terminateHelper()`.
+Without this the helper stays alive as an orphan and the next launch fails on socket bind.
+
+---
+
+## 5. ChappieViewModel
 
 `@Observable @MainActor final class ChappieViewModel`
+
+Split across multiple extensions for maintainability:
+
+| File | Responsibility |
+|------|----------------|
+| `ChappieViewModel.swift` | Core state, init, `setModelContainer()` |
+| `+Send.swift` | `send()` — AI request pipeline |
+| `+Threads.swift` | Thread CRUD, `selectThread()`, `loadThreadsAndSelectActive()` |
+| `+ThreadSession.swift` | `ThreadSession` lifecycle — activate, invalidate |
+| `+Providers.swift` | Provider switching, balance loading |
+| `+AppSettings.swift` | `AppSettingsStore` read/write |
+| `+Memory.swift` | Memory tool callbacks |
+| `+Projects.swift` | Project CRUD, `updateProjectSettings()` |
 
 ### Key Properties
 
@@ -139,73 +197,63 @@ graph TD
 | `threads` | `[ThreadMetadata]` | All threads for the sidebar |
 | `activeThread` | `ThreadMetadata?` | Currently active thread |
 | `activeProjects` | `[ProjectMetadata]` | Projects of the active thread |
-| `activeMemoryContext` | `MemoryContext` | Context for system prompt (IT-09: includes settings) |
-| `messages` | `[ChatMessage]` | Full history (UI + legacy) |
-| `visibleMessages` | `[ChatMessage]` | Depth-limited list for ChatScrollView (contextDepth × 10) |
+| `messages` | `[ChatMessage]` | Full history |
+| `visibleMessages` | `[ChatMessage]` | Depth-limited list (contextDepth × 10) |
 | `isThinking` | `Bool` | Loading indicator |
 | `streamingText` | `String` | Current streaming response |
 | `runningCost` | `Double` | Accumulated request cost |
-| `currentBalance` | `Double?` | Active provider balance (nil = not loaded) |
+| `currentBalance` | `Double?` | Active provider balance |
 | `activeProvider` | `AIProvider?` | Active AI provider |
-| `activeModelName` | `String?` | Selected model for the active provider |
-| `activeThreadSettings` | `ThreadSettings` | Settings of the active thread (context depth, unlimited flag) |
-
-### Key Methods
-
-| Method | Purpose |
-|--------|---------|
-| `setModelContainer(_:)` | Connects SwiftData, registers handlers |
-| `selectThread(_:)` | Loads thread + projects + syncs context + ALWAYS calls switchProvider() + saves lastActiveThreadId |
-| `switchProvider(_:)` | Changes active provider, loads its balance from UserDefaults |
-| `refreshBalanceForActiveProvider()` | Loads balance from UserDefaults on startup/thread switch |
-| `addProject(url:)` | Adds a project via NSOpenPanel bookmark |
-| `removeProject(id:)` | Removes a project from the thread |
-| `updateProjectSettings(_:forProjectId:)` | **[IT-09]** Saves project settings |
-| `updateThreadSettings(_:newTitle:forThreadId:)` | **[IT-11]** Saves thread name + context settings |
-| `buildAndSyncMemoryContext()` | Assembles MemoryContext with settings (IT-09) |
-| `syncActiveMemoryContext()` | Syncs ToolExecutionService (context + settings) |
-| `send(prompt:)` | Sends a request to AIOrchestrator |
+| `activeModelName` | `String?` | Selected model |
+| `activeThreadSettings` | `ThreadSettings` | Settings of the active thread |
 
 ### Data Flow on Thread Switch
 
 ```
 selectThread()
-  → saveLastActiveThreadId()          ← UserDefaults key: "lastActiveThreadId"
-  → loadProjectsForThread()           ← ProjectStore → activeProjects
-  → switchProvider(savedOrDefault)    ← ALWAYS, even if provider didn't change
-      → loadBalance(for: provider)    ← UserDefaults key: balance_<id>
-  → buildAndSyncMemoryContext()       ← activeProjects → MemoryContext (with settings IT-09)
-  → syncActiveMemoryContext()         ← ToolExecutionService.setActiveMemoryContext()
-                                      ← ToolExecutionService.setProjectSettings() (IT-09)
+  → loadProjectsForThread()              ← ProjectStore → activeProjects
+  → activateThreadSession()              ← ThreadSession.init() → builds PromptContext
+  → switchProvider(savedOrDefault)       ← ALWAYS, even if provider didn't change
+      → loadBalance(for: provider)       ← AppSettingsStore
+  → save(lastActiveThreadId:)            ← AppSettingsStore
 ```
 
 ### Critical Rule: selectThread() ALWAYS calls switchProvider()
 
-**Reason (fixed bug):** previously `switchProvider()` was skipped if `activeProvider != nil`.
+Previously `switchProvider()` was skipped if `activeProvider != nil`.
 This caused the AI model to be set globally instead of per-thread.
-Now: `selectThread()` always calls `switchProvider()` with the thread's saved provider
-or the default — guaranteeing correct model and balance loading for each thread.
+Now: always called with the thread's saved provider — guarantees correct model and balance per thread.
 
 ---
 
-## 5. Provider Balance
+## 6. AppSettingsMigration.swift
 
-**Storage:** UserDefaults, key `balance_<provider.id.uuidString>`
-**Load:** `switchProvider()` → `loadBalance(for: provider)`
+**⚠️ DO NOT REMOVE** — SwiftData stores the entity name history in the database.
+Removing `AppSettingsMigrationPlan` causes a schema conflict crash on next launch for existing users.
+
+This migration maps `"New.AppSettings"` (old namespace) → `AppSettings` (current name).
+It runs once on first launch after the rename and is a no-op on all subsequent launches.
+
+---
+
+## 7. Provider Balance
+
+**Storage:** `AppSettings.balancesJSON` via `AppSettingsStore`
+**Load:** `switchProvider()` → `AppSettingsStore.loadBalances()`
 **Real-time update:** `onBalanceUpdate` callback in `AIOrchestrator.process()`
 **Display:** `ModelPickerRow` — balance chip to the right of the model picker
 
 ---
 
-## 6. ChatScrollView — LazyVStack + Anti-Jump Streaming
+## 8. ChatScrollView — LazyVStack + Anti-Jump Streaming
 
 **Problem:** during streaming, `withAnimation` on every token triggered layout recalculation → jumps.
 
 **Solution:**
-- Streaming (`onChange(of: streamingText)`) → `proxy.scrollTo("bottom")` **without animation** (instant snap)
+- Streaming (`onChange(of: streamingText)`) → `proxy.scrollTo("bottom")` **without animation**
 - Discrete events (new message, thread switch, isThinking) → `withAnimation(.easeOut)`
 - `LazyVStack` — renders only visible messages (critical at 10,000 messages)
-- Transparent spacers at top/bottom (`headerHeight`, `footerHeight`) — first/last message not hidden behind floating panels
+- Transparent spacers at top/bottom — first/last message not hidden behind floating panels
 
 **Visible message depth rule:**
 - `visibleMessages = last (contextDepth × 10) messages`
@@ -213,25 +261,7 @@ or the default — guaranteeing correct model and balance loading for each threa
 
 ---
 
-## 7. ModelPickerRow
-
-Floating panel for selecting provider and model. Located above the chat (not in toolbar).
-
-**Components:**
-- Provider picker (left side)
-- Model picker (right side)
-- Balance chip (far right, after Spacer)
-
-**Display rules:**
-- `.lineLimit(1)` on all Text — no wrapping on window resize
-- `.fixedSize()` on model picker button — no height growth
-- On narrow window — text truncates, does not wrap
-
----
-
-## 8. IT-09: ProjectSettingsSheet
-
-**Opened by:** tap on project chip in ProjectChipsView → `onOpenSettings(UUID)` → `ContentView.selectedProjectForSettings`
+## 9. ProjectSettingsSheet
 
 **Pattern:** "dumb component" — knows nothing about SwiftData.
 - Receives `ProjectMetadata` and `onSave: (ProjectSettings) -> Void`
@@ -240,12 +270,10 @@ Floating panel for selecting provider and model. Located above the chat (not in 
 
 **Unlock logic:**
 ```
-.advisor → role + language only (advanced settings hidden)
+.advisor → role + language only
 .executor + !isProgrammingProject → role + language + project type flag
 .executor + isProgrammingProject → everything: git, tests, architecture, comments
 ```
-
-**Downgrade alert:** executor → advisor → alert → `downgradeToAdvisor()` resets all flags
 
 **Role indicator in chip:**
 - 🔒 (lock.fill) = advisor
@@ -253,42 +281,24 @@ Floating panel for selecting provider and model. Located above the chat (not in 
 
 ---
 
-## 9. IT-11: ThreadSettingsSheet
-
-**Opened from two places:**
-1. Gear icon in `ThreadRowView` (hover/context menu) → `onOpenThreadSettings(thread)` → `ContentView.selectedThreadForSettings`
-2. Gear chip in `ProjectChipsView` (right side, mirrors balance pill pattern) → `onOpenThreadSettings()` → same state
+## 10. ThreadSettingsSheet
 
 **Pattern:** same "dumb component" pattern as ProjectSettingsSheet.
-- Receives `ThreadMetadata` (includes `settings` field since IT-11)
+- Receives `ThreadMetadata`
 - Edits `@State draftTitle: String` and `@State draftSettings: ThreadSettings`
 - On "Save" → `onSave(newTitle, newSettings)` → `viewModel.updateThreadSettings()`
 
 **Settings:**
 - Thread name (inline TextField)
-- Context depth: slider 10...1000 messages
-- Unlimited context toggle (bypasses all trimming)
-- Info box: shows token budget (messages × 500) and chat display depth (messages × 10)
-
-**Slider step:** adaptive — 5 at 10-100, 10 at 100-500, 50 at 500-1000
+- Context depth: slider 10...1000 messages (adaptive step: 5 / 10 / 50)
+- Unlimited context toggle
+- Info box: token budget (messages × 500) and chat display depth (messages × 10)
 
 ---
 
-## 10. IT-11: Toolbar Thread Title
+## 11. Last Active Thread Restore
 
-`ToolbarContent.swift` accepts `activeThreadTitle: String?` and renders:
-```
-[sidebar toggle]    Chappie — <thread name>    [settings gear]
-```
-Uses `.principal` placement (center of toolbar).
-Hidden when `activeThreadTitle == nil` (onboarding state).
-Title truncates with `.middle` mode at max 300pt width.
-
----
-
-## 11. IT-11: Last Active Thread Restore (UX-RESTORE)
-
-`selectThread()` saves `thread.id.uuidString` to UserDefaults key `"lastActiveThreadId"`.
+`selectThread()` saves `thread.id` via `AppSettingsStore.save(lastActiveThreadId:)`.
 `loadThreadsAndSelectActive()` on startup:
 1. Tries to find thread by `lastActiveThreadId` → selects it.
 2. Falls back to most recently updated thread (index 0, sorted by `updatedAt DESC`).
@@ -298,22 +308,18 @@ Title truncates with `.middle` mode at max 300pt width.
 ## 12. ContentView — Sheet Management
 
 ```swift
-// App settings sheet
 .sheet(isPresented: $showSettings) { SettingsView() }
 
-// Project settings sheet (IT-09)
 .sheet(item: $selectedProjectForSettings) { project in
     ProjectSettingsSheet(onSave: { viewModel.updateProjectSettings(...) }, ...)
 }
 
-// Thread settings sheet (IT-11)
 .sheet(item: $selectedThreadForSettings) { thread in
     ThreadSettingsSheet(onSave: { title, settings in
         viewModel.updateThreadSettings(settings, newTitle: title, forThreadId: thread.id)
     }, ...)
 }
 
-// New thread provider picker
 .sheet(isPresented: $viewModel.showNewThreadProviderPicker) { NewThreadProviderSheet(...) }
 ```
 
@@ -343,13 +349,10 @@ User adds via UI with a real bookmark.
 
 | Date | Change |
 |------|--------|
-| 2026-07-XX | Added Mermaid architecture diagram (section 3) per new architecture file rules |
-| 2026-05-28 | IT-11 ✅: ThreadSettingsSheet, toolbar thread title, UX-RESTORE (last-thread restore), gear in ThreadRowView + ProjectChipsView, "Новый" label on sidebar button |
-| 2026-05-26 | IT-09 ✅: ProjectSettingsSheet, ProjectChipsView.onOpenSettings, ContentView.sheet(item:) |
-| 2026-05-XX | Bug fixed: input panel stuck in thinking state (isThinking=false inside withAnimation) |
-| 2026-05-XX | Draft per thread (UX-DRAFT): threadDrafts [UUID: String] in ViewModel |
-| 2026-05-XX | LazyVStack + anti-jump streaming in ChatScrollView; new thread button moved to sidebar header |
+| 2026-07-XX | M-10 complete: removed SettingsManager, KeychainManager, FeatureFlags, all V1 branches; AppSettings migrated from New namespace |
+| 2026-07-XX | Added AppSettingsMigration.swift section; updated storage map to AppSettingsStore |
+| 2026-07-XX | ViewModel split into extensions (+Send, +Threads, +ThreadSession, +Providers, +AppSettings, +Memory, +Projects) |
+| 2026-05-28 | IT-11 ✅: ThreadSettingsSheet, toolbar thread title, last-thread restore, gear in ThreadRowView + ProjectChipsView |
+| 2026-05-26 | IT-09 ✅: ProjectSettingsSheet, ProjectChipsView.onOpenSettings |
 | 2026-05-XX | Bug fixed: selectThread() now ALWAYS calls switchProvider() (MODEL-PER-THREAD) |
-| 2026-05-XX | Balance per-provider: UserDefaults key balance_<id>, ModelPickerRow chip |
-| 2025-07-XX | IT-06..IT-08 done: ProjectChipsView, project chips, UUID-based memory |
-| 2025-07-XX | IT-05: SidebarView, ThreadListView, ThreadRowView |
+| 2026-05-XX | LazyVStack + anti-jump streaming in ChatScrollView |

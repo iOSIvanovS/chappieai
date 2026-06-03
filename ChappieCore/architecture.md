@@ -19,15 +19,16 @@ ChappieCore/
     │   ├── AIProviderModels.swift       # AIProvider, AIProviderEntity (SwiftData)
     │   ├── AITunnelModels.swift         # AIMessage, AIStreamChunk, AIUsage
     │   ├── AppConfig.swift             # Centralized config (dynamic, per-thread)
+    │   ├── AppSettings.swift           # AppSettings SwiftData model (singleton record)
     │   ├── ChappieError.swift          # ChappieError enum
-    │   ├── MemoryModels.swift          # MemoryEntity, MemoryContext, ActiveMemoryContext
+    │   ├── MemoryModels.swift          # MemoryEntity, MemoryEntry, MemoryContext
     │   ├── ProjectModels.swift         # ProjectEntity, ProjectMetadata, ProjectSettings
     │   └── ThreadModels.swift          # ThreadEntity, ThreadSettings, ThreadMetadata
     └── Services/
         ├── AIClient.swift              # HTTP client for AI APIs (provider-agnostic)
         ├── AIOrchestrator.swift        # Reasoning loop: prompt → tools → response
-        ├── AIProviderStore.swift       # CRUD for AIProviderEntity in SwiftData
-        ├── AITunnelClient.swift        # Legacy tunnel client (deprecated)
+        ├── AIProviderStore.swift       # CRUD for AIProviderEntity + Keychain
+        ├── AppSettingsStore.swift      # Actor-based CRUD for singleton AppSettings
         ├── ChatHistoryManager.swift    # JSON-based message history (legacy + migration)
         ├── FileSystemManager.swift     # Secure file system access (sandbox)
         ├── MCPToolBridge.swift         # Bridge to ChappieMCP via Unix socket
@@ -35,9 +36,19 @@ ChappieCore/
         ├── MemoryStore.swift           # SwiftData CRUD for MemoryEntity
         ├── MigrationService.swift      # One-time migration: JSON files → SwiftData
         ├── ProjectStore.swift          # CRUD for ProjectEntity in SwiftData
+        ├── SystemPromptBuilder.swift   # Deterministic system prompt assembler
+        ├── ThreadSession.swift         # Runtime container for an active thread
         ├── ThreadStore.swift           # CRUD for ThreadEntity in SwiftData
-        ├── ToolExecutionService.swift  # Dispatches tool calls from AIOrchestrator
-        └── WebFetchService.swift       # Fetches web pages and extracts clean text
+        ├── ToolAccessController.swift  # Hard gate before every tool execution
+        ├── WebFetchService.swift       # Fetches web pages and extracts clean text
+        ├── WelcomeService.swift        # Generates AI welcome message for new threads
+        └── ToolExecution/
+            ├── ToolAccessControl.swift     # Legacy access control (superseded by ToolAccessController)
+            ├── ToolDefinitions.swift       # Tool schema definitions (JSON for AI)
+            ├── ToolExecutionService.swift  # Dispatches tool calls from AIOrchestrator
+            ├── FileTools.swift             # File tool implementations
+            ├── GitBuildTools.swift         # Git/build tool implementations
+            └── MemoryTools.swift           # Memory tool implementations
 ```
 
 ---
@@ -49,8 +60,9 @@ graph TD
     subgraph Models["Models"]
         TM["ThreadModels\n(ThreadEntity, ThreadSettings\nThreadMetadata)"]
         PM["ProjectModels\n(ProjectEntity, ProjectMetadata\nProjectSettings)"]
-        MM["MemoryModels\n(MemoryEntity, MemoryContext\nActiveMemoryContext)"]
+        MM["MemoryModels\n(MemoryEntity, MemoryEntry)"]
         APM["AIProviderModels\n(AIProvider, AIProviderEntity)"]
+        AS["AppSettings\n(singleton SwiftData record)"]
         AC["AppConfig\n(dynamic, per-thread)"]
         ATM["AITunnelModels\n(AIMessage, AIStreamChunk\nAIUsage)"]
         CE["ChappieError"]
@@ -64,16 +76,21 @@ graph TD
         PS["ProjectStore\nSwiftData CRUD"]
         MS["MemoryStore\nSwiftData CRUD"]
         APS["AIProviderStore\nSwiftData + Keychain"]
+        ASS["AppSettingsStore\nSingleton AppSettings"]
         MemM["MemoryManager\nSemantic memory"]
+        SPB["SystemPromptBuilder\nDeterministic prompt assembly"]
+        TAC["ToolAccessController\nHard gate per tool call"]
+        TSess["ThreadSession\nRuntime thread container"]
         FSM["FileSystemManager\nSecure FS access"]
         MCP["MCPToolBridge\nUnix Socket client"]
         WFS["WebFetchService\nHTTP page fetch + HTML strip"]
+        WS["WelcomeService\nAI greeting on new thread"]
         Mig["MigrationService\nOne-time JSON→SwiftData"]
         CHM["ChatHistoryManager\nLegacy JSON (deprecated)"]
     end
 
     subgraph Storage["Persistence"]
-        SD["SwiftData\n(ThreadEntity, ProjectEntity\nMemoryEntity, AIProviderEntity)"]
+        SD["SwiftData\n(ThreadEntity, ProjectEntity\nMemoryEntity, AIProviderEntity\nAppSettings)"]
         KC["Keychain\n(API keys)"]
         FS["File System\n(JSON legacy)"]
     end
@@ -84,12 +101,17 @@ graph TD
 
     Orch --> AIC
     Orch --> TES
+    Orch --> SPB
     TES --> FSM
     TES --> MemM
     TES --> MCP
     TES --> TS
     TES --> PS
     TES --> WFS
+    TES --> TAC
+
+    TSess --> MS
+    TSess --> SPB
 
     MemM --> MS
     MS --> SD
@@ -97,6 +119,7 @@ graph TD
     PS --> SD
     APS --> SD
     APS --> KC
+    ASS --> SD
     CHM --> FS
     Mig --> CHM
     Mig --> MS
@@ -104,12 +127,24 @@ graph TD
     MCP -->|Unix Socket| MCPS
 
     Orch --> AC
-    AC --> TM
 ```
 
 ---
 
 ## 4. Key Models
+
+### AppSettings (SwiftData singleton)
+
+```swift
+@Model public final class AppSettings {
+    var workspaceBookmark: Data?            // replaces UserDefaults "workspaceBookmark"
+    var lastActiveThreadIdString: String?   // replaces UserDefaults "lastActiveThreadId"
+    var balancesJSON: Data                  // replaces UserDefaults "balance_<uuid>"
+}
+```
+
+Exactly one record per container. `AppSettingsStore.load()` creates it on first launch.
+Previously stored as `"New.AppSettings"` — `AppSettingsMigrationPlan` handles the rename.
 
 ### ThreadEntity (SwiftData)
 
@@ -140,33 +175,47 @@ struct ThreadSettings: Codable, Sendable {
 }
 ```
 
-### ThreadMetadata (Sendable DTO)
+### PromptContext (input to SystemPromptBuilder)
 
 ```swift
-struct ThreadMetadata: Sendable, Identifiable, Hashable {
-    let id: UUID
-    let title: String
-    let createdAt: Date
-    let updatedAt: Date
-    let projectIds: [UUID]
-    let settings: ThreadSettings  // included so UI doesn't need extra ThreadStore call
+struct PromptContext: Sendable {
+    let userName: String?
+    let globalMemory: [MemoryEntry]
+    let threadMemory: [MemoryEntry]
+    let projects: [ProjectContext]   // one per attached ThreadProject
 }
 ```
 
-### AppConfig (dynamic, per-thread)
+### ToolPermissions (output of SystemPromptBuilder.toolPermissions)
 
-Context depth formula: `tokenBudget = maxMessagesInContext × 500`.
-Range: 10 → 5,000 tokens | 20 → 10,000 | 1000 → 500,000 | unlimited → `Int.max`.
+```swift
+struct ToolPermissions: Sendable {
+    let canReadFiles: Bool
+    let canWriteFiles: Bool
+    let gitLevel: GitAccessLevel    // .none / .statusOnly / .write / .full
+    let canRunTests: Bool
+    let canWriteTests: Bool
+    let canReadBuildLog: Bool
+    let alwaysOn: Set<String>       // memory, web_fetch, project tools — always allowed
+}
+```
 
 ---
 
 ## 5. SwiftData Schema
 
 ```swift
-Schema([ThreadEntity.self, ProjectEntity.self, MemoryEntity.self, AIProviderEntity.self])
+Schema([
+    ThreadEntity.self,
+    ProjectEntity.self,
+    MemoryEntity.self,
+    AIProviderEntity.self,
+    AppSettings.self
+])
 ```
 
-No migrations needed — all complex types are JSON-serialized inside `Data` fields.
+No migrations needed for most changes — all complex types are JSON-serialized inside `Data` fields.
+Exception: `AppSettings` entity was renamed from `New.AppSettings` — handled by `AppSettingsMigrationPlan`.
 
 ---
 
@@ -194,11 +243,11 @@ Actor guarantees sequential access to `ModelContext` (not Sendable).
 
 ```
 process(prompt, history, config, memoryContext)
-  → buildSystemPrompt(memoryContext)
+  → systemPrompt (via ThreadSession or legacy MemoryManager)
   → buildContextWindow(history, config)   // trims to tokenBudget + maxMessages
   → loop (maxOrchestratorSteps = 100):
       → aiClient.streamChat()
-      → if tool_use → toolService.execute()
+      → if tool_use → ToolAccessController.check() → toolService.execute()
       → if text → accumulate tokens
       → if stop → return result
 ```
@@ -208,7 +257,99 @@ Context trimming: take last `maxMessagesInContext` messages, drop oldest if over
 
 ---
 
-## 8. AIProviderStore
+## 8. SystemPromptBuilder
+
+Pure value transformer — no async, no SwiftData, no side effects.
+
+```swift
+public struct SystemPromptBuilder {
+    func build(context: PromptContext) -> String
+    func toolPermissions(for context: PromptContext) -> ToolPermissions
+}
+```
+
+**Injection order:**
+1. Persona block (hardcoded Chappie identity + 14 rules)
+2. `userName` if set
+3. Global memory block if not empty
+4. Thread memory block if not empty
+5. Per-project: `ProjectSettings.formatForSystemPrompt()` + project memory
+6. Tool manifest injected separately by AIOrchestrator
+
+**toolPermissions logic:** merges across all projects — most permissive wins.
+No projects → `ToolPermissions.readOnly` (safe fallback).
+
+---
+
+## 9. ToolAccessController
+
+Hard gate before every tool execution. Pure static function — no async, no side effects.
+
+```swift
+public struct ToolAccessController {
+    static func check(toolName: String, permissions: ToolPermissions) -> AccessResult
+}
+
+public enum AccessResult: Sendable {
+    case allowed
+    case denied(reason: String)
+}
+```
+
+`git_diff` is permanently blocked — cannot be overridden by any settings.
+Denial is returned as structured JSON: `{"error":"tool_access_denied","tool":"...","reason":"..."}`.
+The AI receives this as a tool result and explains the situation to the user naturally.
+
+---
+
+## 10. ThreadSession (actor)
+
+Runtime container for one active thread. NOT persisted — assembled from SwiftData on activation.
+
+```swift
+public actor ThreadSession {
+    func systemPrompt() async throws -> String       // cached, rebuilt on invalidate
+    func toolPermissions() async throws -> ToolPermissions
+    func invalidateCache()                           // call after memory/settings change
+}
+```
+
+**Lifecycle:**
+```
+User selects thread
+    → ThreadSession.init(thread, projectMetas, memoryStore, promptBuilder, userName)
+    → first systemPrompt() call → buildPromptContext() → bulk MemoryStore fetch → build()
+
+User switches thread
+    → old ThreadSession discarded
+    → new ThreadSession activated
+    → NO state leaks between sessions
+```
+
+**Bulk memory fetch:** loads global + thread + all project scopes in one `readEntriesForScopes()` call.
+
+---
+
+## 11. AppSettingsStore (actor)
+
+```swift
+public actor AppSettingsStore {
+    func load() throws -> AppSettings
+    func save(workspaceBookmark: Data?) throws
+    func loadWorkspaceBookmark() throws -> Data?
+    func save(lastActiveThreadId: UUID?) throws
+    func loadLastActiveThreadId() throws -> UUID?
+    func save(balance: Double?, for providerID: UUID) throws
+    func loadBalances() throws -> [UUID: Double]
+}
+```
+
+Singleton record pattern: exactly one `AppSettings` row per container.
+All write methods use `fetchOrCreate()` — safe to call in any order.
+
+---
+
+## 12. AIProviderStore
 
 ```swift
 public actor AIProviderStore {
@@ -222,12 +363,13 @@ public actor AIProviderStore {
 ```
 
 API keys stored in Keychain (not SwiftData). `AIProviderEntity` holds only the UUID reference.
+Keychain key format: `provider.id.uuidString`.
 
 ---
 
-## 9. MemoryStore (three-level memory)
+## 13. MemoryStore (three-level memory)
 
-Scopes: `global`, `<projectId UUID>`, `<threadId UUID>`.
+Scopes: `"global"`, `thread.id.uuidString`, `project.id.uuidString`.
 Stored in `MemoryEntity`: `key + type + jsonString + scope + targetId`.
 
 ```swift
@@ -237,30 +379,29 @@ public actor MemoryStore {
     func deleteEntry(key:scope:targetId:) throws
     func searchEntries(type:scope:targetId:) throws -> [MemoryEntry]
     func importEntries(_:scope:) throws
+    func readEntriesForScopes(_: [String]) async throws -> [String: [MemoryEntry]]  // bulk fetch
 }
 ```
 
 ---
 
-## 10. ToolExecutionService
+## 14. ToolExecutionService
 
-Dispatches tool calls from AIOrchestrator.
+Dispatches tool calls from AIOrchestrator. Calls `ToolAccessController.check()` before execution.
 
 **Tool categories:**
 - File system: `read_file`, `write_file`, `delete_file`, `list_files`
 - Web: `web_fetch` (via WebFetchService)
 - Memory: `memorize`, `recall`, `search_memory`, `delete_memory`
-- Git (via MCP): `git_status`, `git_add`, `git_commit`, `git_log`, `git_reset`
+- Git (via MCP): `git_status`, `git_add`, `git_commit`, `git_log`, `git_reset`, `git_revert`, `git_checkout`
 - Build (via MCP): `build_project`, `run_tests`, `read_build_log`
-- Projects: `add_project_to_thread`, `remove_project_from_thread`, `list_projects`
+- Projects: `add_project_to_thread`, `remove_project_from_thread`, `list_thread_projects`
 
 `git_diff` always blocked regardless of settings.
-`containsCyrillic()` blocks Cyrillic in memory writes — all memory must be English.
-`WebFetchService` injected via `init(webFetch:)`, optional — `nil` returns a clear error.
 
 ---
 
-## 11. WebFetchService (actor)
+## 15. WebFetchService (actor)
 
 ```swift
 public actor WebFetchService {
@@ -277,7 +418,7 @@ public actor WebFetchService {
 
 ---
 
-## 12. MigrationService
+## 16. MigrationService
 
 One-time migration from JSON → SwiftData. Flag: `UserDefaults["migrationIT04Completed"]`.
 
@@ -285,3 +426,12 @@ Steps:
 1. `chat_history.json` → create thread "Основной" + save messages
 2. `semantic.json` → import entries into MemoryStore (scope=global)
 3. Set flag → skip on next launch
+
+---
+
+## 17. JSON-in-SwiftData Rule
+
+**⚠️ CRITICAL: Never rename a `Codable` property stored in SwiftData without `CodingKeys`.**
+Old JSON has the old key name — renaming silently returns nil/default and corrupts stored data.
+
+When adding a new field — always provide a default value in `init` so old JSON decodes cleanly.

@@ -5,7 +5,6 @@
 ```
 /Volumes/Storage/Work/Chappie/
 ├── architecture.md                          # This file (root architecture)
-├── architecture-thread-isolation.md         # Thread isolation refactor design ← READ THIS
 ├── Chappie.xcodeproj/
 ├── Chappie/                                 # UI target → see Chappie/architecture.md
 ├── ChappieCore/                             # Business logic → see ChappieCore/architecture.md
@@ -49,14 +48,12 @@ graph TD
     App -->|embeds in Contents/Helpers/| MCP
 
     subgraph Storage["Persistence"]
-        SD["SwiftData\n(Thread, ThreadProject, ProviderSnapshot\nMemoryEntry, AIProvider, ProjectEntity)"]
-        KC["Keychain\n(API keys by keyId)"]
-        UD["UserDefaults\n(balance_<id>, lastActiveThreadId)"]
+        SD["SwiftData\n(ThreadEntity, ProjectEntity, MemoryEntity\nAIProviderEntity, AppSettings)"]
+        KC["Keychain\n(API keys by provider UUID)"]
     end
 
     Core --> SD
     Core --> KC
-    UI --> UD
 ```
 
 ---
@@ -83,64 +80,105 @@ ChappieMCP
 |---|---|
 | Swift 6 (Full Concurrency) | Entire project |
 | SwiftUI macOS 26+ | UI layer |
-| SwiftData macOS 26+ | Thread, project, and memory persistence |
+| SwiftData macOS 26+ | Thread, project, memory, and settings persistence |
 | @Observable | ViewModel |
 | Actors | ChappieCore services |
 | AITunnel API (OpenAI-compatible) | Proxy to Anthropic and other providers |
 | Unix Domain Sockets | IPC with ChappieMCP |
 | Keychain | API key storage |
-| UserDefaults | Per-provider balance (`balance_<provider.id.uuidString>`) |
 
 ---
 
-## 6. Per-Provider Balance Storage
+## 6. Storage Map
 
-Balance stored per-provider in UserDefaults.
-- Key: `balance_<provider.id.uuidString>`
-- Loaded in `switchProvider()` on provider change
-- Saved via `onBalanceUpdate` callback and `result.newBalance` in `AIOrchestrator.process()`
+| What | Where | Key/Format |
+|---|---|---|
+| Threads, messages, settings | SwiftData `ThreadEntity` | JSON-in-Data fields |
+| Projects (folder registry) | SwiftData `ProjectEntity` | bookmarkData + path |
+| Memory (3 levels) | SwiftData `MemoryEntity` | scope + targetId |
+| AI providers | SwiftData `AIProviderEntity` | JSON blob |
+| API keys | Keychain | `provider.id.uuidString` |
+| Provider balances | SwiftData `AppSettings.balancesJSON` | `{ "<uuid>": Double }` |
+| Last active thread | SwiftData `AppSettings.lastActiveThreadIdString` | UUID string |
+| Workspace bookmark | SwiftData `AppSettings.workspaceBookmark` | Data |
+| One-time migration flags | UserDefaults | `migrationIT04Completed` |
+
+**UserDefaults is used only for one-time migration flags. All domain data lives in SwiftData or Keychain.**
 
 ---
 
-## 7. Memory Structure
+## 7. Memory Structure — Three Levels
 
-Three levels — see `architecture-thread-isolation.md` section 3 for full detail.
-
-| Level | Owner | Location | Tool |
+| Level | Owner | Physical Location | Tool Parameter |
 |---|---|---|---|
-| Global | `AppSettings` | `AppSettings.globalMemory` | `memorize(scope:"global")` |
-| Thread | `Thread` | `Thread.threadMemory` | `memorize(scope:"thread")` |
-| Project | `ThreadProject` | `ThreadProject.memory` | `memorize(targetName:"Name")` |
+| Global | `AppSettings` | `MemoryEntity` scope=`"global"` | `scope:"global"` |
+| Thread | `ThreadEntity` | `MemoryEntity` scope=`thread.id` | `scope:"thread"` |
+| Project | `ThreadProject` (per thread) | `MemoryEntity` scope=`project.id` | `targetName:"Name"` |
 
 Project memory is **per thread** — the same project in two threads has independent memory.
 
 **System prompt injection order:**
 ```
 [1] Persona + 14 rules
-[2] userName
-[3] Global memory
-[4] Thread memory
-[5] Per-project: settings + project memory
-[6] Tool manifest (only available tools)
+[2] userName (from AppSettings)
+[3] Global memory (if not empty)
+[4] Thread memory (if not empty)
+[5] Per-project: ProjectSettings + project memory (one block per valid project)
+[6] Tool manifest (only tools available in this thread)
 ```
 
----
-
-## 8. Thread Isolation
-
-**Critical design — see `architecture-thread-isolation.md` for full detail.**
-
-Key entities:
-- `ProviderSnapshot` — frozen copy of provider+key+model selection, validated on thread load
-- `ThreadProject` — project in context of a thread; owns its own `ProjectSettings` and `memory`
-- `ProjectEntity` — global folder registry only (path + displayName, no logic)
-- `ThreadSession` — runtime container assembled on thread activation, discarded on switch
-- `SystemPromptBuilder` — deterministic prompt assembly from ThreadSession
-- `ToolAccessController` — hard gate before every tool execution, returns structured denial
+Empty sections are omitted entirely — no wasted tokens.
 
 ---
 
-## 9. 📚 Docs Group in Xcode Navigator
+## 8. Thread Isolation Architecture
+
+Key entities and their responsibilities:
+
+| Entity | Role |
+|---|---|
+| `ProviderSnapshot` | Frozen copy of provider+key+model stored in thread; validated on load |
+| `ThreadProject` | Project in context of a specific thread; owns its own `ProjectSettings` and memory |
+| `ProjectEntity` | Global folder registry only — path + displayName, no logic, no memory |
+| `ThreadSession` | Runtime container assembled on thread activation, discarded on switch |
+| `SystemPromptBuilder` | Deterministic prompt assembly from `PromptContext`; pure value transformer |
+| `ToolAccessController` | Hard gate before every tool execution; returns structured `AccessResult` |
+| `AppSettingsStore` | Actor-based CRUD for the singleton `AppSettings` SwiftData record |
+
+**ProviderSnapshot validation on thread load:**
+1. Resolve `providerId` → if not found: show orange banner, block AI calls
+2. Resolve `keyId` → if not found: show orange banner, block AI calls
+3. Resolve `modelId` → if not found: show warning, allow calls using cached `modelName`
+4. Read key value from Keychain → if not found: block AI calls
+
+**Rule: NEVER auto-substitute provider or model on loss.** User must explicitly re-select.
+
+---
+
+## 9. JSON-in-SwiftData Pattern
+
+All complex domain objects are stored as JSON inside SwiftData primitive fields (`Data`).
+SwiftData `@Model` classes contain only: `UUID`, `Date`, `Bool`, `Int`, `String`, `Data`.
+
+**Why:** SwiftData schema migrations are painful. JSON-in-Data means the schema never
+changes — only the `Codable` struct evolves freely.
+
+**⚠️ CRITICAL: Never rename a `Codable` property stored in SwiftData without adding `CodingKeys`.**
+Renaming silently corrupts existing stored data.
+
+Persisted structs (must follow the rename rule):
+
+| Struct | Stored in |
+|---|---|
+| `ThreadSettings` | `ThreadEntity.settingsJSON` |
+| `ProjectSettings` | `ProjectEntity.settingsJSON` |
+| `AIProvider` | `AIProviderEntity.json` |
+| `ProviderSnapshot` | `ThreadEntity.providerSnapshotJSON` |
+| `[ChatMessage]` | `ThreadEntity.messagesJSON` |
+
+---
+
+## 10. 📚 Docs Group in Xcode Navigator
 
 `📚 Docs` group in `project.pbxproj` — navigation only, not included in build.
 Contains root `architecture.md` + references to 4 target architecture files.
@@ -148,26 +186,25 @@ Contains root `architecture.md` + references to 4 target architecture files.
 
 ---
 
-## 10. Work Pipeline
+## 11. Work Pipeline
 
-1. `git commit` — checkpoint before changes
-2. Implement
-3. Add unit tests if needed (business logic, not trivial UI)
-4. `build_project`
-5. `run_tests` (only after green build)
-6. Fix until green
-7. `git commit`
-8. Report to user
+1. `git_status` — check for uncommitted changes
+2. `git_commit` — checkpoint before changes
+3. Implement (one task per pass)
+4. Add unit tests if needed (business logic, not trivial UI)
+5. `build_project`
+6. `run_tests` (only after green build)
+7. Fix until green
+8. `git_commit`
+9. Report to user
 
 ---
 
-## 11. Inviolable Agent Rules
+## 12. Inviolable Agent Rules
 
 **RULE-01: One task per pass** — decompose into backlog, execute one item, commit, repeat.
-Bundling causes signature drift and hard-to-rollback state.
 
 **RULE-02: Read architecture files first** — before any feature or refactor.
-Architecture files are ground truth; skipping them leads to costly rewrites.
 
 **RULE-03: git_diff is always forbidden** — loads entire project into context, costs money.
 
@@ -177,7 +214,7 @@ Architecture files are ground truth; skipping them leads to costly rewrites.
 
 ---
 
-## 12. Tech Debt
+## 13. Tech Debt
 
 | ID | Issue | Priority |
 |----|-------|----------|
@@ -185,10 +222,9 @@ Architecture files are ground truth; skipping them leads to costly rewrites.
 
 ---
 
-## 13. Backlog
+## 14. Backlog
 
 | ID | Task | Priority |
 |----|------|----------|
 | BL-01 | Migrate ChatHistoryManager → SwiftData (per-thread chat history) | High |
 | BL-03 | Universal balance and message cost support for top-10 AI providers in Russia | Medium |
-| BL-04 | Thread isolation refactor — see architecture-thread-isolation.md (M-01 through M-10) | Critical |
