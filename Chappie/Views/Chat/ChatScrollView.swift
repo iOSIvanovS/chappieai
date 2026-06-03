@@ -44,16 +44,19 @@
 //      the layout tree. onChange fires during the render pass — before layout is committed.
 //      A 150ms sleep gives the VStack time to measure its content on cold start.
 //   2. onChange(messages.count) — new message added to the chat.
-//      EXCEPTION: skipped when isLoadingMore=true (Load More prepend) — scroll goes to
-//      firstLoadedMessageId instead to keep the user at their reading position.
+//      EXCEPTION: skipped entirely when isLoadingMore=true (Load More prepend).
+//      SwiftUI preserves scroll position automatically when content is prepended to a VStack
+//      — no explicit scroll call needed. We just reset the flag.
 //   3. onChange(streaming.streamingText) — Chappie is streaming (throttled to 1/frame).
 //
 // BUG-01: LOAD MORE SCROLL FIX:
 // When the user taps "Load earlier messages", loadMoreMessages() sets isLoadingMore=true
-// and records firstLoadedMessageId (first message of the prepended batch) BEFORE mutating
-// displayedMessages. ChatScrollView sees messages.count change, checks isLoadingMore,
-// skips the bottom-scroll, and instead scrolls to firstLoadedMessageId — keeping the user
-// at the same logical reading position. isLoadingMore is reset after the scroll completes.
+// BEFORE mutating displayedMessages. ChatScrollView sees messages.count change, checks
+// isLoadingMore, and does NOT call proxy.scrollTo at all — SwiftUI's ScrollView naturally
+// keeps the viewport anchored to the content that was already visible when items are
+// prepended to the top of a VStack. onLoadMoreScrollDone() resets the flag.
+// WHY NOT proxy.scrollTo(targetId, anchor: .top) — that explicitly jumps to the target
+// message and places it at the TOP of the screen, which is the opposite of what we want.
 //
 // CPU-13: STREAMING ISOLATION:
 // ChatScrollView receives `streaming: StreamingState` as a `let` reference.
@@ -169,18 +172,17 @@ struct ChatScrollView: View {
     let headerHeight: CGFloat
 
     /// Height of the bottom floating panel — exact measured height of InputMorphView.
-    /// CPU-22: measured via onGeometryChange in ContentView, grows with the panel.
+    /// CPU-22: measured via onGeometryChange in ContentView, grows dynamically.
     let footerHeight: CGFloat
 
     /// BUG-01: True while loadMoreMessages() is prepending older messages.
-    /// When true: skip bottom-scroll, anchor to firstLoadedMessageId instead.
+    /// When true: skip bottom-scroll entirely — SwiftUI preserves position automatically.
     let isLoadingMore: Bool
 
-    /// BUG-01: ID of the first message in the batch just prepended.
-    /// Scroll target after Load More — keeps user at their reading position.
+    /// BUG-01: Unused after fix — kept for API compatibility, will be removed in cleanup.
     let firstLoadedMessageId: UUID?
 
-    /// Called after Load More scroll completes — resets isLoadingMore in ViewModel.
+    /// Called after Load More completes — resets isLoadingMore in ViewModel.
     let onLoadMoreScrollDone: () -> Void
 
     // CPU-05: debounce flag — true while a scroll task is already scheduled.
@@ -251,10 +253,12 @@ struct ChatScrollView: View {
                 }
             }
             .onChange(of: messages.count) { _, _ in
-                if isLoadingMore, let targetId = firstLoadedMessageId {
-                    // BUG-01: Load More prepend — anchor to the first new message,
-                    // not the bottom. User stays at their reading position.
-                    proxy.scrollTo(targetId, anchor: .top)
+                if isLoadingMore {
+                    // BUG-01: Load More prepend — do NOT scroll at all.
+                    // SwiftUI ScrollView naturally keeps the viewport anchored when
+                    // items are prepended to a VStack — no explicit scroll needed.
+                    // Any proxy.scrollTo call here would jump the user to a different
+                    // position, which is exactly the bug we're fixing.
                     onLoadMoreScrollDone()
                 } else {
                     withAnimation(.easeOut(duration: 0.3)) {
