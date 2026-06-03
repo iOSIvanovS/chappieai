@@ -46,6 +46,12 @@
 //   visible so the user can see what broke and decide: restore folder or remove project.
 //   isUnavailable=true → orange folder icon + tooltip in ProjectChipsView.
 //   On next sync (thread switch or app restart), if the folder is back → isUnavailable=false.
+//
+// LIVE UNAVAILABILITY (B-05 LIVE):
+//   After FS is wired, we register onProjectUnavailable callback in ToolExecutionService.
+//   When a file tool fails mid-conversation (folder deleted while chat is open), FileTools
+//   calls the callback → markProjectUnavailable() flips the chip orange in real time.
+//   No timer, no polling — event-driven only.
 
 import Foundation
 import ChappieCore
@@ -88,6 +94,9 @@ extension ChappieViewModel {
 
         // M-09 / B-01: Sync FileSystem to cover ALL attached projects.
         await syncFileSystemForActiveThread()
+
+        // B-05 LIVE: register callback so FileTools can flip the chip orange mid-conversation.
+        registerProjectUnavailableCallback()
     }
 
     // MARK: - Invalidate
@@ -247,6 +256,29 @@ extension ChappieViewModel {
 
         let names = workspaces.map(\.name).joined(separator: ", ")
         print("[ChappieViewModel] M-09: FileSystem → [\(names)] (\(workspaces.count) workspaces)")
+    }
+
+    // MARK: - Live unavailability callback (B-05)
+
+    /// Registers onProjectUnavailable in ToolExecutionService.
+    /// Called after every syncFileSystemForActiveThread() so the callback
+    /// always reflects the current activeProjects array.
+    func registerProjectUnavailableCallback() {
+        guard let ts = toolService else { return }
+        Task {
+            await ts.setOnProjectUnavailable { [weak self] projectName in
+                self?.markProjectUnavailable(named: projectName)
+            }
+        }
+    }
+
+    /// Marks a project chip orange by name. Called from onProjectUnavailable callback.
+    /// WHY: @MainActor — activeProjects is a @Observable property on MainActor.
+    func markProjectUnavailable(named name: String) {
+        guard let idx = activeProjects.firstIndex(where: { $0.displayName == name }) else { return }
+        guard !activeProjects[idx].isUnavailable else { return } // already marked, skip
+        activeProjects[idx].isUnavailable = true
+        print("[ChappieViewModel] B-05 LIVE: '\(name)' marked unavailable after FS tool failure")
     }
 
     // MARK: - Stale URL detection

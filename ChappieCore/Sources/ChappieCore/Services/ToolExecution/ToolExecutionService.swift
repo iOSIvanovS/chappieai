@@ -41,6 +41,11 @@
 // IRON ENGLISH BARRIER (MEMORY-ENGLISH):
 // memorize validates all fields for Cyrillic — code-level barrier, not prompt-level.
 // validateMemoryEnglish() + containsCyrillic() in MemoryTools.swift.
+//
+// LIVE PROJECT UNAVAILABILITY (B-05):
+// onProjectUnavailable is called from FileTools when a FS operation fails.
+// ViewModel registers this callback via setOnProjectUnavailable() and marks
+// the matching project chip orange without requiring a thread re-entry.
 
 import Foundation
 
@@ -91,6 +96,12 @@ public actor ToolExecutionService {
     var addProjectHandler: (@Sendable (String) async -> String)?
     var removeProjectHandler: (@Sendable (String) async -> String)?
     var listProjectsHandler: (@Sendable () async -> String)?
+
+    // MARK: - Live unavailability callback (B-05)
+
+    /// Called on MainActor when a FS tool fails for a specific project.
+    /// ViewModel registers this to mark the project chip orange immediately.
+    var onProjectUnavailable: (@MainActor (String) -> Void)?
 
     // MARK: - IT-09: Project settings cache
 
@@ -147,6 +158,12 @@ public actor ToolExecutionService {
     public func setProjectSettings(_ settings: [UUID: ProjectSettings]) {
         self.projectSettingsCache = settings
         print("[ToolExecutionService] ⚙️ Project settings updated (\(settings.count) projects)")
+    }
+
+    /// B-05: Registers a callback that fires on MainActor when a FS tool fails for a project.
+    /// ViewModel uses this to mark the project chip orange in real time.
+    public func setOnProjectUnavailable(_ callback: @escaping @MainActor (String) -> Void) {
+        self.onProjectUnavailable = callback
     }
 
     /// Backward compatibility shim — maps names to placeholder UUIDs.

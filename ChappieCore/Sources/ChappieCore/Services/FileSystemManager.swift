@@ -36,6 +36,12 @@ public actor FileSystemManager {
         workspaces.first?.url ?? URL(fileURLWithPath: "/")
     }
 
+    /// All workspace names — used by FileTools to identify which project failed.
+    /// nonisolated: workspaces is a let constant, safe to read without actor hop.
+    public nonisolated var workspaceNames: [String] {
+        workspaces.map(\.name).filter { !$0.isEmpty }
+    }
+
     // MARK: - Init
 
     /// Single-workspace init — backward compatible. Paths have no project prefix.
