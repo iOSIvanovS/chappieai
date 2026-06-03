@@ -44,7 +44,16 @@
 //      the layout tree. onChange fires during the render pass — before layout is committed.
 //      A 150ms sleep gives the VStack time to measure its content on cold start.
 //   2. onChange(messages.count) — new message added to the chat.
+//      EXCEPTION: skipped when isLoadingMore=true (Load More prepend) — scroll goes to
+//      firstLoadedMessageId instead to keep the user at their reading position.
 //   3. onChange(streaming.streamingText) — Chappie is streaming (throttled to 1/frame).
+//
+// BUG-01: LOAD MORE SCROLL FIX:
+// When the user taps "Load earlier messages", loadMoreMessages() sets isLoadingMore=true
+// and records firstLoadedMessageId (first message of the prepended batch) BEFORE mutating
+// displayedMessages. ChatScrollView sees messages.count change, checks isLoadingMore,
+// skips the bottom-scroll, and instead scrolls to firstLoadedMessageId — keeping the user
+// at the same logical reading position. isLoadingMore is reset after the scroll completes.
 //
 // CPU-13: STREAMING ISOLATION:
 // ChatScrollView receives `streaming: StreamingState` as a `let` reference.
@@ -163,6 +172,17 @@ struct ChatScrollView: View {
     /// CPU-22: measured via onGeometryChange in ContentView, grows with the panel.
     let footerHeight: CGFloat
 
+    /// BUG-01: True while loadMoreMessages() is prepending older messages.
+    /// When true: skip bottom-scroll, anchor to firstLoadedMessageId instead.
+    let isLoadingMore: Bool
+
+    /// BUG-01: ID of the first message in the batch just prepended.
+    /// Scroll target after Load More — keeps user at their reading position.
+    let firstLoadedMessageId: UUID?
+
+    /// Called after Load More scroll completes — resets isLoadingMore in ViewModel.
+    let onLoadMoreScrollDone: () -> Void
+
     // CPU-05: debounce flag — true while a scroll task is already scheduled.
     // Prevents firing proxy.scrollTo on every streaming token (dozens/sec).
     @State private var scrollPending = false
@@ -231,8 +251,15 @@ struct ChatScrollView: View {
                 }
             }
             .onChange(of: messages.count) { _, _ in
-                withAnimation(.easeOut(duration: 0.3)) {
-                    proxy.scrollTo("bottom", anchor: .top)
+                if isLoadingMore, let targetId = firstLoadedMessageId {
+                    // BUG-01: Load More prepend — anchor to the first new message,
+                    // not the bottom. User stays at their reading position.
+                    proxy.scrollTo(targetId, anchor: .top)
+                    onLoadMoreScrollDone()
+                } else {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        proxy.scrollTo("bottom", anchor: .top)
+                    }
                 }
             }
             .onChange(of: streaming.isThinking) { _, isThinking in
@@ -456,7 +483,10 @@ private struct BlinkingCursor: View {
         streaming: streaming,
         isLoadingHistory: false,
         headerHeight: 80,
-        footerHeight: InputLayout.minPanelHeight
+        footerHeight: InputLayout.minPanelHeight,
+        isLoadingMore: false,
+        firstLoadedMessageId: nil,
+        onLoadMoreScrollDone: {}
     )
     .frame(width: 650, height: 500)
     .background(Color(NSColor.windowBackgroundColor))
@@ -473,7 +503,10 @@ private struct BlinkingCursor: View {
         streaming: streaming,
         isLoadingHistory: false,
         headerHeight: 60,
-        footerHeight: InputLayout.minPanelHeight
+        footerHeight: InputLayout.minPanelHeight,
+        isLoadingMore: false,
+        firstLoadedMessageId: nil,
+        onLoadMoreScrollDone: {}
     )
     .frame(width: 650, height: 300)
     .background(Color(NSColor.windowBackgroundColor))
@@ -494,7 +527,10 @@ private struct BlinkingCursor: View {
         streaming: streaming,
         isLoadingHistory: false,
         headerHeight: 60,
-        footerHeight: InputLayout.minPanelHeight
+        footerHeight: InputLayout.minPanelHeight,
+        isLoadingMore: false,
+        firstLoadedMessageId: nil,
+        onLoadMoreScrollDone: {}
     )
     .frame(width: 650, height: 300)
     .background(Color(NSColor.windowBackgroundColor))

@@ -103,6 +103,16 @@ final class ChappieViewModel {
     /// Incremented to trigger scroll-to-bottom in ChatScrollView.
     var scrollToBottomTrigger: Int = 0
 
+    /// BUG-01: True while loadMoreMessages() is prepending older messages.
+    /// ChatScrollView skips auto-scroll-to-bottom when this flag is set,
+    /// and instead scrolls to firstLoadedMessageId to keep the user in place.
+    var isLoadingMore: Bool = false
+
+    /// BUG-01: ID of the first message in the batch just prepended by loadMoreMessages().
+    /// ChatScrollView scrolls to this ID after the batch renders — user stays
+    /// at the same logical position instead of jumping to the bottom.
+    var firstLoadedMessageId: UUID? = nil
+
     /// Messages passed to the network context window (excludes system messages).
     var visibleMessages: [ChatMessage] {
         let onlyMessages = messages.filter { if case .message = $0 { return true }; return false }
@@ -248,10 +258,20 @@ final class ChappieViewModel {
 
     /// Load older messages (scroll up). Prepends pageSizeLoad items,
     /// trims the same amount from the bottom if window would exceed maxDisplayed.
+    ///
+    /// BUG-01: Records firstLoadedMessageId (first message of the new batch) and sets
+    /// isLoadingMore=true BEFORE mutating displayedMessages. ChatScrollView reads these
+    /// flags to skip the auto-scroll-to-bottom and anchor to the first new message instead.
     func loadMoreMessages() {
         guard hasMoreMessages, displayedStart > 0 else { return }
         let newStart = max(0, displayedStart - pageSizeLoad)
         let additional = Array(messages[newStart..<displayedStart])
+        guard !additional.isEmpty else { return }
+
+        // Signal ChatScrollView: skip bottom-scroll, anchor to this message ID.
+        isLoadingMore = true
+        firstLoadedMessageId = additional.first?.id
+
         displayedStart = newStart
         displayedMessages = additional + displayedMessages
         hasMoreMessages = displayedStart > 0

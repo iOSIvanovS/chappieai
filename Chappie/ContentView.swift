@@ -83,6 +83,12 @@
 // MK-07: MODEL PICKER POPOVER — 3 COLUMNS:
 //   ModelPickerRow.onSelectProvider now receives (providerId, keyId, modelName).
 //   ContentView passes all three into switchProvider() — full thread-isolated key selection.
+//
+// BUG-01: LOAD MORE SCROLL FIX:
+//   ChatScrollView now receives isLoadingMore + firstLoadedMessageId + onLoadMoreScrollDone.
+//   When user taps Load More, ViewModel sets isLoadingMore=true and records the first new
+//   message ID before prepending. ChatScrollView skips bottom-scroll and anchors to that ID.
+//   onLoadMoreScrollDone() resets isLoadingMore in ViewModel after scroll.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -345,7 +351,14 @@ struct ContentView: View {
                 streaming: viewModel.streaming,
                 isLoadingHistory: viewModel.isLoadingThread,
                 headerHeight: topPanelHeight + safeAreaTop,
-                footerHeight: currentPanelHeight
+                footerHeight: currentPanelHeight,
+                isLoadingMore: viewModel.isLoadingMore,
+                firstLoadedMessageId: viewModel.firstLoadedMessageId,
+                onLoadMoreScrollDone: {
+                    // BUG-01: reset flag after ChatScrollView has anchored to the new message.
+                    viewModel.isLoadingMore = false
+                    viewModel.firstLoadedMessageId = nil
+                }
             )
             .ignoresSafeArea(edges: .top)
             .onGeometryChange(for: CGFloat.self) { geo in
