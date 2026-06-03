@@ -3,7 +3,7 @@
 //
 // Core @Observable class: state properties, init, service wiring, pagination, drafts, balance.
 // Business logic is split into extensions:
-//   +Threads, +Providers, +Projects, +Send, +Memory, +AppSettings (V2), +ThreadSession (V2)
+//   +Threads, +Providers, +Projects, +Send, +Memory, +AppSettings, +ThreadSession
 //
 // CPU-13: STREAMING ISOLATION
 // streamingText, runningCost, currentToolCall, isThinking are moved into a
@@ -81,7 +81,6 @@ final class ChappieViewModel {
     }
 
     /// CPU-15: balance forwarded to/from StreamingState.
-    /// Legacy call-sites (refreshBalanceForActiveProvider, saveBalance) continue to work.
     var currentBalance: Double? {
         get { streaming.currentBalance }
         set { streaming.currentBalance = newValue }
@@ -194,27 +193,23 @@ final class ChappieViewModel {
     var projectStore: ProjectStore?
     var providerStore: AIProviderStore?
 
-    // MARK: - V2: AppSettingsStore + caches
+    // MARK: - AppSettingsStore + caches
 
-    /// V2 SwiftData-backed settings store. Nil when flag is OFF.
+    /// SwiftData-backed settings store.
     var appSettingsStore: New.AppSettingsStore?
 
-    /// In-memory cache for provider balances (V2 path).
+    /// In-memory cache for provider balances.
     /// Populated by refreshBalanceCacheIfNeeded() on startup.
     var cachedBalances: [UUID: Double] = [:]
 
-    /// In-memory cache for last active thread ID (V2 path).
+    /// In-memory cache for last active thread ID.
     /// Populated by preloadLastActiveThreadId() before thread selection.
     var cachedLastActiveThreadId: UUID?
 
-    // MARK: - V2: ThreadSession (backing storage for computed var in +ThreadSession extension)
+    // MARK: - ThreadSession (backing storage for computed var in +ThreadSession extension)
 
     /// Backing store for activeThreadSession. Use the computed var from +ThreadSession.
     var _activeThreadSession: New.ThreadSession?
-
-    // MARK: - UserDefaults keys (legacy — kept for V1 path and migration)
-
-    let lastActiveThreadIdKey = "lastActiveThreadId"
 
     // MARK: - Init
 
@@ -281,9 +276,7 @@ final class ChappieViewModel {
     func setDraft(_ text: String, for threadId: UUID) { threadDrafts[threadId] = text }
     func clearDraft(for threadId: UUID) { threadDrafts.removeValue(forKey: threadId) }
 
-    // MARK: - Balance key (legacy path only)
-
-    func balanceKey(for providerId: UUID) -> String { "balance_\(providerId.uuidString)" }
+    // MARK: - Balance
 
     func refreshBalanceForActiveProvider() {
         guard let provider = activeProvider else { return }
@@ -309,7 +302,6 @@ final class ChappieViewModel {
         let provStore = AIProviderStore(modelContainer: container)
         self.providerStore = provStore
 
-        // V2: wire AppSettingsStore when flag is active
         connectAppSettingsStore(container: container)
 
         if let mm = memoryManager { Task { await mm.setMemoryStore(store) } }
@@ -321,7 +313,6 @@ final class ChappieViewModel {
         }
 
         Task {
-            // V2: preload caches before thread selection so loadLastActiveThreadId() works synchronously
             await preloadLastActiveThreadId()
             await refreshBalanceCacheIfNeeded()
 
@@ -431,10 +422,9 @@ final class ChappieViewModel {
     }
 
     func loadWorkspaceWithSecurityScope() {
-        // Workspace loading at init time happens synchronously — V2 store isn't ready yet.
+        // Workspace loading at init time happens synchronously — AppSettingsStore isn't ready yet.
         // We always read from UserDefaults here; V2 store is wired later in setModelContainer.
         // WHY: ModelContainer is injected via setModelContainer() after init completes.
-        // The async V2 path (loadWorkspaceBookmarkData) is used for subsequent restores.
         guard let data = UserDefaults.standard.data(forKey: "workspaceBookmark") else { return }
         var isStale = false
 

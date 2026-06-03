@@ -1,8 +1,7 @@
 // ChappieViewModel+ThreadSession.swift
 // Chappie
 //
-// V2: ThreadSession lifecycle — assembly on thread activation, invalidation on memory change.
-// Behind FeatureFlags.useThreadIsolationV2. V1 path is untouched.
+// ThreadSession lifecycle — assembly on thread activation, invalidation on memory change.
 //
 // DESIGN:
 //   ProjectEntity is a SwiftData @Model — non-Sendable, cannot cross actor boundaries.
@@ -60,7 +59,7 @@ extension ChappieViewModel {
 
     // MARK: - Computed accessor
 
-    /// Active V2 session. Nil when flag is OFF or no thread is selected.
+    /// Active ThreadSession. Nil when no thread is selected.
     var activeThreadSession: New.ThreadSession? {
         get { _activeThreadSession }
         set { _activeThreadSession = newValue }
@@ -71,8 +70,7 @@ extension ChappieViewModel {
     /// Builds a fresh ThreadSession for the given thread.
     /// Called from selectThread() after projects are loaded.
     func assembleThreadSession(for thread: ThreadMetadata) async {
-        guard FeatureFlags.useThreadIsolationV2,
-              let store = memoryStore else { return }
+        guard let store = memoryStore else { return }
 
         // Check cancellation before doing any work — if a newer selectThread()
         // already cancelled this task, bail out immediately.
@@ -86,11 +84,11 @@ extension ChappieViewModel {
             projectMetas: activeProjects,
             memoryStore: store,
             promptBuilder: builder,
-            userName: nil // wired in M-07 when AppSettings gets a userName field
+            userName: nil // wired when AppSettings gets a userName field
         )
 
         self._activeThreadSession = session
-        print("[ChappieViewModel] V2 ThreadSession assembled for '\(thread.title)' (\(activeProjects.count) projects)")
+        print("[ChappieViewModel] ThreadSession assembled for '\(thread.title)' (\(activeProjects.count) projects)")
 
         // M-09 / B-01: Sync FileSystem to cover ALL attached projects.
         await syncFileSystemForActiveThread()
@@ -104,17 +102,14 @@ extension ChappieViewModel {
     /// Clears the cached prompt inside the active session.
     /// Call after any memory write or project settings change.
     func invalidateActiveThreadSession() {
-        guard FeatureFlags.useThreadIsolationV2 else { return }
         Task { await _activeThreadSession?.invalidateCache() }
     }
 
     // MARK: - System Prompt for send()
 
     /// Returns the V2 system prompt if a session is active, nil otherwise.
-    /// Nil causes send() to fall back to the V1 MemoryManager path.
     func v2SystemPrompt() async -> String? {
-        guard FeatureFlags.useThreadIsolationV2,
-              let session = _activeThreadSession else { return nil }
+        guard let session = _activeThreadSession else { return nil }
         return try? await session.systemPrompt()
     }
 
@@ -139,8 +134,7 @@ extension ChappieViewModel {
     ///   Failed projects are marked isUnavailable=true in activeProjects so the chip
     ///   turns orange in the UI — user sees exactly which project is broken.
     func syncFileSystemForActiveThread() async {
-        guard FeatureFlags.useThreadIsolationV2,
-              let ts = toolService else { return }
+        guard let ts = toolService else { return }
 
         // No projects → restore global fileSystem (the one from workspaceURL).
         // No bookmark resolution needed — mark ready immediately.
@@ -273,7 +267,7 @@ extension ChappieViewModel {
     }
 
     /// Marks a project chip orange by name. Called from onProjectUnavailable callback.
-    /// WHY: @MainActor — activeProjects is a @Observable property on MainActor.
+    /// @MainActor — activeProjects is a @Observable property on MainActor.
     func markProjectUnavailable(named name: String) {
         guard let idx = activeProjects.firstIndex(where: { $0.displayName == name }) else { return }
         guard !activeProjects[idx].isUnavailable else { return } // already marked, skip
@@ -293,27 +287,11 @@ extension ChappieViewModel {
     /// NOTE: isStale (bookmark staleness) is checked separately BEFORE this function.
     /// A stale bookmark may resolve to a valid-looking URL that passes all checks here
     /// but points to a completely wrong folder — so it must be caught at the source.
-    ///
-    /// WHY NOT use URLResourceValues: resourceValues(forKeys:) itself can hang on
-    /// sandbox-restricted paths. fileExists is cheaper and fails fast.
     private func isURLStale(_ url: URL) -> Bool {
         let path = url.path
-
-        // Reject user Trash — macOS moves items to ~/.Trash/FolderName (contains /.Trash/).
-        if path.contains("/.Trash/") {
-            return true
-        }
-
-        // Reject volume Trash — external drives use /.Trashes/.
-        if path.contains("/.Trashes/") {
-            return true
-        }
-
-        // Reject missing/unmounted paths.
-        if !FileManager.default.fileExists(atPath: path) {
-            return true
-        }
-
+        if path.contains("/.Trash/") { return true }
+        if path.contains("/.Trashes/") { return true }
+        if !FileManager.default.fileExists(atPath: path) { return true }
         return false
     }
 }
@@ -321,9 +299,7 @@ extension ChappieViewModel {
 // MARK: - Shared persona block
 
 extension ChappieViewModel {
-    /// Canonical persona + 14 rules block.
-    /// Shared between AIOrchestrator (V1 copy) and SystemPromptBuilder (V2).
-    /// Update here first, then sync to AIOrchestrator.baseSystemPrompt on V1 removal.
+    /// Canonical persona + rules block injected by SystemPromptBuilder.
     static let v2PersonaBlock = """
     You are Chappie — a universal AI agent of the highest level.
     You are capable of anything: software engineering, architecture, writing,

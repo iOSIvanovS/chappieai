@@ -25,11 +25,9 @@
 //   *(Operation cancelled by user)*
 //
 // V2 SYSTEM PROMPT + TOOL PERMISSIONS:
-// When FeatureFlags.useThreadIsolationV2 is ON:
-//   - v2SystemPrompt() is awaited → passed as overrideSystemPrompt (AIOrchestrator skips MemoryManager).
-//   - v2ToolPermissions() is awaited → passed as overrideToolPermissions (orchestrator uses
-//     New.ToolAccessController.check() instead of legacy ToolAccessControl in ToolExecutionService).
-// When flag is OFF, both overrides are nil and the V1 path runs unchanged.
+// v2SystemPrompt() is awaited → passed as overrideSystemPrompt (AIOrchestrator skips MemoryManager).
+// v2ToolPermissions() is awaited → passed as overrideToolPermissions (orchestrator uses
+// New.ToolAccessController.check() instead of legacy ToolAccessControl in ToolExecutionService).
 //
 // NO PROVIDER ALERT:
 // When orchestrator is nil (model/provider deleted from under the thread), send() triggers
@@ -77,8 +75,6 @@ extension ChappieViewModel {
         let activeProviderId = activeProvider?.id
 
         currentRequestTask = Task {
-            // V2: build system prompt + tool permissions from ThreadSession before the orchestrator.
-            // V1: both nil → orchestrator builds prompt via MemoryManager, ToolExecutionService handles access.
             let systemPromptOverride = await v2SystemPrompt()
             let toolPermissionsOverride = await v2ToolPermissions()
 
@@ -181,7 +177,6 @@ extension ChappieViewModel {
     /// WHY ADD TO HISTORY:
     /// If partial stream text exists, the AI needs to know the operation was interrupted —
     /// otherwise on the next message it may think its previous response was complete.
-    /// The [SYSTEM] note is injected as an assistant message so the AI has full context.
     @MainActor
     private func handleCancellation(activeThreadId: UUID?) {
         let partial = streamingText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -193,17 +188,14 @@ extension ChappieViewModel {
             self.isThinking = false
         }
 
-        // Build cancelled message: partial text (if any) + system note.
         let cancelledText: String
         if partial.isEmpty {
-            // No stream text — was thinking or executing a tool.
             if let tool = lastTool {
                 cancelledText = "*[Operation cancelled by user while executing: \(tool)]*"
             } else {
                 cancelledText = "*[Operation cancelled by user]*"
             }
         } else {
-            // Had partial stream text — preserve it with a note.
             cancelledText = partial + "\n\n---\n*[Response interrupted by user. Operation cancelled.]*"
         }
 
@@ -218,7 +210,6 @@ extension ChappieViewModel {
             self.appendToDisplayed(cancelledMessage)
         }
 
-        // Persist to thread so the AI has context on next message.
         if let threadId = activeThreadId, let store = self.threadStore {
             let currentMessages = self.messages
             Task {
@@ -229,11 +220,9 @@ extension ChappieViewModel {
 
     // MARK: - V2 Tool Permissions
 
-    /// Returns V2 ToolPermissions if a session is active, nil otherwise.
-    /// Nil causes orchestrator to fall back to V1 ToolExecutionService access checks.
+    /// Returns ToolPermissions from the active ThreadSession, nil if no session.
     func v2ToolPermissions() async -> New.ToolPermissions? {
-        guard FeatureFlags.useThreadIsolationV2,
-              let session = _activeThreadSession else { return nil }
+        guard let session = _activeThreadSession else { return nil }
         return try? await session.toolPermissions()
     }
 
@@ -249,7 +238,6 @@ extension ChappieViewModel {
         return sourceMessages.compactMap { msg -> AIMessage? in
             guard case .message(_, let isUser, let text, _, let summary, let attachments) = msg else { return nil }
 
-            // Skip injected system messages — they are not part of the AI conversation
             let isSystemMessage = text.contains("Проект подключен")
                 || text.contains("Память очищена")
                 || text.contains("API-ключ обновлён")

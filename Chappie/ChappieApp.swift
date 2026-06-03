@@ -17,17 +17,12 @@
 //   Without explicit termination the helper remains as an orphan process,
 //   and the next bind() on the same socket fails with "address already in use".
 //
-// SWIFTDATA (REFACTOR-THREADS IT-01):
-// ModelContainer is created ONCE here and passed via .modelContainer()
-// into the SwiftUI environment. This is standard SwiftData practice —
-// a single container for the entire application.
-//
 // SWIFTDATA SCHEMA:
 // - ThreadEntity: threads with message history and settings
 // - ProjectEntity: projects with security-scoped bookmarks
 // - MemoryEntity: three-level memory (global/project/thread)
 // - AIProviderEntity: AI provider configurations
-// - New.AppSettings: V2 global settings (added when FeatureFlags.useThreadIsolationV2 = true)
+// - New.AppSettings: V2 global settings (balance, last active thread, workspace bookmark)
 //
 // WINDOW SIZE:
 // .defaultSize(width:height:) sets the initial window size on first launch.
@@ -61,28 +56,18 @@ struct ChappieApp: App {
     /// not in ViewModel, to guarantee a single instance throughout the app's lifetime.
     /// Creating multiple ModelContainers for the same schema causes conflicts and data loss.
     ///
-    /// V2 SCHEMA EXTENSION:
-    /// When FeatureFlags.useThreadIsolationV2 is true — New.AppSettings is added to the schema.
-    /// SwiftData handles this as a non-destructive migration (new table, no conflicts).
-    ///
     /// ERROR HANDLING:
     /// If the container cannot be created — this is a critical error (corrupted DB).
     /// In this case we try to recreate from scratch (deleteExistingFile: true).
     /// This means data loss, but it's better than a full app crash.
     let modelContainer: ModelContainer = {
-        // Build schema types list — extend with V2 models when flag is active
-        var schemaTypes: [any PersistentModel.Type] = [
+        let schema = Schema([
             ThreadEntity.self,
             ProjectEntity.self,
             MemoryEntity.self,
-            AIProviderEntity.self
-        ]
-
-        if FeatureFlags.useThreadIsolationV2 {
-            schemaTypes.append(New.AppSettings.self)
-        }
-
-        let schema = Schema(schemaTypes)
+            AIProviderEntity.self,
+            New.AppSettings.self
+        ])
 
         let modelConfiguration = ModelConfiguration(
             schema: schema,
@@ -116,7 +101,6 @@ struct ChappieApp: App {
             ContentView()
                 // Background image via .background — does NOT participate in layout,
                 // does NOT affect window minimum size, covers full window including toolbar.
-                // This is the correct approach vs GeometryReader which blocks window resizing.
                 .background(
                     Image("Chappie")
                         .resizable()
@@ -126,9 +110,7 @@ struct ChappieApp: App {
                 )
         }
         .modelContainer(modelContainer)
-        // Initial window size — reasonable default for the split-view layout
         .defaultSize(width: 1100, height: 720)
-        // Center the window on first launch
         .defaultPosition(.center)
         .commands {
             // Standard macOS commands (Quit, Minimize, etc.)

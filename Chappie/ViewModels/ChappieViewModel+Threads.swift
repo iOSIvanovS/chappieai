@@ -51,10 +51,7 @@ extension ChappieViewModel {
         self.messages = []
         self.displayedMessages = []
         self.activeThread = thread
-
-        if FeatureFlags.useThreadIsolationV2 {
-            self._activeThreadSession = nil
-        }
+        self._activeThreadSession = nil
 
         saveLastActiveThreadId(thread.id)
 
