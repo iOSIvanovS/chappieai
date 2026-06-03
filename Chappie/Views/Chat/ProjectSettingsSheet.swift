@@ -138,6 +138,7 @@ struct ProjectSettingsSheet: View {
                 }
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
 
             Text(draft.agentRole.description)
                 .font(.caption)
@@ -344,12 +345,14 @@ struct ProjectSettingsSheet: View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeader("Терминал", systemImage: "terminal.fill")
 
+            // .labelsHidden() prevents the picker label from squeezing the segments
             Picker("Доступ к терминалу", selection: $draft.terminalAccess) {
                 ForEach(TerminalAccessLevel.allCases, id: \.self) { level in
                     Text(level.displayName).tag(level)
                 }
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
 
             Text(draft.terminalAccess.description)
                 .font(.caption)
