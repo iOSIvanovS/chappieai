@@ -73,6 +73,12 @@
 // CPU-23: THINKING INDICATOR CPU:
 //   currentToolCall in StreamingState is throttled to 200ms via setToolCall().
 //   thinkingView animation fires at most 5x/sec instead of 30+/sec.
+//
+// ONBOARDING TRIGGER (MK-04):
+//   Onboarding is shown when appState.shouldShowOnboarding == true.
+//   AppState is @Observable singleton — SwiftUI tracks reads automatically.
+//   @State var appState = AppState.shared ensures SwiftUI subscribes to changes.
+//   Debug: AppState.shared.debugForceOnboarding = true to force re-show onboarding.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -125,6 +131,9 @@ struct ContentView: View {
     // CPU-11: debounce task reference — cancelled on every new keystroke
     @State private var draftDebounceTask: Task<Void, Never>? = nil
 
+    // MK-04: @State so SwiftUI subscribes to @Observable AppState changes
+    @State private var appState = AppState.shared
+
     @Environment(\.modelContext) private var modelContext
 
     private var orphanedThreadIds: Set<UUID> { [] }
@@ -136,7 +145,8 @@ struct ContentView: View {
             if !viewModel.isAppReady {
                 ProgressView("Загрузка...")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if viewModel.providers.isEmpty {
+            } else if appState.shouldShowOnboarding {
+                // MK-04: AppState-driven onboarding replaces the old providers.isEmpty check
                 OnboardingView(viewModel: viewModel)
             } else {
                 mainContent

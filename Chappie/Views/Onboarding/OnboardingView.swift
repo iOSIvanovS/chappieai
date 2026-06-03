@@ -1,17 +1,27 @@
 // OnboardingView.swift
 // Chappie
 //
-// First-launch onboarding screen.
+// First-launch onboarding screen. Also shown on demand via AppState.
 //
 // FLOW:
 // Step 1: User name (optional) — saved directly to global memory via viewModel.saveUserName()
 // Step 2: First AI provider setup (required) — uses AddProviderSheet
 //         Cannot proceed until at least one provider is validated and saved.
+// Step 3 (future MK-05): allow adding multiple keys per provider.
 //
-// The app does NOT allow entry until at least one provider is configured.
-// User name is written straight to SwiftData global memory — no UserDefaults staging.
+// TRIGGER:
+// Shown when AppState.shared.shouldShowOnboarding == true.
+// Completion calls AppState.shared.completeOnboarding() → sets UserDefaults flag.
+// Debug: AppState.shared.debugForceOnboarding = true forces re-show without clearing data.
 //
-// NOTE: "Popular services" hint block removed — services change, hints go stale.
+// MERGE RULES (safe re-run — no data is deleted):
+// - Provider: if a provider with the same website URL already exists → skip adding,
+//   update only its display name.
+// - Key: if a key with the same value already exists for this provider → skip adding,
+//   update only its display name.
+// - Models: add only models not already present for this provider (by name).
+//   Models belong to a specific provider — same model name for different providers
+//   is allowed and treated as distinct.
 
 import SwiftUI
 import ChappieCore
@@ -70,6 +80,12 @@ struct OnboardingView: View {
                     showAddProvider = false
                 }
             )
+        }
+        // When providers become non-empty after AddProviderSheet — complete onboarding
+        .onChange(of: viewModel.providers.count) { _, newCount in
+            if newCount > 0 {
+                AppState.shared.completeOnboarding()
+            }
         }
     }
 
