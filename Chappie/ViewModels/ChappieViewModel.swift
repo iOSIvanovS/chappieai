@@ -161,6 +161,16 @@ final class ChappieViewModel {
 
     public init() {
         loadWorkspaceWithSecurityScope()
+        // Pre-warm the catalog cache at startup — forceRefresh ensures we always
+        // get the latest providers.json, not a stale in-memory copy.
+        Task {
+            do {
+                let catalog = try await providersRemoteService.fetchCatalog(forceRefresh: true)
+                print("[ChappieViewModel] Catalog pre-loaded: \(catalog.providers.count) providers, \(catalog.meta.modelsCount) models")
+            } catch {
+                print("[ChappieViewModel] Catalog pre-load failed: \(error.localizedDescription)")
+            }
+        }
     }
 
     // MARK: - Pagination (CPU-01)
@@ -251,7 +261,22 @@ final class ChappieViewModel {
         Task {
             await preloadLastActiveThreadId()
             await refreshBalanceCacheIfNeeded()
+
+            // Sync requiresApiKey from the remote catalog BEFORE loading providers.
+            // This guarantees self.providers is populated with correct requiresApiKey values
+            // before loadThreadsAndSelectActive calls switchProvider.
+            // Without this ordering, switchProvider may run with stale requiresApiKey=true
+            // for providers like Ollama, blocking the orchestrator.
+            if let catalog = try? await providersRemoteService.fetchCatalog() {
+                try? await provStore.syncRequiresApiKey(from: catalog.providers)
+                print("[ChappieViewModel] requiresApiKey synced from catalog")
+            }
+
+            // Load providers FIRST — must complete before thread selection so that
+            // switchProvider() reads fresh requiresApiKey values from self.providers.
             await loadProvidersAndSetActive(from: provStore)
+
+            // Load threads AFTER providers are ready.
             await loadThreadsAndSelectActive(from: tStore)
         }
     }

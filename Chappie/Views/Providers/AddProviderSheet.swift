@@ -6,31 +6,26 @@
 // ENTRY POINTS:
 // 1. From CatalogPickerSheet (catalog row) → prefilledRemote is set.
 //    Step 1 is pre-filled: name, baseURL, catalogId, providerProtocol, models.
-//    Models step shows catalog models pre-selected — user can deselect unwanted ones.
-//    "Загрузить список" still works to discover additional live models.
+//    Models step shows catalog models pre-selected — no network fetch to provider.
 //
 // 2. From CatalogPickerSheet ("Ручная настройка") → prefilledRemote is nil.
 //    Blank step 1. No catalog link. User enters everything manually.
-//    Model step: no pre-selection, no catalog models — fetch or type manually.
+//    Protocol picker + Auth scheme picker shown — deterministic flow.
+//    Auth scheme auto-switches when protocol changes, but user can override.
+//    Models step: user fetches from provider or adds manually.
 //
 // 3. Edit mode (editingProvider != nil) → opens on step 1 pre-filled with existing data.
 //
 // STEP 1 — Provider:
-//   Enter base URL, API key (with user-defined name), optional provider name.
-//   Validation uses AIClientFactory.makeForValidation() — picks Anthropic or OpenAI
-//   client based on provider protocol (from catalog or inferred from URL).
-//   On success → proceed to step 2.
+//   Enter base URL, API key, optional provider name.
+//   Custom mode: explicit protocol picker + auth scheme picker.
+//   Catalog mode: protocol and auth inferred from catalog — pickers hidden.
+//   If catalog provider has requiresApiKey == false (e.g. Ollama) — key field hidden, button always enabled.
 //
 // STEP 2 — Models:
-//   Catalog entry: models from catalog are shown pre-selected.
-//   All entries: user can fetch live list, search, select/deselect, add manually.
+//   Catalog entry: models from catalog shown pre-selected, no fetch button.
+//   Custom entry: user can fetch live list, search, select/deselect, add manually.
 //   Must add at least one model to proceed.
-//   Fetch error is suppressed when catalog models are already loaded (e.g. Anthropic
-//   has no /v1/models endpoint — catalog models are the source of truth).
-//
-// SAVE BEHAVIOUR:
-//   Onboarding → calls providerStore.mergeProvider (safe upsert, no alerts).
-//   Directory  → calls providerStore.addProvider (strict add, shows alerts on duplicates).
 
 import SwiftUI
 import ChappieCore
@@ -62,7 +57,7 @@ struct AddProviderSheet: View {
     private enum Step { case provider, models }
     @State private var step: Step = .provider
 
-    // MARK: - Step 1 State — shared
+    // MARK: - Step 1 State
 
     @State private var providerName: String = ""
     @State private var baseURL: String = ""
@@ -70,14 +65,16 @@ struct AddProviderSheet: View {
     @State private var validationError: String? = nil
     @State private var validatedProvider: AIProvider? = nil
 
-    // MARK: - Step 1 State — directory mode (single key)
+    // Custom mode: explicit protocol + auth scheme selection.
+    @State private var customProtocol: ProviderProtocol = .openai
+    @State private var customAuthScheme: AuthScheme = .bearer
 
+    // Directory mode (single key)
     @State private var apiKeyValue: String = ""
     @State private var apiKeyName: String = ""
     @State private var isKeyVisible: Bool = false
 
-    // MARK: - Step 1 State — onboarding mode (multi-key)
-
+    // Onboarding mode (multi-key)
     @State private var pendingKeys: [PendingKey] = [PendingKey()]
 
     // MARK: - Step 2 State
@@ -102,20 +99,45 @@ struct AddProviderSheet: View {
     private var isEditing: Bool { editingProvider != nil }
     private var isCatalog: Bool { prefilledRemote != nil }
 
+    /// Show protocol + auth pickers only in pure Custom mode (not catalog, not editing).
+    private var showCustomPickers: Bool { !isCatalog && !isEditing }
+
+    /// Whether this provider requires an API key (from catalog flag, default true).
+    private var requiresApiKey: Bool {
+        let result = prefilledRemote?.requiresApiKey ?? true
+        print("[AddProviderSheet] requiresApiKey=\(result) prefilledRemote=\(prefilledRemote?.id ?? "nil")")
+        return result
+    }
+
     private var title: String { isEditing ? "Редактировать провайдера" : "Добавить провайдера" }
 
-    /// Inferred protocol for validation — from catalog or editing provider; defaults to openai.
-    private var inferredProtocol: ProviderProtocol {
+    /// Effective protocol for validation and client creation.
+    private var effectiveProtocol: ProviderProtocol {
+        if showCustomPickers { return customProtocol }
         if let remote = prefilledRemote {
-            let hasAnthropic = remote.models.contains { $0.protocol == "anthropic" }
-            return hasAnthropic ? .anthropic : .openai
+            return remote.models.contains { $0.protocol == "anthropic" } ? .anthropic : .openai
         }
         return editingProvider?.providerProtocol ?? .openai
     }
 
+    /// Effective auth scheme.
+    private var effectiveAuthScheme: AuthScheme {
+        if showCustomPickers { return customAuthScheme }
+        return editingProvider?.authScheme ?? (effectiveProtocol == .anthropic ? .xApiKey : .bearer)
+    }
+
+    /// Origin for new providers — custom if no catalog, catalog otherwise.
+    private var effectiveOrigin: ProviderOrigin {
+        showCustomPickers ? .custom : .catalog
+    }
+
     private var canValidate: Bool {
         let urlOk = !baseURL.trimmingCharacters(in: .whitespaces).isEmpty
+        let reqKey = prefilledRemote?.requiresApiKey ?? true
+        print("[AddProviderSheet] canValidate: urlOk=\(urlOk) requiresApiKey=\(reqKey) baseURL='\(baseURL)'")
         if isEditing { return urlOk }
+        // Providers that don't require an API key (e.g. Ollama) — URL alone is enough.
+        if !reqKey { return urlOk }
         if isOnboarding {
             return urlOk && pendingKeys.contains(where: {
                 !$0.value.trimmingCharacters(in: .whitespaces).isEmpty
@@ -199,7 +221,11 @@ struct AddProviderSheet: View {
         }
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
-        .onAppear { prefill() }
+        .onAppear {
+            print("[AddProviderSheet] onAppear — prefilledRemote=\(prefilledRemote?.id ?? "nil") requiresApiKey=\(prefilledRemote?.requiresApiKey ?? true)")
+            prefill()
+            print("[AddProviderSheet] after prefill — baseURL='\(baseURL)' canValidate=\(canValidate)")
+        }
         .alert("Провайдер уже существует", isPresented: $duplicateHostAlert) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -240,10 +266,28 @@ struct AddProviderSheet: View {
                         .foregroundStyle(isCatalog && !isEditing ? .secondary : .primary)
                 }
 
-                if isOnboarding {
-                    multiKeySection
+                // Protocol + Auth pickers — only in Custom mode.
+                if showCustomPickers {
+                    protocolPickerSection
+                    authSchemePickerSection
+                }
+
+                // Key section — hidden for providers that don't require an API key (e.g. Ollama).
+                if prefilledRemote?.requiresApiKey ?? true {
+                    if isOnboarding {
+                        multiKeySection
+                    } else {
+                        singleKeySection
+                    }
                 } else {
-                    singleKeySection
+                    // Local provider hint — no key needed.
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                        Text("Этот провайдер работает локально и не требует API-ключа.")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    .padding(12)
+                    .background(Color.green.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
                 }
 
                 if let err = validationError {
@@ -254,13 +298,165 @@ struct AddProviderSheet: View {
         }
     }
 
+    // MARK: - Protocol Picker
+
+    private var protocolPickerSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Протокол API", systemImage: "network")
+                .font(.headline)
+
+            HStack(spacing: 12) {
+                protocolOption(
+                    protocol: .openai,
+                    title: "OpenAI-совместимый",
+                    subtitle: "Большинство провайдеров: OpenAI, Groq, Mistral, AITunnel и др.",
+                    icon: "bolt.circle"
+                )
+                protocolOption(
+                    protocol: .anthropic,
+                    title: "Anthropic",
+                    subtitle: "Нативный формат /v1/messages. Тело запроса по стандарту Anthropic.",
+                    icon: "atom"
+                )
+            }
+
+            Text("Выберите Anthropic только если используете нативный Anthropic API или совместимый прокси-роут.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func protocolOption(
+        protocol proto: ProviderProtocol,
+        title: String,
+        subtitle: String,
+        icon: String
+    ) -> some View {
+        let isSelected = customProtocol == proto
+        Button {
+            customProtocol = proto
+            customAuthScheme = proto == .anthropic ? .xApiKey : .bearer
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 18))
+                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(isSelected ? Color.accentColor : .primary)
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.4))
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isSelected ? Color.accentColor.opacity(0.07) : Color.primary.opacity(0.04))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(isSelected ? Color.accentColor.opacity(0.4) : Color.clear, lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Auth Scheme Picker
+
+    private var authSchemePickerSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Авторизация", systemImage: "key.horizontal")
+                .font(.headline)
+
+            HStack(spacing: 12) {
+                authSchemeOption(
+                    scheme: .bearer,
+                    title: "Bearer Token",
+                    subtitle: "Authorization: Bearer {key}\nСтандарт для OpenAI и большинства прокси.",
+                    icon: "lock.shield"
+                )
+                authSchemeOption(
+                    scheme: .xApiKey,
+                    title: "x-api-key",
+                    subtitle: "x-api-key: {key}\nНативный Anthropic API и некоторые прокси.",
+                    icon: "key.fill"
+                )
+            }
+
+            if customProtocol == .anthropic && customAuthScheme == .bearer {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle").foregroundStyle(.blue)
+                    Text("Bearer — нестандартный выбор для Anthropic. Используйте для прокси-сервисов (например, AITunnel с нативным Claude роутом).")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            } else if customProtocol == .openai && customAuthScheme == .xApiKey {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle").foregroundStyle(.blue)
+                    Text("x-api-key — нестандартный выбор для OpenAI-совместимого протокола. Используйте только если провайдер требует именно этот заголовок.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func authSchemeOption(
+        scheme: AuthScheme,
+        title: String,
+        subtitle: String,
+        icon: String
+    ) -> some View {
+        let isSelected = customAuthScheme == scheme
+        Button {
+            customAuthScheme = scheme
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 18))
+                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(isSelected ? Color.accentColor : .primary)
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.4))
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isSelected ? Color.accentColor.opacity(0.07) : Color.primary.opacity(0.04))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(isSelected ? Color.accentColor.opacity(0.4) : Color.clear, lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     // MARK: - Catalog Badge
 
     @ViewBuilder
     private func catalogBadge(_ remote: RemoteProvider) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: "checkmark.seal.fill")
-                .foregroundStyle(Color.accentColor)
+            Image(systemName: "checkmark.seal.fill").foregroundStyle(Color.accentColor)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Из каталога: \(remote.name)")
                     .font(.system(size: 12, weight: .semibold))
@@ -304,8 +500,7 @@ struct AddProviderSheet: View {
                     .font(.system(.body, design: .monospaced))
 
                     Button { isKeyVisible.toggle() } label: {
-                        Image(systemName: isKeyVisible ? "eye.slash" : "eye")
-                            .foregroundStyle(.secondary)
+                        Image(systemName: isKeyVisible ? "eye.slash" : "eye").foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
                 }
@@ -317,12 +512,10 @@ struct AddProviderSheet: View {
 
     private var multiKeySection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("API-ключи", systemImage: "key.fill")
-                .font(.headline)
+            Label("API-ключи", systemImage: "key.fill").font(.headline)
 
-            Text("Добавьте один или несколько ключей для этого провайдера. Все они будут доступны при выборе провайдера в треде.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Text("Добавьте один или несколько ключей для этого провайдера.")
+                .font(.caption).foregroundStyle(.secondary)
 
             ForEach($pendingKeys) { $key in
                 PendingKeyRow(key: $key, canDelete: pendingKeys.count > 1) {
@@ -330,11 +523,8 @@ struct AddProviderSheet: View {
                 }
             }
 
-            Button {
-                pendingKeys.append(PendingKey())
-            } label: {
-                Label("Добавить ещё ключ", systemImage: "plus.circle")
-                    .font(.subheadline)
+            Button { pendingKeys.append(PendingKey()) } label: {
+                Label("Добавить ещё ключ", systemImage: "plus.circle").font(.subheadline)
             }
             .buttonStyle(.plain)
             .foregroundStyle(Color.accentColor)
@@ -346,41 +536,46 @@ struct AddProviderSheet: View {
     private var modelsStep: some View {
         VStack(alignment: .leading, spacing: 0) {
 
-            HStack(spacing: 12) {
-                Button {
-                    fetchModels()
-                } label: {
-                    HStack(spacing: 6) {
-                        if isFetchingModels {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Image(systemName: "arrow.clockwise")
+            // Fetch controls — only for custom/edit providers, not catalog
+            if !isCatalog {
+                HStack(spacing: 12) {
+                    Button { fetchModels() } label: {
+                        HStack(spacing: 6) {
+                            if isFetchingModels { ProgressView().controlSize(.small) }
+                            else { Image(systemName: "arrow.clockwise") }
+                            Text(isFetchingModels ? "Загружаем..." : "Загрузить список")
                         }
-                        Text(isFetchingModels ? "Загружаем..." : "Загрузить список")
                     }
-                }
-                .buttonStyle(.bordered)
-                .disabled(isFetchingModels)
+                    .buttonStyle(.bordered)
+                    .disabled(isFetchingModels)
 
-                if !fetchedModels.isEmpty {
-                    Text("\(allModels.count) моделей")
+                    if !fetchedModels.isEmpty {
+                        Text("\(allModels.count) моделей").font(.caption).foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Text("Выбрано: \(selectedModelIds.count)")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(selectedModelIds.isEmpty ? .orange : .secondary)
                 }
-
-                Spacer()
-
-                Text("Выбрано: \(selectedModelIds.count)")
-                    .font(.caption)
-                    .foregroundStyle(selectedModelIds.isEmpty ? .orange : .secondary)
+                .padding(.horizontal, 24)
+                .padding(.top, 16)
+                .padding(.bottom, 8)
+            } else {
+                HStack {
+                    Text("\(allModels.count) моделей из каталога")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Text("Выбрано: \(selectedModelIds.count)")
+                        .font(.caption)
+                        .foregroundStyle(selectedModelIds.isEmpty ? .orange : .secondary)
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 16)
+                .padding(.bottom, 8)
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 16)
-            .padding(.bottom, 8)
 
-            // Show fetch error only when there are no catalog models already loaded.
-            // Anthropic has no /v1/models endpoint — if catalog models are present,
-            // the empty live list is expected and should not alarm the user.
             if let fetchErr = fetchError, fetchedModels.isEmpty {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
@@ -394,46 +589,33 @@ struct AddProviderSheet: View {
 
             if !allModels.isEmpty {
                 HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(.secondary)
-                        .font(.system(size: 13))
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary).font(.system(size: 13))
                     TextField("Поиск по названию…", text: $modelSearchText)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 13))
+                        .textFieldStyle(.plain).font(.system(size: 13))
                     if !modelSearchText.isEmpty {
-                        Button {
-                            modelSearchText = ""
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.secondary)
-                                .font(.system(size: 12))
+                        Button { modelSearchText = "" } label: {
+                            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary).font(.system(size: 12))
                         }
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+                .padding(.horizontal, 16).padding(.vertical, 8)
                 .background(Color.primary.opacity(0.04))
 
-                Button {
-                    toggleSelectAll()
-                } label: {
+                Button { toggleSelectAll() } label: {
                     HStack(spacing: 6) {
                         Image(systemName: allFilteredSelected ? "checkmark.square.fill" : "square")
                             .font(.system(size: 14))
                             .foregroundStyle(allFilteredSelected ? Color.accentColor : Color.secondary.opacity(0.5))
                         Text(allFilteredSelected ? "Снять выделение" : "Выбрать все")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
                         if !modelSearchText.isEmpty {
                             Text("(\(filteredModels.count) из \(allModels.count))")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary.opacity(0.7))
+                                .font(.system(size: 11)).foregroundStyle(.secondary.opacity(0.7))
                         }
                         Spacer()
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 6)
+                    .padding(.horizontal, 16).padding(.vertical, 6)
                 }
                 .buttonStyle(.plain)
                 .background(Color.primary.opacity(0.02))
@@ -443,30 +625,18 @@ struct AddProviderSheet: View {
 
             if allModels.isEmpty {
                 VStack(spacing: 8) {
-                    Image(systemName: "cpu")
-                        .font(.system(size: 32))
-                        .foregroundStyle(.secondary.opacity(0.4))
-                    Text("Нет загруженных моделей")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    Image(systemName: "cpu").font(.system(size: 32)).foregroundStyle(.secondary.opacity(0.4))
+                    Text("Нет загруженных моделей").font(.subheadline).foregroundStyle(.secondary)
                     Text("Загрузите список выше или добавьте модель вручную")
-                        .font(.caption)
-                        .foregroundStyle(.secondary.opacity(0.7))
-                        .multilineTextAlignment(.center)
+                        .font(.caption).foregroundStyle(.secondary.opacity(0.7)).multilineTextAlignment(.center)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 32)
+                .frame(maxWidth: .infinity).padding(.vertical, 32)
             } else if filteredModels.isEmpty {
                 VStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 28))
-                        .foregroundStyle(.secondary.opacity(0.4))
-                    Text("Ничего не найдено")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    Image(systemName: "magnifyingglass").font(.system(size: 28)).foregroundStyle(.secondary.opacity(0.4))
+                    Text("Ничего не найдено").font(.subheadline).foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 24)
+                .frame(maxWidth: .infinity).padding(.vertical, 24)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 2) {
@@ -475,17 +645,13 @@ struct AddProviderSheet: View {
                                 model: model,
                                 isSelected: selectedModelIds.contains(model.id),
                                 onToggle: {
-                                    if selectedModelIds.contains(model.id) {
-                                        selectedModelIds.remove(model.id)
-                                    } else {
-                                        selectedModelIds.insert(model.id)
-                                    }
+                                    if selectedModelIds.contains(model.id) { selectedModelIds.remove(model.id) }
+                                    else { selectedModelIds.insert(model.id) }
                                 }
                             )
                         }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, 16).padding(.vertical, 8)
                 }
                 .frame(maxHeight: 240)
             }
@@ -493,24 +659,19 @@ struct AddProviderSheet: View {
             Divider()
 
             HStack(spacing: 8) {
-                Image(systemName: "keyboard")
-                    .foregroundStyle(.secondary)
+                Image(systemName: "keyboard").foregroundStyle(.secondary)
                 TextField("Добавить модель вручную…", text: $manualModelInput)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.body, design: .monospaced))
                     .onSubmit { addManualModel() }
-
                 Button("Добавить") { addManualModel() }
                     .buttonStyle(.bordered)
                     .disabled(manualModelInput.trimmingCharacters(in: .whitespaces).isEmpty)
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 24).padding(.vertical, 12)
 
             if let err = saveError {
-                errorBanner(err)
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 8)
+                errorBanner(err).padding(.horizontal, 24).padding(.bottom, 8)
             }
         }
     }
@@ -520,44 +681,28 @@ struct AddProviderSheet: View {
     private var footerButtons: some View {
         HStack {
             Button(step == .provider ? "Отмена" : "Назад") {
-                if step == .provider {
-                    onCancel()
-                } else {
-                    withAnimation { step = .provider }
-                }
+                if step == .provider { onCancel() }
+                else { withAnimation { step = .provider } }
             }
             .keyboardShortcut(.escape)
 
             Spacer()
 
             if step == .provider {
-                Button {
-                    validateAndProceed()
-                } label: {
+                Button { validateAndProceed() } label: {
                     HStack(spacing: 6) {
-                        if isValidating {
-                            ProgressView().controlSize(.small)
-                            Text("Проверяем...")
-                        } else {
-                            Text("Далее")
-                            Image(systemName: "arrow.right")
-                        }
+                        if isValidating { ProgressView().controlSize(.small); Text("Проверяем...") }
+                        else { Text("Далее"); Image(systemName: "arrow.right") }
                     }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!canValidate || isValidating)
                 .keyboardShortcut(.return)
             } else {
-                Button {
-                    saveProvider()
-                } label: {
+                Button { saveProvider() } label: {
                     HStack(spacing: 6) {
-                        if isSaving {
-                            ProgressView().controlSize(.small)
-                            Text("Сохраняем...")
-                        } else {
-                            Text(isEditing ? "Сохранить" : "Добавить провайдера")
-                        }
+                        if isSaving { ProgressView().controlSize(.small); Text("Сохраняем...") }
+                        else { Text(isEditing ? "Сохранить" : "Добавить провайдера") }
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -565,17 +710,14 @@ struct AddProviderSheet: View {
                 .keyboardShortcut(.return)
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
+        .padding(.horizontal, 24).padding(.vertical, 16)
     }
 
     // MARK: - Field Section Builder
 
     @ViewBuilder
     private func fieldSection<Content: View>(
-        label: String,
-        icon: String,
-        hint: String,
+        label: String, icon: String, hint: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -606,6 +748,7 @@ struct AddProviderSheet: View {
         } else if let remote = prefilledRemote {
             providerName = remote.name
             baseURL = remote.baseURL
+            // Catalog models come from providers.json — no network fetch needed
             let catalogModels = remote.models.map { rm in
                 AIModel(
                     id: rm.id,
@@ -622,60 +765,51 @@ struct AddProviderSheet: View {
     // MARK: - Select All Toggle
 
     private func toggleSelectAll() {
-        if allFilteredSelected {
-            for m in filteredModels { selectedModelIds.remove(m.id) }
-        } else {
-            for m in filteredModels { selectedModelIds.insert(m.id) }
-        }
+        if allFilteredSelected { for m in filteredModels { selectedModelIds.remove(m.id) } }
+        else { for m in filteredModels { selectedModelIds.insert(m.id) } }
     }
 
     // MARK: - Step 1: Validate Provider
 
     private func validateAndProceed() {
         let trimmedURL = baseURL.trimmingCharacters(in: .whitespaces)
-        guard !trimmedURL.isEmpty else {
-            validationError = "Введите базовый URL."
-            return
-        }
+        guard !trimmedURL.isEmpty else { validationError = "Введите базовый URL."; return }
 
         isValidating = true
         validationError = nil
 
         Task {
-            // Directory mode: check for duplicate host before validating
-            if !isOnboarding && !isEditing, let store = providerStore {
+            // Duplicate host check only for catalog providers.
+            if isCatalog && !isEditing, let store = providerStore {
                 let hostExists = await store.providerHostExists(trimmedURL)
                 if hostExists {
-                    await MainActor.run {
-                        isValidating = false
-                        duplicateHostAlert = true
-                    }
+                    await MainActor.run { isValidating = false; duplicateHostAlert = true }
                     return
                 }
             }
 
+            // For providers that don't require a key — use empty string (Ollama accepts no auth).
+            let reqKey = prefilledRemote?.requiresApiKey ?? true
             let keyToUse: String
-            if isEditing && firstValidKeyValue.isEmpty, let existing = editingProvider,
-               let store = providerStore,
-               let firstKeyId = existing.keys.first?.id {
+            if !reqKey {
+                keyToUse = ""
+            } else if isEditing && firstValidKeyValue.isEmpty, let existing = editingProvider,
+               let store = providerStore, let firstKeyId = existing.keys.first?.id {
                 keyToUse = await store.loadApiKey(for: firstKeyId) ?? ""
             } else {
                 keyToUse = firstValidKeyValue
             }
 
-            guard !keyToUse.isEmpty else {
-                await MainActor.run {
-                    isValidating = false
-                    validationError = "Введите API-ключ."
-                }
+            if reqKey && keyToUse.isEmpty {
+                await MainActor.run { isValidating = false; validationError = "Введите API-ключ." }
                 return
             }
 
-            // Factory picks AnthropicClient or AIClient based on inferred protocol
             let client = AIClientFactory.makeForValidation(
                 baseURL: trimmedURL,
                 apiKey: keyToUse,
-                providerProtocol: inferredProtocol
+                providerProtocol: effectiveProtocol,
+                authScheme: effectiveAuthScheme
             )
 
             do {
@@ -686,7 +820,9 @@ struct AddProviderSheet: View {
                     name: providerName.trimmingCharacters(in: .whitespaces),
                     baseURL: trimmedURL,
                     catalogId: editingProvider?.catalogId ?? prefilledRemote?.id,
-                    providerProtocol: editingProvider?.providerProtocol ?? inferredProtocol,
+                    providerProtocol: effectiveProtocol,
+                    authScheme: effectiveAuthScheme,
+                    origin: editingProvider?.origin ?? effectiveOrigin,
                     keys: editingProvider?.keys ?? [],
                     models: editingProvider?.models ?? []
                 )
@@ -695,7 +831,8 @@ struct AddProviderSheet: View {
                     isValidating = false
                     validatedProvider = provisional
                     withAnimation { step = .models }
-                    if fetchedModels.isEmpty {
+                    // For custom providers only — fetch models if list is empty
+                    if !isCatalog && fetchedModels.isEmpty {
                         fetchModels()
                     }
                 }
@@ -709,7 +846,7 @@ struct AddProviderSheet: View {
         }
     }
 
-    // MARK: - Step 2: Fetch Models
+    // MARK: - Step 2: Fetch Models (Custom providers only)
 
     private func fetchModels() {
         guard let provider = validatedProvider ?? editingProvider.map({
@@ -718,6 +855,7 @@ struct AddProviderSheet: View {
                 baseURL: baseURL.trimmingCharacters(in: .whitespaces),
                 catalogId: $0.catalogId,
                 providerProtocol: $0.providerProtocol,
+                authScheme: $0.authScheme,
                 keys: $0.keys, models: $0.models
             )
         }) else { return }
@@ -726,10 +864,12 @@ struct AddProviderSheet: View {
         fetchError = nil
 
         Task {
+            let reqKey = prefilledRemote?.requiresApiKey ?? true
             let keyToUse: String
-            if isEditing && firstValidKeyValue.isEmpty, let existing = editingProvider,
-               let store = providerStore,
-               let firstKeyId = existing.keys.first?.id {
+            if !reqKey {
+                keyToUse = ""
+            } else if isEditing && firstValidKeyValue.isEmpty, let existing = editingProvider,
+               let store = providerStore, let firstKeyId = existing.keys.first?.id {
                 keyToUse = await store.loadApiKey(for: firstKeyId) ?? ""
             } else {
                 keyToUse = firstValidKeyValue
@@ -738,38 +878,26 @@ struct AddProviderSheet: View {
             let client = AIClientFactory.makeForValidation(
                 baseURL: provider.baseURL,
                 apiKey: keyToUse,
-                providerProtocol: provider.providerProtocol
+                providerProtocol: provider.providerProtocol,
+                authScheme: provider.authScheme
             )
             let modelIds = await client.fetchAvailableModels()
 
             await MainActor.run {
                 isFetchingModels = false
                 if modelIds.isEmpty {
-                    // Only show error if we have no catalog models to fall back on.
-                    // Anthropic has no /v1/models endpoint — catalog models are the source of truth.
                     if fetchedModels.isEmpty {
                         fetchError = "Не удалось загрузить список моделей. Добавьте модели вручную."
                     }
                 } else {
                     let existingModels = fetchedModels
                     fetchedModels = modelIds.map { modelId in
-                        if let existing = existingModels.first(where: { $0.id == modelId }) {
-                            return existing
-                        }
-                        if let existing = provider.models.first(where: { $0.id == modelId }) {
-                            return existing
-                        }
-                        return AIModel(
-                            id: modelId,
-                            name: modelId,
-                            endpoint: "/v1/chat/completions",
-                            providerProtocol: provider.providerProtocol
-                        )
+                        if let existing = existingModels.first(where: { $0.id == modelId }) { return existing }
+                        if let existing = provider.models.first(where: { $0.id == modelId }) { return existing }
+                        return AIModel(id: modelId, name: modelId, endpoint: "/v1/chat/completions", providerProtocol: provider.providerProtocol)
                     }
                     fetchError = nil
-                    if selectedModelIds.isEmpty {
-                        selectedModelIds = Set(modelIds)
-                    }
+                    if selectedModelIds.isEmpty { selectedModelIds = Set(modelIds) }
                 }
             }
         }
@@ -781,11 +909,9 @@ struct AddProviderSheet: View {
         let trimmed = manualModelInput.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
         if !fetchedModels.contains(where: { $0.id == trimmed }) {
-            let proto = validatedProvider?.providerProtocol ?? inferredProtocol
-            // Anthropic models use /v1/messages endpoint
+            let proto = validatedProvider?.providerProtocol ?? effectiveProtocol
             let endpoint = proto == .anthropic ? "/v1/messages" : "/v1/chat/completions"
-            let model = AIModel(id: trimmed, name: trimmed, endpoint: endpoint, providerProtocol: proto)
-            fetchedModels.insert(model, at: 0)
+            fetchedModels.insert(AIModel(id: trimmed, name: trimmed, endpoint: endpoint, providerProtocol: proto), at: 0)
         }
         selectedModelIds.insert(trimmed)
         manualModelInput = ""
@@ -816,36 +942,23 @@ struct AddProviderSheet: View {
                     if let firstKey = finalProvider.keys.first {
                         if !resolvedKeyName.isEmpty {
                             let otherKeys = finalProvider.keys.filter { $0.id != firstKey.id }
-                            let nameCollision = otherKeys.contains(where: {
-                                $0.name.lowercased() == resolvedKeyName.lowercased()
-                            })
-                            if nameCollision {
-                                await MainActor.run {
-                                    isSaving = false
-                                    duplicateKeyNameAlert = true
-                                }
+                            if otherKeys.contains(where: { $0.name.lowercased() == resolvedKeyName.lowercased() }) {
+                                await MainActor.run { isSaving = false; duplicateKeyNameAlert = true }
                                 return
                             }
                         }
-
                         if !trimmedKeyValue.isEmpty {
-                            let otherKeys = finalProvider.keys.filter { $0.id != firstKey.id }
                             var valueCollision = false
-                            for other in otherKeys {
+                            for other in finalProvider.keys.filter({ $0.id != firstKey.id }) {
                                 if let stored = await store.loadApiKey(for: other.id), stored == trimmedKeyValue {
-                                    valueCollision = true
-                                    break
+                                    valueCollision = true; break
                                 }
                             }
                             if valueCollision {
-                                await MainActor.run {
-                                    isSaving = false
-                                    duplicateKeyValueAlert = true
-                                }
+                                await MainActor.run { isSaving = false; duplicateKeyValueAlert = true }
                                 return
                             }
                         }
-
                         var updatedKey = firstKey
                         if !resolvedKeyName.isEmpty { updatedKey.name = resolvedKeyName }
                         try await store.updateKey(
@@ -856,24 +969,17 @@ struct AddProviderSheet: View {
                     }
 
                 } else if isOnboarding {
-                    let validKeys = pendingKeys.filter {
-                        !$0.value.trimmingCharacters(in: .whitespaces).isEmpty
-                    }
+                    let validKeys = pendingKeys.filter { !$0.value.trimmingCharacters(in: .whitespaces).isEmpty }
                     guard let firstKey = validKeys.first else {
-                        await MainActor.run {
-                            isSaving = false
-                            saveError = "Нужен хотя бы один ключ."
-                        }
+                        await MainActor.run { isSaving = false; saveError = "Нужен хотя бы один ключ." }
                         return
                     }
-
                     let providerId = try await store.mergeProvider(
                         finalProvider,
                         keyName: firstKey.name.trimmingCharacters(in: .whitespaces).isEmpty ? "Default" : firstKey.name,
                         keyValue: firstKey.value.trimmingCharacters(in: .whitespaces),
                         models: modelsToSave
                     )
-
                     for key in validKeys.dropFirst() {
                         let name = key.name.trimmingCharacters(in: .whitespaces)
                         let value = key.value.trimmingCharacters(in: .whitespaces)
@@ -886,21 +992,19 @@ struct AddProviderSheet: View {
                     }
 
                 } else {
+                    // Save provider — with or without key depending on requiresApiKey.
                     let trimmedKeyValue = apiKeyValue.trimmingCharacters(in: .whitespaces)
                     let resolvedKeyName = apiKeyName.trimmingCharacters(in: .whitespaces)
-                    let keyName = resolvedKeyName.isEmpty ? "Default" : resolvedKeyName
-                    try await store.addProvider(finalProvider, firstKeyName: keyName, firstKeyValue: trimmedKeyValue)
+                    try await store.addProvider(
+                        finalProvider,
+                        firstKeyName: resolvedKeyName.isEmpty ? "Default" : resolvedKeyName,
+                        firstKeyValue: trimmedKeyValue  // empty string for keyless providers like Ollama
+                    )
                 }
 
-                await MainActor.run {
-                    isSaving = false
-                    onSaved()
-                }
+                await MainActor.run { isSaving = false; onSaved() }
             } catch {
-                await MainActor.run {
-                    isSaving = false
-                    saveError = "Ошибка сохранения: \(error.localizedDescription)"
-                }
+                await MainActor.run { isSaving = false; saveError = "Ошибка сохранения: \(error.localizedDescription)" }
             }
         }
     }
@@ -909,7 +1013,6 @@ struct AddProviderSheet: View {
 // MARK: - PendingKeyRow
 
 private struct PendingKeyRow: View {
-
     @Binding var key: PendingKey
     let canDelete: Bool
     let onDelete: () -> Void
@@ -918,29 +1021,20 @@ private struct PendingKeyRow: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 TextField("Название ключа (напр. «Рабочий»)", text: $key.name)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 180)
-
+                    .textFieldStyle(.roundedBorder).frame(maxWidth: 180)
                 Group {
-                    if key.isVisible {
-                        TextField("sk-...", text: $key.value)
-                    } else {
-                        SecureField("sk-...", text: $key.value)
-                    }
+                    if key.isVisible { TextField("sk-...", text: $key.value) }
+                    else { SecureField("sk-...", text: $key.value) }
                 }
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.body, design: .monospaced))
-
                 Button { key.isVisible.toggle() } label: {
-                    Image(systemName: key.isVisible ? "eye.slash" : "eye")
-                        .foregroundStyle(.secondary)
+                    Image(systemName: key.isVisible ? "eye.slash" : "eye").foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-
                 if canDelete {
                     Button(action: onDelete) {
-                        Image(systemName: "minus.circle.fill")
-                            .foregroundStyle(.red.opacity(0.7))
+                        Image(systemName: "minus.circle.fill").foregroundStyle(.red.opacity(0.7))
                     }
                     .buttonStyle(.plain)
                 }
@@ -954,11 +1048,9 @@ private struct PendingKeyRow: View {
 // MARK: - ModelCheckRow
 
 private struct ModelCheckRow: View {
-
     let model: AIModel
     let isSelected: Bool
     let onToggle: () -> Void
-
     @State private var isHovered = false
 
     var body: some View {
@@ -967,21 +1059,15 @@ private struct ModelCheckRow: View {
                 Image(systemName: isSelected ? "checkmark.square.fill" : "square")
                     .font(.system(size: 16))
                     .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.4))
-
                 Text(model.displayName)
                     .font(.system(size: 13, design: .monospaced))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-
+                    .foregroundStyle(.primary).lineLimit(1)
                 Spacer()
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 10).padding(.vertical, 7)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(isSelected
-                          ? Color.accentColor.opacity(0.07)
-                          : (isHovered ? Color.primary.opacity(0.04) : Color.clear))
+                    .fill(isSelected ? Color.accentColor.opacity(0.07) : (isHovered ? Color.primary.opacity(0.04) : Color.clear))
             )
         }
         .buttonStyle(.plain)
@@ -992,9 +1078,5 @@ private struct ModelCheckRow: View {
 // MARK: - Preview
 
 #Preview {
-    AddProviderSheet(
-        providerStore: nil,
-        onSaved: {},
-        onCancel: {}
-    )
+    AddProviderSheet(providerStore: nil, onSaved: {}, onCancel: {})
 }

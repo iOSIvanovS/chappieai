@@ -96,7 +96,7 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
     public var activeModelName: String?
 
     public init(
-        maxMessagesInContext: Int = 300,
+        maxMessagesInContext: Int = 100,
         isUnlimitedContext: Bool = false,
         activeProviderId: UUID? = nil,
         activeKeyId: UUID? = nil,

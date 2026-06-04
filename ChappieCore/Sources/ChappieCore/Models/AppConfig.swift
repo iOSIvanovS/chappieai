@@ -57,7 +57,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
     /// Default config: 300 messages, 150,000 tokens.
     private init() {
         maxOrchestratorSteps     = 100
-        maxMessagesInContext     = 300
+        maxMessagesInContext     = 100
         tokenBudget              = 300 * 500
         isUnlimitedContext       = false
         requestTimeoutSeconds    = 300

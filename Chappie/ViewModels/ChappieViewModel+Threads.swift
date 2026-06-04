@@ -341,6 +341,11 @@ extension ChappieViewModel {
 
     // MARK: - Settings Update
 
+    /// Saves updated thread settings from ThreadSettingsSheet.
+    ///
+    /// KEY CHANGE POLICY: if newKeyId differs from current activeKeyId for the same provider —
+    /// re-initialize the AI client with the new key so next request uses it immediately.
+    /// Provider and model are preserved unless newProviderId is explicitly passed.
     func updateThreadSettings(
         _ settings: ThreadSettings,
         newTitle: String,
@@ -359,15 +364,31 @@ extension ChappieViewModel {
 
                 if let providerId = newProviderId,
                    let provider = providers.first(where: { $0.id == providerId }) {
+                    // Provider explicitly changed — full switch
                     let model = newModelName.flatMap { $0.isEmpty ? nil : $0 }
                     await switchProvider(provider, keyId: newKeyId, modelName: model, persistSettings: false)
                     updatedSettings.activeProviderId = providerId
                     updatedSettings.activeKeyId = newKeyId
                     updatedSettings.activeModelName = model
                 } else {
+                    // Provider unchanged — preserve provider+model, apply key change if any
                     updatedSettings.activeProviderId = activeThreadSettings.activeProviderId
-                    updatedSettings.activeKeyId = activeThreadSettings.activeKeyId
                     updatedSettings.activeModelName = activeThreadSettings.activeModelName
+
+                    let resolvedKeyId = newKeyId ?? activeThreadSettings.activeKeyId
+                    updatedSettings.activeKeyId = resolvedKeyId
+
+                    // If key changed for the active thread — re-init the AI client immediately
+                    if threadId == activeThread?.id,
+                       resolvedKeyId != activeKeyId,
+                       let provider = activeProvider {
+                        await switchProvider(
+                            provider,
+                            keyId: resolvedKeyId,
+                            modelName: activeModelName,
+                            persistSettings: false
+                        )
+                    }
                 }
 
                 try await store.updateSettings(updatedSettings, forThreadId: threadId)

@@ -15,6 +15,13 @@
 // catalogId links a user-added provider to a RemoteProvider entry (e.g. "openai", "groq").
 // nil means the provider was added manually ("Custom" mode) — no catalog entry.
 // providerProtocol tells the AI client which wire protocol to use (OpenAI vs Anthropic).
+// authScheme tells the client which Authorization header format to use.
+// requiresApiKey = false for local providers (Ollama) — no key needed, empty string passed.
+//
+// ORIGIN:
+// origin = .catalog → added from catalog, deduplication by catalogId is enforced.
+// origin = .custom  → added manually, no deduplication, created freely.
+// Old providers without origin field default to .catalog via decodeIfPresent.
 //
 // MULTI-KEY STRUCTURE:
 // AIProvider — one baseURL + user-defined name + list of APIKey + list of saved AIModel.
@@ -33,6 +40,29 @@ public enum ProviderProtocol: String, Codable, Sendable, CaseIterable {
     case openai
     /// Anthropic native API (/v1/messages)
     case anthropic
+}
+
+// MARK: - AuthScheme
+
+/// HTTP authorization header format used by the provider.
+///
+/// Decoupled from ProviderProtocol so that proxy providers (e.g. AITunnel routing
+/// to Claude via /v1/messages) can use Bearer auth even with Anthropic wire format.
+public enum AuthScheme: String, Codable, Sendable, CaseIterable {
+    /// Authorization: Bearer {key}  — default for OpenAI-compatible providers.
+    case bearer
+    /// x-api-key: {key}             — native Anthropic API only.
+    case xApiKey = "x_api_key"
+}
+
+// MARK: - ProviderOrigin
+
+/// How the provider was added — determines deduplication behavior.
+public enum ProviderOrigin: String, Codable, Sendable {
+    /// Added from catalog — only one instance per catalogId is allowed.
+    case catalog
+    /// Added manually — no deduplication, any number of custom providers allowed.
+    case custom
 }
 
 // MARK: - AIModel
@@ -133,7 +163,6 @@ public struct AIProvider: Codable, Sendable, Identifiable, Equatable, Hashable {
     public var name: String
 
     /// Base URL without path, e.g. "https://api.openai.com".
-    /// For custom providers entered manually this is the full endpoint URL (legacy compat).
     public var baseURL: String
 
     /// Links this provider to a RemoteProvider entry, e.g. "openai", "groq".
@@ -141,8 +170,18 @@ public struct AIProvider: Codable, Sendable, Identifiable, Equatable, Hashable {
     public var catalogId: String?
 
     /// Default wire protocol for this provider.
-    /// Individual models can override this via AIModel.providerProtocol.
     public var providerProtocol: ProviderProtocol
+
+    /// HTTP authorization scheme — Bearer or x-api-key.
+    public var authScheme: AuthScheme
+
+    /// How this provider was added — controls deduplication behavior.
+    /// Old providers without this field default to .catalog via decodeIfPresent.
+    public var origin: ProviderOrigin
+
+    /// Whether an API key is required to use this provider.
+    /// False for local providers like Ollama — key column hidden, empty string passed to client.
+    public var requiresApiKey: Bool
 
     /// Named API keys for this provider.
     public var keys: [APIKey]
@@ -173,6 +212,9 @@ public struct AIProvider: Codable, Sendable, Identifiable, Equatable, Hashable {
         baseURL: String,
         catalogId: String? = nil,
         providerProtocol: ProviderProtocol = .openai,
+        authScheme: AuthScheme? = nil,
+        origin: ProviderOrigin = .catalog,
+        requiresApiKey: Bool = true,
         keys: [APIKey] = [],
         models: [AIModel] = []
     ) {
@@ -181,17 +223,38 @@ public struct AIProvider: Codable, Sendable, Identifiable, Equatable, Hashable {
         self.baseURL = baseURL
         self.catalogId = catalogId
         self.providerProtocol = providerProtocol
+        self.authScheme = authScheme ?? (providerProtocol == .anthropic ? .xApiKey : .bearer)
+        self.origin = origin
+        self.requiresApiKey = requiresApiKey
         self.keys = keys
         self.models = models
     }
 
-    // MARK: - Codable (CodingKeys guard against future renames)
+    // MARK: - Codable
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, keys, models
+        case id, name, keys, models, origin
         case baseURL = "base_url"
         case catalogId = "catalog_id"
         case providerProtocol = "provider_protocol"
+        case authScheme = "auth_scheme"
+        case requiresApiKey = "requires_api_key"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        baseURL = try c.decode(String.self, forKey: .baseURL)
+        catalogId = try c.decodeIfPresent(String.self, forKey: .catalogId)
+        providerProtocol = try c.decodeIfPresent(ProviderProtocol.self, forKey: .providerProtocol) ?? .openai
+        keys = try c.decodeIfPresent([APIKey].self, forKey: .keys) ?? []
+        models = try c.decodeIfPresent([AIModel].self, forKey: .models) ?? []
+        let decodedScheme = try c.decodeIfPresent(AuthScheme.self, forKey: .authScheme)
+        authScheme = decodedScheme ?? (providerProtocol == .anthropic ? .xApiKey : .bearer)
+        origin = try c.decodeIfPresent(ProviderOrigin.self, forKey: .origin) ?? .catalog
+        // Old providers without this field default to true (all existing providers require a key)
+        requiresApiKey = try c.decodeIfPresent(Bool.self, forKey: .requiresApiKey) ?? true
     }
 
     // MARK: - Hashable

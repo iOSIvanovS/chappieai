@@ -12,10 +12,11 @@
 // addFromCatalog() — creates a provider from a RemoteProvider entry.
 //   Converts RemoteModel → AIModel, preserving endpoint + protocol per model.
 //   Duplicate check: by catalogId. If already exists → mergeFromCatalog() instead.
+//   requiresApiKey is copied from RemoteProvider — false for Ollama.
 //
 // CUSTOM FLOW:
 // addProvider() — creates a provider entered manually (catalogId = nil).
-//   Duplicate check: by baseURL host.
+//   No duplicate check for custom providers (origin = .custom).
 //
 // DELETION POLICY:
 // Deletion is ALWAYS allowed — even the last provider, even if threads depend on it.
@@ -87,7 +88,7 @@ public actor AIProviderStore {
         var providers = try getProviders()
         var needsRefresh = false
 
-        for i in providers.indices where providers[i].keys.isEmpty {
+        for i in providers.indices where providers[i].keys.isEmpty && providers[i].requiresApiKey {
             // Old schema: secret stored under provider.id.uuidString — migrate it
             if let secret = keychainLoad(key: providers[i].id.uuidString), !secret.isEmpty {
                 let newKey = APIKey(name: "Default")
@@ -117,10 +118,33 @@ public actor AIProviderStore {
         return try getProviders().first(where: { $0.id == id })
     }
 
+    // MARK: - Sync requiresApiKey from catalog
+
+    /// Called at startup after the remote catalog is fetched.
+    /// Updates requiresApiKey for existing catalog providers whose value changed in the JSON.
+    /// This handles the case where Ollama was added before requires_api_key: false was published.
+    public func syncRequiresApiKey(from remoteProviders: [RemoteProvider]) async throws {
+        let existing = try getProviders()
+        var changed = false
+
+        for remote in remoteProviders {
+            guard let idx = existing.firstIndex(where: { $0.catalogId == remote.id }) else { continue }
+            var provider = existing[idx]
+            guard provider.requiresApiKey != remote.requiresApiKey else { continue }
+
+            provider.requiresApiKey = remote.requiresApiKey
+            try persistProvider(provider)
+            changed = true
+            print("[AIProviderStore] Synced requiresApiKey=\(remote.requiresApiKey) for '\(provider.displayName)'")
+        }
+
+        if changed { try refreshCache() }
+    }
+
     // MARK: - Add Provider (Custom / Manual)
 
-    /// Adds a manually-entered provider (catalogId = nil).
-    /// Duplicate check: by baseURL host — returns existing id if host already present.
+    /// Adds a manually-entered provider (origin = .custom).
+    /// No duplicate check — custom providers are always created freely.
     @discardableResult
     public func addProvider(
         _ provider: AIProvider,
@@ -129,11 +153,14 @@ public actor AIProviderStore {
     ) async throws -> UUID {
         let context = ModelContext(modelContainer)
 
-        let firstKey = APIKey(name: firstKeyName.isEmpty ? "Default" : firstKeyName)
-        saveApiKey(firstKeyValue, for: firstKey.id)
-
         var providerWithKey = provider
-        providerWithKey.keys = [firstKey]
+
+        // Only add key if provider requires one
+        if provider.requiresApiKey {
+            let firstKey = APIKey(name: firstKeyName.isEmpty ? "Default" : firstKeyName)
+            saveApiKey(firstKeyValue, for: firstKey.id)
+            providerWithKey.keys = [firstKey]
+        }
 
         let entity = AIProviderEntity(provider: providerWithKey, isDefault: false)
 
@@ -144,7 +171,7 @@ public actor AIProviderStore {
         try context.save()
         try refreshCache()
 
-        print("[AIProviderStore] Added custom provider '\(providerWithKey.displayName)'")
+        print("[AIProviderStore] Added provider '\(providerWithKey.displayName)'")
         return providerWithKey.id
     }
 
@@ -153,6 +180,7 @@ public actor AIProviderStore {
     /// Creates a new provider from a RemoteProvider catalog entry.
     /// Converts all RemoteModel entries to AIModel (preserving endpoint + protocol).
     /// If a provider with the same catalogId already exists — merges instead.
+    /// requiresApiKey is copied from RemoteProvider (false for Ollama).
     ///
     /// Returns the UUID of the created or updated provider.
     @discardableResult
@@ -178,12 +206,14 @@ public actor AIProviderStore {
         // Build AIModel list from remote catalog
         let allModels = buildModels(from: remote, selectedIds: selectedModelIds)
 
-        // Create the provider
+        // Create the provider — copy requiresApiKey from catalog entry
         let provider = AIProvider(
             name: remote.name,
             baseURL: remote.baseURL,
             catalogId: remote.id,
             providerProtocol: dominantProtocol(in: remote),
+            origin: .catalog,
+            requiresApiKey: remote.requiresApiKey,
             models: allModels
         )
 
@@ -200,21 +230,23 @@ public actor AIProviderStore {
     ) async throws -> UUID {
         var updated = existing
 
-        // Merge key — skip if same value already present
-        let trimmed = keyValue.trimmingCharacters(in: .whitespaces)
-        if !trimmed.isEmpty {
-            var valueExists = false
-            for key in updated.keys {
-                if let stored = keychainLoad(key: key.id.uuidString), stored == trimmed {
-                    valueExists = true
-                    break
+        // Merge key — skip if same value already present or provider doesn't need one
+        if remote.requiresApiKey {
+            let trimmed = keyValue.trimmingCharacters(in: .whitespaces)
+            if !trimmed.isEmpty {
+                var valueExists = false
+                for key in updated.keys {
+                    if let stored = keychainLoad(key: key.id.uuidString), stored == trimmed {
+                        valueExists = true
+                        break
+                    }
                 }
-            }
-            if !valueExists {
-                let resolvedName = resolveKeyName(keyName, existingKeys: updated.keys)
-                let newKey = APIKey(name: resolvedName)
-                saveApiKey(trimmed, for: newKey.id)
-                updated.keys.append(newKey)
+                if !valueExists {
+                    let resolvedName = resolveKeyName(keyName, existingKeys: updated.keys)
+                    let newKey = APIKey(name: resolvedName)
+                    saveApiKey(trimmed, for: newKey.id)
+                    updated.keys.append(newKey)
+                }
             }
         }
 
@@ -234,7 +266,6 @@ public actor AIProviderStore {
     // MARK: - Merge Provider (Onboarding — legacy host-based)
 
     /// Onboarding upsert — matches by baseURL host. Safe to call multiple times.
-    /// Used by the onboarding flow for manual/custom providers.
     @discardableResult
     public func mergeProvider(
         _ incoming: AIProvider,

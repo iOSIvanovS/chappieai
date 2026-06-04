@@ -10,12 +10,12 @@
 //
 // SETTINGS:
 // - Thread name (inline rename)
+// - API key selection (hidden for providers with requiresApiKey=false, e.g. Ollama)
 // - Context depth: slider 100...1000, step 100, default 300
 // - Unlimited context toggle
 //
 // NOTE: Provider + model selection happens ONLY via the "Модель" chip in the chat toolbar.
 // Adding/editing/deleting providers happens ONLY in the provider directory (SettingsView).
-// This sheet intentionally has no provider picker.
 
 import SwiftUI
 import ChappieCore
@@ -35,6 +35,14 @@ struct ThreadSettingsSheet: View {
 
     @State private var draftTitle: String
     @State private var draftSettings: ThreadSettings
+    @State private var draftKeyId: UUID?
+
+    // MARK: - Active provider (resolved from draftSettings)
+
+    private var activeProvider: AIProvider? {
+        guard let id = draftSettings.activeProviderId else { return nil }
+        return providers.first { $0.id == id }
+    }
 
     // MARK: - Init
 
@@ -50,6 +58,7 @@ struct ThreadSettingsSheet: View {
         self.onDismiss = onDismiss
         self._draftTitle = State(initialValue: thread.title)
         self._draftSettings = State(initialValue: thread.settings)
+        self._draftKeyId = State(initialValue: thread.settings.activeKeyId)
     }
 
     // MARK: - Body
@@ -63,6 +72,10 @@ struct ThreadSettingsSheet: View {
                 VStack(alignment: .leading, spacing: 24) {
                     nameSection
                     Divider().padding(.vertical, 2)
+                    if let provider = activeProvider, provider.requiresApiKey {
+                        keySection(provider: provider)
+                        Divider().padding(.vertical, 2)
+                    }
                     contextSection
                 }
                 .padding(20)
@@ -116,6 +129,37 @@ struct ThreadSettingsSheet: View {
             TextField("Название треда", text: $draftTitle)
                 .textFieldStyle(.roundedBorder)
                 .font(.callout)
+        }
+    }
+
+    // MARK: - Key Section
+
+    private func keySection(provider: AIProvider) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionLabel("API-ключ", systemImage: "key")
+
+            if provider.keys.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "key.slash")
+                        .foregroundStyle(.secondary)
+                    Text("Нет ключей — добавьте в справочнике провайдеров")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(10)
+                .background(Color.primary.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                VStack(spacing: 4) {
+                    ForEach(provider.keys) { key in
+                        KeySelectRow(
+                            key: key,
+                            isSelected: draftKeyId == key.id,
+                            onSelect: { draftKeyId = key.id }
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -226,8 +270,9 @@ struct ThreadSettingsSheet: View {
             Button("Сохранить") {
                 let trimmedTitle = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
                 let finalTitle = trimmedTitle.isEmpty ? thread.title : trimmedTitle
-                // Pass nil for provider/key/model — this sheet no longer manages them
-                onSave(finalTitle, draftSettings, nil, nil, nil)
+                var updatedSettings = draftSettings
+                updatedSettings.activeKeyId = draftKeyId
+                onSave(finalTitle, updatedSettings, nil, draftKeyId, nil)
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.return, modifiers: .command)
@@ -277,6 +322,47 @@ struct ThreadSettingsSheet: View {
         formatter.groupingSeparator = " "
         formatter.locale = Locale(identifier: "ru_RU")
         return formatter.string(from: NSNumber(value: n)) ?? "\(n)"
+    }
+}
+
+// MARK: - KeySelectRow
+
+private struct KeySelectRow: View {
+
+    let key: APIKey
+    let isSelected: Bool
+    let onSelect: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 10) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 14))
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.3))
+
+                Text(key.name)
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                    .foregroundStyle(.primary)
+
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(isSelected
+                          ? Color.accentColor.opacity(0.1)
+                          : (isHovered ? Color.primary.opacity(0.04) : Color.clear))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(isSelected ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
     }
 }
 

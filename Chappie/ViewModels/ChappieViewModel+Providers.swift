@@ -16,7 +16,8 @@
 // MULTI-KEY SCHEMA:
 //   Each provider has a list of APIKey entries. Thread settings store activeKeyId.
 //   switchProvider() resolves the key secret from Keychain using activeKeyId.
-//   If activeKeyId is nil or key not found — orchestrator is blocked, banner shown.
+//   If activeKeyId is nil and provider requiresApiKey — orchestrator is blocked, banner shown.
+//   If provider does NOT require a key (e.g. Ollama) — keyId nil is valid, empty string used.
 
 import SwiftUI
 import ChappieCore
@@ -39,9 +40,8 @@ extension ChappieViewModel {
 
     /// Switches the active provider, key, and model for the current thread.
     ///
-    /// Uses AIClientFactory to create the correct client (OpenAI or Anthropic)
-    /// based on model.providerProtocol. Both keyId and modelName MUST be non-nil
-    /// to create an orchestrator. Missing either → blocks orchestrator + shows banner.
+    /// For providers that don't require an API key (e.g. Ollama), keyId may be nil
+    /// and an empty string is passed to the client factory — which is valid for local providers.
     ///
     /// - Parameter persistSettings: When true (default), writes the new provider/key/model
     ///   to the active thread's settings in the DB.
@@ -55,16 +55,18 @@ extension ChappieViewModel {
         let provStore = store ?? self.providerStore
         guard let provStore else { return }
 
-        // Both key and model required — block orchestrator if either is missing
-        guard let resolvedKeyId = keyId,
-              let modelId = modelName, !modelId.isEmpty,
-              let model = provider.models.first(where: { $0.id == modelId }),
-              let apiKey = await provStore.loadApiKey(for: resolvedKeyId),
-              !apiKey.isEmpty else {
-            await applyProviderWithoutModel(provider, from: provStore)
+        // Resolve model — required regardless of key
+        // Always look up the freshest provider from the in-memory list to avoid stale model list
+        let freshProvider = providers.first(where: { $0.id == provider.id }) ?? provider
+        print("[ChappieViewModel] switchProvider: '\(freshProvider.displayName)' requiresApiKey=\(freshProvider.requiresApiKey) modelName=\(modelName ?? "nil") models=\(freshProvider.models.map(\.id))")
+
+        guard let modelId = modelName, !modelId.isEmpty,
+              let model = freshProvider.models.first(where: { $0.id == modelId }) else {
+            print("[ChappieViewModel] switchProvider: model '\(modelName ?? "nil")' not found in provider '\(freshProvider.displayName)' — blocking orchestrator")
+            await applyProviderWithoutModel(freshProvider, from: provStore)
             if persistSettings, activeThread != nil {
                 var settings = activeThreadSettings
-                settings.activeProviderId = provider.id
+                settings.activeProviderId = freshProvider.id
                 settings.activeKeyId = keyId
                 settings.activeModelName = modelName?.isEmpty == false ? modelName : nil
                 activeThreadSettings = settings
@@ -75,13 +77,38 @@ extension ChappieViewModel {
             return
         }
 
+        // Resolve API key — required only if provider.requiresApiKey
+        let apiKey: String
+        if freshProvider.requiresApiKey {
+            guard let resolvedKeyId = keyId,
+                  let loadedKey = await provStore.loadApiKey(for: resolvedKeyId),
+                  !loadedKey.isEmpty else {
+                await applyProviderWithoutModel(freshProvider, from: provStore)
+                if persistSettings, activeThread != nil {
+                    var settings = activeThreadSettings
+                    settings.activeProviderId = freshProvider.id
+                    settings.activeKeyId = keyId
+                    settings.activeModelName = modelId
+                    activeThreadSettings = settings
+                    if let threadId = activeThread?.id, let tStore = threadStore {
+                        try? await tStore.updateSettings(settings, forThreadId: threadId)
+                    }
+                }
+                return
+            }
+            apiKey = loadedKey
+        } else {
+            // Local provider (e.g. Ollama) — no key needed
+            apiKey = ""
+        }
+
         // Factory picks AIClient or AnthropicClient based on model.providerProtocol
-        let client = AIClientFactory.make(for: provider, apiKey: apiKey, model: model)
+        let client = AIClientFactory.make(for: freshProvider, apiKey: apiKey, model: model)
         self.aiClient = client
-        self.activeProvider = provider
-        self.activeKeyId = resolvedKeyId
+        self.activeProvider = freshProvider
+        self.activeKeyId = keyId
         self.activeModelName = modelId
-        self.currentBalance = loadBalance(for: provider.id)
+        self.currentBalance = loadBalance(for: freshProvider.id)
 
         if let ts = toolService, let fs = fileSystem, let mm = memoryManager {
             self.orchestrator = AIOrchestrator(aiClient: client, toolService: ts, fileSystem: fs, memoryManager: mm)
@@ -89,8 +116,8 @@ extension ChappieViewModel {
 
         if persistSettings, activeThread != nil {
             var settings = activeThreadSettings
-            settings.activeProviderId = provider.id
-            settings.activeKeyId = resolvedKeyId
+            settings.activeProviderId = freshProvider.id
+            settings.activeKeyId = keyId
             settings.activeModelName = modelId
             activeThreadSettings = settings
             if let threadId = activeThread?.id, let tStore = threadStore {
@@ -98,7 +125,7 @@ extension ChappieViewModel {
             }
         }
 
-        print("[ChappieViewModel] Switched → \(provider.displayName) / \(model.providerProtocol) / key: \(resolvedKeyId) / model: \(modelId)")
+        print("[ChappieViewModel] Switched → \(freshProvider.displayName) / \(model.providerProtocol) / key: \(keyId?.uuidString ?? "none") / model: \(modelId)")
     }
 
     func switchProvider(id: UUID) {
@@ -208,7 +235,7 @@ extension ChappieViewModel {
                 )
                 print("[ChappieViewModel] User name saved: \(trimmed)")
             } catch {
-                print("[ChappieViewModel] Failed to save user name: \(error)")
+                print("[ChappieViewModel] Failed to load user name: \(error)")
             }
         }
     }

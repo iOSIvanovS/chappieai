@@ -58,7 +58,6 @@ struct ProvidersSettingsView: View {
             }
         }
         .frame(width: 560, height: 480)
-        // Opens catalog picker → which then opens AddProviderSheet internally
         .sheet(isPresented: $showAddProvider) {
             CatalogPickerSheet(
                 providerStore: viewModel.providerStore,
@@ -89,7 +88,6 @@ struct ProvidersSettingsView: View {
     private var providerListView: some View {
         VStack(alignment: .leading, spacing: 0) {
 
-            // Header
             HStack {
                 Image(systemName: "cpu")
                     .font(.title2)
@@ -118,7 +116,6 @@ struct ProvidersSettingsView: View {
 
             Divider()
 
-            // Footer
             HStack {
                 Button {
                     showAddProvider = true
@@ -182,12 +179,7 @@ struct ProvidersSettingsView: View {
 
     private func deleteProvider(id: UUID) {
         guard let store = viewModel.providerStore else { return }
-
-        // Synchronously clear aiClient/orchestrator BEFORE the async delete.
-        // WHY: reloadProviders() spawns a Task — there is a race window where
-        // send() can fire and find a non-nil orchestrator pointing at the deleted provider.
         viewModel.invalidateProviderIfDeleted(id: id)
-
         Task {
             do {
                 try await store.deleteProvider(id: id)
@@ -213,8 +205,20 @@ private struct ProviderListRow: View {
         HStack(spacing: 12) {
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(provider.displayName)
-                    .font(.system(size: 13, weight: .semibold))
+                HStack(spacing: 6) {
+                    Text(provider.displayName)
+                        .font(.system(size: 13, weight: .semibold))
+
+                    // Custom badge — clearly marks manually added providers
+                    if provider.origin == .custom {
+                        Text("Custom")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.12), in: Capsule())
+                    }
+                }
 
                 HStack(spacing: 6) {
                     Text(provider.displayHost)
@@ -239,7 +243,6 @@ private struct ProviderListRow: View {
 
             Spacer()
 
-            // Delete button — visible on hover
             Button(action: onDelete) {
                 Image(systemName: "trash")
                     .font(.system(size: 12))
@@ -289,6 +292,9 @@ struct ProviderDetailView: View {
     // MARK: - State
 
     @State private var currentProvider: AIProvider
+    // Explicit arrays for models/keys — forces SwiftUI to re-render on mutation
+    @State private var displayedModels: [AIModel]
+    @State private var displayedKeys: [APIKey]
     @State private var showEditProvider: Bool = false
     @State private var showAddKey: Bool = false
     @State private var editingKey: APIKey? = nil
@@ -302,6 +308,8 @@ struct ProviderDetailView: View {
         self.viewModel = viewModel
         self.onBack = onBack
         self._currentProvider = State(initialValue: provider)
+        self._displayedModels = State(initialValue: provider.models)
+        self._displayedKeys = State(initialValue: provider.keys)
     }
 
     // MARK: - Body
@@ -309,7 +317,6 @@ struct ProviderDetailView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
 
-            // Header with back button
             HStack {
                 Button(action: onBack) {
                     HStack(spacing: 4) {
@@ -337,7 +344,6 @@ struct ProviderDetailView: View {
 
             Divider()
 
-            // Provider info card
             providerInfoCard
                 .padding(.vertical, 12)
 
@@ -366,7 +372,6 @@ struct ProviderDetailView: View {
                     .padding(.vertical, 8)
             }
         }
-        // Edit mode uses AddProviderSheet directly (no catalog picker needed for editing)
         .sheet(isPresented: $showEditProvider) {
             AddProviderSheet(
                 providerStore: viewModel.providerStore,
@@ -408,8 +413,9 @@ struct ProviderDetailView: View {
         .sheet(isPresented: $showAddModel) {
             AddModelSheet(
                 provider: currentProvider,
-                existingModels: currentProvider.models,
+                existingModels: displayedModels,
                 providerStore: viewModel.providerStore,
+                remoteService: viewModel.providersRemoteService,
                 onSaved: { newModels in
                     showAddModel = false
                     addModels(newModels)
@@ -456,12 +462,20 @@ struct ProviderDetailView: View {
                     Text(currentProvider.displayName)
                         .font(.system(size: 15, weight: .semibold))
 
-                    // Catalog badge
                     if currentProvider.isFromCatalog {
                         Image(systemName: "checkmark.seal.fill")
                             .font(.system(size: 11))
                             .foregroundStyle(Color.accentColor.opacity(0.7))
                             .help("Из каталога провайдеров")
+                    }
+
+                    if currentProvider.origin == .custom {
+                        Text("Custom")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.12), in: Capsule())
                     }
                 }
 
@@ -486,7 +500,7 @@ struct ProviderDetailView: View {
             HStack {
                 Text("Ключи")
                     .font(.headline)
-                Text("(\(currentProvider.keys.count))")
+                Text("(\(displayedKeys.count))")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -497,7 +511,7 @@ struct ProviderDetailView: View {
                 .buttonStyle(.bordered)
             }
 
-            if currentProvider.keys.isEmpty {
+            if displayedKeys.isEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
@@ -509,7 +523,7 @@ struct ProviderDetailView: View {
                 .background(Color.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
             } else {
                 VStack(spacing: 2) {
-                    ForEach(currentProvider.keys) { key in
+                    ForEach(displayedKeys) { key in
                         KeyRow(
                             key: key,
                             onEdit: { editingKey = key },
@@ -530,7 +544,7 @@ struct ProviderDetailView: View {
             HStack {
                 Text("Модели")
                     .font(.headline)
-                Text("(\(currentProvider.models.count))")
+                Text("(\(displayedModels.count))")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -541,7 +555,7 @@ struct ProviderDetailView: View {
                 .buttonStyle(.bordered)
             }
 
-            if currentProvider.models.isEmpty {
+            if displayedModels.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "square.stack.3d.up.slash")
                         .font(.system(size: 28))
@@ -554,7 +568,7 @@ struct ProviderDetailView: View {
                 .padding(.vertical, 20)
             } else {
                 VStack(spacing: 2) {
-                    ForEach(currentProvider.models) { model in
+                    ForEach(displayedModels) { model in
                         ModelRow(
                             model: model,
                             onDelete: { deleteModelId = model.id }
@@ -612,9 +626,12 @@ struct ProviderDetailView: View {
         }
     }
 
+    // Refresh currentProvider + explicitly update displayed arrays to trigger re-render
     private func refreshCurrentProvider() {
         if let updated = viewModel.providers.first(where: { $0.id == currentProvider.id }) {
             currentProvider = updated
+            displayedModels = updated.models
+            displayedKeys = updated.keys
         }
     }
 }

@@ -9,12 +9,13 @@
 //
 // JSON SHAPE:
 // {
-//   "meta": { "version": "1.0", "updated_at": "...", "providers_count": 10, "models_count": 209 },
+//   "meta": { "version": "1.0", "updated_at": "...", "providers_count": 10, "models_count": 211 },
 //   "providers": [
 //     {
 //       "id": "openai",
 //       "name": "OpenAI",
 //       "base_url": "https://api.openai.com",
+//       "requires_api_key": true,   // optional, defaults to true
 //       "models": [
 //         { "id": "gpt-4o", "name": "GPT-4o", "endpoint": "/v1/chat/completions", "protocol": "openai" }
 //       ]
@@ -59,16 +60,37 @@ public struct RemoteProvider: Codable, Sendable, Identifiable {
     public let name: String
     /// Base URL without path, e.g. "https://api.openai.com".
     public let baseURL: String
+    /// Whether an API key is required. Defaults to true. False for local providers like Ollama.
+    public let requiresApiKey: Bool
     /// All models offered by this provider.
     public let models: [RemoteModel]
 
     private enum CodingKeys: String, CodingKey {
         case id, name, models
         case baseURL = "base_url"
+        case requiresApiKey = "requires_api_key"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        baseURL = try container.decode(String.self, forKey: .baseURL)
+        // Default to true — all existing providers require a key
+        requiresApiKey = try container.decodeIfPresent(Bool.self, forKey: .requiresApiKey) ?? true
+        models = try container.decode([RemoteModel].self, forKey: .models)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(baseURL, forKey: .baseURL)
+        try container.encode(requiresApiKey, forKey: .requiresApiKey)
+        try container.encode(models, forKey: .models)
     }
 
     /// Convenience: full endpoint for the first model (or a sensible default).
-    /// Used when constructing an AIProvider endpoint for display/validation.
     public var defaultEndpoint: String {
         guard let first = models.first else {
             return baseURL + "/v1/chat/completions"
@@ -77,7 +99,6 @@ public struct RemoteProvider: Codable, Sendable, Identifiable {
     }
 
     /// All unique full endpoint URLs across models of this provider.
-    /// Most providers have one endpoint; some (Groq) use a non-standard path.
     public var uniqueEndpoints: [String] {
         var seen = Set<String>()
         return models.compactMap { model in

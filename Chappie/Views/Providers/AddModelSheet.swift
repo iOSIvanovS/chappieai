@@ -4,19 +4,18 @@
 // Reusable sheet for adding models to a provider.
 // Used in: ProviderDetailView (settings), AddProviderSheet step 2.
 //
-// FLOW:
-//   1. Sheet opens — auto-fetches model list from provider endpoint.
-//   2. User selects from the list and/or types names manually.
-//   3. On confirm — returns the list of new AIModel entries to the caller.
-//      Caller is responsible for deduplication against existing models.
+// FLOW (catalog provider):
+//   1. Sheet opens — loads models from remote catalog via ProvidersRemoteService (no network to provider).
+//   2. User selects which catalog models to add.
+//   3. Manual input still available for models not in catalog.
+//
+// FLOW (custom provider):
+//   1. Sheet opens — shows empty list.
+//   2. User taps "Загрузить список" to fetch from provider endpoint, or adds manually.
 //
 // DEDUPLICATION:
 //   existingModels are shown as already-added (greyed out, not selectable).
 //   Only new models can be selected and returned.
-//
-// MANUAL INPUT:
-//   User can type any model ID — it appears at the top as a custom entry.
-//   Manual entries get endpoint "/v1/chat/completions" and protocol "openai" by default.
 
 import SwiftUI
 import ChappieCore
@@ -30,28 +29,34 @@ struct AddModelSheet: View {
     let provider: AIProvider
     let existingModels: [AIModel]
     let providerStore: AIProviderStore?
-    let onSaved: ([AIModel]) -> Void    // New models only — caller deduplicates
+    let remoteService: ProvidersRemoteService?
+    let onSaved: ([AIModel]) -> Void
     let onCancel: () -> Void
 
     // MARK: - State
 
+    @State private var catalogModels: [AIModel] = []
     @State private var fetchedModels: [AIModel] = []
     @State private var manualModels: [AIModel] = []
     @State private var selectedModelIds: Set<String> = []
     @State private var manualInput: String = ""
     @State private var searchText: String = ""
-    @State private var isFetching: Bool = false
-    @State private var fetchError: String? = nil
+    @State private var isLoading: Bool = false
+    @State private var loadError: String? = nil
     @State private var isSaving: Bool = false
     @State private var saveError: String? = nil
 
     // MARK: - Computed
 
+    /// True if provider comes from catalog — use catalog as model source.
+    private var isCatalog: Bool { provider.catalogId != nil }
+
     private var existingIds: Set<String> { Set(existingModels.map { $0.id }) }
 
     private var allModels: [AIModel] {
         var result = manualModels
-        for m in fetchedModels where !result.contains(where: { $0.id == m.id }) {
+        let source = isCatalog ? catalogModels : fetchedModels
+        for m in source where !result.contains(where: { $0.id == m.id }) {
             result.append(m)
         }
         return result
@@ -103,38 +108,60 @@ struct AddModelSheet: View {
 
             Divider()
 
-            // Fetch controls
-            HStack(spacing: 12) {
-                Button { fetchModels() } label: {
-                    HStack(spacing: 6) {
-                        if isFetching {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Image(systemName: "arrow.clockwise")
+            // Load controls — only for custom providers
+            if !isCatalog {
+                HStack(spacing: 12) {
+                    Button { fetchFromProvider() } label: {
+                        HStack(spacing: 6) {
+                            if isLoading {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                            Text(isLoading ? "Загружаем..." : "Загрузить список")
                         }
-                        Text(isFetching ? "Загружаем..." : "Загрузить список")
                     }
-                }
-                .buttonStyle(.bordered)
-                .disabled(isFetching)
+                    .buttonStyle(.bordered)
+                    .disabled(isLoading)
 
-                if !allModels.isEmpty {
-                    Text("\(allModels.count) моделей")
+                    if !allModels.isEmpty {
+                        Text("\(allModels.count) моделей")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Text("Выбрано: \(selectedModelIds.count)")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(selectedModelIds.isEmpty ? .orange : .secondary)
                 }
-
-                Spacer()
-
-                Text("Выбрано: \(selectedModelIds.count)")
-                    .font(.caption)
-                    .foregroundStyle(selectedModelIds.isEmpty ? .orange : .secondary)
+                .padding(.horizontal, 24)
+                .padding(.top, 16)
+                .padding(.bottom, 8)
+            } else {
+                HStack {
+                    if isLoading {
+                        ProgressView().controlSize(.small)
+                        Text("Загружаем из каталога...")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("\(allModels.count) моделей в каталоге")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text("Выбрано: \(selectedModelIds.count)")
+                        .font(.caption)
+                        .foregroundStyle(selectedModelIds.isEmpty ? .orange : .secondary)
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 16)
+                .padding(.bottom, 8)
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 16)
-            .padding(.bottom, 8)
 
-            if let err = fetchError {
+            if let err = loadError {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                     Text(err).font(.caption).foregroundStyle(.orange)
@@ -192,22 +219,24 @@ struct AddModelSheet: View {
             }
 
             // Model list
-            if allModels.isEmpty {
+            if allModels.isEmpty && !isLoading {
                 VStack(spacing: 8) {
                     Image(systemName: "cpu")
                         .font(.system(size: 32))
                         .foregroundStyle(.secondary.opacity(0.4))
-                    Text("Нет загруженных моделей")
+                    Text("Нет моделей")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    Text("Загрузите список выше или добавьте модель вручную")
+                    Text(isCatalog
+                         ? "Модели не найдены в каталоге. Добавьте вручную."
+                         : "Загрузите список выше или добавьте модель вручную")
                         .font(.caption)
                         .foregroundStyle(.secondary.opacity(0.7))
                         .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 32)
-            } else if filteredModels.isEmpty {
+            } else if filteredModels.isEmpty && !isLoading {
                 VStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 28))
@@ -248,7 +277,7 @@ struct AddModelSheet: View {
 
             Divider()
 
-            // Manual input — creates a basic OpenAI-compatible model entry
+            // Manual input
             HStack(spacing: 8) {
                 Image(systemName: "keyboard")
                     .foregroundStyle(.secondary)
@@ -302,15 +331,86 @@ struct AddModelSheet: View {
         }
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
-        .onAppear { fetchModels() }
+        .onAppear { loadModels() }
     }
 
-    // MARK: - Fetch Models
+    // MARK: - Load Models
 
-    private func fetchModels() {
+    private func loadModels() {
+        if isCatalog {
+            loadFromCatalog()
+        }
+        // Custom providers: don't auto-fetch — user taps button explicitly
+    }
+
+    /// Load models from remote catalog for catalog-linked providers.
+    private func loadFromCatalog() {
+        guard let catalogId = provider.catalogId,
+              let service = remoteService else { return }
+
+        isLoading = true
+        loadError = nil
+
+        Task {
+            // Catalog should already be cached from app launch fetch
+            if let remote = await service.findProvider(byCatalogId: catalogId) {
+                let models = remote.models.map { rm in
+                    AIModel(
+                        id: rm.id,
+                        name: rm.name,
+                        endpoint: rm.endpoint,
+                        providerProtocol: rm.protocol == "anthropic" ? .anthropic : .openai
+                    )
+                }
+                await MainActor.run {
+                    catalogModels = models
+                    isLoading = false
+                    // Auto-select all non-existing models
+                    for m in models where !existingIds.contains(m.id) {
+                        selectedModelIds.insert(m.id)
+                    }
+                }
+            } else {
+                // Catalog not cached yet — fetch it
+                do {
+                    let catalog = try await service.fetchCatalog()
+                    if let remote = catalog.providers.first(where: { $0.id == catalogId }) {
+                        let models = remote.models.map { rm in
+                            AIModel(
+                                id: rm.id,
+                                name: rm.name,
+                                endpoint: rm.endpoint,
+                                providerProtocol: rm.protocol == "anthropic" ? .anthropic : .openai
+                            )
+                        }
+                        await MainActor.run {
+                            catalogModels = models
+                            isLoading = false
+                            for m in models where !existingIds.contains(m.id) {
+                                selectedModelIds.insert(m.id)
+                            }
+                        }
+                    } else {
+                        await MainActor.run {
+                            isLoading = false
+                            loadError = "Провайдер не найден в каталоге. Добавьте модели вручную."
+                        }
+                    }
+                } catch {
+                    await MainActor.run {
+                        isLoading = false
+                        loadError = "Не удалось загрузить каталог: \(error.localizedDescription)"
+                    }
+                }
+            }
+        }
+    }
+
+    /// Fetch models from provider endpoint — only for custom providers.
+    private func fetchFromProvider() {
         guard let store = providerStore else { return }
-        isFetching = true
-        fetchError = nil
+        isLoading = true
+        loadError = nil
 
         Task {
             let keySecret: String
@@ -322,29 +422,29 @@ struct AddModelSheet: View {
 
             guard !keySecret.isEmpty else {
                 await MainActor.run {
-                    isFetching = false
-                    fetchError = "Нет ключей для этого провайдера."
+                    isLoading = false
+                    loadError = "Нет ключей для этого провайдера."
                 }
                 return
             }
 
-            // Use first model's endpoint or default chat endpoint for the /models discovery call
-            let discoveryEndpoint = provider.baseURL + "/v1/models"
-            let client = AIClient(endpoint: discoveryEndpoint, apiKey: keySecret, modelName: "")
+            let client = AIClientFactory.makeForValidation(
+                baseURL: provider.baseURL,
+                apiKey: keySecret,
+                providerProtocol: provider.providerProtocol,
+                authScheme: provider.authScheme
+            )
             let modelIds = await client.fetchAvailableModels()
 
             await MainActor.run {
-                isFetching = false
+                isLoading = false
                 if modelIds.isEmpty {
-                    fetchError = "Не удалось загрузить список. Добавьте модели вручную."
+                    loadError = "Не удалось загрузить список. Добавьте модели вручную."
                 } else {
-                    // Build AIModel entries: use catalog data if provider has models, else defaults
                     fetchedModels = modelIds.map { modelId in
-                        // Try to find matching entry in provider's existing catalog models
                         if let existing = provider.models.first(where: { $0.id == modelId }) {
                             return existing
                         }
-                        // Default: OpenAI-compatible chat endpoint
                         return AIModel(
                             id: modelId,
                             name: modelId,
@@ -352,8 +452,6 @@ struct AddModelSheet: View {
                             providerProtocol: provider.providerProtocol
                         )
                     }
-                    fetchError = nil
-                    // Auto-select all new (non-existing) models
                     for m in fetchedModels where !existingIds.contains(m.id) {
                         selectedModelIds.insert(m.id)
                     }
@@ -367,12 +465,12 @@ struct AddModelSheet: View {
     private func addManual() {
         let trimmed = manualInput.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
-        if !fetchedModels.contains(where: { $0.id == trimmed }),
-           !manualModels.contains(where: { $0.id == trimmed }) {
+        let allExisting = catalogModels + fetchedModels + manualModels
+        if !allExisting.contains(where: { $0.id == trimmed }) {
             let model = AIModel(
                 id: trimmed,
                 name: trimmed,
-                endpoint: "/v1/chat/completions",
+                endpoint: provider.providerProtocol == .anthropic ? "/v1/messages" : "/v1/chat/completions",
                 providerProtocol: provider.providerProtocol
             )
             manualModels.insert(model, at: 0)

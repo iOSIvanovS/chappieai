@@ -5,17 +5,27 @@
 // Implements AIClientProtocol — works with any provider that follows the
 // OpenAI chat completions API (/v1/chat/completions).
 //
-// STALL-WATCHDOG (STALL-WATCHDOG):
+// STALL-WATCHDOG:
 // streamRequestWithTools() launches a child Task for the stream loop.
-// StallWatchdog (StallWatchdog.swift) monitors token arrival. If no token arrives
-// within stallTimeout seconds — it cancels the child Task.
-// The outer function distinguishes stall from user-cancel via StallWatchdog.isStalled
-// and throws StallError so AIOrchestrator can perform a continuation retry.
+// StallWatchdog monitors token arrival. If no token arrives within stallTimeout
+// seconds — it cancels the child Task and throws StallError.
 //
-// CANCEL FIX (CANCEL-FIX):
+// CANCEL FIX:
 // asyncBytes.lines does NOT respect cooperative Swift cancellation while waiting for
-// server bytes. Fix: check Task.isCancelled on every iteration. On user cancel →
-// CancellationError propagates cleanly up to ChappieViewModel+Send.swift.
+// server bytes. Fix: check Task.isCancelled on every iteration.
+//
+// AUTH SCHEME:
+// Supports both Bearer and x-api-key auth headers.
+// Controlled by AuthScheme passed at init — allows OpenAI-format body with x-api-key
+// or any other combination needed by proxy providers.
+//
+// URL DESIGN:
+// Two inits exist to avoid double-path bugs:
+//   init(endpoint:) — for chat requests. baseURL is derived by stripping the path.
+//   init(baseURL:)  — for discovery/validation. endpointURL = baseURL + /v1/chat/completions.
+// fetchAvailableModels and validateProvider always use baseURL.appendingPathComponent("v1/models").
+// This means callers must pass the correct base (e.g. "https://openrouter.ai/api"),
+// NOT the full models URL.
 
 import Foundation
 
@@ -48,19 +58,27 @@ public struct AIClient: Sendable, AIClientProtocol {
     /// Full chat completions endpoint URL, e.g. "https://api.openai.com/v1/chat/completions"
     private let endpointURL: URL
 
-    /// Base URL for auxiliary requests like /models (scheme+host only)
+    /// Base URL for auxiliary requests — scheme+host+prefix, e.g. "https://openrouter.ai/api"
+    /// fetchAvailableModels appends "/v1/models" to this, validateProvider does the same.
     private let baseURL: URL
 
     private let apiKey: String
     private let modelName: String
+    private let authScheme: AuthScheme
     private let urlSession: URLSession
 
-    // MARK: - Init
+    // MARK: - Init (from chat endpoint)
 
-    public init(endpoint: String, apiKey: String, modelName: String) {
+    /// Use when you have the full chat endpoint URL.
+    /// baseURL is derived by stripping the path — works for simple providers (OpenAI, AITunnel).
+    /// For providers with path prefixes (OpenRouter: /api/v1/...) use init(baseURL:) instead.
+    public init(endpoint: String, apiKey: String, modelName: String, authScheme: AuthScheme = .bearer) {
         self.endpointURL = URL(string: endpoint) ?? URL(string: "https://api.openai.com/v1/chat/completions")!
+        self.apiKey = apiKey
+        self.modelName = modelName
+        self.authScheme = authScheme
 
-        // Derive base URL: strip path to get scheme+host
+        // Derive base URL: strip path to get scheme+host only
         if let url = URL(string: endpoint), let scheme = url.scheme, let host = url.host {
             let port = url.port.map { ":\($0)" } ?? ""
             self.baseURL = URL(string: "\(scheme)://\(host)\(port)") ?? url
@@ -68,8 +86,24 @@ public struct AIClient: Sendable, AIClientProtocol {
             self.baseURL = self.endpointURL
         }
 
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = AppConfig.shared.requestTimeoutSeconds
+        config.timeoutIntervalForResource = AppConfig.shared.requestTimeoutSeconds
+        self.urlSession = URLSession(configuration: config)
+    }
+
+    // MARK: - Init (from base URL)
+
+    /// Use for discovery/validation when you know the provider's base URL (e.g. "https://openrouter.ai/api").
+    /// endpointURL = baseURL + /v1/chat/completions.
+    /// fetchAvailableModels and validateProvider append /v1/models to baseURL directly — no double-path.
+    public init(baseURL: String, apiKey: String, modelName: String, authScheme: AuthScheme = .bearer) {
+        let base = URL(string: baseURL) ?? URL(string: "https://api.openai.com")!
+        self.baseURL = base
+        self.endpointURL = base.appendingPathComponent("v1/chat/completions")
         self.apiKey = apiKey
         self.modelName = modelName
+        self.authScheme = authScheme
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = AppConfig.shared.requestTimeoutSeconds
@@ -79,13 +113,11 @@ public struct AIClient: Sendable, AIClientProtocol {
 
     // MARK: - AIClientProtocol: fetchAvailableModels
 
-    /// Fetches available model IDs from GET {baseURL}/v1/models.
-    /// Returns empty array if the endpoint doesn't support it or request fails.
     public func fetchAvailableModels() async -> [String] {
         let modelsURL = baseURL.appendingPathComponent("v1/models")
         var request = URLRequest(url: modelsURL)
         request.httpMethod = "GET"
-        request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        applyAuth(to: &request)
         request.timeoutInterval = 15
 
         do {
@@ -108,15 +140,11 @@ public struct AIClient: Sendable, AIClientProtocol {
 
     // MARK: - AIClientProtocol: validateProvider
 
-    /// Validates endpoint + API key via GET /v1/models (no model name required).
-    ///
-    /// Strategy: 401/403 → bad key; any other response (200, 404, 500) → reachable.
-    /// Used in AddProviderSheet step 1 before models are selected.
     public func validateProvider() async throws {
         let modelsURL = baseURL.appendingPathComponent("v1/models")
         var req = URLRequest(url: modelsURL)
         req.httpMethod = "GET"
-        req.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        applyAuth(to: &req)
         req.timeoutInterval = 15
 
         do {
@@ -136,7 +164,6 @@ public struct AIClient: Sendable, AIClientProtocol {
 
     // MARK: - AIClientProtocol: validateConnection
 
-    /// Sends a minimal test request to validate endpoint + key + model.
     public func validateConnection() async throws {
         let body = AITunnelRequest(
             model: modelName,
@@ -153,8 +180,6 @@ public struct AIClient: Sendable, AIClientProtocol {
 
     // MARK: - AIClientProtocol: streamRequestWithTools
 
-    /// Sends a streaming request with tool call support.
-    /// Returns AIStreamResult with accumulated text + tool calls + cost info.
     public func streamRequestWithTools(
         systemPrompt: String,
         chatHistory: [AIMessage],
@@ -286,7 +311,7 @@ public struct AIClient: Sendable, AIClientProtocol {
         )
     }
 
-    // MARK: - Non-streaming (fallback)
+    // MARK: - Non-streaming
 
     public func sendRequest(
         systemPrompt: String,
@@ -336,6 +361,18 @@ public struct AIClient: Sendable, AIClientProtocol {
         }
         let getUsage: @Sendable () async -> (cost: Double?, balance: Double?) = { await usageBox.get() }
         return (stream, getUsage)
+    }
+
+    // MARK: - Private: Auth Header
+
+    /// Applies the correct authorization header based on authScheme.
+    private func applyAuth(to request: inout URLRequest) {
+        switch authScheme {
+        case .bearer:
+            request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        case .xApiKey:
+            request.addValue(apiKey, forHTTPHeaderField: "x-api-key")
+        }
     }
 
     // MARK: - Private: Message Building
@@ -404,7 +441,7 @@ public struct AIClient: Sendable, AIClientProtocol {
         var request = URLRequest(url: endpointURL)
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        applyAuth(to: &request)
         request.timeoutInterval = AppConfig.shared.requestTimeoutSeconds
         do {
             request.httpBody = try JSONEncoder().encode(body)

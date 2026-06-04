@@ -9,15 +9,23 @@
 // - Tool results: role "user" with content array of type "tool_result"
 // - Tool calls: content array blocks of type "tool_use" (not delta.tool_calls)
 // - Streaming: event: content_block_delta / event: message_delta (not data: {...})
-// - Auth header: x-api-key (not Authorization: Bearer)
-// - Required header: anthropic-version: 2023-06-01
+// - Default auth: x-api-key header + anthropic-version header
 // - max_tokens is REQUIRED (no default)
 // - No /v1/models endpoint — fetchAvailableModels() returns []
+//
+// AUTH SCHEME:
+// By default uses x-api-key (native Anthropic). Can be overridden to Bearer
+// for proxy providers (e.g. AITunnel routing to Claude via /v1/messages).
 //
 // TOOL CALL STREAMING:
 // Anthropic streams tool calls as content_block_start (type=tool_use, id, name)
 // followed by content_block_delta (input_json_delta with partial JSON).
 // We accumulate them by content block index, same logic as OpenAI.
+//
+// BALANCE / COST:
+// Native Anthropic does not return balance or cost_rub — those are AITunnel extensions.
+// AnthropicUsage decodes them as optional so proxy providers (AITunnel /v1/messages)
+// can return billing info through the same client.
 
 import Foundation
 
@@ -30,6 +38,7 @@ public struct AnthropicClient: Sendable, AIClientProtocol {
     private let endpointURL: URL
     private let apiKey: String
     private let modelName: String
+    private let authScheme: AuthScheme
     private let urlSession: URLSession
 
     private static let anthropicVersion = "2023-06-01"
@@ -37,11 +46,12 @@ public struct AnthropicClient: Sendable, AIClientProtocol {
 
     // MARK: - Init
 
-    public init(baseURL: String, apiKey: String, modelName: String) {
+    public init(baseURL: String, apiKey: String, modelName: String, authScheme: AuthScheme = .xApiKey) {
         let base = URL(string: baseURL) ?? URL(string: "https://api.anthropic.com")!
         self.endpointURL = base.appendingPathComponent("v1/messages")
         self.apiKey = apiKey
         self.modelName = modelName
+        self.authScheme = authScheme
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = AppConfig.shared.requestTimeoutSeconds
@@ -98,8 +108,6 @@ public struct AnthropicClient: Sendable, AIClientProtocol {
 
     // MARK: - AIClientProtocol: sendRequest (non-streaming)
 
-    /// Sends a non-streaming request and returns the complete response.
-    /// Used by WelcomeService and other lightweight one-shot requests.
     public func sendRequest(
         systemPrompt: String,
         chatHistory: [AIMessage],
@@ -121,7 +129,6 @@ public struct AnthropicClient: Sendable, AIClientProtocol {
         let (data, response) = try await performRequest(request)
         try validateHTTPResponse(response, data: data)
 
-        // Decode Anthropic non-streaming response
         struct AnthropicResponse: Decodable {
             struct ContentBlock: Decodable {
                 let type: String
@@ -134,7 +141,7 @@ public struct AnthropicClient: Sendable, AIClientProtocol {
         let decoded = try JSONDecoder().decode(AnthropicResponse.self, from: data)
         let text = decoded.content.compactMap { $0.text }.joined()
         let message = AIMessage(role: "assistant", content: text)
-        return (message, nil, nil)
+        return (message, decoded.usage?.costRub, decoded.usage?.balance)
     }
 
     // MARK: - AIClientProtocol: streamRequestWithTools
@@ -238,11 +245,16 @@ public struct AnthropicClient: Sendable, AIClientProtocol {
 
                 case "message_delta":
                     if let usage = json.usage {
+                        // Capture billing info — available from proxy providers like AITunnel.
+                        state.finalCost = usage.costRub
+                        state.finalBalance = usage.balance
                         logCacheStats(
                             inputTokens: usage.inputTokens ?? 0,
                             outputTokens: usage.outputTokens ?? 0,
                             cacheRead: usage.cacheReadInputTokens ?? 0,
-                            cacheCreation: usage.cacheCreationInputTokens ?? 0
+                            cacheCreation: usage.cacheCreationInputTokens ?? 0,
+                            cost: usage.costRub,
+                            balance: usage.balance
                         )
                     }
 
@@ -395,8 +407,16 @@ public struct AnthropicClient: Sendable, AIClientProtocol {
         var request = URLRequest(url: endpointURL)
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.addValue(apiKey, forHTTPHeaderField: "x-api-key")
         request.addValue(Self.anthropicVersion, forHTTPHeaderField: "anthropic-version")
+
+        // Apply auth scheme — x-api-key for native Anthropic, Bearer for proxies.
+        switch authScheme {
+        case .xApiKey:
+            request.addValue(apiKey, forHTTPHeaderField: "x-api-key")
+        case .bearer:
+            request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
+
         request.timeoutInterval = AppConfig.shared.requestTimeoutSeconds
         do {
             request.httpBody = try JSONEncoder().encode(body)
@@ -432,14 +452,24 @@ public struct AnthropicClient: Sendable, AIClientProtocol {
 
     // MARK: - Private: Cache Stats
 
-    private func logCacheStats(inputTokens: Int, outputTokens: Int, cacheRead: Int, cacheCreation: Int) {
+    private func logCacheStats(
+        inputTokens: Int,
+        outputTokens: Int,
+        cacheRead: Int,
+        cacheCreation: Int,
+        cost: Double?,
+        balance: Double?
+    ) {
+        let costStr = cost.map { String(format: "%.4f RUB", $0) } ?? "n/a"
+        let balanceStr = balance.map { String(format: "%.2f RUB", $0) } ?? "n/a"
+
         if cacheRead > 0 {
             let pct = inputTokens > 0 ? Int(Double(cacheRead) / Double(inputTokens) * 100) : 0
-            print("[AnthropicClient] CACHE HIT | input: \(inputTokens) | read: \(cacheRead) (\(pct)%) | created: \(cacheCreation) | output: \(outputTokens)")
+            print("[AnthropicClient] CACHE HIT | input: \(inputTokens) | read: \(cacheRead) (\(pct)%) | created: \(cacheCreation) | output: \(outputTokens) | cost: \(costStr) | balance: \(balanceStr)")
         } else if cacheCreation > 0 {
-            print("[AnthropicClient] CACHE WRITE | input: \(inputTokens) | created: \(cacheCreation) | output: \(outputTokens)")
+            print("[AnthropicClient] CACHE WRITE | input: \(inputTokens) | created: \(cacheCreation) | output: \(outputTokens) | cost: \(costStr) | balance: \(balanceStr)")
         } else {
-            print("[AnthropicClient] CACHE MISS | input: \(inputTokens) | output: \(outputTokens)")
+            print("[AnthropicClient] CACHE MISS | input: \(inputTokens) | output: \(outputTokens) | cost: \(costStr) | balance: \(balanceStr)")
         }
     }
 }
@@ -600,17 +630,27 @@ private struct AnthropicContentBlockInfo: Decodable {
     let name: String?
 }
 
+/// Token usage and optional billing info from Anthropic / proxy responses.
+///
+/// Native Anthropic does not include costRub / balance — those are AITunnel extensions.
+/// Declared as optional so the same struct works for both native and proxy providers.
 private struct AnthropicUsage: Decodable {
     let inputTokens: Int?
     let outputTokens: Int?
     let cacheReadInputTokens: Int?
     let cacheCreationInputTokens: Int?
+    /// AITunnel extension — cost of this request in RUB.
+    let costRub: Double?
+    /// AITunnel extension — remaining balance in RUB after the request.
+    let balance: Double?
 
     enum CodingKeys: String, CodingKey {
         case inputTokens = "input_tokens"
         case outputTokens = "output_tokens"
         case cacheReadInputTokens = "cache_read_input_tokens"
         case cacheCreationInputTokens = "cache_creation_input_tokens"
+        case costRub = "cost_rub"
+        case balance
     }
 }
 

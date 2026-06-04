@@ -2,12 +2,22 @@
 // ChappieCore
 //
 // Single factory for creating AI clients — picks the right implementation
-// based on model.providerProtocol.
+// based on model.providerProtocol and provider.authScheme.
 //
 // WHY A FACTORY:
-// Call sites (ChappieViewModel+Providers, AddProviderSheet) should not know
-// which client class to instantiate. The factory encapsulates that decision.
-// If a new protocol is added (e.g. Google Gemini), only this file changes.
+// Call sites should not know which client class to instantiate.
+// The factory encapsulates that decision. Adding a new protocol (e.g. Google Gemini)
+// means only this file changes.
+//
+// AUTH SCHEME:
+// authScheme is decoupled from providerProtocol — a proxy provider can use
+// Anthropic wire format (/v1/messages) with Bearer auth instead of x-api-key.
+// Both clients (AIClient and AnthropicClient) accept authScheme at init.
+//
+// URL DESIGN:
+// make() uses AIClient.init(endpoint:) — full chat URL known from model.endpoint.
+// makeForValidation() uses AIClient.init(baseURL:) — no chat model yet, only base URL known.
+// This avoids the double-path bug where /v1/models gets appended twice.
 
 import Foundation
 
@@ -16,12 +26,6 @@ import Foundation
 public enum AIClientFactory {
 
     /// Creates the correct AI client for the given provider + model combination.
-    ///
-    /// - Parameters:
-    ///   - provider: The active AIProvider (carries baseURL and protocol).
-    ///   - apiKey: The resolved API key secret (from Keychain).
-    ///   - model: The selected AIModel (carries endpoint path and protocol override).
-    /// - Returns: An `any AIClientProtocol` — either AIClient or AnthropicClient.
     public static func make(
         for provider: AIProvider,
         apiKey: String,
@@ -29,42 +33,57 @@ public enum AIClientFactory {
     ) -> any AIClientProtocol {
         // Model-level protocol takes precedence over provider-level default.
         let proto = model.providerProtocol
+        let auth = provider.authScheme
 
         switch proto {
         case .anthropic:
             return AnthropicClient(
                 baseURL: provider.baseURL,
                 apiKey: apiKey,
-                modelName: model.id
+                modelName: model.id,
+                authScheme: auth
             )
 
         case .openai:
-            // Full endpoint = baseURL + model's endpoint path
             let endpoint = provider.baseURL + model.endpoint
             return AIClient(
                 endpoint: endpoint,
                 apiKey: apiKey,
-                modelName: model.id
+                modelName: model.id,
+                authScheme: auth
             )
         }
     }
 
-    /// Convenience factory for validation — uses the provider's default protocol.
+    /// Convenience factory for provider-level validation and model discovery (no model selected yet).
     ///
-    /// Used in AddProviderSheet step 1 where no model is selected yet.
-    /// Creates a client pointing at the validation endpoint (baseURL + /v1/models or similar).
+    /// Uses AIClient.init(baseURL:) so that fetchAvailableModels appends /v1/models
+    /// to the exact baseURL without double-path issues (e.g. OpenRouter: /api/v1/models).
     public static func makeForValidation(
         baseURL: String,
         apiKey: String,
-        providerProtocol: ProviderProtocol = .openai
+        providerProtocol: ProviderProtocol = .openai,
+        authScheme: AuthScheme? = nil
     ) -> any AIClientProtocol {
+        // Default auth scheme by protocol if not explicitly provided.
+        let resolvedAuth = authScheme ?? (providerProtocol == .anthropic ? .xApiKey : .bearer)
+
         switch providerProtocol {
         case .anthropic:
-            // For Anthropic validation, use a dummy model name — validateProvider() sends max_tokens=1
-            return AnthropicClient(baseURL: baseURL, apiKey: apiKey, modelName: "")
+            return AnthropicClient(
+                baseURL: baseURL,
+                apiKey: apiKey,
+                modelName: "",
+                authScheme: resolvedAuth
+            )
         case .openai:
-            let endpoint = baseURL + "/v1/models"
-            return AIClient(endpoint: endpoint, apiKey: apiKey, modelName: "")
+            // Use baseURL init — fetchAvailableModels will append /v1/models correctly.
+            return AIClient(
+                baseURL: baseURL,
+                apiKey: apiKey,
+                modelName: "",
+                authScheme: resolvedAuth
+            )
         }
     }
 }
