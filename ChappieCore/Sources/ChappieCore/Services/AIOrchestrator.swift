@@ -55,7 +55,6 @@ public struct AIOrchestratorResult: Sendable {
 /// without knowing the wire format. Client is chosen by AIClientFactory.
 public actor AIOrchestrator {
 
-    // Protocol type — accepts both AIClient and AnthropicClient
     private let aiClient: any AIClientProtocol
     private let toolService: ToolExecutionService
     private let fileSystem: FileSystemManager
@@ -378,12 +377,12 @@ public actor AIOrchestrator {
     ) -> [AIMessage] {
         let budget = config.tokenBudget
         let recentCount = config.recentFullMessages
-        let summaryThreshold = config.summaryThreshold
         let maxMessages = config.maxMessagesInContext
 
         let totalTokensBefore = history.reduce(0) { $0 + estimateTokens($1) }
         print("[AIOrchestrator] History: \(history.count) msgs, ~\(totalTokensBefore) tokens | Budget: \(budget) (\(maxMessages) msgs x 500)")
 
+        // Remove duplicate last message if it matches the current prompt
         let deduplicatedHistory: [AIMessage]
         if let lastMessage = history.last,
            lastMessage.role == "user",
@@ -413,14 +412,11 @@ public actor AIOrchestrator {
         var usedTokens = recentMessages.reduce(0) { $0 + estimateTokens($1) }
         var selectedOlder: [AIMessage] = []
 
+        // Fit as many older messages as possible within the token budget — no compression, full content.
         for message in olderMessages.reversed() {
-            // Compress only if enabled — when disabled, send the full message as-is
-            let processed = config.useMessageCompression
-                ? compressMessage(message, summaryThreshold: summaryThreshold)
-                : message
-            let tokens = estimateTokens(processed)
+            let tokens = estimateTokens(message)
             if usedTokens + tokens <= budget {
-                selectedOlder.insert(processed, at: 0)
+                selectedOlder.insert(message, at: 0)
                 usedTokens += tokens
             } else {
                 break
@@ -435,32 +431,8 @@ public actor AIOrchestrator {
         }
 
         let totalTokensAfter = contextWindow.reduce(0) { $0 + estimateTokens($1) }
-        let compressionNote = config.useMessageCompression ? "" : " [compression OFF]"
-        print("[AIOrchestrator] Sending: \(contextWindow.count) msgs, ~\(totalTokensAfter) tokens\(compressionNote)")
+        print("[AIOrchestrator] Sending: \(contextWindow.count) msgs, ~\(totalTokensAfter) tokens")
         return contextWindow
-    }
-
-    private func compressMessage(_ message: AIMessage, summaryThreshold: Int) -> AIMessage {
-        guard let fullText = message.contentString,
-              estimateTokens(message) > summaryThreshold,
-              let summary = extractSummary(from: fullText) else { return message }
-        return AIMessage(
-            role: message.role,
-            content: "[COMPRESSED] \(summary)",
-            tool_call_id: message.tool_call_id,
-            name: message.name
-        )
-    }
-
-    private func extractSummary(from text: String) -> String? {
-        let openTag = "<summary>"
-        let closeTag = "</summary>"
-        guard let openRange = text.range(of: openTag),
-              let closeRange = text.range(of: closeTag),
-              openRange.upperBound < closeRange.lowerBound else { return nil }
-        let summary = String(text[openRange.upperBound..<closeRange.lowerBound])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return summary.isEmpty ? nil : summary
     }
 
     private func estimateTokens(_ message: AIMessage) -> Int {

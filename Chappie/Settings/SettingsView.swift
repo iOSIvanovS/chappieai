@@ -6,12 +6,9 @@
 // SECTIONS:
 //   - User name: saved to global memory, used in system prompt.
 //   - AI providers: shortcut to ProvidersSettingsView (the directory).
-//   - Onboarding: manual re-run trigger (calls AppState.resetOnboarding).
+//   - Memory: thread message history management (MemoryManagementView).
+//   - Onboarding: manual re-run trigger.
 //   - Security: Keychain info.
-//
-// NOTE: There is no "active provider" concept at the global level.
-// Provider + key + model selection happens per-thread in ThreadSettingsSheet.
-// ProvidersSettingsView is purely a directory — add/edit/delete, no selection.
 
 import SwiftUI
 import ChappieCore
@@ -20,20 +17,15 @@ import ChappieCore
 
 struct SettingsView: View {
 
-    // MARK: - Dependencies
-
     var viewModel: ChappieViewModel
-
-    // MARK: - State
 
     @State private var userName: String = ""
     @State private var showProviders: Bool = false
+    @State private var showMemoryManagement: Bool = false
     @State private var nameSaved: Bool = false
     @State private var showOnboardingConfirm: Bool = false
 
     @Environment(\.dismiss) private var dismiss
-
-    // MARK: - Body
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -143,6 +135,35 @@ struct SettingsView: View {
 
                     Divider()
 
+                    // MARK: Memory Management
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("Память", systemImage: "memorychip")
+                            .font(.headline)
+
+                        Text("История сообщений каждого треда хранится полностью. Здесь вы можете посмотреть объём и удалить старые сообщения вручную.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+
+                        HStack {
+                            Text("\(viewModel.threads.count) \(threadsLabel(viewModel.threads.count))")
+                                .font(.system(size: 13, weight: .medium))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+
+                            Spacer()
+
+                            Button {
+                                showMemoryManagement = true
+                            } label: {
+                                Label("Управлять памятью", systemImage: "internaldrive")
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+
+                    Divider()
+
                     // MARK: Onboarding
                     VStack(alignment: .leading, spacing: 12) {
                         Label("Онбординг", systemImage: "wand.and.stars")
@@ -195,14 +216,16 @@ struct SettingsView: View {
             .padding(.horizontal, 24)
             .padding(.vertical, 16)
         }
-        .frame(width: 500, height: 480)
+        .frame(width: 500, height: 560)
         .sheet(isPresented: $showProviders) {
             ProvidersSettingsView(viewModel: viewModel)
+        }
+        .sheet(isPresented: $showMemoryManagement) {
+            MemoryManagementView(viewModel: viewModel)
         }
         .alert("Запустить онбординг?", isPresented: $showOnboardingConfirm) {
             Button("Запустить") {
                 dismiss()
-                // Small delay so settings sheet dismisses before onboarding appears
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     AppState.shared.resetOnboarding()
                 }
@@ -221,6 +244,14 @@ struct SettingsView: View {
         case 1: return "провайдер"
         case 2...4: return "провайдера"
         default: return "провайдеров"
+        }
+    }
+
+    private func threadsLabel(_ count: Int) -> String {
+        switch count {
+        case 1: return "тред"
+        case 2...4: return "треда"
+        default: return "тредов"
         }
     }
 

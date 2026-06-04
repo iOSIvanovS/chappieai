@@ -1,7 +1,7 @@
 // ThreadStore.swift
 // ChappieCore
 //
-// Actor for CRUD operations on threads via SwiftData (REFACTOR-THREADS IT-01).
+// Actor for CRUD operations on threads via SwiftData.
 //
 // WHY ACTOR, NOT CLASS:
 // ThreadStore works with ModelContext — an object that is NOT Sendable
@@ -22,69 +22,30 @@
 // saveMessages/loadMessages use Generic <T: Codable> — same as ChatHistoryManager.
 // UI layer passes the concrete type; ChappieCore just serializes.
 //
-// IT-06: Added updateProjectBindings() — atomic replacement of the full project UUID list.
-//
-// IT-11: ThreadMetadata moved to ThreadModels.swift (with settings field).
-// ThreadStore.loadThreads() now deserializes settingsJSON into ThreadMetadata.settings.
-//
-// CACHING:
-// cachedThreads holds the thread list in RAM after first load.
-// loadThreads() is served from cache — no SwiftData hit on warm calls.
-// loadSettings() / loadMessages() / loadProjectIds() always hit SwiftData —
-// they are per-thread reads that happen only when a thread is selected, not in hot loops.
-// All writes call refreshCache() to keep the thread list consistent.
+// FULL HISTORY STORAGE:
+// saveMessages() stores the complete message history without any trimming.
+// Users manage their thread history via the Memory Management screen in Settings.
 
 import Foundation
 import SwiftData
 
 // MARK: - ThreadStore
 
-/// Actor for managing threads in SwiftData.
-///
-/// All methods are isolated in the actor — safe concurrent access is guaranteed.
-/// UI layer calls methods via await.
 public actor ThreadStore {
 
-    // MARK: - Properties
-
-    /// SwiftData model container — stored for creating contexts.
-    ///
-    /// WHY CONTAINER, NOT CONTEXT:
-    /// ModelContext is not Sendable and cannot be passed between actors.
-    /// ModelContainer is Sendable — safe to store in an actor.
-    /// Context is created inside the actor per operation via ModelContext(container).
     private let modelContainer: ModelContainer
-
-    // In-memory cache of the thread list — populated on first loadThreads(), invalidated on writes.
-    // loadSettings/loadMessages/loadProjectIds are NOT cached: they are per-thread,
-    // called only on thread selection, and their data changes frequently (messages).
     private var cachedThreads: [ThreadMetadata]? = nil
 
-    // MARK: - Init
-
-    /// Creates a ThreadStore with the given ModelContainer.
-    ///
-    /// - Parameter modelContainer: SwiftData container (created in ChappieApp.swift)
     public init(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
     }
 
-    // MARK: - Context helper
-
-    /// Creates a new ModelContext for operations inside the actor.
-    ///
-    /// WHY CREATE EACH TIME:
-    /// ModelContext is not Sendable — cannot be stored as an actor property
-    /// and passed between tasks. Creating a new context per operation
-    /// is standard practice for background SwiftData work.
-    /// ModelContainer manages synchronization between contexts automatically.
     private func makeContext() -> ModelContext {
         ModelContext(modelContainer)
     }
 
     // MARK: - Cache Management
 
-    /// Reloads the thread list from SwiftData into cachedThreads.
     private func refreshCache() throws {
         let context = makeContext()
         let descriptor = FetchDescriptor<ThreadEntity>(
@@ -95,18 +56,6 @@ public actor ThreadStore {
 
     // MARK: - Create
 
-    /// Creates a new thread and saves it to the database.
-    ///
-    /// - Parameters:
-    ///   - title: Thread title (usually the first words of the first message)
-    ///   - settings: Thread settings (defaults if not provided)
-    /// - Returns: UUID of the created thread
-    /// - Throws: SwiftData error if save failed
-    ///
-    /// WHY RETURN UUID, NOT ThreadEntity:
-    /// ThreadEntity is a SwiftData @Model object bound to a specific ModelContext.
-    /// Passing it outside the actor is unsafe in Swift 6. Return UUID instead —
-    /// caller can load thread metadata via loadThreads().
     public func createThread(
         title: String,
         settings: ThreadSettings = ThreadSettings()
@@ -115,27 +64,13 @@ public actor ThreadStore {
         let thread = ThreadEntity(title: title, settings: settings)
         context.insert(thread)
         try context.save()
-
         try refreshCache()
-
         print("[ThreadStore] ✅ Created thread '\(title)' (id: \(thread.id))")
         return thread.id
     }
 
     // MARK: - Load
 
-    /// Loads metadata for all threads, sorted by last update time (newest first).
-    /// Served from in-memory cache — no SwiftData hit on warm calls.
-    ///
-    /// RETURNS VALUE TYPE:
-    /// Returns ThreadMetadata (struct) — safe Sendable type.
-    /// Passing @Model objects outside the actor is unsafe in Swift 6.
-    ///
-    /// IT-11: ThreadMetadata now includes settings field.
-    /// Settings are deserialized from settingsJSON here — no extra call needed in UI.
-    ///
-    /// - Returns: Array of thread metadata sorted by updatedAt DESC
-    /// - Throws: SwiftData error if fetch failed
     public func loadThreads() throws -> [ThreadMetadata] {
         if let cached = cachedThreads { return cached }
         try refreshCache()
@@ -144,21 +79,10 @@ public actor ThreadStore {
 
     // MARK: - Save/Load Messages (Generic)
 
-    /// Saves the thread message history.
-    ///
-    /// GENERIC T: Codable — same as ChatHistoryManager.saveMessages<T: Codable>().
-    /// ChappieCore doesn't know about ChatMessage (UI type), so accepts any Codable.
-    /// UI layer passes [ChatMessage]; ChappieCore just serializes.
-    ///
-    /// LIMIT: Saves the last 100 messages (same as old ChatHistoryManager).
-    ///
-    /// - Parameters:
-    ///   - messages: Array of messages to save (any Codable type)
-    ///   - threadId: UUID of the thread to save to
-    /// - Throws: SwiftData or JSONEncoder error if save failed
+    /// Saves the complete thread message history without any trimming.
+    /// Full history is always preserved — users manage storage via Settings > Memory.
     public func saveMessages<T: Codable>(_ messages: [T], toThreadId threadId: UUID) throws {
         let context = makeContext()
-
         let descriptor = FetchDescriptor<ThreadEntity>(
             predicate: #Predicate { $0.id == threadId }
         )
@@ -167,43 +91,18 @@ public actor ThreadStore {
             return
         }
 
-        // Trim to 100 messages — UI stores no more
-        let maxStored = 100
-        let trimmed = messages.count > maxStored
-            ? Array(messages.suffix(maxStored))
-            : messages
-
-        if messages.count > maxStored {
-            print("[ThreadStore] ✂️ Trimmed: \(messages.count - maxStored) old messages removed")
-        }
-
-        thread.messagesJSON = try JSONEncoder().encode(trimmed)
+        thread.messagesJSON = try JSONEncoder().encode(messages)
         thread.updatedAt = Date()
         try context.save()
-
-        // Invalidate thread list cache — updatedAt changed, sort order may shift
         try refreshCache()
     }
 
-    /// Loads message history from a thread.
-    /// Always hits SwiftData — messages change on every send, caching would be stale.
-    ///
-    /// GENERIC T: Codable — UI layer specifies the concrete type ([ChatMessage]).
-    ///
-    /// - Parameters:
-    ///   - threadId: Thread UUID
-    ///   - type: Type for decoding (e.g. ChatMessage.self)
-    /// - Returns: Array of messages (empty if thread not found or history is empty)
-    /// - Throws: SwiftData error if fetch failed
     public func loadMessages<T: Codable>(fromThreadId threadId: UUID, as type: T.Type) throws -> [T] {
         let context = makeContext()
         let descriptor = FetchDescriptor<ThreadEntity>(
             predicate: #Predicate { $0.id == threadId }
         )
-        guard let thread = try context.fetch(descriptor).first else {
-            return []
-        }
-
+        guard let thread = try context.fetch(descriptor).first else { return [] }
         guard !thread.messagesJSON.isEmpty else { return [] }
 
         do {
@@ -216,31 +115,17 @@ public actor ThreadStore {
 
     // MARK: - Settings
 
-    /// Updates thread settings.
-    ///
-    /// - Parameters:
-    ///   - settings: New settings
-    ///   - threadId: UUID of the thread to update
-    /// - Throws: SwiftData error if save failed
     public func updateSettings(_ settings: ThreadSettings, forThreadId threadId: UUID) throws {
         let context = makeContext()
         let descriptor = FetchDescriptor<ThreadEntity>(
             predicate: #Predicate { $0.id == threadId }
         )
         guard let thread = try context.fetch(descriptor).first else { return }
-
         thread.settingsJSON = (try? JSONEncoder().encode(settings)) ?? thread.settingsJSON
         try context.save()
-
-        // Invalidate thread list cache — settings are embedded in ThreadMetadata
         try refreshCache()
     }
 
-    /// Loads thread settings. Always hits SwiftData — not cached.
-    ///
-    /// - Parameter threadId: Thread UUID
-    /// - Returns: ThreadSettings (defaults if thread not found or data is corrupt)
-    /// - Throws: SwiftData error if fetch failed
     public func loadSettings(forThreadId threadId: UUID) throws -> ThreadSettings {
         let context = makeContext()
         let descriptor = FetchDescriptor<ThreadEntity>(
@@ -249,19 +134,54 @@ public actor ThreadStore {
         guard let thread = try context.fetch(descriptor).first,
               !thread.settingsJSON.isEmpty,
               let settings = try? JSONDecoder().decode(ThreadSettings.self, from: thread.settingsJSON)
-        else {
-            return ThreadSettings()
-        }
+        else { return ThreadSettings() }
         return settings
+    }
+
+    // MARK: - Message Count & Size (for Memory Management UI)
+
+    /// Returns message count and raw JSON size in bytes for a thread.
+    public func messageStats(forThreadId threadId: UUID) throws -> (count: Int, bytes: Int) {
+        let context = makeContext()
+        let descriptor = FetchDescriptor<ThreadEntity>(
+            predicate: #Predicate { $0.id == threadId }
+        )
+        guard let thread = try context.fetch(descriptor).first else { return (0, 0) }
+        let bytes = thread.messagesJSON.count
+        // Count messages by decoding as raw JSON array — avoids dependency on ChatMessage type.
+        let count = (try? JSONDecoder().decode([AnyDecodable].self, from: thread.messagesJSON))?.count ?? 0
+        return (count, bytes)
+    }
+
+    /// Deletes the oldest N messages from a thread.
+    public func deleteOldestMessages(count: Int, fromThreadId threadId: UUID) throws {
+        let context = makeContext()
+        let descriptor = FetchDescriptor<ThreadEntity>(
+            predicate: #Predicate { $0.id == threadId }
+        )
+        guard let thread = try context.fetch(descriptor).first,
+              !thread.messagesJSON.isEmpty else { return }
+
+        guard var rawArray = try? JSONDecoder().decode([AnyDecodable].self, from: thread.messagesJSON),
+              rawArray.count > count else {
+            // If count >= total messages — clear all
+            thread.messagesJSON = "[]".data(using: .utf8) ?? Data()
+            thread.updatedAt = Date()
+            try context.save()
+            try refreshCache()
+            return
+        }
+
+        rawArray.removeFirst(count)
+        thread.messagesJSON = (try? JSONEncoder().encode(rawArray)) ?? thread.messagesJSON
+        thread.updatedAt = Date()
+        try context.save()
+        try refreshCache()
+        print("[ThreadStore] 🗑 Deleted \(count) oldest messages from thread \(threadId)")
     }
 
     // MARK: - Project Bindings
 
-    /// Loads the list of project UUIDs bound to a thread.
-    ///
-    /// - Parameter threadId: Thread UUID
-    /// - Returns: Array of project UUIDs
-    /// - Throws: SwiftData error if fetch failed
     public func loadProjectIds(forThreadId threadId: UUID) throws -> [UUID] {
         let context = makeContext()
         let descriptor = FetchDescriptor<ThreadEntity>(
@@ -270,25 +190,10 @@ public actor ThreadStore {
         guard let thread = try context.fetch(descriptor).first,
               !thread.projectBindingsJSON.isEmpty,
               let ids = try? JSONDecoder().decode([UUID].self, from: thread.projectBindingsJSON)
-        else {
-            return []
-        }
+        else { return [] }
         return ids
     }
 
-    /// Atomically replaces the entire project UUID list for a thread.
-    ///
-    /// WHY ATOMIC REPLACE, NOT ADD/REMOVE:
-    /// ChappieViewModel holds the current projectIds in activeThread.
-    /// On add/remove, ViewModel computes the new array and passes it here whole.
-    /// This guarantees consistency — no risk of desync between ViewModel and DB.
-    ///
-    /// ANALOGY: saveMessages() — also a full replace, not append.
-    ///
-    /// - Parameters:
-    ///   - projectIds: New complete list of project UUIDs (may be empty)
-    ///   - threadId: UUID of the thread to update
-    /// - Throws: SwiftData error if save failed
     public func updateProjectBindings(_ projectIds: [UUID], forThreadId threadId: UUID) throws {
         let context = makeContext()
         let descriptor = FetchDescriptor<ThreadEntity>(
@@ -298,22 +203,13 @@ public actor ThreadStore {
             print("[ThreadStore] ⚠️ Thread \(threadId) not found when updating project bindings")
             return
         }
-
         thread.projectBindingsJSON = (try? JSONEncoder().encode(projectIds)) ?? thread.projectBindingsJSON
         thread.updatedAt = Date()
         try context.save()
-
         try refreshCache()
-
         print("[ThreadStore] ✅ Updated project bindings for thread '\(thread.title)': \(projectIds.count) projects")
     }
 
-    /// Adds a project to a thread (idempotent — duplicates are ignored).
-    ///
-    /// - Parameters:
-    ///   - projectId: UUID of the project to add
-    ///   - threadId: Thread UUID
-    /// - Throws: SwiftData error if save failed
     public func addProject(id projectId: UUID, toThreadId threadId: UUID) throws {
         let context = makeContext()
         let descriptor = FetchDescriptor<ThreadEntity>(
@@ -335,18 +231,10 @@ public actor ThreadStore {
         thread.projectBindingsJSON = (try? JSONEncoder().encode(ids)) ?? thread.projectBindingsJSON
         thread.updatedAt = Date()
         try context.save()
-
         try refreshCache()
-
         print("[ThreadStore] ✅ Project \(projectId) added to thread '\(thread.title)'")
     }
 
-    /// Removes a project from a thread.
-    ///
-    /// - Parameters:
-    ///   - projectId: UUID of the project to remove
-    ///   - threadId: Thread UUID
-    /// - Throws: SwiftData error if save failed
     public func removeProject(id projectId: UUID, fromThreadId threadId: UUID) throws {
         let context = makeContext()
         let descriptor = FetchDescriptor<ThreadEntity>(
@@ -370,70 +258,87 @@ public actor ThreadStore {
         thread.projectBindingsJSON = (try? JSONEncoder().encode(ids)) ?? thread.projectBindingsJSON
         thread.updatedAt = Date()
         try context.save()
-
         try refreshCache()
-
         print("[ThreadStore] ✅ Project \(projectId) removed from thread '\(thread.title)'")
     }
 
     // MARK: - Rename
 
-    /// Renames a thread.
-    ///
-    /// - Parameters:
-    ///   - threadId: Thread UUID
-    ///   - title: New title
-    /// - Throws: SwiftData error if save failed
     public func renameThread(id threadId: UUID, title: String) throws {
         let context = makeContext()
         let descriptor = FetchDescriptor<ThreadEntity>(
             predicate: #Predicate { $0.id == threadId }
         )
         guard let thread = try context.fetch(descriptor).first else { return }
-
         thread.title = title
         thread.updatedAt = Date()
         try context.save()
-
         try refreshCache()
     }
 
     // MARK: - Delete
 
-    /// Deletes a thread from the database.
-    ///
-    /// WARNING: Deletion is irreversible. All thread message history is lost.
-    /// UI should show a confirmation before calling this method.
-    ///
-    /// - Parameter threadId: UUID of the thread to delete
-    /// - Throws: SwiftData error if deletion failed
     public func deleteThread(id threadId: UUID) throws {
         let context = makeContext()
         let descriptor = FetchDescriptor<ThreadEntity>(
             predicate: #Predicate { $0.id == threadId }
         )
         guard let thread = try context.fetch(descriptor).first else { return }
-
         let title = thread.title
         context.delete(thread)
         try context.save()
-
         try refreshCache()
-
         print("[ThreadStore] 🗑 Thread '\(title)' deleted")
     }
 
-    // MARK: - Default Provider
+    public func loadDefaultProvider() throws -> AIProvider? { return nil }
+}
 
-    /// Loads the default AI provider (first in the list).
-    ///
-    /// Used by selectThread() as fallback when a thread has no saved provider.
-    ///
-    /// - Returns: First AIProvider, or nil if none configured
-    /// - Throws: SwiftData error if fetch failed
-    public func loadDefaultProvider() throws -> AIProvider? {
-        // This method exists for convenience — actual provider loading is in AIProviderStore.
-        // ThreadStore delegates to AIProviderStore via ChappieViewModel.
-        return nil
+// MARK: - AnyDecodable (internal helper for raw JSON array operations)
+
+/// Minimal Codable wrapper for working with JSON arrays without knowing the element type.
+/// Used by messageStats() and deleteOldestMessages() to count/trim messages
+/// without depending on the ChatMessage type (which lives in the UI target).
+private struct AnyDecodable: Codable {
+    private let value: Any
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let dict = try? container.decode([String: AnyCodable].self) {
+            value = dict
+        } else {
+            value = "unknown"
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        if let dict = value as? [String: AnyCodable] {
+            try container.encode(dict)
+        } else {
+            try container.encode("unknown")
+        }
+    }
+}
+
+private struct AnyCodable: Codable {
+    let value: Any
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let str = try? container.decode(String.self) { value = str }
+        else if let int = try? container.decode(Int.self) { value = int }
+        else if let bool = try? container.decode(Bool.self) { value = bool }
+        else if let double = try? container.decode(Double.self) { value = double }
+        else { value = "" }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        if let str = value as? String { try container.encode(str) }
+        else if let int = value as? Int { try container.encode(int) }
+        else if let bool = value as? Bool { try container.encode(bool) }
+        else if let double = value as? Double { try container.encode(double) }
+        else { try container.encode("") }
     }
 }
