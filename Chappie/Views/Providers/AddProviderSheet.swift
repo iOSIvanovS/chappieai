@@ -17,17 +17,9 @@
 //
 // STEP 1 — Provider:
 //   Enter base URL, API key (with user-defined name), optional provider name.
-//   Validate provider (GET /v1/models — no model name needed).
+//   Validation uses AIClientFactory.makeForValidation() — picks Anthropic or OpenAI
+//   client based on provider protocol (from catalog or inferred from URL).
 //   On success → proceed to step 2.
-//
-//   ONBOARDING MODE (isOnboarding == true):
-//     Shows a "+ Добавить ещё ключ" button to collect multiple keys before validation.
-//     Each key has a name + value field. At least one key required.
-//     Validation uses the first non-empty key.
-//
-//   DIRECTORY MODE (isOnboarding == false, default):
-//     Single key field. On duplicate host → alert (do not add).
-//     On duplicate key value → alert (do not add).
 //
 // STEP 2 — Models:
 //   Catalog entry: models from catalog are shown pre-selected.
@@ -57,7 +49,6 @@ struct AddProviderSheet: View {
     // MARK: - Input
 
     let providerStore: AIProviderStore?
-    /// Pre-filled from catalog picker. nil = custom / edit mode.
     var prefilledRemote: RemoteProvider? = nil
     var editingProvider: AIProvider? = nil
     var isOnboarding: Bool = false
@@ -111,6 +102,15 @@ struct AddProviderSheet: View {
 
     private var title: String { isEditing ? "Редактировать провайдера" : "Добавить провайдера" }
 
+    /// Inferred protocol for validation — from catalog or editing provider; defaults to openai.
+    private var inferredProtocol: ProviderProtocol {
+        if let remote = prefilledRemote {
+            let hasAnthropic = remote.models.contains { $0.protocol == "anthropic" }
+            return hasAnthropic ? .anthropic : .openai
+        }
+        return editingProvider?.providerProtocol ?? .openai
+    }
+
     private var canValidate: Bool {
         let urlOk = !baseURL.trimmingCharacters(in: .whitespaces).isEmpty
         if isEditing { return urlOk }
@@ -123,7 +123,6 @@ struct AddProviderSheet: View {
         }
     }
 
-    // All models: fetched + catalog (for catalog mode) + existing (for edit mode)
     private var allModels: [AIModel] {
         var combined = fetchedModels
         if let existing = editingProvider {
@@ -222,7 +221,6 @@ struct AddProviderSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
 
-                // Catalog badge — shows which provider was picked
                 if let remote = prefilledRemote {
                     catalogBadge(remote)
                 }
@@ -236,7 +234,6 @@ struct AddProviderSheet: View {
                     TextField("https://...", text: $baseURL)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.body, design: .monospaced))
-                        // Lock URL for catalog providers — it's authoritative
                         .disabled(isCatalog && !isEditing)
                         .foregroundStyle(isCatalog && !isEditing ? .secondary : .primary)
                 }
@@ -597,16 +594,13 @@ struct AddProviderSheet: View {
 
     private func prefill() {
         if let provider = editingProvider {
-            // Edit mode: fill from existing provider
             providerName = provider.name
             baseURL = provider.baseURL
             selectedModelIds = Set(provider.models.map { $0.id })
             apiKeyName = provider.keys.first?.name ?? ""
         } else if let remote = prefilledRemote {
-            // Catalog mode: fill from RemoteProvider
             providerName = remote.name
             baseURL = remote.baseURL
-            // Pre-populate catalog models and select all
             let catalogModels = remote.models.map { rm in
                 AIModel(
                     id: rm.id,
@@ -634,7 +628,6 @@ struct AddProviderSheet: View {
 
     private func validateAndProceed() {
         let trimmedURL = baseURL.trimmingCharacters(in: .whitespaces)
-
         guard !trimmedURL.isEmpty else {
             validationError = "Введите базовый URL."
             return
@@ -673,19 +666,22 @@ struct AddProviderSheet: View {
                 return
             }
 
-            let validationEndpoint = trimmedURL + "/v1/models"
-            let client = AIClient(endpoint: validationEndpoint, apiKey: keyToUse, modelName: "")
+            // Use factory — picks AnthropicClient or AIClient based on inferred protocol
+            let client = AIClientFactory.makeForValidation(
+                baseURL: trimmedURL,
+                apiKey: keyToUse,
+                providerProtocol: inferredProtocol
+            )
+
             do {
                 try await client.validateProvider()
 
-                // Build provisional provider, preserving catalog metadata if present
                 let provisional = AIProvider(
                     id: editingProvider?.id ?? UUID(),
                     name: providerName.trimmingCharacters(in: .whitespaces),
                     baseURL: trimmedURL,
                     catalogId: editingProvider?.catalogId ?? prefilledRemote?.id,
-                    providerProtocol: editingProvider?.providerProtocol
-                        ?? (prefilledRemote?.models.first?.protocol == "anthropic" ? .anthropic : .openai),
+                    providerProtocol: editingProvider?.providerProtocol ?? inferredProtocol,
                     keys: editingProvider?.keys ?? [],
                     models: editingProvider?.models ?? []
                 )
@@ -694,7 +690,6 @@ struct AddProviderSheet: View {
                     isValidating = false
                     validatedProvider = provisional
                     withAnimation { step = .models }
-                    // Only auto-fetch if no catalog models are pre-loaded
                     if fetchedModels.isEmpty {
                         fetchModels()
                     }
@@ -735,8 +730,12 @@ struct AddProviderSheet: View {
                 keyToUse = firstValidKeyValue
             }
 
-            let discoveryEndpoint = provider.baseURL + "/v1/models"
-            let client = AIClient(endpoint: discoveryEndpoint, apiKey: keyToUse, modelName: "")
+            // Use factory for model fetching — Anthropic returns [] (no /models endpoint)
+            let client = AIClientFactory.makeForValidation(
+                baseURL: provider.baseURL,
+                apiKey: keyToUse,
+                providerProtocol: provider.providerProtocol
+            )
             let modelIds = await client.fetchAvailableModels()
 
             await MainActor.run {
@@ -744,7 +743,6 @@ struct AddProviderSheet: View {
                 if modelIds.isEmpty {
                     fetchError = "Не удалось загрузить список моделей. Добавьте модели вручную."
                 } else {
-                    // Merge live models with existing catalog/edit models — preserve metadata
                     let existingModels = fetchedModels
                     fetchedModels = modelIds.map { modelId in
                         if let existing = existingModels.first(where: { $0.id == modelId }) {
@@ -761,7 +759,6 @@ struct AddProviderSheet: View {
                         )
                     }
                     fetchError = nil
-                    // Auto-select newly fetched models only if nothing was selected yet
                     if selectedModelIds.isEmpty {
                         selectedModelIds = Set(modelIds)
                     }
@@ -776,12 +773,10 @@ struct AddProviderSheet: View {
         let trimmed = manualModelInput.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
         if !fetchedModels.contains(where: { $0.id == trimmed }) {
-            let model = AIModel(
-                id: trimmed,
-                name: trimmed,
-                endpoint: "/v1/chat/completions",
-                providerProtocol: validatedProvider?.providerProtocol ?? .openai
-            )
+            let proto = validatedProvider?.providerProtocol ?? inferredProtocol
+            // Anthropic models use /v1/messages endpoint
+            let endpoint = proto == .anthropic ? "/v1/messages" : "/v1/chat/completions"
+            let model = AIModel(id: trimmed, name: trimmed, endpoint: endpoint, providerProtocol: proto)
             fetchedModels.insert(model, at: 0)
         }
         selectedModelIds.insert(trimmed)

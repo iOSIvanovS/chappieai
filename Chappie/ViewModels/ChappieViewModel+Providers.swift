@@ -8,6 +8,11 @@
 //   If active provider or model is missing — set orchestrator/aiClient/activeModelName to nil,
 //   show orange banner, block send(). User must explicitly choose. No silent fallback.
 //
+// CLIENT CREATION:
+//   AIClientFactory.make(for:apiKey:model:) picks the right client implementation
+//   based on model.providerProtocol (OpenAI → AIClient, Anthropic → AnthropicClient).
+//   Call sites never instantiate clients directly.
+//
 // MULTI-KEY SCHEMA:
 //   Each provider has a list of APIKey entries. Thread settings store activeKeyId.
 //   switchProvider() resolves the key secret from Keychain using activeKeyId.
@@ -34,12 +39,12 @@ extension ChappieViewModel {
 
     /// Switches the active provider, key, and model for the current thread.
     ///
-    /// Both keyId and modelName MUST be non-nil to create an orchestrator.
-    /// Missing either → blocks orchestrator and shows warning banner.
+    /// Uses AIClientFactory to create the correct client (OpenAI or Anthropic)
+    /// based on model.providerProtocol. Both keyId and modelName MUST be non-nil
+    /// to create an orchestrator. Missing either → blocks orchestrator + shows banner.
     ///
     /// - Parameter persistSettings: When true (default), writes the new provider/key/model
-    ///   to the active thread's settings in the DB. Pass false when the caller already
-    ///   manages persistence to avoid overwriting freshly-loaded settings.
+    ///   to the active thread's settings in the DB.
     func switchProvider(
         _ provider: AIProvider,
         keyId: UUID?,
@@ -50,17 +55,10 @@ extension ChappieViewModel {
         let provStore = store ?? self.providerStore
         guard let provStore else { return }
 
-        // Resolve endpoint: use the model's specific endpoint if available, else /v1/chat/completions
-        let resolvedEndpoint: String
-        if let modelName, let model = provider.models.first(where: { $0.id == modelName }) {
-            resolvedEndpoint = provider.baseURL + model.endpoint
-        } else {
-            resolvedEndpoint = provider.baseURL + "/v1/chat/completions"
-        }
-
         // Both key and model required — block orchestrator if either is missing
         guard let resolvedKeyId = keyId,
-              let model = modelName, !model.isEmpty,
+              let modelId = modelName, !modelId.isEmpty,
+              let model = provider.models.first(where: { $0.id == modelId }),
               let apiKey = await provStore.loadApiKey(for: resolvedKeyId),
               !apiKey.isEmpty else {
             await applyProviderWithoutModel(provider, from: provStore)
@@ -77,11 +75,12 @@ extension ChappieViewModel {
             return
         }
 
-        let client = AIClient(endpoint: resolvedEndpoint, apiKey: apiKey, modelName: model)
+        // Factory picks AIClient or AnthropicClient based on model.providerProtocol
+        let client = AIClientFactory.make(for: provider, apiKey: apiKey, model: model)
         self.aiClient = client
         self.activeProvider = provider
         self.activeKeyId = resolvedKeyId
-        self.activeModelName = model
+        self.activeModelName = modelId
         self.currentBalance = loadBalance(for: provider.id)
 
         if let ts = toolService, let fs = fileSystem, let mm = memoryManager {
@@ -92,18 +91,17 @@ extension ChappieViewModel {
             var settings = activeThreadSettings
             settings.activeProviderId = provider.id
             settings.activeKeyId = resolvedKeyId
-            settings.activeModelName = model
+            settings.activeModelName = modelId
             activeThreadSettings = settings
             if let threadId = activeThread?.id, let tStore = threadStore {
                 try? await tStore.updateSettings(settings, forThreadId: threadId)
             }
         }
 
-        print("[ChappieViewModel] Switched to provider: \(provider.displayName) / key: \(resolvedKeyId) / model: \(model)")
+        print("[ChappieViewModel] Switched → \(provider.displayName) / \(model.providerProtocol) / key: \(resolvedKeyId) / model: \(modelId)")
     }
 
     func switchProvider(id: UUID) {
-        // No auto-key/model: pass nil so the user sees the banner and picks explicitly.
         guard let provider = providers.first(where: { $0.id == id }),
               let provStore = providerStore else { return }
         Task { await switchProvider(provider, keyId: nil, modelName: nil, from: provStore) }
@@ -116,15 +114,11 @@ extension ChappieViewModel {
 
     // MARK: - Immediate invalidation
 
-    /// Stops any in-flight request and clears aiClient/orchestrator/activeProvider
-    /// if the given provider ID matches the currently active one.
     func invalidateProviderIfDeleted(id: UUID) {
         guard activeProvider?.id == id else { return }
-
-        print("[ChappieViewModel] Active provider deleted — invalidating client and orchestrator")
+        print("[ChappieViewModel] Active provider deleted — invalidating")
         currentRequestTask?.cancel()
         currentRequestTask = nil
-
         self.activeProvider = nil
         self.activeKeyId = nil
         self.aiClient = nil
@@ -132,36 +126,24 @@ extension ChappieViewModel {
         self.activeModelName = nil
     }
 
-    /// Stops any in-flight request and clears aiClient/orchestrator/activeModelName
-    /// if the deleted model is currently active on the given provider.
     func invalidateModelIfDeleted(modelId: String, providerId: UUID) {
-        guard activeProvider?.id == providerId,
-              activeModelName == modelId else { return }
-
-        print("[ChappieViewModel] Active model '\(modelId)' deleted — invalidating client and orchestrator")
+        guard activeProvider?.id == providerId, activeModelName == modelId else { return }
+        print("[ChappieViewModel] Active model '\(modelId)' deleted — invalidating client")
         currentRequestTask?.cancel()
         currentRequestTask = nil
-
         self.aiClient = nil
         self.orchestrator = nil
         self.activeModelName = nil
-        // Keep activeProvider and activeKeyId — only the model is gone.
     }
 
-    /// Stops any in-flight request and clears aiClient/orchestrator
-    /// if the deleted key is currently active on the given provider.
     func invalidateKeyIfDeleted(keyId: UUID, providerId: UUID) {
-        guard activeProvider?.id == providerId,
-              activeKeyId == keyId else { return }
-
-        print("[ChappieViewModel] Active key deleted — invalidating client and orchestrator")
+        guard activeProvider?.id == providerId, activeKeyId == keyId else { return }
+        print("[ChappieViewModel] Active key deleted — invalidating client")
         currentRequestTask?.cancel()
         currentRequestTask = nil
-
         self.aiClient = nil
         self.orchestrator = nil
         self.activeKeyId = nil
-        // Keep activeProvider and activeModelName — only the key is gone.
     }
 
     // MARK: - Reload
@@ -177,7 +159,6 @@ extension ChappieViewModel {
                     if let updated = loaded.first(where: { $0.id == active.id }) {
                         self.activeProvider = updated
 
-                        // Validate activeKeyId is still present on the updated provider
                         if let keyId = activeKeyId,
                            !updated.keys.contains(where: { $0.id == keyId }) {
                             print("[ChappieViewModel] Active key gone after reload — invalidating")
@@ -186,7 +167,6 @@ extension ChappieViewModel {
                             self.activeKeyId = nil
                         }
                     } else {
-                        // Provider gone — full invalidation
                         print("[ChappieViewModel] Active provider gone after reload — invalidating")
                         self.activeProvider = nil
                         self.activeKeyId = nil
@@ -226,7 +206,7 @@ extension ChappieViewModel {
                     jsonString: "{\"name\": \"\(escaped)\"}",
                     scope: "global"
                 )
-                print("[ChappieViewModel] User name saved to global memory: \(trimmed)")
+                print("[ChappieViewModel] User name saved: \(trimmed)")
             } catch {
                 print("[ChappieViewModel] Failed to save user name: \(error)")
             }

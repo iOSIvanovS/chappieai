@@ -50,23 +50,22 @@ public struct AIOrchestratorResult: Sendable {
 ///
 /// Loop: request → tool calls → response → next request, until the model
 /// returns a final text response with no tool calls.
+///
+/// Uses AIClientProtocol — works with any provider (OpenAI, Anthropic, etc.)
+/// without knowing the wire format. Client is chosen by AIClientFactory.
 public actor AIOrchestrator {
 
-    private let aiClient: AIClient
+    // Protocol type — accepts both AIClient and AnthropicClient
+    private let aiClient: any AIClientProtocol
     private let toolService: ToolExecutionService
     private let fileSystem: FileSystemManager
     private let memoryManager: MemoryManager
     private let defaultConfig: AppConfig
 
     // B-04: invalidate() sets this flag; process() checks it before each agentic step.
-    // WHY NOT task.cancel(): URLSession.AsyncBytes.lines ignores Swift cooperative cancellation
-    // while waiting for server bytes — the stream simply never throws CancellationError.
-    // An explicit actor-level flag is the only reliable way to abort between steps.
     private var isInvalidated: Bool = false
 
     // MARK: - Fallback System Prompt
-    // Used only when overrideSystemPrompt is nil (e.g. session not yet assembled on cold start).
-    // Normal path: ThreadSession always provides overrideSystemPrompt via v2SystemPrompt().
 
     private let baseSystemPrompt = """
     You are Chappie — a universal AI agent of the highest level.
@@ -94,7 +93,7 @@ public actor AIOrchestrator {
     // MARK: - Init
 
     public init(
-        aiClient: AIClient,
+        aiClient: any AIClientProtocol,
         toolService: ToolExecutionService,
         fileSystem: FileSystemManager,
         memoryManager: MemoryManager,
@@ -109,7 +108,6 @@ public actor AIOrchestrator {
 
     // MARK: - Invalidation (B-04)
 
-    /// Marks this orchestrator as dead. process() will throw CancellationError on the next step boundary.
     public func invalidate() {
         isInvalidated = true
         print("[AIOrchestrator] Invalidated — will abort at next step boundary")
@@ -117,16 +115,6 @@ public actor AIOrchestrator {
 
     // MARK: - Public API
 
-    /// Runs the full agentic loop for the given prompt.
-    ///
-    /// overrideSystemPrompt: pre-built by ThreadSession (v2SystemPrompt()). When nil —
-    /// falls back to baseSystemPrompt (cold-start race condition guard).
-    ///
-    /// overrideToolPermissions: when provided, ToolAccessController.check() is called
-    /// before every tool execution. When nil — ToolExecutionService handles access checks.
-    ///
-    /// currentMessage: optional pre-built AIMessage for multimodal content (images/files).
-    /// When provided, replaces the default AIMessage(role:"user", content:prompt).
     public func process(
         prompt: String,
         history: [AIMessage],
@@ -146,7 +134,6 @@ public actor AIOrchestrator {
             throw CancellationError()
         }
 
-        // Use ThreadSession prompt when available; fall back to baseSystemPrompt on cold start.
         let systemPrompt = overrideSystemPrompt ?? baseSystemPrompt
 
         var sessionHistory = buildContextWindow(
@@ -207,12 +194,8 @@ public actor AIOrchestrator {
                     onToolCall: onToolCall
                 )
                 continue
-
             } else {
-                let finalResponse = streamResult.text.isEmpty
-                    ? "No response from model."
-                    : streamResult.text
-
+                let finalResponse = streamResult.text.isEmpty ? "No response from model." : streamResult.text
                 return AIOrchestratorResult(
                     finalResponse: finalResponse,
                     totalCost: totalCost > 0 ? totalCost : nil,
@@ -227,18 +210,8 @@ public actor AIOrchestrator {
         )
     }
 
-    // MARK: - Private: Unified Retry Wrapper (Stall + Timeout)
+    // MARK: - Private: Retry Wrapper (Stall + Timeout)
 
-    /// Wraps streamRequestWithTools() with two recovery layers:
-    ///
-    /// Layer 1 — Stall retry (StallError):
-    ///   No tokens for stallTimeout seconds → inject continuation prompt → retry.
-    ///   Up to maxStallRetries times.
-    ///
-    /// Layer 2 — Timeout retry (URLError.timedOut / networkError):
-    ///   Full connection timeout → 1 silent retry after 2s delay.
-    ///   If second attempt also times out → send a lightweight diagnostic request to AI
-    ///   and return a structured explanation instead of a raw error.
     private func streamWithRetry(
         systemPrompt: String,
         sessionHistory: [AIMessage],
@@ -253,7 +226,6 @@ public actor AIOrchestrator {
         var timeoutAttempt = 0
 
         while true {
-            // Build RequestLog snapshot before the network call.
             let log = RequestLog(
                 attemptNumber: timeoutAttempt + 1,
                 messageCount: retryHistory.count,
@@ -271,24 +243,19 @@ public actor AIOrchestrator {
                     onToken: onToken
                 )
 
-                if accumulatedPartialText.isEmpty {
-                    return result
-                } else {
-                    return AIStreamResult(
-                        text: accumulatedPartialText + result.text,
-                        toolCalls: result.toolCalls,
-                        cost: result.cost,
-                        balance: result.balance
-                    )
-                }
+                if accumulatedPartialText.isEmpty { return result }
+                return AIStreamResult(
+                    text: accumulatedPartialText + result.text,
+                    toolCalls: result.toolCalls,
+                    cost: result.cost,
+                    balance: result.balance
+                )
 
             } catch let stallError as StallError {
-                // Layer 1: stall retry — model went silent mid-stream.
                 stallRetryCount += 1
                 print("[AIOrchestrator] Stall retry \(stallRetryCount)/\(config.maxStallRetries). Partial: \(stallError.partialText.count) chars.")
 
                 if stallRetryCount > config.maxStallRetries {
-                    // Stall retries exhausted — escalate to timeout diagnostic.
                     throw ChappieError.networkError(
                         "Stream stalled \(config.maxStallRetries) times in a row. " +
                         "The provider may be overloaded. Please try again."
@@ -296,11 +263,9 @@ public actor AIOrchestrator {
                 }
 
                 accumulatedPartialText += stallError.partialText
-
                 if !stallError.partialText.isEmpty {
                     retryHistory.append(AIMessage(role: "assistant", content: stallError.partialText))
                 }
-
                 retryHistory.append(AIMessage(
                     role: "user",
                     content: "[SYSTEM: Your previous response was interrupted by a network stall. " +
@@ -308,27 +273,21 @@ public actor AIOrchestrator {
                              "Do NOT repeat what you already wrote. " +
                              "Do NOT add any preamble. Just continue the response.]"
                 ))
-
                 print("[AIOrchestrator] Retrying with continuation prompt. History: \(retryHistory.count) msgs.")
 
             } catch {
-                // Layer 2: check if this is a timeout error worth retrying silently.
                 guard isTimeoutError(error) else { throw error }
 
                 timeoutAttempt += 1
                 print("[AIOrchestrator] Timeout on attempt \(timeoutAttempt). Error: \(error.localizedDescription)")
 
                 if timeoutAttempt == 1 {
-                    // First timeout — silent retry after a short pause.
                     print("[AIOrchestrator] Silent retry in 2s...")
                     try await Task.sleep(nanoseconds: 2_000_000_000)
-
-                    // Re-check invalidation after sleep — user may have cancelled.
                     guard !isInvalidated else { throw CancellationError() }
                     continue
                 }
 
-                // Second timeout — run diagnostic and return a helpful message.
                 print("[AIOrchestrator] Double timeout. Running diagnostic request...")
                 let diagnosis = await runDiagnosticRequest(log: log, systemPrompt: systemPrompt)
                 return AIStreamResult(text: diagnosis, toolCalls: nil, cost: nil, balance: nil)
@@ -338,7 +297,6 @@ public actor AIOrchestrator {
 
     // MARK: - Private: Timeout Detection
 
-    /// Returns true if the error represents a connection or request timeout.
     private func isTimeoutError(_ error: Error) -> Bool {
         if let urlError = error as? URLError {
             return urlError.code == .timedOut || urlError.code == .networkConnectionLost
@@ -352,11 +310,6 @@ public actor AIOrchestrator {
 
     // MARK: - Private: Diagnostic Request
 
-    /// Sends a lightweight diagnostic request to the AI with RequestLog metadata.
-    ///
-    /// WHY LIGHTWEIGHT: we don't send the full context — it may be the cause of the timeout.
-    /// Instead we send only the log summary and ask the AI to diagnose.
-    /// If the diagnostic request also fails — we return a static fallback message.
     private func runDiagnosticRequest(log: RequestLog, systemPrompt: String) async -> String {
         let diagnosticPrompt = """
         A user's request to you timed out twice in a row. Here are the request metadata:
@@ -370,15 +323,12 @@ public actor AIOrchestrator {
         Be specific and practical. Do NOT apologize excessively. Just diagnose and advise.
         """
 
-        let diagnosticHistory = [AIMessage(role: "user", content: diagnosticPrompt)]
-
         do {
-            // Minimal tools — we only need a text response.
             let result = try await aiClient.streamRequestWithTools(
                 systemPrompt: "You are a helpful AI assistant diagnosing a timeout issue.",
-                chatHistory: diagnosticHistory,
+                chatHistory: [AIMessage(role: "user", content: diagnosticPrompt)],
                 tools: [],
-                stallTimeout: 30, // short timeout for diagnostic — if this fails too, we give up
+                stallTimeout: 30,
                 onToken: nil
             )
             let diagnosis = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -389,7 +339,6 @@ public actor AIOrchestrator {
             print("[AIOrchestrator] Diagnostic request also failed: \(error.localizedDescription)")
         }
 
-        // Static fallback if diagnostic request also fails.
         return """
         ⏱️ **Запрос завис дважды подряд.**
 
@@ -404,39 +353,23 @@ public actor AIOrchestrator {
 
     // MARK: - Private: Extract Recent File Paths
 
-    /// Scans the last few tool result messages in history for file paths.
-    /// Used to populate RequestLog.recentFilePaths for diagnostic context.
     private func extractRecentFilePaths(from history: [AIMessage]) -> [String] {
         let recentMessages = history.suffix(6)
         var paths: [String] = []
-
         for message in recentMessages {
             guard let content = message.contentString else { continue }
-            // Look for path-like strings: starts with a letter/dot, contains slashes.
             let words = content.components(separatedBy: .whitespacesAndNewlines)
             for word in words {
                 let clean = word.trimmingCharacters(in: CharacterSet(charactersIn: "\"',()[]{}"))
-                if clean.contains("/") && clean.count > 3 && clean.count < 200 {
-                    paths.append(clean)
-                }
+                if clean.contains("/") && clean.count > 3 && clean.count < 200 { paths.append(clean) }
             }
         }
-
-        // Deduplicate and limit to 5 most recent.
         var seen = Set<String>()
         return paths.filter { seen.insert($0).inserted }.prefix(5).map { $0 }
     }
 
-    // MARK: - Private: Smart Context Window
+    // MARK: - Private: Context Window
 
-    /// Builds the context window from history + current user message.
-    ///
-    /// Deduplication: if the last history message is a plain-text user message matching
-    /// currentPrompt, it is removed to avoid duplication. Multimodal messages are never
-    /// deduplicated (contentString is nil, so the comparison always fails).
-    ///
-    /// Compression: older messages beyond tokenBudget are replaced with their <summary>
-    /// if available. The last recentFullMessages are always sent in full.
     private func buildContextWindow(
         from history: [AIMessage],
         currentPrompt: String,
@@ -478,12 +411,11 @@ public actor AIOrchestrator {
         }
 
         var usedTokens = recentMessages.reduce(0) { $0 + estimateTokens($1) }
-
         var selectedOlder: [AIMessage] = []
+
         for message in olderMessages.reversed() {
             let compressed = compressMessage(message, summaryThreshold: summaryThreshold)
             let tokens = estimateTokens(compressed)
-
             if usedTokens + tokens <= budget {
                 selectedOlder.insert(compressed, at: 0)
                 usedTokens += tokens
@@ -493,7 +425,6 @@ public actor AIOrchestrator {
         }
 
         var contextWindow = selectedOlder + recentMessages
-
         if let message = currentMessage {
             contextWindow.append(message)
         } else {
@@ -501,18 +432,14 @@ public actor AIOrchestrator {
         }
 
         let totalTokensAfter = contextWindow.reduce(0) { $0 + estimateTokens($1) }
-        print("[AIOrchestrator] Sending: \(contextWindow.count) msgs, ~\(totalTokensAfter) tokens (compressed from \(totalTokensBefore))")
-
+        print("[AIOrchestrator] Sending: \(contextWindow.count) msgs, ~\(totalTokensAfter) tokens")
         return contextWindow
     }
 
     private func compressMessage(_ message: AIMessage, summaryThreshold: Int) -> AIMessage {
         guard let fullText = message.contentString,
               estimateTokens(message) > summaryThreshold,
-              let summary = extractSummary(from: fullText) else {
-            return message
-        }
-
+              let summary = extractSummary(from: fullText) else { return message }
         return AIMessage(
             role: message.role,
             content: "[COMPRESSED] \(summary)",
@@ -524,25 +451,17 @@ public actor AIOrchestrator {
     private func extractSummary(from text: String) -> String? {
         let openTag = "<summary>"
         let closeTag = "</summary>"
-
         guard let openRange = text.range(of: openTag),
               let closeRange = text.range(of: closeTag),
-              openRange.upperBound < closeRange.lowerBound else {
-            return nil
-        }
-
+              openRange.upperBound < closeRange.lowerBound else { return nil }
         let summary = String(text[openRange.upperBound..<closeRange.lowerBound])
             .trimmingCharacters(in: .whitespacesAndNewlines)
-
         return summary.isEmpty ? nil : summary
     }
 
-    /// UTF-8 bytes / 4 × 1.5 — realistic estimate for mixed Russian/English text with code.
     private func estimateTokens(_ message: AIMessage) -> Int {
         let text = message.contentString ?? ""
-        let utf8ByteCount = text.utf8.count
-        let estimated = Int(Double(utf8ByteCount) / 4.0 * 1.5)
-        return max(1, estimated)
+        return max(1, Int(Double(text.utf8.count) / 4.0 * 1.5))
     }
 
     // MARK: - Private: Tool Execution
@@ -562,7 +481,6 @@ public actor AIOrchestrator {
             let resultString: String
 
             if lastToolSignature == signature {
-                // Blocks only consecutive identical calls — prevents tight loops.
                 resultString = """
                 SYSTEM ERROR: You just called `\(toolName)` with the exact same arguments right before this. \
                 This is an infinite loop. DO NOT REPEAT THE SAME ACTION. USE A DIFFERENT APPROACH.
@@ -595,9 +513,7 @@ public actor AIOrchestrator {
 
     private func extractTargetPath(from arguments: String) -> String {
         guard let data = arguments.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return ""
-        }
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return "" }
         return json["path"] as? String ?? ""
     }
 }

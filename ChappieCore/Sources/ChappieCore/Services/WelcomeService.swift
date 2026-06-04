@@ -10,7 +10,6 @@
 // - Single non-streaming request — short, fast, no tool loop needed.
 // - Result is saved as the first assistant message in thread history.
 // - appLanguage is optional — when nil, model replies in its default language.
-//   TODO: wire AppSettings.appLanguage here when i18n lands.
 // - On any error (network, timeout, no provider) — silently skips the greeting.
 //   The thread opens cleanly; no error shown to the user.
 
@@ -23,17 +22,15 @@ public struct WelcomeService: Sendable {
     /// Sends a short greeting request to the AI and returns the response text.
     ///
     /// - Parameters:
-    ///   - client: The AIClient configured for the active provider + model.
+    ///   - client: Any AIClientProtocol — works with OpenAI and Anthropic.
     ///   - appLanguage: BCP-47 language tag (e.g. "ru", "en"). Nil = model decides.
     /// - Returns: Greeting text, or nil if the request failed or was cancelled.
     public static func generateGreeting(
-        using client: AIClient,
+        using client: any AIClientProtocol,
         appLanguage: String? = nil
     ) async -> String? {
         let languageInstruction: String
         if let lang = appLanguage {
-            // Explicit language instruction so the greeting matches the app locale.
-            // TODO: replace "ru" hardcode with AppSettings.appLanguage when i18n lands.
             languageInstruction = " Reply in language code: \(lang). Your reply MUST be in that language."
         } else {
             languageInstruction = ""
@@ -55,7 +52,6 @@ public struct WelcomeService: Sendable {
             guard let text, !text.isEmpty else { return nil }
             return text
         } catch {
-            // Greeting is best-effort — any failure is silent.
             print("[WelcomeService] Greeting skipped: \(error.localizedDescription)")
             return nil
         }

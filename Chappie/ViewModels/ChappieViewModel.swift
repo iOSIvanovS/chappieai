@@ -115,9 +115,7 @@ final class ChappieViewModel {
             return activeThreadSettings.activeProviderId != nil
         }
         guard providers.contains(where: { $0.id == provider.id }) else { return true }
-        // Key missing
         if let keyId = activeKeyId, !provider.keys.contains(where: { $0.id == keyId }) { return true }
-        // Model missing — compare by AIModel.id
         if let modelName = activeModelName {
             return !provider.models.contains(where: { $0.id == modelName })
         }
@@ -134,7 +132,8 @@ final class ChappieViewModel {
     var memoryManager: MemoryManager?
     var webFetchService: WebFetchService?
     var toolService: ToolExecutionService?
-    var aiClient: AIClient?
+    // Protocol type — can be AIClient (OpenAI) or AnthropicClient
+    var aiClient: (any AIClientProtocol)?
     var orchestrator: AIOrchestrator?
 
     // MARK: - SwiftData
