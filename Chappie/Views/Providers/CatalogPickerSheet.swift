@@ -4,7 +4,7 @@
 // First screen when adding a provider: choose from the remote catalog or enter manually.
 //
 // FLOW:
-// 1. Sheet opens → catalog loads from ProvidersRemoteService (once per session).
+// 1. Sheet opens → catalog loads via the shared ProvidersRemoteService (cached for the session).
 // 2. User sees a list of known providers (OpenAI, Anthropic, Groq, …)
 //    + a "Custom settings" row at the bottom.
 // 3. Tapping a catalog row → opens AddProviderSheet pre-filled with
@@ -22,6 +22,8 @@ struct CatalogPickerSheet: View {
     // MARK: - Input
 
     let providerStore: AIProviderStore?
+    /// Shared remote service — injected from ChappieViewModel to reuse the in-memory cache.
+    let remoteService: ProvidersRemoteService
     var isOnboarding: Bool = false
     let onSaved: () -> Void
     let onCancel: () -> Void
@@ -196,8 +198,8 @@ struct CatalogPickerSheet: View {
 
         Task {
             do {
-                let service = ProvidersRemoteService()
-                let result = try await service.fetchCatalog()
+                // Uses shared service — second open returns cached result instantly
+                let result = try await remoteService.fetchCatalog()
                 await MainActor.run {
                     catalog = result.providers
                     isLoading = false
@@ -224,7 +226,7 @@ private struct CatalogProviderRow: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 14) {
-                // Provider icon placeholder — letter avatar
+                // Letter avatar
                 ZStack {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color.accentColor.opacity(0.12))
@@ -325,14 +327,4 @@ private struct CustomProviderRow: View {
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
     }
-}
-
-// MARK: - Preview
-
-#Preview {
-    CatalogPickerSheet(
-        providerStore: nil,
-        onSaved: {},
-        onCancel: {}
-    )
 }

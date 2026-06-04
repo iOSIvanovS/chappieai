@@ -25,6 +25,8 @@
 //   Catalog entry: models from catalog are shown pre-selected.
 //   All entries: user can fetch live list, search, select/deselect, add manually.
 //   Must add at least one model to proceed.
+//   Fetch error is suppressed when catalog models are already loaded (e.g. Anthropic
+//   has no /v1/models endpoint — catalog models are the source of truth).
 //
 // SAVE BEHAVIOUR:
 //   Onboarding → calls providerStore.mergeProvider (safe upsert, no alerts).
@@ -376,7 +378,10 @@ struct AddProviderSheet: View {
             .padding(.top, 16)
             .padding(.bottom, 8)
 
-            if let fetchErr = fetchError {
+            // Show fetch error only when there are no catalog models already loaded.
+            // Anthropic has no /v1/models endpoint — if catalog models are present,
+            // the empty live list is expected and should not alarm the user.
+            if let fetchErr = fetchError, fetchedModels.isEmpty {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                     Text(fetchErr).font(.caption).foregroundStyle(.orange)
@@ -666,7 +671,7 @@ struct AddProviderSheet: View {
                 return
             }
 
-            // Use factory — picks AnthropicClient or AIClient based on inferred protocol
+            // Factory picks AnthropicClient or AIClient based on inferred protocol
             let client = AIClientFactory.makeForValidation(
                 baseURL: trimmedURL,
                 apiKey: keyToUse,
@@ -730,7 +735,6 @@ struct AddProviderSheet: View {
                 keyToUse = firstValidKeyValue
             }
 
-            // Use factory for model fetching — Anthropic returns [] (no /models endpoint)
             let client = AIClientFactory.makeForValidation(
                 baseURL: provider.baseURL,
                 apiKey: keyToUse,
@@ -741,7 +745,11 @@ struct AddProviderSheet: View {
             await MainActor.run {
                 isFetchingModels = false
                 if modelIds.isEmpty {
-                    fetchError = "Не удалось загрузить список моделей. Добавьте модели вручную."
+                    // Only show error if we have no catalog models to fall back on.
+                    // Anthropic has no /v1/models endpoint — catalog models are the source of truth.
+                    if fetchedModels.isEmpty {
+                        fetchError = "Не удалось загрузить список моделей. Добавьте модели вручную."
+                    }
                 } else {
                     let existingModels = fetchedModels
                     fetchedModels = modelIds.map { modelId in

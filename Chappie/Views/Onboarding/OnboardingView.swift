@@ -70,10 +70,11 @@ struct OnboardingView: View {
             }
             .padding(40)
         }
-        // Catalog picker in onboarding mode — passes isOnboarding flag down to AddProviderSheet
+        // Catalog picker in onboarding mode — shared remote service for session cache
         .sheet(isPresented: $showAddProvider) {
             CatalogPickerSheet(
                 providerStore: viewModel.providerStore,
+                remoteService: viewModel.providersRemoteService,
                 isOnboarding: true,
                 onSaved: {
                     showAddProvider = false

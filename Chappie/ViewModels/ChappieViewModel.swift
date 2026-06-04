@@ -136,6 +136,12 @@ final class ChappieViewModel {
     var aiClient: (any AIClientProtocol)?
     var orchestrator: AIOrchestrator?
 
+    // MARK: - Shared remote services
+
+    /// Single shared instance — caches the catalog for the entire app session.
+    /// CatalogPickerSheet uses this instead of creating a new instance each time.
+    let providersRemoteService = ProvidersRemoteService()
+
     // MARK: - SwiftData
 
     var modelContainer: ModelContainer?
