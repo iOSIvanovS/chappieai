@@ -35,11 +35,18 @@
 // WHY: GeometryReader inside WindowGroup is greedy in horizontal direction and prevents
 // the window from being resized narrower than its initial width. Using .background()
 // with .ignoresSafeArea() achieves the same full-window coverage without layout side effects.
+//
+// SPARKLE AUTO-UPDATE:
+// SPUStandardUpdaterController is created at app level and stored in AppDelegate.
+// SUFeedURL, SUPublicEDKey, SUEnableAutomaticChecks are set in Info.plist.
+// Auto-check on launch is handled by Sparkle itself (SUEnableAutomaticChecks = YES).
+// Manual "Check for Updates" button in SettingsView calls updaterController.updater.checkForUpdates().
 
 import SwiftUI
 import AppKit
 import ChappieCore
 import SwiftData
+import Sparkle
 
 @main
 struct ChappieApp: App {
@@ -49,8 +56,24 @@ struct ChappieApp: App {
     @NSApplicationDelegateAdaptor(ChappieAppDelegate.self) var appDelegate
 
     // MARK: - View Model
-    // Создаем экземпляр ViewModel для всего жизненного цикла приложения
+
     @State private var viewModel = ChappieViewModel()
+
+    // MARK: - Sparkle
+
+    // Sparkle updater controller — lives for the entire app lifetime.
+    // WHY @State: ensures single instance across SwiftUI re-renders.
+    private let updaterController: SPUStandardUpdaterController
+
+    init() {
+        // startingUpdater: true — Sparkle starts immediately and auto-checks on launch
+        // (controlled by SUEnableAutomaticChecks in Info.plist).
+        updaterController = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: nil,
+            userDriverDelegate: nil
+        )
+    }
 
     // MARK: - SwiftData Container
 
@@ -106,14 +129,12 @@ struct ChappieApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                // Передаем ViewModel в окружение текущего окна
                 .environment(viewModel)
+                // Pass updater into environment so SettingsView can trigger manual checks.
+                .environment(\.sparkleUpdater, updaterController.updater)
                 .onAppear {
-                    // Подключаем базу данных (ModelContainer) к ViewModel при загрузке окна
                     viewModel.setModelContainer(modelContainer)
                 }
-                // Background image via .background — does NOT participate in layout,
-                // does NOT affect window minimum size, covers full window including toolbar.
                 .background(
                     Image("Chappie")
                         .resizable()
@@ -131,10 +152,23 @@ struct ChappieApp: App {
         }
 
         Settings {
-            // Settings scene is intentionally minimal — main settings are in the sheet
-            // opened from the toolbar gear button
             EmptyView()
         }
+    }
+}
+
+// MARK: - Sparkle Environment Key
+
+// Custom EnvironmentKey to pass SPUUpdater down the view hierarchy.
+// WHY: avoids passing updaterController manually through every view init.
+private struct SparkleUpdaterKey: EnvironmentKey {
+    static let defaultValue: SPUUpdater? = nil
+}
+
+extension EnvironmentValues {
+    var sparkleUpdater: SPUUpdater? {
+        get { self[SparkleUpdaterKey.self] }
+        set { self[SparkleUpdaterKey.self] = newValue }
     }
 }
 

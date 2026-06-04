@@ -7,15 +7,21 @@
 //   - User name: saved to global memory, used in system prompt.
 //   - AI providers: shortcut to ProvidersSettingsView (the directory).
 //   - Memory: shortcut to MemoryManagementView (per-thread history cleanup).
+//   - Updates: Sparkle "Check for Updates" button + current app version.
 //   - Onboarding: manual re-run trigger (calls AppState.resetOnboarding).
 //   - Security: Keychain info.
 //
 // NOTE: There is no "active provider" concept at the global level.
 // Provider + key + model selection happens per-thread via the "Модель" chip in the toolbar.
 // ProvidersSettingsView is purely a directory — add/edit/delete, no selection.
+//
+// SPARKLE:
+// SPUUpdater is received via @Environment(\.sparkleUpdater) — injected in ChappieApp.
+// Sparkle must be explicitly imported here for checkForUpdates() and canCheckForUpdates.
 
 import SwiftUI
 import ChappieCore
+import Sparkle
 
 // MARK: - SettingsView
 
@@ -33,6 +39,8 @@ struct SettingsView: View {
     @State private var nameSaved: Bool = false
     @State private var showOnboardingConfirm: Bool = false
 
+    // Sparkle updater passed via environment from ChappieApp.
+    @Environment(\.sparkleUpdater) private var sparkleUpdater
     @Environment(\.dismiss) private var dismiss
 
     // MARK: - Body
@@ -179,6 +187,38 @@ struct SettingsView: View {
 
                     Divider()
 
+                    // MARK: Updates
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("Обновления", systemImage: "arrow.down.circle")
+                            .font(.headline)
+
+                        HStack(spacing: 12) {
+                            // Current app version badge
+                            HStack(spacing: 6) {
+                                Image(systemName: "app.badge.checkmark")
+                                    .foregroundStyle(.secondary)
+                                Text("Версия \(appVersion)")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+
+                            Spacer()
+
+                            Button {
+                                sparkleUpdater?.checkForUpdates()
+                            } label: {
+                                Label("Проверить обновления", systemImage: "arrow.clockwise")
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(sparkleUpdater?.canCheckForUpdates == false)
+                        }
+                    }
+
+                    Divider()
+
                     // MARK: Onboarding
                     VStack(alignment: .leading, spacing: 12) {
                         Label("Онбординг", systemImage: "wand.and.stars")
@@ -231,7 +271,7 @@ struct SettingsView: View {
             .padding(.horizontal, 24)
             .padding(.vertical, 16)
         }
-        .frame(width: 500, height: 540)
+        .frame(width: 500, height: 600)
         .sheet(isPresented: $showProviders) {
             ProvidersSettingsView(viewModel: viewModel)
         }
@@ -253,6 +293,10 @@ struct SettingsView: View {
     }
 
     // MARK: - Helpers
+
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+    }
 
     private func providersLabel(_ count: Int) -> String {
         switch count {
