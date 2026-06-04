@@ -6,11 +6,12 @@
 // SECTIONS:
 //   - User name: saved to global memory, used in system prompt.
 //   - AI providers: shortcut to ProvidersSettingsView (the directory).
+//   - Memory: shortcut to MemoryManagementView (per-thread history cleanup).
 //   - Onboarding: manual re-run trigger (calls AppState.resetOnboarding).
 //   - Security: Keychain info.
 //
 // NOTE: There is no "active provider" concept at the global level.
-// Provider + key + model selection happens per-thread in ThreadSettingsSheet.
+// Provider + key + model selection happens per-thread via the "Модель" chip in the toolbar.
 // ProvidersSettingsView is purely a directory — add/edit/delete, no selection.
 
 import SwiftUI
@@ -28,6 +29,7 @@ struct SettingsView: View {
 
     @State private var userName: String = ""
     @State private var showProviders: Bool = false
+    @State private var showMemory: Bool = false
     @State private var nameSaved: Bool = false
     @State private var showOnboardingConfirm: Bool = false
 
@@ -101,7 +103,7 @@ struct SettingsView: View {
                         Label("AI-провайдеры", systemImage: "cpu")
                             .font(.headline)
 
-                        Text("Справочник провайдеров: ключи и модели для каждого из них. Выбор провайдера и модели происходит в настройках треда.")
+                        Text("Справочник провайдеров: ключи и модели для каждого из них. Выбор провайдера и модели происходит в чипсе «Модель» в тулбаре чата.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
 
@@ -136,6 +138,40 @@ struct SettingsView: View {
                                 showProviders = true
                             } label: {
                                 Label("Управлять", systemImage: "slider.horizontal.3")
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+
+                    Divider()
+
+                    // MARK: Memory Management
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("Память", systemImage: "internaldrive")
+                            .font(.headline)
+
+                        Text("История сообщений хранится полностью. Здесь можно посмотреть объём каждого треда и удалить старые сообщения.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+
+                        HStack {
+                            let totalThreads = viewModel.threads.count
+                            HStack(spacing: 6) {
+                                Image(systemName: "bubble.left.and.bubble.right")
+                                    .foregroundStyle(.blue)
+                                Text("\(totalThreads) \(threadsLabel(totalThreads))")
+                                    .font(.system(size: 13, weight: .medium))
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Color.blue.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+
+                            Spacer()
+
+                            Button {
+                                showMemory = true
+                            } label: {
+                                Label("Управлять", systemImage: "trash.slash")
                             }
                             .buttonStyle(.bordered)
                         }
@@ -195,14 +231,16 @@ struct SettingsView: View {
             .padding(.horizontal, 24)
             .padding(.vertical, 16)
         }
-        .frame(width: 500, height: 480)
+        .frame(width: 500, height: 540)
         .sheet(isPresented: $showProviders) {
             ProvidersSettingsView(viewModel: viewModel)
+        }
+        .sheet(isPresented: $showMemory) {
+            MemoryManagementView(viewModel: viewModel)
         }
         .alert("Запустить онбординг?", isPresented: $showOnboardingConfirm) {
             Button("Запустить") {
                 dismiss()
-                // Small delay so settings sheet dismisses before onboarding appears
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     AppState.shared.resetOnboarding()
                 }
@@ -221,6 +259,14 @@ struct SettingsView: View {
         case 1: return "провайдер"
         case 2...4: return "провайдера"
         default: return "провайдеров"
+        }
+    }
+
+    private func threadsLabel(_ count: Int) -> String {
+        switch count {
+        case 1: return "тред"
+        case 2...4: return "треда"
+        default: return "тредов"
         }
     }
 

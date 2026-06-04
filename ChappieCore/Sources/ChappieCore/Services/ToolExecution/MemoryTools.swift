@@ -17,6 +17,11 @@
 // A rule in memory disappears when sessions change. Only code is reliable.
 // Detector: Unicode scalar range U+0400–U+04FF (basic Cyrillic).
 // Checked fields: key, type, jsonString — all three required fields.
+//
+// MEMORY CHANGE CALLBACK:
+// After memorize/delete_memory — calls onMemoryChanged on MainActor.
+// This triggers invalidateActiveThreadSession() in ChappieViewModel,
+// clearing the cached system prompt so the next message picks up fresh memory.
 
 import Foundation
 
@@ -104,6 +109,8 @@ extension ToolExecutionService {
                 ) {
                     return "❌ memorize: \(error)"
                 }
+                // Invalidate cached system prompt so next message sees updated memory.
+                notifyMemoryChanged()
                 let scopeLabel: String
                 if scopeString == "global" {
                     scopeLabel = "global memory"
@@ -160,11 +167,22 @@ extension ToolExecutionService {
                 if let error = await memoryManager.deleteMemoryEntry(key: key, scope: scopeString) {
                     return "❌ delete_memory: \(error)"
                 }
+                // Invalidate cached system prompt so next message sees updated memory.
+                notifyMemoryChanged()
                 return "✅ Entry '\(key)' deleted from scope '\(scopeString)'."
             }
 
         default:
             return "Ошибка: Неизвестный memory tool '\(name)'"
         }
+    }
+
+    // MARK: - Private helper
+
+    /// Fires the onMemoryChanged callback on MainActor.
+    /// Called after any write/delete to memory so the cached system prompt is cleared immediately.
+    private func notifyMemoryChanged() {
+        guard let callback = onMemoryChanged else { return }
+        Task { @MainActor in callback() }
     }
 }

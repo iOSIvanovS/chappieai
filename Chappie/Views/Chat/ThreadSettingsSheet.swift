@@ -10,11 +10,12 @@
 //
 // SETTINGS:
 // - Thread name (inline rename)
-// - Provider + key + model (3-column picker, per-thread isolation)
 // - Context depth: slider 100...1000, step 100, default 300
-// - Unlimited context toggle: bypasses all trimming
+// - Unlimited context toggle
 //
-// ProviderPickRow / ModelPickRow are defined in Shared/ProviderModelPickerRows.swift.
+// NOTE: Provider + model selection happens ONLY via the "Модель" chip in the chat toolbar.
+// Adding/editing/deleting providers happens ONLY in the provider directory (SettingsView).
+// This sheet intentionally has no provider picker.
 
 import SwiftUI
 import ChappieCore
@@ -34,16 +35,6 @@ struct ThreadSettingsSheet: View {
 
     @State private var draftTitle: String
     @State private var draftSettings: ThreadSettings
-    @State private var selectedProviderId: UUID?
-    @State private var selectedKeyId: UUID?
-    @State private var selectedModelName: String
-    @State private var manualModelInput: String = ""
-
-    // MARK: - Computed
-
-    private var selectedProvider: AIProvider? {
-        providers.first { $0.id == selectedProviderId }
-    }
 
     // MARK: - Init
 
@@ -59,9 +50,6 @@ struct ThreadSettingsSheet: View {
         self.onDismiss = onDismiss
         self._draftTitle = State(initialValue: thread.title)
         self._draftSettings = State(initialValue: thread.settings)
-        self._selectedProviderId = State(initialValue: thread.settings.activeProviderId)
-        self._selectedKeyId = State(initialValue: thread.settings.activeKeyId)
-        self._selectedModelName = State(initialValue: thread.settings.activeModelName ?? "")
     }
 
     // MARK: - Body
@@ -75,10 +63,6 @@ struct ThreadSettingsSheet: View {
                 VStack(alignment: .leading, spacing: 24) {
                     nameSection
                     Divider().padding(.vertical, 2)
-                    if !providers.isEmpty {
-                        providerSection
-                        Divider().padding(.vertical, 2)
-                    }
                     contextSection
                 }
                 .padding(20)
@@ -87,8 +71,8 @@ struct ThreadSettingsSheet: View {
             Divider()
             footerView
         }
-        .frame(width: 520)
-        .frame(minHeight: 400)
+        .frame(width: 480)
+        .frame(minHeight: 320)
     }
 
     // MARK: - Header
@@ -132,168 +116,6 @@ struct ThreadSettingsSheet: View {
             TextField("Название треда", text: $draftTitle)
                 .textFieldStyle(.roundedBorder)
                 .font(.callout)
-        }
-    }
-
-    // MARK: - Provider Section (3-column: provider / key / model)
-
-    private var providerSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("Провайдер и модель", systemImage: "cpu")
-
-            HStack(alignment: .top, spacing: 0) {
-
-                // Left: providers
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("Провайдер")
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
-                        .padding(.bottom, 4)
-
-                    ScrollView {
-                        VStack(spacing: 2) {
-                            ForEach(providers) { provider in
-                                ProviderPickRow(
-                                    provider: provider,
-                                    isSelected: selectedProviderId == provider.id,
-                                    onSelect: {
-                                        selectedProviderId = provider.id
-                                        selectedKeyId = provider.keys.count == 1 ? provider.keys.first?.id : nil
-                                        selectedModelName = provider.models.first?.id ?? ""
-                                    }
-                                )
-                            }
-                        }
-                        .padding(.horizontal, 4)
-                    }
-                    .frame(maxHeight: 150)
-                }
-                .frame(width: 160)
-
-                Divider()
-                    .padding(.horizontal, 8)
-
-                // Middle: keys
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("Ключ")
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
-                        .padding(.bottom, 4)
-
-                    if let provider = selectedProvider {
-                        if provider.keys.isEmpty {
-                            keysEmptyState
-                        } else {
-                            ScrollView {
-                                VStack(spacing: 2) {
-                                    ForEach(provider.keys) { key in
-                                        KeyPickRow(
-                                            key: key,
-                                            isSelected: selectedKeyId == key.id,
-                                            onSelect: { selectedKeyId = key.id }
-                                        )
-                                    }
-                                }
-                                .padding(.horizontal, 4)
-                            }
-                            .frame(maxHeight: 150)
-                        }
-                    } else {
-                        noProviderHint
-                    }
-                }
-                .frame(width: 140)
-
-                Divider()
-                    .padding(.horizontal, 8)
-
-                // Right: models
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("Модель")
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
-                        .padding(.bottom, 4)
-
-                    if let provider = selectedProvider {
-                        if provider.models.isEmpty {
-                            modelsEmptyState
-                        } else {
-                            ScrollView {
-                                VStack(spacing: 2) {
-                                    ForEach(provider.models) { model in
-                                        ModelPickRow(
-                                            model: model.id,
-                                            isSelected: selectedModelName == model.id,
-                                            onSelect: { selectedModelName = model.id }
-                                        )
-                                    }
-                                }
-                                .padding(.horizontal, 4)
-                            }
-                            .frame(maxHeight: 150)
-                        }
-
-                        // Manual model input
-                        Divider().padding(.vertical, 4)
-                        HStack(spacing: 6) {
-                            TextField("Ввести вручную…", text: $manualModelInput)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.system(.callout, design: .monospaced))
-                                .onSubmit { applyManualModel() }
-                            Button("OK") { applyManualModel() }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                                .disabled(manualModelInput.trimmingCharacters(in: .whitespaces).isEmpty)
-                        }
-                    } else {
-                        noProviderHint
-                    }
-                }
-                .frame(maxWidth: .infinity)
-            }
-            .padding(12)
-            .background(Color.primary.opacity(0.03))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-
-            selectionSummary
-        }
-    }
-
-    // MARK: - Selection Summary
-
-    @ViewBuilder
-    private var selectionSummary: some View {
-        if let provider = selectedProvider {
-            if !selectedModelName.isEmpty, let keyId = selectedKeyId,
-               let key = provider.keys.first(where: { $0.id == keyId }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.green)
-                    Text("\(provider.displayName) · \(key.name) · \(selectedModelName)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            } else if selectedKeyId == nil {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.circle")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.orange)
-                    Text("Выберите ключ")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-            } else if selectedModelName.isEmpty {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.circle")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.orange)
-                    Text("Выберите модель")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-            }
         }
     }
 
@@ -377,7 +199,6 @@ struct ThreadSettingsSheet: View {
                 )
             } else {
                 let tokenBudget = draftSettings.maxMessagesInContext * 500
-
                 infoRow(
                     icon: "arrow.up.doc",
                     color: .accentColor,
@@ -388,47 +209,6 @@ struct ThreadSettingsSheet: View {
         .padding(12)
         .background(Color.primary.opacity(0.04))
         .clipShape(RoundedRectangle(cornerRadius: 10))
-    }
-
-    // MARK: - Empty / Hint States
-
-    private var keysEmptyState: some View {
-        VStack(spacing: 6) {
-            Spacer()
-            Image(systemName: "key.slash")
-                .font(.system(size: 20))
-                .foregroundStyle(.secondary.opacity(0.4))
-            Text("Нет ключей")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: 80)
-    }
-
-    private var modelsEmptyState: some View {
-        VStack(spacing: 6) {
-            Spacer()
-            Image(systemName: "square.stack.3d.up.slash")
-                .font(.system(size: 20))
-                .foregroundStyle(.secondary.opacity(0.4))
-            Text("Нет сохранённых моделей")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: 80)
-    }
-
-    private var noProviderHint: some View {
-        VStack {
-            Spacer()
-            Text("← Выберите провайдера")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Footer
@@ -446,13 +226,8 @@ struct ThreadSettingsSheet: View {
             Button("Сохранить") {
                 let trimmedTitle = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
                 let finalTitle = trimmedTitle.isEmpty ? thread.title : trimmedTitle
-                onSave(
-                    finalTitle,
-                    draftSettings,
-                    selectedProviderId,
-                    selectedKeyId,
-                    selectedModelName.isEmpty ? nil : selectedModelName
-                )
+                // Pass nil for provider/key/model — this sheet no longer manages them
+                onSave(finalTitle, draftSettings, nil, nil, nil)
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.return, modifiers: .command)
@@ -461,13 +236,6 @@ struct ThreadSettingsSheet: View {
     }
 
     // MARK: - Helpers
-
-    private func applyManualModel() {
-        let trimmed = manualModelInput.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return }
-        selectedModelName = trimmed
-        manualModelInput = ""
-    }
 
     private func sectionLabel(_ title: String, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
@@ -512,45 +280,6 @@ struct ThreadSettingsSheet: View {
     }
 }
 
-// MARK: - KeyPickRow
-
-private struct KeyPickRow: View {
-
-    let key: APIKey
-    let isSelected: Bool
-    let onSelect: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 8) {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 13))
-                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.3))
-                    .frame(width: 16)
-
-                Text(key.name)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-
-                Spacer()
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isSelected
-                          ? Color.accentColor.opacity(0.07)
-                          : (isHovered ? Color.primary.opacity(0.04) : Color.clear))
-            )
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
-    }
-}
-
 // MARK: - Preview
 
 #Preview("Default settings") {
@@ -563,20 +292,9 @@ private struct KeyPickRow: View {
             createdAt: Date(),
             updatedAt: Date()
         ),
-        providers: [
-            AIProvider(
-                id: UUID(),
-                name: "AITunnel",
-                baseURL: "https://api.aitunnel.ru/v1",
-                keys: [APIKey(name: "Рабочий"), APIKey(name: "Личный")],
-                models: [
-                    AIModel(id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5"),
-                    AIModel(id: "gpt-4o", name: "GPT-4o")
-                ]
-            )
-        ],
-        onSave: { title, settings, providerId, keyId, modelName in
-            print("Save: \(title), provider: \(String(describing: providerId))")
+        providers: [],
+        onSave: { title, settings, _, _, _ in
+            print("Save: \(title)")
         },
         onDismiss: {}
     )

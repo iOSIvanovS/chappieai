@@ -17,8 +17,9 @@
 //   (100ms–1s per project). Unnecessary when only settings change, not project membership.
 //
 // MEMORY WRITE FLOW (memorize/recall tool calls during conversation):
-//   memory changes → invalidateActiveThreadSession() — clears cached prompt only.
-//   projectMetas are unchanged, so invalidation is sufficient here.
+//   ToolExecutionService.onMemoryChanged fires → invalidateActiveThreadSession()
+//   clears the cached prompt immediately — no app restart needed.
+//   projectMetas are unchanged, so invalidation (not full rebuild) is sufficient.
 
 import ChappieCore
 
@@ -51,5 +52,11 @@ extension ChappieViewModel {
         // Push project settings so ToolExecutionService can enforce permissions.
         let settingsMap = Dictionary(uniqueKeysWithValues: activeProjects.map { ($0.id, $0.settings) })
         await ts.setProjectSettings(settingsMap)
+
+        // Register callback so memory writes immediately invalidate the cached system prompt.
+        // This ensures memorize/delete_memory changes are visible in the very next message.
+        await ts.setOnMemoryChanged { [weak self] in
+            self?.invalidateActiveThreadSession()
+        }
     }
 }

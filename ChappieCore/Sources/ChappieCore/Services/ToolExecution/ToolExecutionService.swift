@@ -53,6 +53,12 @@
 // onProjectUnavailable is called from FileTools when a FS operation fails.
 // ViewModel registers this callback via setOnProjectUnavailable() and marks
 // the matching project chip orange without requiring a thread re-entry.
+//
+// MEMORY CHANGE CALLBACK:
+// onMemoryChanged is called from MemoryTools after every memorize/delete_memory.
+// ViewModel registers this via setOnMemoryChanged() to invalidate the cached
+// system prompt immediately — so the next message picks up fresh memory.
+// Without this, memory changes are only visible after app restart.
 
 import Foundation
 
@@ -109,6 +115,13 @@ public actor ToolExecutionService {
     /// Called on MainActor when a FS tool fails for a specific project.
     /// ViewModel uses this to mark the project chip orange in real time.
     var onProjectUnavailable: (@MainActor (String) -> Void)?
+
+    // MARK: - Memory change callback
+
+    /// Called on MainActor after every memorize/delete_memory.
+    /// ViewModel uses this to invalidate the cached system prompt immediately,
+    /// so the next message picks up the updated memory without app restart.
+    var onMemoryChanged: (@MainActor () -> Void)?
 
     // MARK: - IT-09: Project settings cache
 
@@ -171,6 +184,14 @@ public actor ToolExecutionService {
     /// ViewModel uses this to mark the project chip orange in real time.
     public func setOnProjectUnavailable(_ callback: @escaping @MainActor (String) -> Void) {
         self.onProjectUnavailable = callback
+    }
+
+    /// Registers a callback that fires on MainActor after every memorize/delete_memory.
+    /// ViewModel uses this to invalidate the cached system prompt so memory changes
+    /// are visible in the next message without requiring an app restart.
+    public func setOnMemoryChanged(_ callback: @escaping @MainActor () -> Void) {
+        self.onMemoryChanged = callback
+        print("[ToolExecutionService] ✅ Memory change callback registered")
     }
 
     /// Backward compatibility shim — maps names to placeholder UUIDs.
