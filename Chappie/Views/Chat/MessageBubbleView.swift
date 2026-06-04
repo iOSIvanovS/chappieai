@@ -5,9 +5,15 @@
 // Renders individual chat message bubbles in the conversation scroll view.
 //
 // BUBBLE WIDTH STRATEGY:
-// frame(maxWidth: .infinity) on the HStack row, then frame(maxWidth: bubbleMaxWidth)
-// on the bubble itself. bubbleMaxWidth is a fixed point value (500 pt) — no GeometryReader,
-// no containerRelativeFrame, no background probes. Simple and correct.
+// availableWidth is measured once by ChatScrollView via GeometryReader and passed in.
+// This breaks the layout cycle that containerRelativeFrame caused: ScrollView was
+// "negotiating" its own width with bubble widths on every resize step, causing
+// 30+ iterations to shrink the window. GeometryReader measures the parent once,
+// bubbles get a concrete maxWidth — no feedback loop, instant resize.
+//
+// User bubbles: max 72% of available width.
+// Chappie bubbles: max 88% — wider to accommodate code blocks and tables.
+// Both have a hard floor at 220pt so very narrow windows don't break layout.
 //
 // ATTACHMENTS STRATEGY (simplified, IT-14 rev2):
 // Replaced FlowLayout thumbnails with a plain vertical list (AttachmentRowView).
@@ -24,17 +30,19 @@
 import SwiftUI
 import QuickLook
 
-// Fixed maximum bubble width in points.
-// Works well for typical macOS window sizes (800–1400 pt wide).
-private let bubbleMaxWidth: CGFloat = 500
+private let userBubbleWidthFraction: CGFloat = 0.72
+private let chappieBubbleWidthFraction: CGFloat = 0.88
+private let minBubbleWidth: CGFloat = 220
 
 // MARK: - MessageBubbleView (public entry point)
 
 /// Renders a single chat message bubble.
-/// No GeometryReader, no background probes — just HStack + Spacer.
+/// availableWidth is passed from ChatScrollView (measured via GeometryReader once).
+/// This avoids the layout cycle that containerRelativeFrame caused on window resize.
 struct MessageBubbleView: View {
 
     let msg: ChatMessage
+    let availableWidth: CGFloat
     @Environment(ChappieViewModel.self) private var viewModel
 
     var body: some View {
@@ -46,7 +54,6 @@ struct MessageBubbleView: View {
             terminalConfirmationBubble(id: id, command: command, threadId: threadId)
 
         case .toolCall:
-            // Tool call logs are rendered by ChatScrollView directly — not here.
             EmptyView()
         }
     }
@@ -71,7 +78,6 @@ struct MessageBubbleView: View {
 
             if !isUser { Spacer(minLength: 24) }
         }
-        // Smooth slide-in from bottom on insertion, fade on removal.
         .transition(
             .asymmetric(
                 insertion: .move(edge: .bottom).combined(with: .opacity),
@@ -87,7 +93,6 @@ struct MessageBubbleView: View {
     private func terminalConfirmationBubble(id: UUID, command: String, threadId: UUID) -> some View {
         HStack(alignment: .bottom, spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
-                // Header
                 HStack(spacing: 6) {
                     Image(systemName: "terminal.fill")
                         .font(.system(size: 13, weight: .medium))
@@ -97,7 +102,6 @@ struct MessageBubbleView: View {
                         .foregroundStyle(.primary)
                 }
 
-                // Command block
                 Text(command)
                     .font(.system(size: 13, design: .monospaced))
                     .foregroundStyle(.primary)
@@ -108,7 +112,6 @@ struct MessageBubbleView: View {
                     .background(Color.primary.opacity(0.06))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
 
-                // Action buttons
                 HStack(spacing: 8) {
                     Button {
                         viewModel.approveTerminalCommand(messageId: id, command: command)
@@ -150,7 +153,7 @@ struct MessageBubbleView: View {
                 )
                 .stroke(Color.orange.opacity(0.4), lineWidth: 1.5)
             )
-            .frame(maxWidth: bubbleMaxWidth, alignment: .leading)
+            .frame(maxWidth: max(availableWidth * chappieBubbleWidthFraction, minBubbleWidth))
 
             Spacer(minLength: 24)
         }
@@ -177,8 +180,8 @@ struct MessageBubbleView: View {
                     .lineSpacing(4)
                     .foregroundStyle(.white)
                     .textSelection(.enabled)
-                    // Allow text to wrap naturally — no fixed width needed.
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
         .padding(.horizontal, 14)
@@ -192,8 +195,8 @@ struct MessageBubbleView: View {
                 topTrailingRadius: 12
             )
         )
-        // Shrinks to content, hard cap at bubbleMaxWidth.
-        .frame(maxWidth: bubbleMaxWidth, alignment: .trailing)
+        // Concrete maxWidth from parent measurement — no layout cycle on resize.
+        .frame(maxWidth: max(availableWidth * userBubbleWidthFraction, minBubbleWidth))
     }
 
     // MARK: - Chappie Bubble
@@ -210,6 +213,7 @@ struct MessageBubbleView: View {
                         .padding(.bottom, cost != nil ? 18 : 0)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if let cost = cost {
                 Text(String(format: "🪙 %.2f ₽", cost))
@@ -237,16 +241,13 @@ struct MessageBubbleView: View {
             )
             .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         )
-        .frame(maxWidth: bubbleMaxWidth, alignment: .leading)
+        // Concrete maxWidth from parent measurement — no layout cycle on resize.
+        .frame(maxWidth: max(availableWidth * chappieBubbleWidthFraction, minBubbleWidth))
     }
 }
 
 // MARK: - AttachmentListView
 
-/// Vertical list of attachment rows.
-/// Each row: file icon + filename + file size.
-/// Images open via QuickLook. Other files open via NSWorkspace.
-/// No FlowLayout, no GeometryReader, no fixed widths — pure VStack.
 private struct AttachmentListView: View {
 
     let attachments: [AttachedFile]
@@ -259,10 +260,8 @@ private struct AttachmentListView: View {
             ForEach(attachments) { file in
                 AttachmentRowView(file: file, isUser: isUser) {
                     if file.mimeType.isImage {
-                        // Write to temp dir and open QuickLook.
                         previewURL = writeTempFile(file)
                     } else {
-                        // Open with default app.
                         if let url = writeTempFile(file) {
                             NSWorkspace.shared.open(url)
                         }
@@ -283,8 +282,6 @@ private struct AttachmentListView: View {
 
 // MARK: - AttachmentRowView
 
-/// Single attachment row: icon + filename + size.
-/// Tapping triggers the onTap action (QuickLook or NSWorkspace).
 private struct AttachmentRowView: View {
 
     let file: AttachedFile
@@ -294,18 +291,15 @@ private struct AttachmentRowView: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 7) {
-                // File type icon — image files get a photo icon.
                 Image(systemName: file.mimeType.isImage ? "photo" : file.mimeType.systemIcon)
                     .font(.system(size: 13, weight: .medium))
                     .frame(width: 18)
 
-                // Filename — truncates in the middle to preserve extension.
                 Text(file.filename)
                     .font(.system(size: 13))
                     .lineLimit(1)
                     .truncationMode(.middle)
 
-                // File size — compact human-readable format.
                 Text(fileSizeString(file.data.count))
                     .font(.system(size: 11))
                     .opacity(0.65)
@@ -324,7 +318,6 @@ private struct AttachmentRowView: View {
         .help("Open \(file.filename)")
     }
 
-    /// Human-readable file size: "42 B", "1.2 KB", "3.4 MB".
     private func fileSizeString(_ bytes: Int) -> String {
         if bytes < 1024 {
             return "\(bytes) B"
@@ -349,30 +342,11 @@ private struct AttachmentRowView: View {
 
     return ScrollView {
         VStack(spacing: 16) {
-            MessageBubbleView(msg: .message(
-                isUser: true,
-                text: "Here's the screenshot and the spec",
-                attachments: [sampleImage, samplePDF]
-            ))
-            MessageBubbleView(msg: .message(
-                isUser: false,
-                text: "Got it! I'll analyze both files.",
-                cost: 0.45
-            ))
-            MessageBubbleView(msg: .terminalConfirmation(
-                command: "swift test --filter ToolExecutionServiceTests",
-                threadId: UUID()
-            ))
-            MessageBubbleView(msg: .message(
-                isUser: true,
-                text: "Check these notes",
-                attachments: [sampleTxt]
-            ))
-            MessageBubbleView(msg: .message(
-                isUser: false,
-                text: "## Analysis\n\nThe spec looks **solid**.\n\n```swift\nlet x = 42\n```",
-                cost: 1.23
-            ))
+            MessageBubbleView(msg: .message(isUser: true, text: "Here's the screenshot and the spec", attachments: [sampleImage, samplePDF]), availableWidth: 618)
+            MessageBubbleView(msg: .message(isUser: false, text: "Got it! I'll analyze both files.", cost: 0.45), availableWidth: 618)
+            MessageBubbleView(msg: .terminalConfirmation(command: "swift test --filter ToolExecutionServiceTests", threadId: UUID()), availableWidth: 618)
+            MessageBubbleView(msg: .message(isUser: true, text: "Check these notes", attachments: [sampleTxt]), availableWidth: 618)
+            MessageBubbleView(msg: .message(isUser: false, text: "## Analysis\n\nThe spec looks **solid**.\n\n```swift\nlet x = 42\n```", cost: 1.23), availableWidth: 618)
         }
         .padding()
     }

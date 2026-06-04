@@ -107,6 +107,16 @@
 // Fix: removed thinkingIndicator entirely. Only streamingBubble is shown when
 // isThinking=true — and only once text actually starts arriving.
 //
+// BUBBLE WIDTH (RESIZE FIX v2):
+// availableWidth is measured via onGeometryChange on the ChatScrollView itself —
+// OUTSIDE the ScrollView. This means we measure the window/parent width, not the
+// scroll content width. This breaks the feedback loop:
+//   OLD (broken): GeometryReader INSIDE ScrollView → measures content width →
+//     bubbles set maxWidth → content width changes → ScrollView resists shrinking →
+//     user needs 30+ drag iterations to shrink the window.
+//   NEW (fixed): onGeometryChange on outer view → measures parent (window) width →
+//     bubbles get concrete maxWidth → ScrollView content follows window freely.
+//
 // NOTE ON "bad range for [%{public}s]" IN XCODE CONSOLE:
 // This warning is NOT caused by our code. It is an internal CoreData/SwiftData OSLog
 // decode error that fires when SwiftData performs its first PostSaveMaintenance
@@ -130,11 +140,6 @@
 // When messages are empty and not loading — show nothing.
 // The AI sends a live greeting as the first message when a new thread is created,
 // so there is no need for a static placeholder. Old threads load their real history.
-//
-// MESSAGE RENDERING:
-// ForEach uses MessageBubbleView directly — no GeometryReader, no background probe.
-// Bubble width is capped at a fixed 500 pt constant via frame(maxWidth:).
-// Window can resize freely without any layout side effects.
 
 import SwiftUI
 
@@ -144,43 +149,31 @@ import SwiftUI
 /// Pagination logic lives in ViewModel, not here.
 struct ChatScrollView: View {
 
-    /// Scroll-to-bottom trigger from ViewModel.
     let scrollToBottomTrigger: Int
-
-    /// Paginated message slice (last N messages, grows upward via onLoadMore).
     let messages: [ChatMessage]
-
-    /// True when there are older messages not yet loaded into the displayed slice.
     let hasMoreMessages: Bool
-
-    /// Called when user taps "Load earlier messages" — ViewModel prepends more.
     let onLoadMore: () -> Void
 
     /// CPU-13: isolated streaming state — only this view subscribes to it.
-    /// ContentView passes the reference without reading any of its properties.
     let streaming: StreamingState
 
-    /// True while history is being loaded from SwiftData.
     let isLoadingHistory: Bool
-
-    /// Height of the top floating panel — transparent header spacer.
     let headerHeight: CGFloat
 
-    /// Height of the bottom floating panel — exact measured height of InputMorphView.
     /// CPU-22: measured via onGeometryChange in ContentView, grows dynamically.
     let footerHeight: CGFloat
 
-    /// BUG-01 v6: ID of the first previously-visible message before Load More prepend.
-    /// onChange(of: loadMoreAnchorId) fires a delayed proxy.scrollTo after VStack layout.
-    /// anchor: .center — anchor message lands in the middle of the viewport.
-    /// Reset to nil by ViewModel after scroll is applied.
+    /// BUG-01 v6: anchor message ID set just before Load More prepend.
     let loadMoreAnchorId: UUID?
-
-    /// Called after Load More anchor scroll is applied — resets loadMoreAnchorId in ViewModel.
     let onLoadMoreScrollDone: () -> Void
 
     // CPU-05: debounce flag — true while a scroll task is already scheduled.
     @State private var scrollPending = false
+
+    // BUBBLE WIDTH (RESIZE FIX v2): measured from the outer view (parent/window),
+    // not from inside ScrollView. This prevents the feedback loop where ScrollView
+    // resists shrinking because its content (bubbles) holds the old wide maxWidth.
+    @State private var availableWidth: CGFloat = 600
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -203,13 +196,11 @@ struct ChatScrollView: View {
                         }
 
                         ForEach(messages) { msg in
-                            MessageBubbleView(msg: msg)
+                            MessageBubbleView(msg: msg, availableWidth: availableWidth)
                                 .id(msg.id)
                         }
 
-                        // CPU-31: thinkingIndicator (DotsIndicator bubble) removed.
-                        // Only show streamingBubble once text actually arrives.
-                        // The bottom panel already indicates thinking state visually.
+                        // CPU-31: thinkingIndicator removed — bottom panel shows thinking state.
                         if streaming.isThinking && !streaming.streamingText.isEmpty {
                             streamingBubble
                                 .transition(.asymmetric(
@@ -221,16 +212,10 @@ struct ChatScrollView: View {
                         }
                     }
 
-                    // Sentinel: zero height, anchor: .top.
-                    // TOP of this marker aligns with the BOTTOM of the viewport on scroll.
-                    // Result: last message sits just above the input panel.
                     Color.clear
                         .frame(height: 0)
                         .id("bottom")
 
-                    // Footer spacer: exact panel height — provides physical clearance
-                    // so content isn't hidden behind the floating input panel.
-                    // CPU-22: footerHeight = measured InputMorphView height, grows dynamically.
                     Color.clear
                         .frame(height: footerHeight)
                 }
@@ -239,20 +224,14 @@ struct ChatScrollView: View {
             .scrollIndicators(.never)
             .task(id: scrollToBottomTrigger) {
                 guard scrollToBottomTrigger > 0 else { return }
-                // 150ms — enough for VStack to measure content on cold start.
                 try? await Task.sleep(nanoseconds: 150_000_000)
                 withAnimation(.easeOut(duration: 0.3)) {
                     proxy.scrollTo("bottom", anchor: .top)
                 }
             }
-            // BUG-01 v6: dedicated onChange on loadMoreAnchorId — fires exactly when
-            // ViewModel sets the anchor, independent of message count changes.
-            // Fixes the race condition in v5 where onChange(messages.count) could fire
-            // before loadMoreAnchorId was committed, causing nil-read → scroll-to-bottom.
             .onChange(of: loadMoreAnchorId) { _, newAnchorId in
                 guard let anchorId = newAnchorId else { return }
                 Task {
-                    // 80ms — VStack needs time to measure the prepended batch before scroll.
                     try? await Task.sleep(nanoseconds: 80_000_000)
                     withAnimation(.easeOut(duration: 0.2)) {
                         proxy.scrollTo(anchorId, anchor: .center)
@@ -261,7 +240,6 @@ struct ChatScrollView: View {
                 }
             }
             .onChange(of: messages.count) { _, _ in
-                // Skip scroll-to-bottom during Load More prepend — anchorId onChange handles it.
                 guard loadMoreAnchorId == nil else { return }
                 withAnimation(.easeOut(duration: 0.3)) {
                     proxy.scrollTo("bottom", anchor: .top)
@@ -275,7 +253,6 @@ struct ChatScrollView: View {
                 }
             }
             .onChange(of: streaming.streamingText) { _, _ in
-                // CPU-05: throttle scroll to once per frame (~16ms).
                 guard !scrollPending else { return }
                 scrollPending = true
                 Task {
@@ -285,11 +262,17 @@ struct ChatScrollView: View {
                 }
             }
         }
+        // Measure parent width OUTSIDE ScrollView — window/parent drives bubble width,
+        // not scroll content. This prevents ScrollView from resisting resize.
+        .onGeometryChange(for: CGFloat.self) { geo in
+            geo.size.width
+        } action: { newWidth in
+            if newWidth > 0 { availableWidth = newWidth }
+        }
     }
 
     // MARK: - Subviews
 
-    /// CPU-29: DotsIndicator — TimelineView-driven, zero @State.
     private var historyLoadingIndicator: some View {
         DotsIndicator()
             .frame(maxWidth: .infinity)
@@ -318,11 +301,7 @@ struct ChatScrollView: View {
         .frame(maxWidth: .infinity)
     }
 
-    /// Live streaming bubble — plain text during stream, no Markdown parsing.
-    /// CPU-24: MarkdownTextView.init() calls MarkdownParser.parse() on every render.
-    /// During streaming that means full re-parse on every token (30+/sec), growing text.
-    /// StreamingTextView renders plain Text — zero parse overhead during stream.
-    /// Markdown is applied only after stream completes (MessageBubbleView).
+    /// CPU-24: plain text during stream — no Markdown parsing overhead.
     private var streamingBubble: some View {
         HStack(alignment: .bottom, spacing: 8) {
             ZStack(alignment: .bottomTrailing) {
@@ -333,9 +312,7 @@ struct ChatScrollView: View {
                 }
                 .padding(.bottom, 18)
 
-                // CPU-27: .animation(.easeInOut(0.3), value: runningCost) removed —
-                // it fired on every token with cost info (30+/sec).
-                // contentTransition is kept for visual smoothness on the numeric flip.
+                // CPU-27: animation removed — fires on every token (30+/sec).
                 Text(String(format: "🪙 %.2f ₽", streaming.runningCost))
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(.secondary)
@@ -361,6 +338,7 @@ struct ChatScrollView: View {
                 )
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
             )
+            .frame(maxWidth: max(availableWidth * 0.88, 220))
 
             Spacer(minLength: 40)
         }
@@ -370,23 +348,10 @@ struct ChatScrollView: View {
 // MARK: - DotsIndicator
 
 /// CPU-29: TimelineView-driven waiting indicator — zero @State, zero SwiftUI invalidation.
-///
-/// WHY TimelineView over @State + repeatForever:
-/// The old implementation used three @State booleans with .repeatForever animations.
-/// Even with drawingGroup(), SwiftUI still schedules layout passes on its side for each
-/// animation tick — because @State changes trigger the SwiftUI invalidation pipeline.
-/// This caused ~50% CPU while waiting for the AI backend (no network, no disk, just dots).
-///
-/// TimelineView(.animation) uses a single shared display-link for the entire screen.
-/// Phase is computed mathematically from the current Date — no @State, no invalidation.
-/// The view body is a pure function: same timestamp → same pixels. Zero side effects.
-///
-/// NOTE: DotsIndicator is only used for historyLoadingIndicator (loading old messages).
-/// The thinkingIndicator bubble was removed (CPU-31) — the bottom panel shows thinking state.
 private struct DotsIndicator: View {
     private let dotSize: CGFloat = 7
     private let spacing: CGFloat = 5
-    private let period: Double = 1.08  // full pulse cycle in seconds
+    private let period: Double = 1.08
 
     var body: some View {
         TimelineView(.animation) { timeline in
@@ -396,16 +361,13 @@ private struct DotsIndicator: View {
                 dot(t: t, delay: 0.18)
                 dot(t: t, delay: 0.36)
             }
-            // Single Metal texture for all three dots — one GPU draw call.
             .drawingGroup()
         }
     }
 
-    /// Computes scale and opacity from a sine wave offset by `delay` seconds.
-    /// sin oscillates -1…1 → normalized to 0…1 for smooth pulse.
     private func dot(t: Double, delay: Double) -> some View {
         let phase = (t - delay).truncatingRemainder(dividingBy: period) / period
-        let v = (sin(phase * 2 * .pi - .pi / 2) + 1) / 2  // 0…1, starts at 0
+        let v = (sin(phase * 2 * .pi - .pi / 2) + 1) / 2
         return Circle()
             .fill(Color.secondary.opacity(0.6))
             .frame(width: dotSize, height: dotSize)
@@ -416,11 +378,7 @@ private struct DotsIndicator: View {
 
 // MARK: - StreamingTextView
 
-/// CPU-24: Plain text renderer for the live streaming bubble.
-/// No Markdown parsing — just renders the raw text as-is with basic font styling.
-/// WHY: MarkdownTextView calls MarkdownParser.parse() in init() — O(n) on every token.
-/// During a 500-token stream that's 500 full parses of growing text.
-/// Plain Text() is O(1) — just a string assignment.
+/// CPU-24: Plain text renderer for the live streaming bubble — no Markdown parsing.
 private struct StreamingTextView: View {
     let text: String
 
@@ -438,23 +396,11 @@ private struct StreamingTextView: View {
 // MARK: - BlinkingCursor
 
 /// CPU-30: TimelineView-driven blinking cursor — zero @State, zero SwiftUI invalidation.
-///
-/// WHY TimelineView over @State + repeatForever:
-/// The old implementation toggled @State isVisible every 500ms with .repeatForever.
-/// drawingGroup() offloads GPU render but SwiftUI still runs its full invalidation
-/// pipeline on every @State toggle: AttributeGraph diff + layout pass on macOS.
-/// During "thinking with text" state this caused ~50% CPU with no network activity.
-///
-/// TimelineView(.periodic(from:by:)) fires exactly 2× per second.
-/// Cursor visibility is computed from Date parity — no @State, no invalidation.
-/// The view body is a pure function: same timestamp → same pixel. Zero side effects.
 private struct BlinkingCursor: View {
-    // Anchor to a fixed reference point so all cursors blink in sync.
     private static let epoch = Date(timeIntervalSinceReferenceDate: 0)
 
     var body: some View {
         TimelineView(.periodic(from: Self.epoch, by: 0.5)) { timeline in
-            // Count 0.5s slots elapsed since epoch; even = visible, odd = hidden.
             let slot = Int(timeline.date.timeIntervalSinceReferenceDate / 0.5)
             Text("▍")
                 .font(.system(size: 14))
