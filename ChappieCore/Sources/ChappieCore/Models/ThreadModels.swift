@@ -17,12 +17,18 @@ import SwiftData
 // MARK: - ThreadEntity
 
 /// SwiftData record for a single thread.
+///
+/// WHY ONLY PRIMITIVES AND DATA: SwiftData has limited support for custom Codable types in @Model.
+/// Storing complex structs directly causes migration issues — JSON-in-Data avoids this entirely.
+///
+/// WHY @Model FINAL CLASS: SwiftData requires reference types for change tracking via @Observable.
 @Model
 public final class ThreadEntity {
 
     public var id: UUID
     public var title: String
     public var createdAt: Date
+    /// Used for sorting — most recently active at top.
     public var updatedAt: Date
 
     /// [ChatMessage] serialized via JSONEncoder. UI target owns the type.
@@ -32,6 +38,9 @@ public final class ThreadEntity {
     public var settingsJSON: Data
 
     /// [UUID] of projects bound to this thread, serialized via JSONEncoder.
+    ///
+    /// WHY UUID LIST, NOT SwiftData RELATIONSHIP:
+    /// Simpler than a typed relationship and avoids cascading delete complexity.
     public var projectBindingsJSON: Data
 
     public init(
@@ -53,37 +62,56 @@ public final class ThreadEntity {
 // MARK: - ThreadSettings
 
 /// Per-thread configuration — serialized to JSON and stored in ThreadEntity.settingsJSON.
+///
+/// WHY STRUCT, NOT @Model: Settings always belong to a thread, never standalone.
 public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
 
     /// Max messages in context window. Range: 10...1000. Default: 20.
     public var maxMessagesInContext: Int
 
     /// When true — all trimming is disabled, everything is sent to the model.
+    ///
+    /// WHY SEPARATE FLAG, NOT maxMessagesInContext = Int.max:
+    /// Int.max in JSON/Codable is fragile. An explicit Bool is clear and safe.
     public var isUnlimitedContext: Bool
 
-    /// Computed token budget: maxMessagesInContext × 500. Not stored.
+    /// When true — old AI messages longer than summaryThreshold are replaced with their
+    /// <summary> tag content before being sent to the model. Saves tokens on long histories.
+    /// Default: true. Disable to send full message history without any compression.
+    public var useMessageCompression: Bool
+
+    /// Computed token budget: maxMessagesInContext × 500. Not stored — avoids migration on formula changes.
     public var tokenBudget: Int {
         isUnlimitedContext ? Int.max : maxMessagesInContext * 500
     }
 
     /// UUID of the AI provider for this thread. nil = use default provider.
+    ///
+    /// WHY UUID, NOT INLINE PROVIDER: avoids duplication — thread always reflects latest provider config.
     public var activeProviderId: UUID?
 
-    /// UUID of the active API key for this thread.
+    /// UUID of the active API key for this thread. nil = use first available key from the provider.
+    ///
+    /// WHY UUID, NOT KEY VALUE: thread stores only the reference — actual secret loaded from Keychain.
+    /// Tread isolation: each thread carries its own key reference, never shared across threads.
     public var activeKeyId: UUID?
 
     /// Model name for this thread. nil = no model selected.
+    /// If the model is deleted from the provider, the thread shows a warning banner.
     public var activeModelName: String?
 
     public init(
         maxMessagesInContext: Int = 20,
         isUnlimitedContext: Bool = false,
+        useMessageCompression: Bool = true,
         activeProviderId: UUID? = nil,
         activeKeyId: UUID? = nil,
         activeModelName: String? = nil
     ) {
+        // Clamp to valid range — guard against corrupted JSON values
         self.maxMessagesInContext = max(10, min(1000, maxMessagesInContext))
         self.isUnlimitedContext = isUnlimitedContext
+        self.useMessageCompression = useMessageCompression
         self.activeProviderId = activeProviderId
         self.activeKeyId = activeKeyId
         self.activeModelName = activeModelName
@@ -93,15 +121,23 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
 // MARK: - ThreadMetadata
 
 /// Sendable DTO for passing thread data from actor to UI.
+///
+/// WHY NOT ThreadEntity DIRECTLY:
+/// ThreadEntity is a SwiftData @Model bound to a ModelContext — not Sendable.
+/// Passing it across actor boundaries violates Swift 6 concurrency rules.
+/// ThreadMetadata contains only value types — fully Sendable.
 public struct ThreadMetadata: Sendable, Identifiable, Hashable {
 
     public let id: UUID
     public let title: String
     public let createdAt: Date
+    /// Used for sorting in the sidebar.
     public let updatedAt: Date
     public let projectIds: [UUID]
+    /// Included so UI can show settings without an extra ThreadStore call.
     public let settings: ThreadSettings
 
+    /// Creates ThreadMetadata from ThreadEntity (inside actor only).
     init(from entity: ThreadEntity) {
         self.id = entity.id
         self.title = entity.title
@@ -123,6 +159,9 @@ public struct ThreadMetadata: Sendable, Identifiable, Hashable {
         }
     }
 
+    /// Public memberwise init — for Previews and tests.
+    ///
+    /// WHY EXPLICIT PUBLIC INIT: Swift auto-generates memberwise init as internal.
     public init(
         id: UUID = UUID(),
         title: String,
