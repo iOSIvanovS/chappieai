@@ -44,7 +44,6 @@ fastlane/test_output
 
 # Logs & temp
 *.log
-chat_history.json
 /tmp/
 
 # IDE
