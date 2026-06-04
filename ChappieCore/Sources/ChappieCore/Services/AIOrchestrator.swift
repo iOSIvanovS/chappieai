@@ -370,97 +370,44 @@ public actor AIOrchestrator {
 
     // MARK: - Private: Context Window
 
+    /// Builds the message window to send to the model.
+    /// Full history is stored in SwiftData — here we only cap by maxMessagesInContext.
+    /// No compression, no summarization — full fidelity always.
     private func buildContextWindow(
         from history: [AIMessage],
         currentPrompt: String,
         currentMessage: AIMessage? = nil,
         config: AppConfig
     ) -> [AIMessage] {
-        let budget = config.tokenBudget
-        let recentCount = config.recentFullMessages
-        let summaryThreshold = config.summaryThreshold
         let maxMessages = config.maxMessagesInContext
 
-        let totalTokensBefore = history.reduce(0) { $0 + estimateTokens($1) }
-        print("[AIOrchestrator] History: \(history.count) msgs, ~\(totalTokensBefore) tokens | Budget: \(budget) (\(maxMessages) msgs x 500)")
+        print("[AIOrchestrator] History: \(history.count) msgs | Limit: \(maxMessages == Int.max ? "∞" : "\(maxMessages)")")
 
+        // Remove duplicate last message if it matches the current prompt
         let deduplicatedHistory: [AIMessage]
         if let lastMessage = history.last,
            lastMessage.role == "user",
            let lastContent = lastMessage.contentString,
            lastContent == currentPrompt {
             deduplicatedHistory = Array(history.dropLast())
-            print("[AIOrchestrator] Dedup: removed duplicate last message")
         } else {
             deduplicatedHistory = history
         }
 
-        let cappedHistory = deduplicatedHistory.count > maxMessages
+        // Cap to maxMessagesInContext (Int.max = unlimited)
+        let cappedHistory = (maxMessages != Int.max && deduplicatedHistory.count > maxMessages)
             ? Array(deduplicatedHistory.suffix(maxMessages))
             : deduplicatedHistory
 
-        let recentMessages: [AIMessage]
-        let olderMessages: [AIMessage]
-
-        if cappedHistory.count <= recentCount {
-            recentMessages = cappedHistory
-            olderMessages = []
-        } else {
-            recentMessages = Array(cappedHistory.suffix(recentCount))
-            olderMessages = Array(cappedHistory.prefix(cappedHistory.count - recentCount))
-        }
-
-        var usedTokens = recentMessages.reduce(0) { $0 + estimateTokens($1) }
-        var selectedOlder: [AIMessage] = []
-
-        for message in olderMessages.reversed() {
-            // Compress only if enabled — when disabled, send the full message as-is
-            let processed = config.useMessageCompression
-                ? compressMessage(message, summaryThreshold: summaryThreshold)
-                : message
-            let tokens = estimateTokens(processed)
-            if usedTokens + tokens <= budget {
-                selectedOlder.insert(processed, at: 0)
-                usedTokens += tokens
-            } else {
-                break
-            }
-        }
-
-        var contextWindow = selectedOlder + recentMessages
+        var contextWindow = cappedHistory
         if let message = currentMessage {
             contextWindow.append(message)
         } else {
             contextWindow.append(AIMessage(role: "user", content: currentPrompt))
         }
 
-        let totalTokensAfter = contextWindow.reduce(0) { $0 + estimateTokens($1) }
-        let compressionNote = config.useMessageCompression ? "" : " [compression OFF]"
-        print("[AIOrchestrator] Sending: \(contextWindow.count) msgs, ~\(totalTokensAfter) tokens\(compressionNote)")
+        print("[AIOrchestrator] Sending: \(contextWindow.count) msgs")
         return contextWindow
-    }
-
-    private func compressMessage(_ message: AIMessage, summaryThreshold: Int) -> AIMessage {
-        guard let fullText = message.contentString,
-              estimateTokens(message) > summaryThreshold,
-              let summary = extractSummary(from: fullText) else { return message }
-        return AIMessage(
-            role: message.role,
-            content: "[COMPRESSED] \(summary)",
-            tool_call_id: message.tool_call_id,
-            name: message.name
-        )
-    }
-
-    private func extractSummary(from text: String) -> String? {
-        let openTag = "<summary>"
-        let closeTag = "</summary>"
-        guard let openRange = text.range(of: openTag),
-              let closeRange = text.range(of: closeTag),
-              openRange.upperBound < closeRange.lowerBound else { return nil }
-        let summary = String(text[openRange.upperBound..<closeRange.lowerBound])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return summary.isEmpty ? nil : summary
     }
 
     private func estimateTokens(_ message: AIMessage) -> Int {

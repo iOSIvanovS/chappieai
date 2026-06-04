@@ -13,13 +13,6 @@
 // ChatMessage becomes an enum with two semantically clear cases.
 // MessageBubbleView now knows exactly what to render — and does it beautifully.
 //
-// CHANGE (ТД-COST-SUMMARY — Self-Summary):
-// Added field `summary: String?` to the .message case.
-// This is a brief digest of Chappie's response extracted from the <summary>...</summary> tag.
-// When building history for the API: if summary is present and the message is "old"
-// (outside the recent window) — the summary is substituted for the full text.
-// This radically reduces token count without losing context meaning.
-//
 // CHANGE (MULTIMODAL):
 // Added field `attachments: [AttachedFile]` to the .message case.
 // Attachments are stored inline (base64 in JSON) for persistence simplicity.
@@ -47,12 +40,8 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
     /// A regular text message — from the user or from the AI.
     ///
     /// - isUser: true = user (right, blue), false = Chappie (left, neutral)
-    /// - text: Message text (supports Markdown). For Chappie responses: full text
-    ///   WITHOUT the <summary> tag (already extracted and hidden).
+    /// - text: Message text (supports Markdown).
     /// - cost: Request cost in RUB — only on final AI responses.
-    /// - summary: Brief digest extracted from <summary>...</summary>.
-    ///   nil for user messages and short responses without the tag.
-    ///   Used when building API history instead of the full text.
     /// - attachments: Files attached by the user. Empty array for AI responses.
     ///   Stored inline as base64 for persistence.
     case message(
@@ -60,7 +49,6 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
         isUser: Bool,
         text: String,
         cost: Double? = nil,
-        summary: String? = nil,
         attachments: [AttachedFile] = []
     )
 
@@ -94,7 +82,7 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
     /// Unique identifier — needed for ForEach and ScrollViewReader.scrollTo()
     public var id: UUID {
         switch self {
-        case .message(let id, _, _, _, _, _): return id
+        case .message(let id, _, _, _, _): return id
         case .toolCall(let id, _, _): return id
         case .terminalConfirmation(let id, _, _): return id
         }
@@ -105,7 +93,7 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
     /// Whether this is a user message (for filtering when building the API context).
     public var isUser: Bool {
         switch self {
-        case .message(_, let isUser, _, _, _, _): return isUser
+        case .message(_, let isUser, _, _, _): return isUser
         case .toolCall: return false
         case .terminalConfirmation: return false
         }
@@ -114,7 +102,7 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
     /// Message text — only for .message case, nil otherwise.
     public var text: String? {
         switch self {
-        case .message(_, _, let text, _, _, _): return text
+        case .message(_, _, let text, _, _): return text
         case .toolCall: return nil
         case .terminalConfirmation: return nil
         }
@@ -123,19 +111,7 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
     /// Request cost — only for final AI responses.
     public var cost: Double? {
         switch self {
-        case .message(_, _, _, let cost, _, _): return cost
-        case .toolCall: return nil
-        case .terminalConfirmation: return nil
-        }
-    }
-
-    /// Brief response digest for substitution in API history.
-    ///
-    /// Present only on Chappie responses (isUser == false) where the model
-    /// added a <summary> tag at the end of the response.
-    public var summary: String? {
-        switch self {
-        case .message(_, _, _, _, let summary, _): return summary
+        case .message(_, _, _, let cost, _): return cost
         case .toolCall: return nil
         case .terminalConfirmation: return nil
         }
@@ -144,7 +120,7 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
     /// Files attached to this message. Empty for AI responses and tool calls.
     public var attachments: [AttachedFile] {
         switch self {
-        case .message(_, _, _, _, _, let attachments): return attachments
+        case .message(_, _, _, _, let attachments): return attachments
         case .toolCall: return []
         case .terminalConfirmation: return []
         }
@@ -168,7 +144,7 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
     // if a specific JSON format is required. We want a readable, forward-compatible format.
 
     private enum CodingKeys: String, CodingKey {
-        case type, id, isUser, text, cost, summary, attachments, toolName, targetPath
+        case type, id, isUser, text, cost, attachments, toolName, targetPath
         case command, threadId
     }
 
@@ -186,9 +162,8 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
             let isUser      = try container.decode(Bool.self, forKey: .isUser)
             let text        = try container.decode(String.self, forKey: .text)
             let cost        = try container.decodeIfPresent(Double.self, forKey: .cost)
-            let summary     = try container.decodeIfPresent(String.self, forKey: .summary)
             let attachments = try container.decodeIfPresent([AttachedFile].self, forKey: .attachments) ?? []
-            self = .message(id: id, isUser: isUser, text: text, cost: cost, summary: summary, attachments: attachments)
+            self = .message(id: id, isUser: isUser, text: text, cost: cost, attachments: attachments)
 
         case .toolCall:
             let toolName   = try container.decode(String.self, forKey: .toolName)
@@ -207,13 +182,12 @@ public enum ChatMessage: Identifiable, Hashable, Codable {
         var container = encoder.container(keyedBy: CodingKeys.self)
 
         switch self {
-        case .message(let id, let isUser, let text, let cost, let summary, let attachments):
+        case .message(let id, let isUser, let text, let cost, let attachments):
             try container.encode(MessageType.message, forKey: .type)
             try container.encode(id,     forKey: .id)
             try container.encode(isUser, forKey: .isUser)
             try container.encode(text,   forKey: .text)
-            try container.encodeIfPresent(cost,    forKey: .cost)
-            try container.encodeIfPresent(summary, forKey: .summary)
+            try container.encodeIfPresent(cost, forKey: .cost)
             if !attachments.isEmpty {
                 try container.encode(attachments, forKey: .attachments)
             }

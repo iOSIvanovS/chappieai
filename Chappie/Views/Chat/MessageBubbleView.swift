@@ -39,7 +39,7 @@ struct MessageBubbleView: View {
 
     var body: some View {
         switch msg {
-        case .message(_, let isUser, let text, let cost, _, let attachments):
+        case .message(_, let isUser, let text, let cost, let attachments):
             messageBubble(isUser: isUser, text: text, cost: cost, attachments: attachments)
 
         case .terminalConfirmation(let id, let command, let threadId):

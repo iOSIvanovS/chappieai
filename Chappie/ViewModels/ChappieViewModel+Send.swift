@@ -131,8 +131,7 @@ extension ChappieViewModel {
                     return
                 }
 
-                let (displayText, summary) = self.extractAndCleanSummary(from: rawResponse)
-                let aiMessage = ChatMessage.message(isUser: false, text: displayText, cost: result.totalCost, summary: summary)
+                let aiMessage = ChatMessage.message(isUser: false, text: rawResponse, cost: result.totalCost)
 
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
                     self.streamingText = ""
@@ -221,11 +220,7 @@ extension ChappieViewModel {
             cancelledText = partial + "\n\n---\n*[Response interrupted by user. Operation cancelled.]*"
         }
 
-        let cancelledMessage = ChatMessage.message(
-            isUser: false,
-            text: cancelledText,
-            summary: "User cancelled this operation. The response above is incomplete."
-        )
+        let cancelledMessage = ChatMessage.message(isUser: false, text: cancelledText)
 
         withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
             self.messages.append(cancelledMessage)
@@ -258,7 +253,7 @@ extension ChappieViewModel {
             : messages
 
         return sourceMessages.compactMap { msg -> AIMessage? in
-            guard case .message(_, let isUser, let text, _, let summary, let attachments) = msg else { return nil }
+            guard case .message(_, let isUser, let text, _, let attachments) = msg else { return nil }
 
             let isSystemMessage = text.contains("Проект подключен")
                 || text.contains("Память очищена")
@@ -271,9 +266,6 @@ extension ChappieViewModel {
             let role = isUser ? "user" : "assistant"
 
             if !isUser {
-                if let summary = summary {
-                    return AIMessage(role: role, content: text + "\n<summary>\(summary)</summary>")
-                }
                 return AIMessage(role: role, content: text)
             }
 
@@ -320,31 +312,6 @@ extension ChappieViewModel {
         case .other:
             return .text("File: \(attachment.filename) (\(attachment.mimeType.rawValue), \(attachment.data.count / 1024)KB)")
         }
-    }
-
-    // MARK: - Self-Summary Parsing
-
-    /// Extracts the last <summary>…</summary> tag from the AI response.
-    /// Returns (displayText without the tag, summary string or nil).
-    func extractAndCleanSummary(from text: String) -> (displayText: String, summary: String?) {
-        guard let regex = try? NSRegularExpression(
-            pattern: "<summary>(.*?)</summary>",
-            options: [.dotMatchesLineSeparators, .caseInsensitive]
-        ) else { return (text, nil) }
-
-        let range = NSRange(text.startIndex..., in: text)
-        let matches = regex.matches(in: text, options: [], range: range)
-
-        guard let lastMatch = matches.last,
-              let summaryRange = Range(lastMatch.range(at: 1), in: text),
-              let fullMatchRange = Range(lastMatch.range, in: text) else { return (text, nil) }
-
-        let summary = String(text[summaryRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-        var displayText = text
-        displayText.removeSubrange(fullMatchRange)
-        displayText = displayText.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        return (displayText.isEmpty ? summary : displayText, summary.isEmpty ? nil : summary)
     }
 
     // MARK: - Response Cleanup

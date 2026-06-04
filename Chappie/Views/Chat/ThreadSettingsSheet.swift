@@ -11,10 +11,8 @@
 // SETTINGS:
 // - Thread name (inline rename)
 // - Provider + key + model (3-column picker, per-thread isolation)
-// - Context depth: slider 10...1000 messages
-//   Token budget = messages × 500 (displayed as info, not editable)
+// - Context depth: slider 100...1000, step 100, default 300
 // - Unlimited context toggle: bypasses all trimming
-// - Message compression toggle: compress old AI messages to <summary> content to save tokens
 //
 // ProviderPickRow / ModelPickRow are defined in Shared/ProviderModelPickerRows.swift.
 
@@ -160,7 +158,6 @@ struct ThreadSettingsSheet: View {
                                     isSelected: selectedProviderId == provider.id,
                                     onSelect: {
                                         selectedProviderId = provider.id
-                                        // Auto-select key if provider has exactly one
                                         selectedKeyId = provider.keys.count == 1 ? provider.keys.first?.id : nil
                                         selectedModelName = provider.models.first?.id ?? ""
                                     }
@@ -322,19 +319,6 @@ struct ThreadSettingsSheet: View {
                 limitedContextControls
             }
 
-            // Compression toggle — only meaningful when context is not unlimited
-            Toggle(isOn: $draftSettings.useMessageCompression) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Компрессия сообщений ИИ")
-                        .font(.callout)
-                    Text("Старые ответы ИИ сжимаются перед повторной отправкой — экономит токены на длинных историях.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .toggleStyle(.switch)
-
             contextInfoBox
         }
     }
@@ -353,18 +337,19 @@ struct ThreadSettingsSheet: View {
                     .frame(minWidth: 44, alignment: .trailing)
             }
 
+            // Step 100: map slider 1...10 → actual value × 100
             Slider(
                 value: Binding(
-                    get: { Double(draftSettings.maxMessagesInContext) },
-                    set: { draftSettings.maxMessagesInContext = Int($0) }
+                    get: { Double(draftSettings.maxMessagesInContext / 100) },
+                    set: { draftSettings.maxMessagesInContext = Int($0) * 100 }
                 ),
-                in: 10...1000,
-                step: sliderStep(for: draftSettings.maxMessagesInContext)
+                in: 1...10,
+                step: 1
             )
             .accentColor(Color.accentColor)
 
             HStack {
-                Text("10")
+                Text("100")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -392,25 +377,11 @@ struct ThreadSettingsSheet: View {
                 )
             } else {
                 let tokenBudget = draftSettings.maxMessagesInContext * 500
-                let chatDepth = draftSettings.maxMessagesInContext * 10
 
                 infoRow(
                     icon: "arrow.up.doc",
                     color: .accentColor,
                     text: "Токен-бюджет запроса: ~\(formatNumber(tokenBudget)) токенов"
-                )
-                infoRow(
-                    icon: "bubble.left.and.bubble.right",
-                    color: .secondary,
-                    text: "В чате отображается: \(formatNumber(chatDepth)) сообщений"
-                )
-            }
-
-            if !draftSettings.useMessageCompression {
-                infoRow(
-                    icon: "exclamationmark.triangle",
-                    color: .orange,
-                    text: "Компрессия отключена — история передаётся без сжатия, токены расходуются быстрее"
                 )
             }
         }
@@ -539,14 +510,6 @@ struct ThreadSettingsSheet: View {
         formatter.locale = Locale(identifier: "ru_RU")
         return formatter.string(from: NSNumber(value: n)) ?? "\(n)"
     }
-
-    private func sliderStep(for value: Int) -> Double {
-        switch value {
-        case ..<100: return 5
-        case ..<500: return 10
-        default: return 50
-        }
-    }
 }
 
 // MARK: - KeyPickRow
@@ -613,7 +576,7 @@ private struct KeyPickRow: View {
             )
         ],
         onSave: { title, settings, providerId, keyId, modelName in
-            print("Save: \(title), provider: \(String(describing: providerId)), key: \(String(describing: keyId)), model: \(String(describing: modelName))")
+            print("Save: \(title), provider: \(String(describing: providerId))")
         },
         onDismiss: {}
     )
