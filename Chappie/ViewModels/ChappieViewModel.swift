@@ -36,6 +36,9 @@ final class ChappieViewModel {
 
     let pageSize = 30
     let pageSizeLoad = 30
+    // maxDisplayed only applies to appendToDisplayed (new messages arriving).
+    // loadMoreMessages does NOT trim the bottom — user must be able to scroll
+    // freely through history without new messages disappearing.
     let maxDisplayed = 60
 
     // MARK: - CPU-13: Isolated streaming state
@@ -201,14 +204,17 @@ final class ChappieViewModel {
         displayedMessages = additional + displayedMessages
         hasMoreMessages = displayedStart > 0
 
-        if displayedMessages.count > maxDisplayed {
-            let excess = displayedMessages.count - maxDisplayed
-            displayedMessages = Array(displayedMessages.dropLast(excess))
-        }
+        // WHY: do NOT trim the bottom here. Trimming new messages while the user
+        // scrolls up through history causes visible messages to disappear.
+        // maxDisplayed cap applies only in appendToDisplayed (new messages arriving
+        // while at the bottom of the chat). History browsing must be uncapped.
     }
 
     func appendToDisplayed(_ message: ChatMessage) {
         displayedMessages.append(message)
+        // Cap the window only when new messages arrive — trim oldest from the top.
+        // This keeps memory bounded during long active sessions without affecting
+        // history browsing (loadMoreMessages is uncapped).
         if displayedMessages.count > maxDisplayed {
             let excess = displayedMessages.count - maxDisplayed
             displayedMessages = Array(displayedMessages.dropFirst(excess))
