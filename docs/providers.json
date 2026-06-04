@@ -125,9 +125,7 @@
           "endpoint": "/v1/chat/completions",
           "protocol": "openai"
         }
-      ],
-      "icon_name": "brain",
-      "icon_color": "#10A37F"
+      ]
     },
     {
       "id": "anthropic",
@@ -176,9 +174,7 @@
           "endpoint": "/v1/messages",
           "protocol": "anthropic"
         }
-      ],
-      "icon_name": "sparkles",
-      "icon_color": "#D4622A"
+      ]
     },
     {
       "id": "google",
@@ -233,9 +229,7 @@
           "endpoint": "/v1/chat/completions",
           "protocol": "openai"
         }
-      ],
-      "icon_name": "star.fill",
-      "icon_color": "#4285F4"
+      ]
     },
     {
       "id": "deepseek",
@@ -260,9 +254,7 @@
           "endpoint": "/v1/chat/completions",
           "protocol": "openai"
         }
-      ],
-      "icon_name": "eye.fill",
-      "icon_color": "#4D6BFE"
+      ]
     },
     {
       "id": "groq",
@@ -341,9 +333,7 @@
           "endpoint": "/openai/v1/chat/completions",
           "protocol": "openai"
         }
-      ],
-      "icon_name": "bolt.fill",
-      "icon_color": "#F55036"
+      ]
     },
     {
       "id": "mistral",
@@ -398,9 +388,7 @@
           "endpoint": "/v1/chat/completions",
           "protocol": "openai"
         }
-      ],
-      "icon_name": "wind",
-      "icon_color": "#FF7000"
+      ]
     },
     {
       "id": "xai",
@@ -443,9 +431,7 @@
           "endpoint": "/v1/chat/completions",
           "protocol": "openai"
         }
-      ],
-      "icon_name": "x.circle.fill",
-      "icon_color": "#000000"
+      ]
     },
     {
       "id": "openrouter",
@@ -566,9 +552,7 @@
           "endpoint": "/api/v1/chat/completions",
           "protocol": "openai"
         }
-      ],
-      "icon_name": "arrow.triangle.branch",
-      "icon_color": "#6366F1"
+      ]
     },
     {
       "id": "aitunnel",
@@ -677,9 +661,7 @@
           "endpoint": "/v1/chat/completions",
           "protocol": "openai"
         }
-      ],
-      "icon_name": "network",
-      "icon_color": "#0A84FF"
+      ]
     },
     {
       "id": "ollama",
@@ -759,9 +741,7 @@
           "protocol": "openai"
         }
       ],
-      "requires_api_key": false,
-      "icon_name": "desktopcomputer",
-      "icon_color": "#3E8914"
+      "requires_api_key": false
     }
   ]
 }
