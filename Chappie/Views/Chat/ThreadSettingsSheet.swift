@@ -161,7 +161,7 @@ struct ThreadSettingsSheet: View {
                                         selectedProviderId = provider.id
                                         // Auto-select key if provider has exactly one
                                         selectedKeyId = provider.keys.count == 1 ? provider.keys.first?.id : nil
-                                        selectedModelName = provider.models.first ?? ""
+                                        selectedModelName = provider.models.first?.id ?? ""
                                     }
                                 )
                             }
@@ -222,11 +222,11 @@ struct ThreadSettingsSheet: View {
                         } else {
                             ScrollView {
                                 VStack(spacing: 2) {
-                                    ForEach(provider.models, id: \.self) { model in
+                                    ForEach(provider.models) { model in
                                         ModelPickRow(
-                                            model: model,
-                                            isSelected: selectedModelName == model,
-                                            onSelect: { selectedModelName = model }
+                                            model: model.id,
+                                            isSelected: selectedModelName == model.id,
+                                            onSelect: { selectedModelName = model.id }
                                         )
                                     }
                                 }
@@ -257,7 +257,6 @@ struct ThreadSettingsSheet: View {
             .background(Color.primary.opacity(0.03))
             .clipShape(RoundedRectangle(cornerRadius: 10))
 
-            // Summary of current selection
             selectionSummary
         }
     }
@@ -583,9 +582,12 @@ private struct KeyPickRow: View {
             AIProvider(
                 id: UUID(),
                 name: "AITunnel",
-                endpoint: "https://api.aitunnel.ru/v1/chat/completions",
+                baseURL: "https://api.aitunnel.ru/v1",
                 keys: [APIKey(name: "Рабочий"), APIKey(name: "Личный")],
-                models: ["claude-sonnet-4-5", "gpt-4o"]
+                models: [
+                    AIModel(id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5"),
+                    AIModel(id: "gpt-4o", name: "GPT-4o")
+                ]
             )
         ],
         onSave: { title, settings, providerId, keyId, modelName in

@@ -3,50 +3,15 @@
 //
 // Top floating row: model selector pill (left) + thread settings pill (right).
 //
-// LAYOUT:
-//   Left pill  — "Модель:" label + model chip (ultraThinMaterial).
-//   Spacer     — pushes the two pills to opposite edges.
-//   Right pill — gear icon + thread name (ultraThinMaterial).
-//                Always visible when a thread is active.
-//
-// CPU-15: STREAMING REFERENCE INSTEAD OF SCALAR PROPS:
-//   streaming: StreamingState is passed as a let reference. ModelPickerRow reads
-//   streaming.isThinking directly — only this view re-renders on that change.
-//   ContentView and topPanel are not invalidated.
-//
-// CHIP STYLE:
-//   Only the inner HStack gets ultraThinMaterial pill background.
-//   Consistent with ProjectChipsView and the bottom InputMorphView panel.
-//
-// ORPHANED STATE:
-//   If the active provider or model is no longer in the providers list,
-//   the row shows a warning style. User can pick a new provider+model inline.
-//
-// SOFT LOCK (IT-13):
-//   When isThinking == true the model picker button is locked via shakeOnTap().
-//   Tapping it triggers a spring-shake animation instead of opacity(0.5) dimming.
-//
-// TRUNCATION:
-//   The model label uses .truncationMode(.middle) so that when the
-//   window is narrow the text clips in the middle.
-//   Both pills compress gracefully — right pill is fixedSize, left pill gets
-//   the remaining space via layoutPriority(1).
-//
-// MK-07: 3-COLUMN POPOVER (provider / key / model):
-//   ModelPickerPopover has a middle "Key" column.
-//   When user hovers a provider, its keys are shown immediately.
-//   Key auto-selects if provider has exactly one key.
-//   onSelectProvider signature: (providerId, keyId, modelName).
+// CPU-15: streaming reference — reads .isThinking / .currentBalance directly.
+// MK-07: 3-column popover (provider / key / model).
 
 import SwiftUI
 import ChappieCore
 
 // MARK: - ModelPickerRow
 
-/// Top row: model selector pill (left) + thread settings pill (right).
 struct ModelPickerRow: View {
-
-    // MARK: - Input
 
     let activeProvider: AIProvider?
     let activeModelName: String?
@@ -54,28 +19,19 @@ struct ModelPickerRow: View {
     let providers: [AIProvider]
     let isOrphaned: Bool
     let threadName: String?
-    /// CPU-15: streaming reference — reads .isThinking directly.
     let streaming: StreamingState
-    /// MK-07: keyId added — caller must pass the selected key along with provider+model.
     let onSelectProvider: (UUID, UUID?, String) -> Void
     let onOpenThreadSettings: () -> Void
 
-    // MARK: - State
-
     @State private var showPopover: Bool = false
-
-    // MARK: - Body
 
     var body: some View {
         HStack(spacing: 8) {
-
-            // LEFT PILL: model selector — gets all remaining space after right pill is placed
             modelPill
                 .layoutPriority(1)
 
             Spacer(minLength: 8)
 
-            // RIGHT PILL: thread settings gear — always shown when thread is active
             threadSettingsPill
                 .fixedSize()
         }
@@ -208,8 +164,6 @@ struct ModelPickerRow: View {
 
 // MARK: - ModelPickerPopover
 
-/// Three-column popover: providers → keys of hovered provider → models of hovered provider.
-/// Key column auto-selects when provider has exactly one key.
 private struct ModelPickerPopover: View {
 
     let providers: [AIProvider]
@@ -221,7 +175,6 @@ private struct ModelPickerPopover: View {
     @State private var hoveredProviderId: UUID?
     @State private var selectedKeyId: UUID?
 
-    // Provider shown in key+model columns: hovered > active > first
     private var displayedProvider: AIProvider? {
         if let hovered = hoveredProviderId {
             return providers.first { $0.id == hovered }
@@ -234,29 +187,19 @@ private struct ModelPickerPopover: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
-
-            // Column 1: providers
             providerColumn
-
             Divider()
-
-            // Column 2: keys for displayed provider
             keyColumn
-
             Divider()
-
-            // Column 3: models for displayed provider
             modelColumn
         }
         .frame(width: 540)
         .padding(.bottom, 4)
         .onAppear {
-            // Restore active key as initial selection
             selectedKeyId = activeKeyId
         }
         .onChange(of: hoveredProviderId) { _, newProviderId in
             guard let provider = providers.first(where: { $0.id == newProviderId }) else { return }
-            // Auto-select key when switching providers: single key → select it, multiple → clear
             selectedKeyId = provider.keys.count == 1 ? provider.keys.first?.id : nil
         }
     }
@@ -266,7 +209,6 @@ private struct ModelPickerPopover: View {
     private var providerColumn: some View {
         VStack(alignment: .leading, spacing: 0) {
             columnHeader("Провайдер")
-
             ScrollView {
                 VStack(spacing: 0) {
                     ForEach(providers) { provider in
@@ -292,7 +234,6 @@ private struct ModelPickerPopover: View {
     private var keyColumn: some View {
         VStack(alignment: .leading, spacing: 0) {
             columnHeader("Ключ")
-
             if let provider = displayedProvider {
                 if provider.keys.isEmpty {
                     emptyColumnState(icon: "key.slash", text: "Нет ключей")
@@ -325,22 +266,21 @@ private struct ModelPickerPopover: View {
     private var modelColumn: some View {
         VStack(alignment: .leading, spacing: 0) {
             columnHeader("Модель")
-
             if let provider = displayedProvider {
                 if provider.models.isEmpty {
                     emptyColumnState(icon: "square.stack.3d.up.slash", text: "Нет моделей")
                 } else {
                     ScrollView {
                         VStack(spacing: 0) {
-                            ForEach(provider.models, id: \.self) { model in
+                            ForEach(provider.models) { model in
                                 PopoverModelRow(
-                                    model: model,
-                                    // Active only when both provider and key match current active
+                                    modelId: model.id,
+                                    displayName: model.displayName,
                                     isActive: provider.id == activeProviderId
-                                        && model == activeModelName
+                                        && model.id == activeModelName
                                         && selectedKeyId == activeKeyId
                                 ) {
-                                    onSelect(provider.id, selectedKeyId, model)
+                                    onSelect(provider.id, selectedKeyId, model.id)
                                 }
                             }
                         }
@@ -433,8 +373,8 @@ private struct PopoverProviderRow: View {
 private struct PopoverKeyRow: View {
 
     let key: APIKey
-    let isActive: Bool    // currently active in this thread
-    let isSelected: Bool  // selected in this popover session
+    let isActive: Bool
+    let isSelected: Bool
     let onSelect: () -> Void
 
     @State private var isHovered = false
@@ -477,7 +417,8 @@ private struct PopoverKeyRow: View {
 
 private struct PopoverModelRow: View {
 
-    let model: String
+    let modelId: String
+    let displayName: String
     let isActive: Bool
     let onSelect: () -> Void
 
@@ -491,7 +432,7 @@ private struct PopoverModelRow: View {
                     .foregroundStyle(isActive ? Color.accentColor : Color.secondary.opacity(0.3))
                     .frame(width: 16)
 
-                Text(model)
+                Text(displayName)
                     .font(.system(size: 12, weight: isActive ? .semibold : .regular, design: .monospaced))
                     .foregroundStyle(.primary)
                     .lineLimit(1)

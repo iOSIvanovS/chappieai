@@ -92,12 +92,6 @@ extension ChappieViewModel {
     ///
     /// POLICY: never auto-substitute. If provider, key, or model is missing — block orchestrator,
     /// show banner. User must pick explicitly.
-    ///
-    /// Cases:
-    ///   1. Saved provider+key+model all valid → apply normally.
-    ///   2. Saved provider valid, key or model missing/deleted → block orchestrator, show banner.
-    ///   3. Saved provider UUID not found (deleted) → block orchestrator, show banner.
-    ///   4. No saved provider → block orchestrator, show banner.
     private func resolveAndApplyProvider(for thread: ThreadMetadata, settings: ThreadSettings) async {
         guard let provStore = providerStore else { return }
 
@@ -112,9 +106,9 @@ extension ChappieViewModel {
                 provider.keys.contains(where: { $0.id == id }) ? id : nil
             }
 
-            // Validate model still exists
-            let validatedModel = savedModelName.flatMap {
-                provider.models.contains($0) ? $0 : nil
+            // Validate model still exists in provider's model list (by id)
+            let validatedModel = savedModelName.flatMap { name in
+                provider.models.contains(where: { $0.id == name }) ? name : nil
             }
 
             // If key or model was saved but is now gone — block orchestrator
@@ -144,7 +138,7 @@ extension ChappieViewModel {
             return
         }
 
-        // Case 3: UUID is set but provider was deleted.
+        // Saved provider UUID not found (deleted)
         if let orphanedId = settings.activeProviderId {
             print("[ChappieViewModel] ⚠️ Provider \(orphanedId) not found for thread '\(thread.title)' — showing banner")
             self.activeProvider = nil
@@ -162,7 +156,7 @@ extension ChappieViewModel {
             return
         }
 
-        // Case 4: brand-new thread with no provider saved yet.
+        // Brand-new thread with no provider saved yet
         print("[ChappieViewModel] No saved provider for thread '\(thread.title)' — showing banner")
         self.activeProvider = nil
         self.activeKeyId = nil

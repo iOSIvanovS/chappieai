@@ -292,7 +292,7 @@ struct ProviderDetailView: View {
     @State private var editingKey: APIKey? = nil
     @State private var deleteKeyId: UUID? = nil
     @State private var showAddModel: Bool = false
-    @State private var deleteModelName: String? = nil
+    @State private var deleteModelId: String? = nil
     @State private var errorMessage: String? = nil
 
     init(provider: AIProvider, viewModel: ChappieViewModel, onBack: @escaping () -> Void) {
@@ -427,14 +427,14 @@ struct ProviderDetailView: View {
             Text("Ключ будет удалён из Keychain. Треды, использующие этот ключ, покажут предупреждение.")
         }
         .alert("Удалить модель?", isPresented: Binding(
-            get: { deleteModelName != nil },
-            set: { if !$0 { deleteModelName = nil } }
+            get: { deleteModelId != nil },
+            set: { if !$0 { deleteModelId = nil } }
         )) {
             Button("Удалить", role: .destructive) {
-                if let name = deleteModelName { deleteModel(name) }
-                deleteModelName = nil
+                if let id = deleteModelId { deleteModel(id) }
+                deleteModelId = nil
             }
-            Button("Отмена", role: .cancel) { deleteModelName = nil }
+            Button("Отмена", role: .cancel) { deleteModelId = nil }
         } message: {
             Text("Треды, использующие эту модель, покажут предупреждение.")
         }
@@ -452,7 +452,7 @@ struct ProviderDetailView: View {
                 Text(currentProvider.displayName)
                     .font(.system(size: 15, weight: .semibold))
 
-                Text(currentProvider.endpoint)
+                Text(currentProvider.baseURL)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -541,10 +541,10 @@ struct ProviderDetailView: View {
                 .padding(.vertical, 20)
             } else {
                 VStack(spacing: 2) {
-                    ForEach(currentProvider.models, id: \.self) { model in
+                    ForEach(currentProvider.models) { model in
                         ModelRow(
                             model: model,
-                            onDelete: { deleteModelName = model }
+                            onDelete: { deleteModelId = model.id }
                         )
                     }
                 }
@@ -556,7 +556,7 @@ struct ProviderDetailView: View {
 
     // MARK: - Actions
 
-    private func addModels(_ models: [String]) {
+    private func addModels(_ models: [AIModel]) {
         guard let store = viewModel.providerStore else { return }
         Task {
             do {
@@ -586,12 +586,12 @@ struct ProviderDetailView: View {
         }
     }
 
-    private func deleteModel(_ modelName: String) {
+    private func deleteModel(_ modelId: String) {
         guard let store = viewModel.providerStore else { return }
-        viewModel.invalidateModelIfDeleted(name: modelName, providerId: currentProvider.id)
+        viewModel.invalidateModelIfDeleted(modelId: modelId, providerId: currentProvider.id)
         Task {
             do {
-                try await store.deleteModel(modelName, fromProviderId: currentProvider.id)
+                try await store.deleteModel(id: modelId, fromProviderId: currentProvider.id)
                 viewModel.reloadProviders()
                 refreshCurrentProvider()
             } catch {
@@ -662,7 +662,7 @@ private struct KeyRow: View {
 
 private struct ModelRow: View {
 
-    let model: String
+    let model: AIModel
     let onDelete: () -> Void
 
     @State private var isHovered = false
@@ -673,9 +673,20 @@ private struct ModelRow: View {
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary.opacity(0.5))
 
-            Text(model)
-                .font(.system(size: 13, design: .monospaced))
-                .foregroundStyle(.primary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.displayName)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundStyle(.primary)
+
+                if model.providerProtocol == .anthropic {
+                    Text("anthropic")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary.opacity(0.6))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Color.secondary.opacity(0.1), in: Capsule())
+                }
+            }
 
             Spacer()
 

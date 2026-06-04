@@ -12,9 +12,6 @@
 // invalidate ContentView, topPanel, or bottomPanel. Only ChatScrollView and
 // InputMorphView subscribe to StreamingState directly.
 //
-// Backward-compat computed vars (isThinking, streamingText, etc.) are kept so
-// that all existing call-sites in extensions compile without changes.
-//
 // CPU-15: currentBalance MOVED TO StreamingState.
 // Was updated via onBalanceUpdate on every streaming token — caused topPanel
 // (ModelPickerRow) to re-render on every cost delta. Before this move: topPanel
@@ -22,7 +19,6 @@
 // → every balance update re-rendered topPanel + all its children.
 // After: ModelPickerRow receives `streaming` reference and reads streaming.currentBalance
 // directly — balance updates are isolated to ModelPickerRow only.
-// ChappieViewModel keeps a backward-compat computed var for legacy call-sites.
 //
 // CPU-23: currentToolCall setter routes through streaming.setToolCall() — throttled to 200ms.
 // Direct writes to streaming.currentToolCall are replaced with setToolCall() so the
@@ -38,25 +34,15 @@ final class ChappieViewModel {
 
     // MARK: - Pagination constants (CPU-01)
 
-    /// Messages shown on initial thread load (half of the max window).
     let pageSize = 30
-
-    /// Messages prepended/appended when user scrolls to edge.
     let pageSizeLoad = 30
-
-    /// Maximum messages kept in the render tree at once.
-    /// When window exceeds this, the opposite end is trimmed.
     let maxDisplayed = 60
 
     // MARK: - CPU-13: Isolated streaming state
 
-    /// Owns the hot properties that change 30+ times/sec during streaming.
-    /// ContentView holds a reference but never reads its properties — so token
-    /// updates do NOT invalidate ContentView or topPanel.
     let streaming = StreamingState()
 
-    // MARK: - Backward-compat accessors (used by extensions and legacy call-sites)
-    // These forward reads/writes to StreamingState so no extension needs updating.
+    // MARK: - Backward-compat accessors
 
     var isThinking: Bool {
         get { streaming.isThinking }
@@ -73,8 +59,7 @@ final class ChappieViewModel {
         set { streaming.runningCost = newValue }
     }
 
-    // CPU-23: setter routes through throttled setToolCall() — 200ms throttle.
-    // Direct assignment would bypass the throttle and fire animation on every token.
+    // CPU-23: throttled via setToolCall()
     var currentToolCall: String? {
         get { streaming.currentToolCall }
         set { streaming.setToolCall(newValue) }
@@ -90,26 +75,12 @@ final class ChappieViewModel {
 
     var workspaceURL: URL?
     var messages: [ChatMessage] = []
-
-    /// Paginated slice shown in ChatScrollView (≤ maxDisplayed items).
     var displayedMessages: [ChatMessage] = []
-
-    /// True when older messages exist above the current displayed slice.
     var hasMoreMessages: Bool = false
-
-    /// Index into `messages` marking the start of the current displayed slice.
     var displayedStart: Int = 0
-
-    /// Incremented to trigger scroll-to-bottom in ChatScrollView.
     var scrollToBottomTrigger: Int = 0
-
-    // BUG-01: After Load More prepend, ChatScrollView must anchor to this ID
-    // so the user stays at the same logical position instead of jumping to bottom.
-    // Set to the first message of the newly prepended batch before mutating displayedMessages.
-    // Reset to nil by ChatScrollView after it has scrolled to the anchor.
     var loadMoreAnchorId: UUID? = nil
 
-    /// Messages passed to the network context window (excludes system messages).
     var visibleMessages: [ChatMessage] {
         let onlyMessages = messages.filter { if case .message = $0 { return true }; return false }
         if activeThreadSettings.isUnlimitedContext { return onlyMessages }
@@ -118,57 +89,25 @@ final class ChappieViewModel {
 
     var isLoadingThread: Bool = false
     var isAppReady: Bool = false
-
     var currentRequestTask: Task<Void, Never>? = nil
-
-    /// Triggered when user tries to send a message with no active provider/model.
-    /// Drives a native alert in ContentView — avoids polluting chat history with system messages.
     var showNoProviderAlert: Bool = false
-
-    // MARK: - Background sync task (cancellable)
-
-    /// Holds the current background Task launched by selectThread().
-    /// Cancelled at the start of every new selectThread() call so a slow
-    /// syncFileSystemForActiveThread() from a previous thread cannot race
-    /// with the new thread's sync and corrupt isFileSystemReady state.
     var _syncTask: Task<Void, Never>? = nil
-
-    // MARK: - File system readiness
-
-    /// False while syncFileSystemForActiveThread() is resolving bookmarks after thread switch.
-    /// ProjectChipsView shows a spinner on project chips while false.
-    /// ToolExecutionService blocks file/git/build tools while false.
-    /// Set to true by syncFileSystemForActiveThread() when FS is ready.
     var isFileSystemReady: Bool = true
 
     // MARK: - Threads
 
     var threads: [ThreadMetadata] = []
     var activeThread: ThreadMetadata? = nil
-
-    // MARK: - Projects in thread
-
     var activeProjects: [ProjectMetadata] = []
-
-    // MARK: - Active thread settings
-
     var activeThreadSettings: ThreadSettings = ThreadSettings()
-
     var activeConfig: AppConfig { AppConfig(settings: activeThreadSettings) }
-
-    // MARK: - Memory context for system prompt
-
     var activeMemoryContext: MemoryContext = .empty
 
     // MARK: - AI Providers
 
     var providers: [AIProvider] = []
     var activeProvider: AIProvider? = nil
-
-    /// UUID of the active API key for the current thread.
-    /// Stored per-thread in ThreadSettings.activeKeyId — loaded on thread switch.
     var activeKeyId: UUID? = nil
-
     var activeModelName: String? = nil
 
     var isThreadOrphaned: Bool {
@@ -178,15 +117,15 @@ final class ChappieViewModel {
         guard providers.contains(where: { $0.id == provider.id }) else { return true }
         // Key missing
         if let keyId = activeKeyId, !provider.keys.contains(where: { $0.id == keyId }) { return true }
-        if let model = activeModelName { return !provider.models.contains(model) }
+        // Model missing — compare by AIModel.id
+        if let modelName = activeModelName {
+            return !provider.models.contains(where: { $0.id == modelName })
+        }
         return false
     }
 
     var showNewThreadProviderPicker: Bool = false
     var pendingNewThread: ThreadMetadata? = nil
-
-    // MARK: - Draft per thread
-
     var threadDrafts: [UUID: String] = [:]
 
     // MARK: - Dependencies
@@ -208,20 +147,9 @@ final class ChappieViewModel {
 
     // MARK: - AppSettingsStore + caches
 
-    /// SwiftData-backed settings store.
     var appSettingsStore: AppSettingsStore?
-
-    /// In-memory cache for provider balances.
-    /// Populated by refreshBalanceCacheIfNeeded() on startup.
     var cachedBalances: [UUID: Double] = [:]
-
-    /// In-memory cache for last active thread ID.
-    /// Populated by preloadLastActiveThreadId() before thread selection.
     var cachedLastActiveThreadId: UUID?
-
-    // MARK: - ThreadSession (backing storage for computed var in +ThreadSession extension)
-
-    /// Backing store for activeThreadSession. Use the computed var from +ThreadSession.
     var _activeThreadSession: ThreadSession?
 
     // MARK: - Init
@@ -231,12 +159,6 @@ final class ChappieViewModel {
     }
 
     // MARK: - Pagination (CPU-01)
-    //
-    // Window strategy: always ≤ maxDisplayed (60) messages in the render tree.
-    //   - Initial load: last 30 messages.
-    //   - Scroll up: prepend 30, trim 30 from bottom if window > 60.
-    //   - New message appended: trim 30 from top if window > 60.
-    // This keeps VStack lean regardless of conversation length.
 
     func resetPagination(fireScrollTrigger: Bool = false) {
         let count = messages.count
@@ -252,40 +174,26 @@ final class ChappieViewModel {
         if fireScrollTrigger { scrollToBottomTrigger += 1 }
     }
 
-    /// Load older messages (scroll up). Prepends pageSizeLoad items,
-    /// trims the same amount from the bottom if window would exceed maxDisplayed.
-    ///
-    /// BUG-01: Sets loadMoreAnchorId to the first message of the new batch BEFORE
-    /// mutating displayedMessages. ChatScrollView reads this ID via scrollPosition(id:)
-    /// to stay anchored at that message after the prepend renders.
     func loadMoreMessages() {
         guard hasMoreMessages, displayedStart > 0 else { return }
         let newStart = max(0, displayedStart - pageSizeLoad)
         let additional = Array(messages[newStart..<displayedStart])
         guard !additional.isEmpty else { return }
 
-        // Anchor: first message currently visible — stays in place after prepend.
-        // Set BEFORE mutating displayedMessages so ChatScrollView can read it
-        // in the same render pass via scrollPosition(id:).
         loadMoreAnchorId = displayedMessages.first?.id
 
         displayedStart = newStart
         displayedMessages = additional + displayedMessages
         hasMoreMessages = displayedStart > 0
 
-        // Trim bottom to keep window ≤ maxDisplayed.
         if displayedMessages.count > maxDisplayed {
             let excess = displayedMessages.count - maxDisplayed
             displayedMessages = Array(displayedMessages.dropLast(excess))
         }
     }
 
-    /// Append a new message to the displayed slice.
-    /// Trims the top if window exceeds maxDisplayed (keeps bottom pinned).
     func appendToDisplayed(_ message: ChatMessage) {
         displayedMessages.append(message)
-
-        // Trim top when window overflows — user is at the bottom, old messages slide out.
         if displayedMessages.count > maxDisplayed {
             let excess = displayedMessages.count - maxDisplayed
             displayedMessages = Array(displayedMessages.dropFirst(excess))
@@ -304,7 +212,6 @@ final class ChappieViewModel {
 
     func refreshBalanceForActiveProvider() {
         guard let provider = activeProvider else { return }
-        // CPU-15: writes through to streaming.currentBalance via computed var.
         self.currentBalance = loadBalance(for: provider.id)
     }
 
@@ -421,9 +328,6 @@ final class ChappieViewModel {
     }
 
     func loadWorkspaceWithSecurityScope() {
-        // Workspace loading at init time happens synchronously — AppSettingsStore isn't ready yet.
-        // We always read from UserDefaults here; V2 store is wired later in setModelContainer.
-        // WHY: ModelContainer is injected via setModelContainer() after init completes.
         guard let data = UserDefaults.standard.data(forKey: "workspaceBookmark") else { return }
         var isStale = false
 

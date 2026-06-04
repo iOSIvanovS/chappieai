@@ -1,10 +1,10 @@
 // AddProviderSheet.swift
 // Chappie
 //
-// Two-step sheet for adding a new AI provider.
+// Two-step sheet for adding or editing an AI provider.
 //
 // STEP 1 — Provider:
-//   Enter endpoint URL, API key (with user-defined name), optional provider name.
+//   Enter base URL, API key (with user-defined name), optional provider name.
 //   Validate provider (GET /v1/models — no model name needed).
 //   On success → proceed to step 2.
 //
@@ -29,8 +29,6 @@
 //   API key field shows placeholder (existing key preserved if left empty).
 //   Key name field editable — rename the key without changing the secret.
 //   Models list is editable — add/remove individual models.
-//   Duplicate key name check: if the new name collides with another key → alert, no save.
-//   Duplicate key value check: if the new value matches another key → alert, no save.
 //
 // SAVE BEHAVIOUR:
 //   Onboarding → calls providerStore.mergeProvider (safe upsert, no alerts).
@@ -41,7 +39,6 @@ import ChappieCore
 
 // MARK: - PendingKey
 
-/// A key being composed in the onboarding multi-key UI (before saving).
 private struct PendingKey: Identifiable {
     let id = UUID()
     var name: String = ""
@@ -57,7 +54,6 @@ struct AddProviderSheet: View {
 
     let providerStore: AIProviderStore?
     var editingProvider: AIProvider? = nil
-    /// When true: multi-key input, merge-save (onboarding). When false: single-key, strict-save (directory).
     var isOnboarding: Bool = false
     let onSaved: () -> Void
     let onCancel: () -> Void
@@ -70,7 +66,7 @@ struct AddProviderSheet: View {
     // MARK: - Step 1 State — shared
 
     @State private var providerName: String = ""
-    @State private var endpoint: String = ""
+    @State private var baseURL: String = ""
     @State private var isValidating: Bool = false
     @State private var validationError: String? = nil
     @State private var validatedProvider: AIProvider? = nil
@@ -87,8 +83,8 @@ struct AddProviderSheet: View {
 
     // MARK: - Step 2 State
 
-    @State private var fetchedModels: [String] = []
-    @State private var selectedModels: Set<String> = []
+    @State private var fetchedModels: [AIModel] = []
+    @State private var selectedModelIds: Set<String> = []
     @State private var manualModelInput: String = ""
     @State private var isFetchingModels: Bool = false
     @State private var fetchError: String? = nil
@@ -108,38 +104,40 @@ struct AddProviderSheet: View {
     private var title: String { isEditing ? "Редактировать провайдера" : "Добавить провайдера" }
 
     private var canValidate: Bool {
-        let endpointOk = !endpoint.trimmingCharacters(in: .whitespaces).isEmpty
-        if isEditing { return endpointOk }
+        let urlOk = !baseURL.trimmingCharacters(in: .whitespaces).isEmpty
+        if isEditing { return urlOk }
         if isOnboarding {
-            return endpointOk && pendingKeys.contains(where: {
+            return urlOk && pendingKeys.contains(where: {
                 !$0.value.trimmingCharacters(in: .whitespaces).isEmpty
             })
         } else {
-            return endpointOk && !apiKeyValue.trimmingCharacters(in: .whitespaces).isEmpty
+            return urlOk && !apiKeyValue.trimmingCharacters(in: .whitespaces).isEmpty
         }
     }
 
-    // All models: fetched + manually added + existing (for edit mode)
-    private var allModels: [String] {
+    // All models: fetched + existing (for edit mode)
+    private var allModels: [AIModel] {
         var combined = fetchedModels
         if let existing = editingProvider {
-            for m in existing.models where !combined.contains(m) {
+            for m in existing.models where !combined.contains(where: { $0.id == m.id }) {
                 combined.insert(m, at: 0)
             }
         }
         return combined
     }
 
-    private var filteredModels: [String] {
+    private var filteredModels: [AIModel] {
         let q = modelSearchText.trimmingCharacters(in: .whitespaces).lowercased()
         guard !q.isEmpty else { return allModels }
-        return allModels.filter { $0.lowercased().contains(q) }
+        return allModels.filter {
+            $0.id.lowercased().contains(q) || $0.name.lowercased().contains(q)
+        }
     }
 
-    private var canSave: Bool { !selectedModels.isEmpty }
+    private var canSave: Bool { !selectedModelIds.isEmpty }
 
     private var allFilteredSelected: Bool {
-        !filteredModels.isEmpty && filteredModels.allSatisfy { selectedModels.contains($0) }
+        !filteredModels.isEmpty && filteredModels.allSatisfy { selectedModelIds.contains($0.id) }
     }
 
     private var firstValidKeyValue: String {
@@ -221,8 +219,8 @@ struct AddProviderSheet: View {
                         .textFieldStyle(.roundedBorder)
                 }
 
-                fieldSection(label: "Эндпойнт", icon: "link", hint: "Полный URL, например: https://api.aitunnel.ru/v1/chat/completions") {
-                    TextField("https://...", text: $endpoint)
+                fieldSection(label: "Базовый URL", icon: "link", hint: "Без пути, например: https://api.openai.com или https://api.aitunnel.ru/v1") {
+                    TextField("https://...", text: $baseURL)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.body, design: .monospaced))
                 }
@@ -337,9 +335,9 @@ struct AddProviderSheet: View {
 
                 Spacer()
 
-                Text("Выбрано: \(selectedModels.count)")
+                Text("Выбрано: \(selectedModelIds.count)")
                     .font(.caption)
-                    .foregroundStyle(selectedModels.isEmpty ? .orange : .secondary)
+                    .foregroundStyle(selectedModelIds.isEmpty ? .orange : .secondary)
             }
             .padding(.horizontal, 24)
             .padding(.top, 16)
@@ -434,15 +432,15 @@ struct AddProviderSheet: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 2) {
-                        ForEach(filteredModels, id: \.self) { model in
+                        ForEach(filteredModels) { model in
                             ModelCheckRow(
                                 model: model,
-                                isSelected: selectedModels.contains(model),
+                                isSelected: selectedModelIds.contains(model.id),
                                 onToggle: {
-                                    if selectedModels.contains(model) {
-                                        selectedModels.remove(model)
+                                    if selectedModelIds.contains(model.id) {
+                                        selectedModelIds.remove(model.id)
                                     } else {
-                                        selectedModels.insert(model)
+                                        selectedModelIds.insert(model.id)
                                     }
                                 }
                             )
@@ -564,8 +562,8 @@ struct AddProviderSheet: View {
     private func prefillIfEditing() {
         guard let provider = editingProvider else { return }
         providerName = provider.name
-        endpoint = provider.endpoint
-        selectedModels = Set(provider.models)
+        baseURL = provider.baseURL
+        selectedModelIds = Set(provider.models.map { $0.id })
         apiKeyName = provider.keys.first?.name ?? ""
     }
 
@@ -573,19 +571,19 @@ struct AddProviderSheet: View {
 
     private func toggleSelectAll() {
         if allFilteredSelected {
-            for m in filteredModels { selectedModels.remove(m) }
+            for m in filteredModels { selectedModelIds.remove(m.id) }
         } else {
-            for m in filteredModels { selectedModels.insert(m) }
+            for m in filteredModels { selectedModelIds.insert(m.id) }
         }
     }
 
     // MARK: - Step 1: Validate Provider
 
     private func validateAndProceed() {
-        let trimmedEndpoint = endpoint.trimmingCharacters(in: .whitespaces)
+        let trimmedURL = baseURL.trimmingCharacters(in: .whitespaces)
 
-        guard !trimmedEndpoint.isEmpty else {
-            validationError = "Введите URL эндпойнта."
+        guard !trimmedURL.isEmpty else {
+            validationError = "Введите базовый URL."
             return
         }
 
@@ -595,7 +593,7 @@ struct AddProviderSheet: View {
         Task {
             // Directory mode: check for duplicate host before validating
             if !isOnboarding && !isEditing, let store = providerStore {
-                let hostExists = await store.providerHostExists(trimmedEndpoint)
+                let hostExists = await store.providerHostExists(trimmedURL)
                 if hostExists {
                     await MainActor.run {
                         isValidating = false
@@ -622,14 +620,18 @@ struct AddProviderSheet: View {
                 return
             }
 
-            let client = AIClient(endpoint: trimmedEndpoint, apiKey: keyToUse, modelName: "")
+            // Validate using /v1/models endpoint
+            let validationEndpoint = trimmedURL + "/v1/models"
+            let client = AIClient(endpoint: validationEndpoint, apiKey: keyToUse, modelName: "")
             do {
                 try await client.validateProvider()
 
                 let provisional = AIProvider(
                     id: editingProvider?.id ?? UUID(),
                     name: providerName.trimmingCharacters(in: .whitespaces),
-                    endpoint: trimmedEndpoint,
+                    baseURL: trimmedURL,
+                    catalogId: editingProvider?.catalogId,
+                    providerProtocol: editingProvider?.providerProtocol ?? .openai,
                     keys: editingProvider?.keys ?? [],
                     models: editingProvider?.models ?? []
                 )
@@ -654,7 +656,13 @@ struct AddProviderSheet: View {
 
     private func fetchModels() {
         guard let provider = validatedProvider ?? editingProvider.map({
-            AIProvider(id: $0.id, name: $0.name, endpoint: endpoint.trimmingCharacters(in: .whitespaces), keys: $0.keys, models: $0.models)
+            AIProvider(
+                id: $0.id, name: $0.name,
+                baseURL: baseURL.trimmingCharacters(in: .whitespaces),
+                catalogId: $0.catalogId,
+                providerProtocol: $0.providerProtocol,
+                keys: $0.keys, models: $0.models
+            )
         }) else { return }
 
         isFetchingModels = true
@@ -670,18 +678,30 @@ struct AddProviderSheet: View {
                 keyToUse = firstValidKeyValue
             }
 
-            let client = AIClient(endpoint: provider.endpoint, apiKey: keyToUse, modelName: "")
-            let models = await client.fetchAvailableModels()
+            let discoveryEndpoint = provider.baseURL + "/v1/models"
+            let client = AIClient(endpoint: discoveryEndpoint, apiKey: keyToUse, modelName: "")
+            let modelIds = await client.fetchAvailableModels()
 
             await MainActor.run {
                 isFetchingModels = false
-                if models.isEmpty {
+                if modelIds.isEmpty {
                     fetchError = "Не удалось загрузить список моделей. Добавьте модели вручную."
                 } else {
-                    fetchedModels = models
+                    fetchedModels = modelIds.map { modelId in
+                        // Preserve existing AIModel metadata if available
+                        if let existing = provider.models.first(where: { $0.id == modelId }) {
+                            return existing
+                        }
+                        return AIModel(
+                            id: modelId,
+                            name: modelId,
+                            endpoint: "/v1/chat/completions",
+                            providerProtocol: provider.providerProtocol
+                        )
+                    }
                     fetchError = nil
-                    if selectedModels.isEmpty {
-                        selectedModels = Set(models)
+                    if selectedModelIds.isEmpty {
+                        selectedModelIds = Set(modelIds)
                     }
                 }
             }
@@ -693,10 +713,16 @@ struct AddProviderSheet: View {
     private func addManualModel() {
         let trimmed = manualModelInput.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
-        if !fetchedModels.contains(trimmed) {
-            fetchedModels.insert(trimmed, at: 0)
+        if !fetchedModels.contains(where: { $0.id == trimmed }) {
+            let model = AIModel(
+                id: trimmed,
+                name: trimmed,
+                endpoint: "/v1/chat/completions",
+                providerProtocol: validatedProvider?.providerProtocol ?? .openai
+            )
+            fetchedModels.insert(model, at: 0)
         }
-        selectedModels.insert(trimmed)
+        selectedModelIds.insert(trimmed)
         manualModelInput = ""
     }
 
@@ -709,7 +735,7 @@ struct AddProviderSheet: View {
         isSaving = true
         saveError = nil
 
-        let modelsToSave = Array(selectedModels).sorted()
+        let modelsToSave = allModels.filter { selectedModelIds.contains($0.id) }
 
         Task {
             do {
@@ -723,7 +749,7 @@ struct AddProviderSheet: View {
                     let resolvedKeyName = apiKeyName.trimmingCharacters(in: .whitespaces)
 
                     if let firstKey = finalProvider.keys.first {
-                        // Check name uniqueness against all OTHER keys of this provider
+                        // Check name uniqueness against all OTHER keys
                         if !resolvedKeyName.isEmpty {
                             let otherKeys = finalProvider.keys.filter { $0.id != firstKey.id }
                             let nameCollision = otherKeys.contains(where: {
@@ -738,7 +764,7 @@ struct AddProviderSheet: View {
                             }
                         }
 
-                        // Check value uniqueness against all OTHER keys of this provider
+                        // Check value uniqueness against all OTHER keys
                         if !trimmedKeyValue.isEmpty {
                             let otherKeys = finalProvider.keys.filter { $0.id != firstKey.id }
                             var valueCollision = false
@@ -785,12 +811,12 @@ struct AddProviderSheet: View {
                         models: modelsToSave
                     )
 
-                    // Merge remaining keys — models already added on first merge
+                    // Merge remaining keys
                     for key in validKeys.dropFirst() {
                         let name = key.name.trimmingCharacters(in: .whitespaces)
                         let value = key.value.trimmingCharacters(in: .whitespaces)
                         _ = try await store.mergeProvider(
-                            AIProvider(id: providerId, name: finalProvider.name, endpoint: finalProvider.endpoint),
+                            AIProvider(id: providerId, name: finalProvider.name, baseURL: finalProvider.baseURL),
                             keyName: name.isEmpty ? "Key" : name,
                             keyValue: value,
                             models: []
@@ -798,7 +824,7 @@ struct AddProviderSheet: View {
                     }
 
                 } else {
-                    // Directory: new provider — no existing keys, no duplicates possible
+                    // Directory: new custom provider
                     let trimmedKeyValue = apiKeyValue.trimmingCharacters(in: .whitespaces)
                     let resolvedKeyName = apiKeyName.trimmingCharacters(in: .whitespaces)
                     let keyName = resolvedKeyName.isEmpty ? "Default" : resolvedKeyName
@@ -821,7 +847,6 @@ struct AddProviderSheet: View {
 
 // MARK: - PendingKeyRow
 
-/// One key row in the onboarding multi-key list.
 private struct PendingKeyRow: View {
 
     @Binding var key: PendingKey
@@ -869,7 +894,7 @@ private struct PendingKeyRow: View {
 
 private struct ModelCheckRow: View {
 
-    let model: String
+    let model: AIModel
     let isSelected: Bool
     let onToggle: () -> Void
 
@@ -882,7 +907,7 @@ private struct ModelCheckRow: View {
                     .font(.system(size: 16))
                     .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.4))
 
-                Text(model)
+                Text(model.displayName)
                     .font(.system(size: 13, design: .monospaced))
                     .foregroundStyle(.primary)
                     .lineLimit(1)

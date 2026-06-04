@@ -7,16 +7,16 @@
 // FLOW:
 //   1. Sheet opens — auto-fetches model list from provider endpoint.
 //   2. User selects from the list and/or types names manually.
-//   3. On confirm — returns the set of selected model names to the caller.
+//   3. On confirm — returns the list of new AIModel entries to the caller.
 //      Caller is responsible for deduplication against existing models.
 //
 // DEDUPLICATION:
-//   existingModels are shown in the list as already-added (greyed out, not selectable).
+//   existingModels are shown as already-added (greyed out, not selectable).
 //   Only new models can be selected and returned.
 //
 // MANUAL INPUT:
-//   User can type any name and add it — it appears at the top of the list as a custom entry.
-//   Manual entries can be selected/deselected like fetched ones.
+//   User can type any model ID — it appears at the top as a custom entry.
+//   Manual entries get endpoint "/v1/chat/completions" and protocol "openai" by default.
 
 import SwiftUI
 import ChappieCore
@@ -28,16 +28,16 @@ struct AddModelSheet: View {
     // MARK: - Input
 
     let provider: AIProvider
-    let existingModels: [String]       // Already added models — shown greyed out
+    let existingModels: [AIModel]
     let providerStore: AIProviderStore?
-    let onSaved: ([String]) -> Void    // Called with the list of NEW models to add
+    let onSaved: ([AIModel]) -> Void    // New models only — caller deduplicates
     let onCancel: () -> Void
 
     // MARK: - State
 
-    @State private var fetchedModels: [String] = []
-    @State private var manualModels: [String] = []  // User-typed entries not in fetched list
-    @State private var selectedModels: Set<String> = []
+    @State private var fetchedModels: [AIModel] = []
+    @State private var manualModels: [AIModel] = []
+    @State private var selectedModelIds: Set<String> = []
     @State private var manualInput: String = ""
     @State private var searchText: String = ""
     @State private var isFetching: Bool = false
@@ -47,27 +47,29 @@ struct AddModelSheet: View {
 
     // MARK: - Computed
 
-    /// All available models: manual entries first, then fetched.
-    private var allModels: [String] {
+    private var existingIds: Set<String> { Set(existingModels.map { $0.id }) }
+
+    private var allModels: [AIModel] {
         var result = manualModels
-        for m in fetchedModels where !result.contains(m) {
+        for m in fetchedModels where !result.contains(where: { $0.id == m.id }) {
             result.append(m)
         }
         return result
     }
 
-    /// Filtered by search text, excluding already-existing models from the selectable pool.
-    private var filteredModels: [String] {
+    private var filteredModels: [AIModel] {
         let q = searchText.trimmingCharacters(in: .whitespaces).lowercased()
         guard !q.isEmpty else { return allModels }
-        return allModels.filter { $0.lowercased().contains(q) }
+        return allModels.filter {
+            $0.id.lowercased().contains(q) || $0.name.lowercased().contains(q)
+        }
     }
 
-    private var canSave: Bool { !selectedModels.isEmpty }
+    private var canSave: Bool { !selectedModelIds.isEmpty }
 
     private var allFilteredSelected: Bool {
-        let selectable = filteredModels.filter { !existingModels.contains($0) }
-        return !selectable.isEmpty && selectable.allSatisfy { selectedModels.contains($0) }
+        let selectable = filteredModels.filter { !existingIds.contains($0.id) }
+        return !selectable.isEmpty && selectable.allSatisfy { selectedModelIds.contains($0.id) }
     }
 
     // MARK: - Body
@@ -103,9 +105,7 @@ struct AddModelSheet: View {
 
             // Fetch controls
             HStack(spacing: 12) {
-                Button {
-                    fetchModels()
-                } label: {
+                Button { fetchModels() } label: {
                     HStack(spacing: 6) {
                         if isFetching {
                             ProgressView().controlSize(.small)
@@ -126,9 +126,9 @@ struct AddModelSheet: View {
 
                 Spacer()
 
-                Text("Выбрано: \(selectedModels.count)")
+                Text("Выбрано: \(selectedModelIds.count)")
                     .font(.caption)
-                    .foregroundStyle(selectedModels.isEmpty ? .orange : .secondary)
+                    .foregroundStyle(selectedModelIds.isEmpty ? .orange : .secondary)
             }
             .padding(.horizontal, 24)
             .padding(.top, 16)
@@ -167,7 +167,6 @@ struct AddModelSheet: View {
                 .padding(.vertical, 8)
                 .background(Color.primary.opacity(0.04))
 
-                // Select all toggle
                 Button { toggleSelectAll() } label: {
                     HStack(spacing: 6) {
                         Image(systemName: allFilteredSelected ? "checkmark.square.fill" : "square")
@@ -177,7 +176,7 @@ struct AddModelSheet: View {
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(.secondary)
                         if !searchText.isEmpty {
-                            Text("(\(filteredModels.filter { !existingModels.contains($0) }.count) доступных)")
+                            Text("(\(filteredModels.filter { !existingIds.contains($0.id) }.count) доступных)")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary.opacity(0.7))
                         }
@@ -222,9 +221,9 @@ struct AddModelSheet: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 2) {
-                        ForEach(filteredModels, id: \.self) { model in
-                            let isExisting = existingModels.contains(model)
-                            let isSelected = selectedModels.contains(model)
+                        ForEach(filteredModels) { model in
+                            let isExisting = existingIds.contains(model.id)
+                            let isSelected = selectedModelIds.contains(model.id)
 
                             ModelSelectRow(
                                 model: model,
@@ -233,9 +232,9 @@ struct AddModelSheet: View {
                                 onToggle: {
                                     guard !isExisting else { return }
                                     if isSelected {
-                                        selectedModels.remove(model)
+                                        selectedModelIds.remove(model.id)
                                     } else {
-                                        selectedModels.insert(model)
+                                        selectedModelIds.insert(model.id)
                                     }
                                 }
                             )
@@ -249,7 +248,7 @@ struct AddModelSheet: View {
 
             Divider()
 
-            // Manual input
+            // Manual input — creates a basic OpenAI-compatible model entry
             HStack(spacing: 8) {
                 Image(systemName: "keyboard")
                     .foregroundStyle(.secondary)
@@ -290,7 +289,7 @@ struct AddModelSheet: View {
                             ProgressView().controlSize(.small)
                             Text("Добавляем...")
                         } else {
-                            Text("Добавить (\(selectedModels.count))")
+                            Text("Добавить (\(selectedModelIds.count))")
                         }
                     }
                 }
@@ -314,7 +313,6 @@ struct AddModelSheet: View {
         fetchError = nil
 
         Task {
-            // Load the first available key secret to authenticate the request
             let keySecret: String
             if let firstKey = provider.keys.first {
                 keySecret = await store.loadApiKey(for: firstKey.id) ?? ""
@@ -330,19 +328,34 @@ struct AddModelSheet: View {
                 return
             }
 
-            let client = AIClient(endpoint: provider.endpoint, apiKey: keySecret, modelName: "")
-            let models = await client.fetchAvailableModels()
+            // Use first model's endpoint or default chat endpoint for the /models discovery call
+            let discoveryEndpoint = provider.baseURL + "/v1/models"
+            let client = AIClient(endpoint: discoveryEndpoint, apiKey: keySecret, modelName: "")
+            let modelIds = await client.fetchAvailableModels()
 
             await MainActor.run {
                 isFetching = false
-                if models.isEmpty {
+                if modelIds.isEmpty {
                     fetchError = "Не удалось загрузить список. Добавьте модели вручную."
                 } else {
-                    fetchedModels = models
+                    // Build AIModel entries: use catalog data if provider has models, else defaults
+                    fetchedModels = modelIds.map { modelId in
+                        // Try to find matching entry in provider's existing catalog models
+                        if let existing = provider.models.first(where: { $0.id == modelId }) {
+                            return existing
+                        }
+                        // Default: OpenAI-compatible chat endpoint
+                        return AIModel(
+                            id: modelId,
+                            name: modelId,
+                            endpoint: "/v1/chat/completions",
+                            providerProtocol: provider.providerProtocol
+                        )
+                    }
                     fetchError = nil
                     // Auto-select all new (non-existing) models
-                    for m in models where !existingModels.contains(m) {
-                        selectedModels.insert(m)
+                    for m in fetchedModels where !existingIds.contains(m.id) {
+                        selectedModelIds.insert(m.id)
                     }
                 }
             }
@@ -354,12 +367,18 @@ struct AddModelSheet: View {
     private func addManual() {
         let trimmed = manualInput.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
-        if !fetchedModels.contains(trimmed) && !manualModels.contains(trimmed) {
-            manualModels.insert(trimmed, at: 0)
+        if !fetchedModels.contains(where: { $0.id == trimmed }),
+           !manualModels.contains(where: { $0.id == trimmed }) {
+            let model = AIModel(
+                id: trimmed,
+                name: trimmed,
+                endpoint: "/v1/chat/completions",
+                providerProtocol: provider.providerProtocol
+            )
+            manualModels.insert(model, at: 0)
         }
-        // Auto-select the manually added model (unless it already exists)
-        if !existingModels.contains(trimmed) {
-            selectedModels.insert(trimmed)
+        if !existingIds.contains(trimmed) {
+            selectedModelIds.insert(trimmed)
         }
         manualInput = ""
     }
@@ -367,19 +386,20 @@ struct AddModelSheet: View {
     // MARK: - Select All Toggle
 
     private func toggleSelectAll() {
-        let selectable = filteredModels.filter { !existingModels.contains($0) }
+        let selectable = filteredModels.filter { !existingIds.contains($0.id) }
         if allFilteredSelected {
-            for m in selectable { selectedModels.remove(m) }
+            for m in selectable { selectedModelIds.remove(m.id) }
         } else {
-            for m in selectable { selectedModels.insert(m) }
+            for m in selectable { selectedModelIds.insert(m.id) }
         }
     }
 
     // MARK: - Confirm
 
     private func confirmSave() {
-        // Filter out any that somehow ended up in existingModels
-        let newModels = Array(selectedModels).filter { !existingModels.contains($0) }.sorted()
+        let newModels = allModels
+            .filter { selectedModelIds.contains($0.id) && !existingIds.contains($0.id) }
+            .sorted { $0.id < $1.id }
         guard !newModels.isEmpty else { return }
         onSaved(newModels)
     }
@@ -389,9 +409,9 @@ struct AddModelSheet: View {
 
 private struct ModelSelectRow: View {
 
-    let model: String
+    let model: AIModel
     let isSelected: Bool
-    let isExisting: Bool   // Already added — greyed out, not selectable
+    let isExisting: Bool
     let onToggle: () -> Void
 
     @State private var isHovered = false
@@ -409,7 +429,7 @@ private struct ModelSelectRow: View {
                         .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.4))
                 }
 
-                Text(model)
+                Text(model.displayName)
                     .font(.system(size: 13, design: .monospaced))
                     .foregroundStyle(isExisting ? .secondary : .primary)
                     .lineLimit(1)

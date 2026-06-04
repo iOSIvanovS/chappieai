@@ -7,35 +7,30 @@
 // - AIProviderEntity in SwiftData stores provider config as JSON (no graph pattern)
 // - API key secrets live exclusively in Keychain, keyed by apiKey.id.uuidString
 // - Each provider can have multiple named APIKey entries (multi-key schema)
-// - This class is the single source of truth for provider management
 //
-// MIGRATION FROM SINGLE-KEY SCHEMA:
-// Old schema stored one secret per provider under provider.id.uuidString in Keychain.
-// On first load, providers with empty keys[] are detected and migrated automatically:
-//   1. Read old secret from Keychain using provider.id.uuidString
-//   2. Create a new APIKey(name: "Default") with a fresh UUID
-//   3. Store secret in Keychain under apiKey.id.uuidString
-//   4. Delete old Keychain entry under provider.id.uuidString
-//   5. Persist updated AIProvider JSON to SwiftData
+// CATALOG FLOW:
+// addFromCatalog() — creates a provider from a RemoteProvider entry.
+//   Converts RemoteModel → AIModel, preserving endpoint + protocol per model.
+//   Duplicate check: by catalogId. If already exists → mergeFromCatalog() instead.
+//
+// CUSTOM FLOW:
+// addProvider() — creates a provider entered manually (catalogId = nil).
+//   Duplicate check: by baseURL host.
 //
 // DELETION POLICY:
 // Deletion is ALWAYS allowed — even the last provider, even if threads depend on it.
-// Orphaned threads (provider or model or key missing) show a warning banner in the chat view.
-// No blocking guards here — freedom to the user, smart warnings in the UI.
+// Orphaned threads show a warning banner. No blocking guards here.
 //
 // THREAD SAFETY:
 // All async methods run in a detached Task with ModelContainer actor isolation.
-// Same pattern as ThreadStore and ProjectStore.
 //
 // CACHING:
 // cachedProviders holds the full list in RAM after first load.
-// All reads return from cache — zero SwiftData hits on hot path.
-// All writes invalidate the cache by calling refreshCache() after saving.
+// All reads return from cache. All writes call refreshCache() after saving.
 //
 // DEFAULT PROVIDER:
-// isDefault lives on AIProviderEntity (SwiftData), not on AIProvider (domain model).
-// The cache stores a separate cachedDefaultId to answer loadDefaultProvider() without
-// iterating over JSON or hitting the DB.
+// isDefault lives on AIProviderEntity. cachedDefaultId answers loadDefaultProvider()
+// without iterating JSON or hitting the DB.
 
 import Foundation
 import SwiftData
@@ -43,22 +38,6 @@ import Security
 
 // MARK: - AIProviderStore
 
-/// Manages persistence of AI providers using SwiftData + Keychain.
-///
-/// USAGE:
-/// - loadProviders() → [AIProvider]
-/// - addProvider(_ provider:, firstKeyName:, firstKeyValue:) → UUID
-/// - updateProvider(_ provider:)
-/// - deleteProvider(id:)
-/// - addKey(name:value:toProviderId:) → APIKey
-/// - updateKey(_ key:, newValue:, forProviderId:)
-/// - deleteKey(id:fromProviderId:)
-/// - addModel(_ modelName:, toProviderId:)
-/// - deleteModel(_ modelName:, fromProviderId:)
-/// - setDefault(id:)
-/// - loadDefaultProvider() → AIProvider?
-/// - loadApiKey(for keyId:) → String?
-/// - mergeProvider(_:keyName:keyValue:models:) — onboarding upsert with merge rules
 public actor AIProviderStore {
 
     // MARK: - Dependencies
@@ -67,9 +46,7 @@ public actor AIProviderStore {
 
     // MARK: - In-memory cache
 
-    // Full provider list — populated on first access, invalidated on writes.
     private var cachedProviders: [AIProvider]? = nil
-    // ID of the default provider — kept in sync with cachedProviders.
     private var cachedDefaultId: UUID? = nil
 
     // MARK: - Keychain constants
@@ -86,8 +63,6 @@ public actor AIProviderStore {
 
     // MARK: - Cache Management
 
-    /// Loads all providers from SwiftData and stores them in cachedProviders.
-    /// Called after every write operation to keep cache fresh.
     private func refreshCache() throws {
         let context = ModelContext(modelContainer)
         let descriptor = FetchDescriptor<AIProviderEntity>(
@@ -98,7 +73,6 @@ public actor AIProviderStore {
         cachedDefaultId = entities.first(where: { $0.isDefault })?.id
     }
 
-    /// Returns cached providers, loading from SwiftData on first call.
     private func getProviders() throws -> [AIProvider] {
         if let cached = cachedProviders { return cached }
         try refreshCache()
@@ -108,8 +82,7 @@ public actor AIProviderStore {
     // MARK: - Load
 
     /// Returns all stored providers, sorted by creation date (oldest first).
-    /// Served from in-memory cache — no SwiftData hit on warm calls.
-    /// Runs single-key migration on providers that predate the multi-key schema.
+    /// Runs single-key migration for providers that predate the multi-key schema.
     public func loadProviders() async throws -> [AIProvider] {
         var providers = try getProviders()
         var needsRefresh = false
@@ -131,7 +104,6 @@ public actor AIProviderStore {
         return try getProviders()
     }
 
-    /// Returns the default provider, or the first one if no default is set.
     public func loadDefaultProvider() async throws -> AIProvider? {
         let providers = try getProviders()
         if let defaultId = cachedDefaultId,
@@ -141,15 +113,14 @@ public actor AIProviderStore {
         return providers.first
     }
 
-    /// Returns a single provider by ID.
     public func loadProvider(id: UUID) async throws -> AIProvider? {
         return try getProviders().first(where: { $0.id == id })
     }
 
-    // MARK: - Add Provider
+    // MARK: - Add Provider (Custom / Manual)
 
-    /// Persists a new provider with its first API key.
-    /// Returns the new provider's UUID.
+    /// Adds a manually-entered provider (catalogId = nil).
+    /// Duplicate check: by baseURL host — returns existing id if host already present.
     @discardableResult
     public func addProvider(
         _ provider: AIProvider,
@@ -158,7 +129,6 @@ public actor AIProviderStore {
     ) async throws -> UUID {
         let context = ModelContext(modelContainer)
 
-        // Create the first APIKey and store its secret in Keychain
         let firstKey = APIKey(name: firstKeyName.isEmpty ? "Default" : firstKeyName)
         saveApiKey(firstKeyValue, for: firstKey.id)
 
@@ -167,62 +137,124 @@ public actor AIProviderStore {
 
         let entity = AIProviderEntity(provider: providerWithKey, isDefault: false)
 
-        // First provider ever — make it default automatically
         let existingCount = (try? context.fetch(FetchDescriptor<AIProviderEntity>()).count) ?? 0
-        if existingCount == 0 {
-            entity.isDefault = true
-        }
+        if existingCount == 0 { entity.isDefault = true }
 
         context.insert(entity)
         try context.save()
-
         try refreshCache()
 
-        print("[AIProviderStore] Added provider '\(providerWithKey.displayName)' with key '\(firstKey.name)'")
+        print("[AIProviderStore] Added custom provider '\(providerWithKey.displayName)'")
         return providerWithKey.id
     }
 
-    // MARK: - Merge Provider (Onboarding)
+    // MARK: - Add Provider from Catalog
 
-    /// Onboarding upsert — safe to call multiple times without destroying existing data.
+    /// Creates a new provider from a RemoteProvider catalog entry.
+    /// Converts all RemoteModel entries to AIModel (preserving endpoint + protocol).
+    /// If a provider with the same catalogId already exists — merges instead.
     ///
-    /// MERGE RULES:
-    /// - Provider match: by displayHost (URL host). If found → update name only, reuse existing id.
-    ///   If not found → create new provider.
-    /// - Key match: by Keychain value within the provider. If value already exists → update name only.
-    ///   If name already exists (different value) → rename incoming key with a suffix.
-    ///   If neither exists → add as new key.
-    /// - Models: add only models not already present for this provider (by name).
-    ///   Models are provider-scoped — same name at different providers is fine.
-    ///
-    /// Returns the UUID of the provider that was created or updated.
+    /// Returns the UUID of the created or updated provider.
+    @discardableResult
+    public func addFromCatalog(
+        _ remote: RemoteProvider,
+        keyName: String,
+        keyValue: String,
+        selectedModelIds: Set<String>? = nil  // nil = all models
+    ) async throws -> UUID {
+        let existing = try getProviders()
+
+        // If provider with same catalogId exists — merge key and models
+        if let matched = existing.first(where: { $0.catalogId == remote.id }) {
+            return try await mergeIntoCatalogProvider(
+                matched,
+                remote: remote,
+                keyName: keyName,
+                keyValue: keyValue,
+                selectedModelIds: selectedModelIds
+            )
+        }
+
+        // Build AIModel list from remote catalog
+        let allModels = buildModels(from: remote, selectedIds: selectedModelIds)
+
+        // Create the provider
+        let provider = AIProvider(
+            name: remote.name,
+            baseURL: remote.baseURL,
+            catalogId: remote.id,
+            providerProtocol: dominantProtocol(in: remote),
+            models: allModels
+        )
+
+        return try await addProvider(provider, firstKeyName: keyName, firstKeyValue: keyValue)
+    }
+
+    /// Merges a new key and models into an existing catalog provider.
+    private func mergeIntoCatalogProvider(
+        _ existing: AIProvider,
+        remote: RemoteProvider,
+        keyName: String,
+        keyValue: String,
+        selectedModelIds: Set<String>?
+    ) async throws -> UUID {
+        var updated = existing
+
+        // Merge key — skip if same value already present
+        let trimmed = keyValue.trimmingCharacters(in: .whitespaces)
+        if !trimmed.isEmpty {
+            var valueExists = false
+            for key in updated.keys {
+                if let stored = keychainLoad(key: key.id.uuidString), stored == trimmed {
+                    valueExists = true
+                    break
+                }
+            }
+            if !valueExists {
+                let resolvedName = resolveKeyName(keyName, existingKeys: updated.keys)
+                let newKey = APIKey(name: resolvedName)
+                saveApiKey(trimmed, for: newKey.id)
+                updated.keys.append(newKey)
+            }
+        }
+
+        // Merge models — add only those not already present (by id)
+        let newModels = buildModels(from: remote, selectedIds: selectedModelIds)
+        let existingIds = Set(updated.models.map { $0.id })
+        let toAdd = newModels.filter { !existingIds.contains($0.id) }
+        updated.models.append(contentsOf: toAdd)
+
+        try persistProvider(updated)
+        try refreshCache()
+
+        print("[AIProviderStore] Merged into catalog provider '\(updated.displayName)'")
+        return updated.id
+    }
+
+    // MARK: - Merge Provider (Onboarding — legacy host-based)
+
+    /// Onboarding upsert — matches by baseURL host. Safe to call multiple times.
+    /// Used by the onboarding flow for manual/custom providers.
     @discardableResult
     public func mergeProvider(
         _ incoming: AIProvider,
         keyName: String,
         keyValue: String,
-        models: [String]
+        models: [AIModel]
     ) async throws -> UUID {
         let existing = try getProviders()
-        let incomingHost = URL(string: incoming.endpoint)?.host ?? incoming.endpoint
+        let incomingHost = URL(string: incoming.baseURL)?.host ?? incoming.baseURL
 
-        // Find provider by host
         if var matched = existing.first(where: { provider in
-            (URL(string: provider.endpoint)?.host ?? provider.endpoint) == incomingHost
+            (URL(string: provider.baseURL)?.host ?? provider.baseURL) == incomingHost
         }) {
-            // Provider exists — update display name if incoming has one
-            if !incoming.name.isEmpty {
-                matched.name = incoming.name
-            }
+            if !incoming.name.isEmpty { matched.name = incoming.name }
 
-            // Merge key
             let trimmedValue = keyValue.trimmingCharacters(in: .whitespaces)
             if !trimmedValue.isEmpty {
-                // Check if this key value already exists
                 var valueExists = false
                 for existingKey in matched.keys {
                     if let stored = keychainLoad(key: existingKey.id.uuidString), stored == trimmedValue {
-                        // Value duplicate — update name only
                         var updatedKey = existingKey
                         if !keyName.isEmpty { updatedKey.name = keyName }
                         if let idx = matched.keys.firstIndex(where: { $0.id == existingKey.id }) {
@@ -232,9 +264,7 @@ public actor AIProviderStore {
                         break
                     }
                 }
-
                 if !valueExists {
-                    // New key value — check name uniqueness, add suffix if collision
                     let resolvedName = resolveKeyName(keyName, existingKeys: matched.keys)
                     let newKey = APIKey(name: resolvedName)
                     saveApiKey(trimmedValue, for: newKey.id)
@@ -242,58 +272,42 @@ public actor AIProviderStore {
                 }
             }
 
-            // Merge models — add only those not already present
-            let existingModelSet = Set(matched.models)
-            let newModels = models.filter { !existingModelSet.contains($0) }
+            let existingModelIds = Set(matched.models.map { $0.id })
+            let newModels = models.filter { !existingModelIds.contains($0.id) }
             matched.models.append(contentsOf: newModels)
 
             try persistProvider(matched)
             try refreshCache()
-
             print("[AIProviderStore] Merged provider '\(matched.displayName)' (host: \(incomingHost))")
             return matched.id
 
         } else {
-            // Provider not found — create new
             let id = try await addProvider(incoming, firstKeyName: keyName, firstKeyValue: keyValue)
-
-            // Add models (addProvider only sets up keys, not models)
             if var newProvider = try getProviders().first(where: { $0.id == id }) {
                 newProvider.models = models
                 try persistProvider(newProvider)
                 try refreshCache()
             }
-
             return id
         }
     }
 
-    /// Resolves key name uniqueness within a provider — appends suffix if collision.
-    private func resolveKeyName(_ name: String, existingKeys: [APIKey]) -> String {
-        let base = name.isEmpty ? "Key" : name
-        guard existingKeys.contains(where: { $0.name.lowercased() == base.lowercased() }) else {
-            return base
-        }
-        var suffix = 2
-        while existingKeys.contains(where: { $0.name.lowercased() == "\(base) \(suffix)".lowercased() }) {
-            suffix += 1
-        }
-        return "\(base) \(suffix)"
-    }
+    // MARK: - Duplicate Check Helpers
 
-    // MARK: - Duplicate Check Helpers (for UI validation)
-
-    /// Returns true if a provider with the same host already exists.
-    /// Used by the directory (non-onboarding) add flow to show an alert.
-    public func providerHostExists(_ endpoint: String) async -> Bool {
-        let host = URL(string: endpoint)?.host ?? endpoint
+    /// True if a provider with the same host already exists (for custom add flow).
+    public func providerHostExists(_ baseURL: String) async -> Bool {
+        let host = URL(string: baseURL)?.host ?? baseURL
         return (try? getProviders().contains(where: { provider in
-            (URL(string: provider.endpoint)?.host ?? provider.endpoint) == host
+            (URL(string: provider.baseURL)?.host ?? provider.baseURL) == host
         })) ?? false
     }
 
-    /// Returns true if a key with the same value already exists for the given provider.
-    /// Used by the directory add flow to show an alert.
+    /// True if a provider with the given catalogId already exists.
+    public func providerCatalogIdExists(_ catalogId: String) async -> Bool {
+        return (try? getProviders().contains(where: { $0.catalogId == catalogId })) ?? false
+    }
+
+    /// True if a key with the same value already exists for the given provider.
     public func keyValueExists(_ value: String, inProviderId providerId: UUID) async -> Bool {
         guard let provider = (try? getProviders().first(where: { $0.id == providerId })) else {
             return false
@@ -308,8 +322,6 @@ public actor AIProviderStore {
 
     // MARK: - Update Provider
 
-    /// Updates an existing provider's config (name, endpoint, models).
-    /// Does NOT touch API keys — use addKey/updateKey/deleteKey for that.
     public func updateProvider(_ provider: AIProvider) async throws {
         try persistProvider(provider)
         try refreshCache()
@@ -318,8 +330,6 @@ public actor AIProviderStore {
 
     // MARK: - Delete Provider
 
-    /// Deletes a provider and ALL its API keys from Keychain.
-    /// ALWAYS succeeds — even if this is the last provider.
     public func deleteProvider(id: UUID) async throws {
         let context = ModelContext(modelContainer)
         let descriptor = FetchDescriptor<AIProviderEntity>(
@@ -329,18 +339,14 @@ public actor AIProviderStore {
             throw AIProviderStoreError.notFound(id)
         }
 
-        // Remove all key secrets from Keychain before deleting the entity
         if let provider = entity.toProvider() {
-            for key in provider.keys {
-                deleteKeychainEntry(key: key.id.uuidString)
-            }
+            for key in provider.keys { deleteKeychainEntry(key: key.id.uuidString) }
         }
 
         let wasDefault = entity.isDefault
         context.delete(entity)
         try context.save()
 
-        // Reassign default to first remaining provider
         if wasDefault {
             let remaining = try context.fetch(FetchDescriptor<AIProviderEntity>(
                 sortBy: [SortDescriptor(\.createdAt, order: .forward)]
@@ -357,8 +363,6 @@ public actor AIProviderStore {
 
     // MARK: - Key Management
 
-    /// Adds a new named API key to an existing provider.
-    /// Returns the created APIKey (without the secret — secret is in Keychain).
     @discardableResult
     public func addKey(
         name: String,
@@ -371,17 +375,14 @@ public actor AIProviderStore {
 
         let newKey = APIKey(name: name.isEmpty ? "Key \(provider.keys.count + 1)" : name)
         saveApiKey(value, for: newKey.id)
-
         provider.keys.append(newKey)
+
         try persistProvider(provider)
         try refreshCache()
-
         print("[AIProviderStore] Added key '\(newKey.name)' to provider '\(provider.displayName)'")
         return newKey
     }
 
-    /// Updates a key's name and/or secret value.
-    /// Pass nil for newValue to leave the secret unchanged.
     public func updateKey(
         _ key: APIKey,
         newValue: String?,
@@ -395,19 +396,13 @@ public actor AIProviderStore {
         }
 
         provider.keys[idx] = key
-
-        if let value = newValue, !value.isEmpty {
-            saveApiKey(value, for: key.id)
-        }
+        if let value = newValue, !value.isEmpty { saveApiKey(value, for: key.id) }
 
         try persistProvider(provider)
         try refreshCache()
-
         print("[AIProviderStore] Updated key '\(key.name)' on provider '\(provider.displayName)'")
     }
 
-    /// Removes a key from a provider and deletes its Keychain entry.
-    /// Threads using this key become orphaned — no blocking here.
     public func deleteKey(id keyId: UUID, fromProviderId providerId: UUID) async throws {
         guard var provider = try getProviders().first(where: { $0.id == providerId }) else {
             throw AIProviderStoreError.notFound(providerId)
@@ -418,73 +413,59 @@ public actor AIProviderStore {
 
         try persistProvider(provider)
         try refreshCache()
-
         print("[AIProviderStore] Deleted key \(keyId) from provider '\(provider.displayName)'")
     }
 
     // MARK: - Model Management
 
-    /// Adds a model name to a provider's saved model list (if not already present).
-    public func addModel(_ modelName: String, toProviderId providerId: UUID) async throws {
+    public func addModel(_ model: AIModel, toProviderId providerId: UUID) async throws {
         guard var provider = try getProviders().first(where: { $0.id == providerId }) else {
             throw AIProviderStoreError.notFound(providerId)
         }
 
-        let trimmed = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !provider.models.contains(trimmed) else { return }
+        guard !model.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !provider.models.contains(where: { $0.id == model.id }) else { return }
 
-        provider.models.append(trimmed)
+        provider.models.append(model)
         try persistProvider(provider)
         try refreshCache()
-
-        print("[AIProviderStore] Added model '\(trimmed)' to provider '\(provider.displayName)'")
+        print("[AIProviderStore] Added model '\(model.id)' to provider '\(provider.displayName)'")
     }
 
-    /// Removes a model name from a provider's saved model list.
-    /// Threads using this model become orphaned — no blocking here.
-    public func deleteModel(_ modelName: String, fromProviderId providerId: UUID) async throws {
+    public func deleteModel(id modelId: String, fromProviderId providerId: UUID) async throws {
         guard var provider = try getProviders().first(where: { $0.id == providerId }) else {
             throw AIProviderStoreError.notFound(providerId)
         }
 
-        provider.models.removeAll { $0 == modelName }
+        provider.models.removeAll { $0.id == modelId }
         try persistProvider(provider)
         try refreshCache()
-
-        print("[AIProviderStore] Deleted model '\(modelName)' from provider '\(provider.displayName)'")
+        print("[AIProviderStore] Deleted model '\(modelId)' from provider '\(provider.displayName)'")
     }
 
     // MARK: - Default
 
-    /// Marks a provider as default, unmarks all others.
     public func setDefault(id: UUID) async throws {
         let context = ModelContext(modelContainer)
         let allEntities = try context.fetch(FetchDescriptor<AIProviderEntity>())
-
-        for entity in allEntities {
-            entity.isDefault = (entity.id == id)
-        }
+        for entity in allEntities { entity.isDefault = (entity.id == id) }
         try context.save()
-
         try refreshCache()
         print("[AIProviderStore] Default provider set to id: \(id)")
     }
 
     // MARK: - API Key (Keychain)
 
-    /// Loads the API key secret for a given APIKey.id from Keychain.
     public func loadApiKey(for keyId: UUID) -> String? {
         return keychainLoad(key: keyId.uuidString)
     }
 
-    /// Returns true if at least one provider exists.
     public func hasProviders() async -> Bool {
         return (try? getProviders().isEmpty == false) ?? false
     }
 
     // MARK: - Private Helpers
 
-    /// Persists a mutated AIProvider back to SwiftData (updates JSON in entity).
     private func persistProvider(_ provider: AIProvider) throws {
         let context = ModelContext(modelContainer)
         let id = provider.id
@@ -498,7 +479,42 @@ public actor AIProviderStore {
         try context.save()
     }
 
-    // MARK: - Keychain Helpers (private)
+    private func resolveKeyName(_ name: String, existingKeys: [APIKey]) -> String {
+        let base = name.isEmpty ? "Key" : name
+        guard existingKeys.contains(where: { $0.name.lowercased() == base.lowercased() }) else {
+            return base
+        }
+        var suffix = 2
+        while existingKeys.contains(where: {
+            $0.name.lowercased() == "\(base) \(suffix)".lowercased()
+        }) { suffix += 1 }
+        return "\(base) \(suffix)"
+    }
+
+    /// Builds AIModel list from a RemoteProvider, optionally filtering by selected IDs.
+    private func buildModels(
+        from remote: RemoteProvider,
+        selectedIds: Set<String>?
+    ) -> [AIModel] {
+        remote.models
+            .filter { selectedIds == nil || selectedIds!.contains($0.id) }
+            .map { rm in
+                AIModel(
+                    id: rm.id,
+                    name: rm.name,
+                    endpoint: rm.endpoint,
+                    providerProtocol: rm.protocol == "anthropic" ? .anthropic : .openai
+                )
+            }
+    }
+
+    /// Returns the most common protocol among models — used as the provider-level default.
+    private func dominantProtocol(in remote: RemoteProvider) -> ProviderProtocol {
+        let anthropicCount = remote.models.filter { $0.protocol == "anthropic" }.count
+        return anthropicCount > remote.models.count / 2 ? .anthropic : .openai
+    }
+
+    // MARK: - Keychain Helpers
 
     private func saveApiKey(_ value: String, for keyId: UUID) {
         guard let data = value.data(using: .utf8) else { return }
@@ -549,10 +565,8 @@ public enum AIProviderStoreError: LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .notFound(let id):
-            return "Provider not found: \(id)"
-        case .keyNotFound(let id):
-            return "API key not found: \(id)"
+        case .notFound(let id): return "Provider not found: \(id)"
+        case .keyNotFound(let id): return "API key not found: \(id)"
         }
     }
 }

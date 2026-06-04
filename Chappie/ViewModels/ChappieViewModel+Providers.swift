@@ -50,6 +50,14 @@ extension ChappieViewModel {
         let provStore = store ?? self.providerStore
         guard let provStore else { return }
 
+        // Resolve endpoint: use the model's specific endpoint if available, else /v1/chat/completions
+        let resolvedEndpoint: String
+        if let modelName, let model = provider.models.first(where: { $0.id == modelName }) {
+            resolvedEndpoint = provider.baseURL + model.endpoint
+        } else {
+            resolvedEndpoint = provider.baseURL + "/v1/chat/completions"
+        }
+
         // Both key and model required — block orchestrator if either is missing
         guard let resolvedKeyId = keyId,
               let model = modelName, !model.isEmpty,
@@ -69,7 +77,7 @@ extension ChappieViewModel {
             return
         }
 
-        let client = AIClient(endpoint: provider.endpoint, apiKey: apiKey, modelName: model)
+        let client = AIClient(endpoint: resolvedEndpoint, apiKey: apiKey, modelName: model)
         self.aiClient = client
         self.activeProvider = provider
         self.activeKeyId = resolvedKeyId
@@ -126,11 +134,11 @@ extension ChappieViewModel {
 
     /// Stops any in-flight request and clears aiClient/orchestrator/activeModelName
     /// if the deleted model is currently active on the given provider.
-    func invalidateModelIfDeleted(name: String, providerId: UUID) {
+    func invalidateModelIfDeleted(modelId: String, providerId: UUID) {
         guard activeProvider?.id == providerId,
-              activeModelName == name else { return }
+              activeModelName == modelId else { return }
 
-        print("[ChappieViewModel] Active model '\(name)' deleted — invalidating client and orchestrator")
+        print("[ChappieViewModel] Active model '\(modelId)' deleted — invalidating client and orchestrator")
         currentRequestTask?.cancel()
         currentRequestTask = nil
 

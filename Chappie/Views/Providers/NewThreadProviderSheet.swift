@@ -7,7 +7,7 @@
 //   List of all configured providers. User picks one.
 //
 // LEVEL 2 — Key + Model selection:
-//   Keys saved for the selected provider — user picks one (Variant B: picker under provider).
+//   Keys saved for the selected provider — user picks one.
 //   Models saved for the selected provider — user picks one.
 //   Manual model input available if list is empty.
 //
@@ -19,9 +19,6 @@
 //
 // POLICY: no auto-selection of key or model. User must pick explicitly.
 // canConfirm requires provider + key + model before "Начать" is enabled.
-//
-// NOTE MK-07: Key picker is shown here but key selection UI is minimal until
-// MK-07 full implementation. For providers with a single key it auto-selects.
 
 import SwiftUI
 import ChappieCore
@@ -168,11 +165,11 @@ struct NewThreadProviderSheet: View {
                         } else {
                             ScrollView {
                                 VStack(spacing: 2) {
-                                    ForEach(provider.models, id: \.self) { model in
+                                    ForEach(provider.models) { model in
                                         ModelPickRow(
-                                            model: model,
-                                            isSelected: selectedModelName == model,
-                                            onSelect: { selectedModelName = model }
+                                            model: model.id,
+                                            isSelected: selectedModelName == model.id,
+                                            onSelect: { selectedModelName = model.id }
                                         )
                                     }
                                 }
@@ -271,7 +268,7 @@ struct NewThreadProviderSheet: View {
             // Restore current model only if still valid
             if let model = currentModelName,
                let provider = preselectedProvider,
-               provider.models.contains(model) {
+               provider.models.contains(where: { $0.id == model }) {
                 selectedModelName = model
             }
         }
@@ -492,14 +489,17 @@ private struct KeyPickRow: View {
             AIProvider(
                 id: UUID(),
                 name: "AITunnel",
-                endpoint: "https://api.aitunnel.ru/v1/chat/completions",
+                baseURL: "https://api.aitunnel.ru/v1",
                 keys: [APIKey(name: "Рабочий"), APIKey(name: "Личный")],
-                models: ["claude-sonnet-4-5", "gpt-4o"]
+                models: [
+                    AIModel(id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5"),
+                    AIModel(id: "gpt-4o", name: "GPT-4o")
+                ]
             )
         ],
         currentProvider: nil,
         currentModelName: nil,
-        onConfirm: { _, _, _, title, settings in
+        onConfirm: { _, _, _, title, _ in
             print("Confirm: \(title)")
         },
         onCancel: {}
