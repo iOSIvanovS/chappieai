@@ -7,12 +7,12 @@
 //
 // LEVEL 1 — Provider list:
 //   Shows all configured providers. Tap → drill into provider detail.
-//   Add / delete providers freely.
+//   "Добавить провайдера" → opens CatalogPickerSheet (catalog list + custom option).
 //
 // LEVEL 2 — Provider detail (ProviderDetailView):
 //   Keys section: list of named API keys with add/edit/delete.
 //   Models section: list of saved models with add (via AddModelSheet) / delete.
-//   Edit provider metadata (name, endpoint) via AddProviderSheet.
+//   Edit provider metadata (name, endpoint) via AddProviderSheet (edit mode).
 //
 // NAVIGATION:
 //   Uses if/else state switch instead of NavigationStack — NavigationStack
@@ -58,8 +58,9 @@ struct ProvidersSettingsView: View {
             }
         }
         .frame(width: 560, height: 480)
+        // Opens catalog picker → which then opens AddProviderSheet internally
         .sheet(isPresented: $showAddProvider) {
-            AddProviderSheet(
+            CatalogPickerSheet(
                 providerStore: viewModel.providerStore,
                 onSaved: {
                     viewModel.reloadProviders()
@@ -364,6 +365,7 @@ struct ProviderDetailView: View {
                     .padding(.vertical, 8)
             }
         }
+        // Edit mode uses AddProviderSheet directly (no catalog picker needed for editing)
         .sheet(isPresented: $showEditProvider) {
             AddProviderSheet(
                 providerStore: viewModel.providerStore,
@@ -449,8 +451,18 @@ struct ProviderDetailView: View {
                 .foregroundStyle(Color.accentColor.opacity(0.8))
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(currentProvider.displayName)
-                    .font(.system(size: 15, weight: .semibold))
+                HStack(spacing: 6) {
+                    Text(currentProvider.displayName)
+                        .font(.system(size: 15, weight: .semibold))
+
+                    // Catalog badge
+                    if currentProvider.isFromCatalog {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.accentColor.opacity(0.7))
+                            .help("Из каталога провайдеров")
+                    }
+                }
 
                 Text(currentProvider.baseURL)
                     .font(.system(size: 11, design: .monospaced))
@@ -573,7 +585,6 @@ struct ProviderDetailView: View {
 
     private func deleteKey(id: UUID) {
         guard let store = viewModel.providerStore else { return }
-        // Synchronously invalidate if this key is currently active
         viewModel.invalidateKeyIfDeleted(keyId: id, providerId: currentProvider.id)
         Task {
             do {

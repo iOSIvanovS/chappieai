@@ -5,9 +5,10 @@
 //
 // FLOW:
 // Step 1: User name (optional) — saved directly to global memory via viewModel.saveUserName()
-// Step 2: First AI provider setup (required) — uses AddProviderSheet in onboarding mode.
+// Step 2: First AI provider setup (required) — uses CatalogPickerSheet in onboarding mode.
 //         Cannot proceed until at least one provider is saved.
-//         Multi-key input is available — user can add several keys at once.
+//         CatalogPickerSheet → AddProviderSheet (catalog or custom).
+//         Multi-key input is available in AddProviderSheet onboarding mode.
 //
 // TRIGGER:
 // Shown when AppState.shared.shouldShowOnboarding == true.
@@ -69,14 +70,14 @@ struct OnboardingView: View {
             }
             .padding(40)
         }
+        // Catalog picker in onboarding mode — passes isOnboarding flag down to AddProviderSheet
         .sheet(isPresented: $showAddProvider) {
-            AddProviderSheet(
+            CatalogPickerSheet(
                 providerStore: viewModel.providerStore,
                 isOnboarding: true,
                 onSaved: {
                     showAddProvider = false
                     viewModel.reloadProviders()
-                    // Complete onboarding as soon as provider is saved
                     AppState.shared.completeOnboarding()
                 },
                 onCancel: {
@@ -156,7 +157,7 @@ struct OnboardingView: View {
                 Text("Настройте AI-провайдера")
                     .font(.largeTitle.bold())
 
-                Text("Чаппи работает с любым сервисом, совместимым с протоколом OpenAI.\nДобавьте эндпойнт, ключи и выберите модели.")
+                Text("Выберите провайдера из каталога или настройте подключение вручную.\nДобавьте ключ и выберите нужные модели.")
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

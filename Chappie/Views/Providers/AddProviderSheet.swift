@@ -3,6 +3,18 @@
 //
 // Two-step sheet for adding or editing an AI provider.
 //
+// ENTRY POINTS:
+// 1. From CatalogPickerSheet (catalog row) → prefilledRemote is set.
+//    Step 1 is pre-filled: name, baseURL, catalogId, providerProtocol, models.
+//    Models step shows catalog models pre-selected — user can deselect unwanted ones.
+//    "Загрузить список" still works to discover additional live models.
+//
+// 2. From CatalogPickerSheet ("Ручная настройка") → prefilledRemote is nil.
+//    Blank step 1. No catalog link. User enters everything manually.
+//    Model step: no pre-selection, no catalog models — fetch or type manually.
+//
+// 3. Edit mode (editingProvider != nil) → opens on step 1 pre-filled with existing data.
+//
 // STEP 1 — Provider:
 //   Enter base URL, API key (with user-defined name), optional provider name.
 //   Validate provider (GET /v1/models — no model name needed).
@@ -18,17 +30,9 @@
 //     On duplicate key value → alert (do not add).
 //
 // STEP 2 — Models:
-//   Fetch available models from the provider (auto-populated if /models works).
-//   User can select from the list OR type model names manually.
-//   Search bar filters the visible list in real time.
-//   "Select all / deselect all" toggle at the top.
+//   Catalog entry: models from catalog are shown pre-selected.
+//   All entries: user can fetch live list, search, select/deselect, add manually.
 //   Must add at least one model to proceed.
-//
-// EDIT MODE:
-//   Opens directly on step 1 pre-filled with existing data.
-//   API key field shows placeholder (existing key preserved if left empty).
-//   Key name field editable — rename the key without changing the secret.
-//   Models list is editable — add/remove individual models.
 //
 // SAVE BEHAVIOUR:
 //   Onboarding → calls providerStore.mergeProvider (safe upsert, no alerts).
@@ -53,6 +57,8 @@ struct AddProviderSheet: View {
     // MARK: - Input
 
     let providerStore: AIProviderStore?
+    /// Pre-filled from catalog picker. nil = custom / edit mode.
+    var prefilledRemote: RemoteProvider? = nil
     var editingProvider: AIProvider? = nil
     var isOnboarding: Bool = false
     let onSaved: () -> Void
@@ -101,6 +107,8 @@ struct AddProviderSheet: View {
     // MARK: - Computed
 
     private var isEditing: Bool { editingProvider != nil }
+    private var isCatalog: Bool { prefilledRemote != nil }
+
     private var title: String { isEditing ? "Редактировать провайдера" : "Добавить провайдера" }
 
     private var canValidate: Bool {
@@ -115,7 +123,7 @@ struct AddProviderSheet: View {
         }
     }
 
-    // All models: fetched + existing (for edit mode)
+    // All models: fetched + catalog (for catalog mode) + existing (for edit mode)
     private var allModels: [AIModel] {
         var combined = fetchedModels
         if let existing = editingProvider {
@@ -190,7 +198,7 @@ struct AddProviderSheet: View {
         }
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
-        .onAppear { prefillIfEditing() }
+        .onAppear { prefill() }
         .alert("Провайдер уже существует", isPresented: $duplicateHostAlert) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -214,15 +222,23 @@ struct AddProviderSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
 
+                // Catalog badge — shows which provider was picked
+                if let remote = prefilledRemote {
+                    catalogBadge(remote)
+                }
+
                 fieldSection(label: "Название провайдера", icon: "tag", hint: "Необязательно. Например: «Work OpenAI» или «Personal Groq»") {
                     TextField("Мой провайдер", text: $providerName)
                         .textFieldStyle(.roundedBorder)
                 }
 
-                fieldSection(label: "Базовый URL", icon: "link", hint: "Без пути, например: https://api.openai.com или https://api.aitunnel.ru/v1") {
+                fieldSection(label: "Базовый URL", icon: "link", hint: "Без пути, например: https://api.openai.com") {
                     TextField("https://...", text: $baseURL)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.body, design: .monospaced))
+                        // Lock URL for catalog providers — it's authoritative
+                        .disabled(isCatalog && !isEditing)
+                        .foregroundStyle(isCatalog && !isEditing ? .secondary : .primary)
                 }
 
                 if isOnboarding {
@@ -237,6 +253,26 @@ struct AddProviderSheet: View {
             }
             .padding(24)
         }
+    }
+
+    // MARK: - Catalog Badge
+
+    @ViewBuilder
+    private func catalogBadge(_ remote: RemoteProvider) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.seal.fill")
+                .foregroundStyle(Color.accentColor)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Из каталога: \(remote.name)")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                Text("\(remote.models.count) моделей в каталоге")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - Single Key (Directory Mode)
@@ -559,12 +595,29 @@ struct AddProviderSheet: View {
 
     // MARK: - Pre-fill
 
-    private func prefillIfEditing() {
-        guard let provider = editingProvider else { return }
-        providerName = provider.name
-        baseURL = provider.baseURL
-        selectedModelIds = Set(provider.models.map { $0.id })
-        apiKeyName = provider.keys.first?.name ?? ""
+    private func prefill() {
+        if let provider = editingProvider {
+            // Edit mode: fill from existing provider
+            providerName = provider.name
+            baseURL = provider.baseURL
+            selectedModelIds = Set(provider.models.map { $0.id })
+            apiKeyName = provider.keys.first?.name ?? ""
+        } else if let remote = prefilledRemote {
+            // Catalog mode: fill from RemoteProvider
+            providerName = remote.name
+            baseURL = remote.baseURL
+            // Pre-populate catalog models and select all
+            let catalogModels = remote.models.map { rm in
+                AIModel(
+                    id: rm.id,
+                    name: rm.name,
+                    endpoint: rm.endpoint,
+                    providerProtocol: rm.protocol == "anthropic" ? .anthropic : .openai
+                )
+            }
+            fetchedModels = catalogModels
+            selectedModelIds = Set(catalogModels.map { $0.id })
+        }
     }
 
     // MARK: - Select All Toggle
@@ -620,18 +673,19 @@ struct AddProviderSheet: View {
                 return
             }
 
-            // Validate using /v1/models endpoint
             let validationEndpoint = trimmedURL + "/v1/models"
             let client = AIClient(endpoint: validationEndpoint, apiKey: keyToUse, modelName: "")
             do {
                 try await client.validateProvider()
 
+                // Build provisional provider, preserving catalog metadata if present
                 let provisional = AIProvider(
                     id: editingProvider?.id ?? UUID(),
                     name: providerName.trimmingCharacters(in: .whitespaces),
                     baseURL: trimmedURL,
-                    catalogId: editingProvider?.catalogId,
-                    providerProtocol: editingProvider?.providerProtocol ?? .openai,
+                    catalogId: editingProvider?.catalogId ?? prefilledRemote?.id,
+                    providerProtocol: editingProvider?.providerProtocol
+                        ?? (prefilledRemote?.models.first?.protocol == "anthropic" ? .anthropic : .openai),
                     keys: editingProvider?.keys ?? [],
                     models: editingProvider?.models ?? []
                 )
@@ -640,7 +694,10 @@ struct AddProviderSheet: View {
                     isValidating = false
                     validatedProvider = provisional
                     withAnimation { step = .models }
-                    fetchModels()
+                    // Only auto-fetch if no catalog models are pre-loaded
+                    if fetchedModels.isEmpty {
+                        fetchModels()
+                    }
                 }
 
             } catch {
@@ -687,8 +744,12 @@ struct AddProviderSheet: View {
                 if modelIds.isEmpty {
                     fetchError = "Не удалось загрузить список моделей. Добавьте модели вручную."
                 } else {
+                    // Merge live models with existing catalog/edit models — preserve metadata
+                    let existingModels = fetchedModels
                     fetchedModels = modelIds.map { modelId in
-                        // Preserve existing AIModel metadata if available
+                        if let existing = existingModels.first(where: { $0.id == modelId }) {
+                            return existing
+                        }
                         if let existing = provider.models.first(where: { $0.id == modelId }) {
                             return existing
                         }
@@ -700,6 +761,7 @@ struct AddProviderSheet: View {
                         )
                     }
                     fetchError = nil
+                    // Auto-select newly fetched models only if nothing was selected yet
                     if selectedModelIds.isEmpty {
                         selectedModelIds = Set(modelIds)
                     }
@@ -749,7 +811,6 @@ struct AddProviderSheet: View {
                     let resolvedKeyName = apiKeyName.trimmingCharacters(in: .whitespaces)
 
                     if let firstKey = finalProvider.keys.first {
-                        // Check name uniqueness against all OTHER keys
                         if !resolvedKeyName.isEmpty {
                             let otherKeys = finalProvider.keys.filter { $0.id != firstKey.id }
                             let nameCollision = otherKeys.contains(where: {
@@ -764,7 +825,6 @@ struct AddProviderSheet: View {
                             }
                         }
 
-                        // Check value uniqueness against all OTHER keys
                         if !trimmedKeyValue.isEmpty {
                             let otherKeys = finalProvider.keys.filter { $0.id != firstKey.id }
                             var valueCollision = false
@@ -811,7 +871,6 @@ struct AddProviderSheet: View {
                         models: modelsToSave
                     )
 
-                    // Merge remaining keys
                     for key in validKeys.dropFirst() {
                         let name = key.name.trimmingCharacters(in: .whitespaces)
                         let value = key.value.trimmingCharacters(in: .whitespaces)
@@ -824,7 +883,6 @@ struct AddProviderSheet: View {
                     }
 
                 } else {
-                    // Directory: new custom provider
                     let trimmedKeyValue = apiKeyValue.trimmingCharacters(in: .whitespaces)
                     let resolvedKeyName = apiKeyName.trimmingCharacters(in: .whitespaces)
                     let keyName = resolvedKeyName.isEmpty ? "Default" : resolvedKeyName
