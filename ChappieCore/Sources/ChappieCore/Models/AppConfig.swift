@@ -43,6 +43,10 @@ public struct AppConfig: Codable, Equatable, Sendable {
     /// When true — tokenBudget and maxMessagesInContext are both Int.max. No trimming.
     public let isUnlimitedContext: Bool
 
+    /// When false — old AI messages are never compressed to their <summary> content.
+    /// Mirrors ThreadSettings.useMessageCompression. Default: true.
+    public let useMessageCompression: Bool
+
     /// Most recent N messages always sent fully, never replaced by summaries.
     /// 3 = current task + Chappie's last action + current step. Hardcoded.
     public let recentFullMessages: Int
@@ -74,6 +78,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         maxMessagesInContext     = 20
         tokenBudget              = 20 * 500
         isUnlimitedContext       = false
+        useMessageCompression    = true
         recentFullMessages       = 3
         summaryThreshold         = 200
         requestTimeoutSeconds    = 300
@@ -86,6 +91,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
     public init(settings: ThreadSettings) {
         maxOrchestratorSteps     = 100
         isUnlimitedContext       = settings.isUnlimitedContext
+        useMessageCompression    = settings.useMessageCompression
         recentFullMessages       = 3
         summaryThreshold         = 200
         requestTimeoutSeconds    = 300
@@ -111,6 +117,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         self.maxMessagesInContext = clamped
         tokenBudget              = clamped * 500
         isUnlimitedContext       = false
+        useMessageCompression    = true
         recentFullMessages       = 3
         summaryThreshold         = 200
         requestTimeoutSeconds    = 300

@@ -414,10 +414,13 @@ public actor AIOrchestrator {
         var selectedOlder: [AIMessage] = []
 
         for message in olderMessages.reversed() {
-            let compressed = compressMessage(message, summaryThreshold: summaryThreshold)
-            let tokens = estimateTokens(compressed)
+            // Compress only if enabled — when disabled, send the full message as-is
+            let processed = config.useMessageCompression
+                ? compressMessage(message, summaryThreshold: summaryThreshold)
+                : message
+            let tokens = estimateTokens(processed)
             if usedTokens + tokens <= budget {
-                selectedOlder.insert(compressed, at: 0)
+                selectedOlder.insert(processed, at: 0)
                 usedTokens += tokens
             } else {
                 break
@@ -432,7 +435,8 @@ public actor AIOrchestrator {
         }
 
         let totalTokensAfter = contextWindow.reduce(0) { $0 + estimateTokens($1) }
-        print("[AIOrchestrator] Sending: \(contextWindow.count) msgs, ~\(totalTokensAfter) tokens")
+        let compressionNote = config.useMessageCompression ? "" : " [compression OFF]"
+        print("[AIOrchestrator] Sending: \(contextWindow.count) msgs, ~\(totalTokensAfter) tokens\(compressionNote)")
         return contextWindow
     }
 

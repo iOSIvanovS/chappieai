@@ -14,6 +14,7 @@
 // - Context depth: slider 10...1000 messages
 //   Token budget = messages × 500 (displayed as info, not editable)
 // - Unlimited context toggle: bypasses all trimming
+// - Message compression toggle: compress old AI messages to <summary> content to save tokens
 //
 // ProviderPickRow / ModelPickRow are defined in Shared/ProviderModelPickerRows.swift.
 
@@ -321,6 +322,19 @@ struct ThreadSettingsSheet: View {
                 limitedContextControls
             }
 
+            // Compression toggle — only meaningful when context is not unlimited
+            Toggle(isOn: $draftSettings.useMessageCompression) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Компрессия сообщений ИИ")
+                        .font(.callout)
+                    Text("Старые ответы ИИ сжимаются перед повторной отправкой — экономит токены на длинных историях.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.switch)
+
             contextInfoBox
         }
     }
@@ -389,6 +403,14 @@ struct ThreadSettingsSheet: View {
                     icon: "bubble.left.and.bubble.right",
                     color: .secondary,
                     text: "В чате отображается: \(formatNumber(chatDepth)) сообщений"
+                )
+            }
+
+            if !draftSettings.useMessageCompression {
+                infoRow(
+                    icon: "exclamationmark.triangle",
+                    color: .orange,
+                    text: "Компрессия отключена — история передаётся без сжатия, токены расходуются быстрее"
                 )
             }
         }

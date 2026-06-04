@@ -75,6 +75,11 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
     /// Int.max in JSON/Codable is fragile. An explicit Bool is clear and safe.
     public var isUnlimitedContext: Bool
 
+    /// When true — old AI messages longer than summaryThreshold are replaced with their
+    /// <summary> tag content before being sent to the model. Saves tokens on long histories.
+    /// Default: true. Disable to send full message history without any compression.
+    public var useMessageCompression: Bool
+
     /// Computed token budget: maxMessagesInContext × 500. Not stored — avoids migration on formula changes.
     public var tokenBudget: Int {
         isUnlimitedContext ? Int.max : maxMessagesInContext * 500
@@ -98,6 +103,7 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
     public init(
         maxMessagesInContext: Int = 20,
         isUnlimitedContext: Bool = false,
+        useMessageCompression: Bool = true,
         activeProviderId: UUID? = nil,
         activeKeyId: UUID? = nil,
         activeModelName: String? = nil
@@ -105,6 +111,7 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
         // Clamp to valid range — guard against corrupted JSON values
         self.maxMessagesInContext = max(10, min(1000, maxMessagesInContext))
         self.isUnlimitedContext = isUnlimitedContext
+        self.useMessageCompression = useMessageCompression
         self.activeProviderId = activeProviderId
         self.activeKeyId = activeKeyId
         self.activeModelName = activeModelName
