@@ -9,7 +9,11 @@
 ├── Chappie/                                 # UI target → see Chappie/architecture.md
 ├── ChappieCore/                             # Business logic → see ChappieCore/architecture.md
 ├── ChappieCoreTests/                        # Tests → see ChappieCoreTests/architecture.md
-└── ChappieMCP/                              # Helper process → see ChappieMCP/architecture.md
+├── ChappieMCP/                              # Helper process → see ChappieMCP/architecture.md
+└── Scripts/                                 # Internal maintenance scripts (not part of build)
+    ├── providers_1_clear.sh                 # Initializes providers.json
+    ├── providers_2_append.sh                # Appends a batch of providers/models (≤100)
+    └── providers_3_push.sh                  # Pushes providers.json to GitHub via API
 ```
 
 ---
@@ -49,11 +53,16 @@ graph TD
 
     subgraph Storage["Persistence"]
         SD["SwiftData\n(ThreadEntity, ProjectEntity, MemoryEntity\nAIProviderEntity, AppSettings)"]
-        KC["Keychain\n(API keys by provider UUID)"]
+        KC["Keychain\n(API keys by apiKey.id.uuidString)"]
+    end
+
+    subgraph Remote["Remote"]
+        GH["GitHub\nproviders.json (public)"]
     end
 
     Core --> SD
     Core --> KC
+    Core -->|HTTP GET on launch| GH
 ```
 
 ---
@@ -83,9 +92,12 @@ ChappieMCP
 | SwiftData macOS 26+ | Thread, project, memory, and settings persistence |
 | @Observable | ViewModel |
 | Actors | ChappieCore services |
-| AITunnel API (OpenAI-compatible) | Proxy to Anthropic and other providers |
+| OpenAI-compatible API | Default wire protocol (AIClient) |
+| Anthropic native API | /v1/messages (AnthropicClient) |
+| AIClientFactory | Picks correct client by model.providerProtocol |
 | Unix Domain Sockets | IPC with ChappieMCP |
-| Keychain | API key storage |
+| Keychain | API key storage (per APIKey.id) |
+| GitHub (public repo) | providers.json catalog hosting |
 
 ---
 
@@ -96,8 +108,8 @@ ChappieMCP
 | Threads, messages, settings | SwiftData `ThreadEntity` | JSON-in-Data fields |
 | Projects (folder registry) | SwiftData `ProjectEntity` | bookmarkData + path |
 | Memory (3 levels) | SwiftData `MemoryEntity` | scope + targetId |
-| AI providers | SwiftData `AIProviderEntity` | JSON blob |
-| API keys | Keychain | `provider.id.uuidString` |
+| AI providers | SwiftData `AIProviderEntity` | JSON blob (AIProvider struct) |
+| API keys | Keychain | `apiKey.id.uuidString` |
 | Provider balances | SwiftData `AppSettings.balancesJSON` | `{ "<uuid>": Double }` |
 | Last active thread | SwiftData `AppSettings.lastActiveThreadIdString` | UUID string |
 | Workspace bookmark | SwiftData `AppSettings.workspaceBookmark` | Data |
@@ -119,7 +131,7 @@ Project memory is **per thread** — the same project in two threads has indepen
 
 **System prompt injection order:**
 ```
-[1] Persona + 14 rules
+[1] Persona + rules (from ChappieViewModel+PersonaBlock.swift)
 [2] userName (from AppSettings)
 [3] Global memory (if not empty)
 [4] Thread memory (if not empty)
@@ -133,11 +145,8 @@ Empty sections are omitted entirely — no wasted tokens.
 
 ## 8. Thread Isolation Architecture
 
-Key entities and their responsibilities:
-
 | Entity | Role |
 |---|---|
-| `ProviderSnapshot` | Frozen copy of provider+key+model stored in thread; validated on load |
 | `ThreadProject` | Project in context of a specific thread; owns its own `ProjectSettings` and memory |
 | `ProjectEntity` | Global folder registry only — path + displayName, no logic, no memory |
 | `ThreadSession` | Runtime container assembled on thread activation, discarded on switch |
@@ -145,7 +154,7 @@ Key entities and their responsibilities:
 | `ToolAccessController` | Hard gate before every tool execution; returns structured `AccessResult` |
 | `AppSettingsStore` | Actor-based CRUD for the singleton `AppSettings` SwiftData record |
 
-**ProviderSnapshot validation on thread load:**
+**Provider/model validation on thread load:**
 1. Resolve `providerId` → if not found: show orange banner, block AI calls
 2. Resolve `keyId` → if not found: show orange banner, block AI calls
 3. Resolve `modelId` → if not found: show warning, allow calls using cached `modelName`
@@ -157,14 +166,13 @@ Key entities and their responsibilities:
 
 ## 9. JSON-in-SwiftData Pattern
 
-All complex domain objects are stored as JSON inside SwiftData primitive fields (`Data`).
+All complex domain objects are stored as JSON inside SwiftData primitive fields.
 SwiftData `@Model` classes contain only: `UUID`, `Date`, `Bool`, `Int`, `String`, `Data`.
 
 **Why:** SwiftData schema migrations are painful. JSON-in-Data means the schema never
 changes — only the `Codable` struct evolves freely.
 
 **⚠️ CRITICAL: Never rename a `Codable` property stored in SwiftData without adding `CodingKeys`.**
-Renaming silently corrupts existing stored data.
 
 Persisted structs (must follow the rename rule):
 
@@ -173,12 +181,42 @@ Persisted structs (must follow the rename rule):
 | `ThreadSettings` | `ThreadEntity.settingsJSON` |
 | `ProjectSettings` | `ProjectEntity.settingsJSON` |
 | `AIProvider` | `AIProviderEntity.json` |
-| `ProviderSnapshot` | `ThreadEntity.providerSnapshotJSON` |
 | `[ChatMessage]` | `ThreadEntity.messagesJSON` |
 
 ---
 
-## 10. 📚 Docs Group in Xcode Navigator
+## 10. Provider Catalog Pipeline
+
+`providers.json` is hosted publicly at:
+`https://raw.githubusercontent.com/iOSIvanovS/chappieai/main/docs/providers.json`
+
+**Monthly update pipeline (run manually by maintainer):**
+1. `Scripts/providers_1_clear.sh` — initializes empty JSON structure
+2. `Scripts/providers_2_append.sh <json>` — appends batch of ≤100 models (run multiple times)
+3. `Scripts/providers_3_push.sh` — pushes final file to GitHub via API (requires `$GITHUB_TOKEN`)
+
+**JSON structure:**
+```json
+{
+  "meta": { "version": "1.0", "updated_at": "...", "providers_count": 10, "models_count": 209 },
+  "providers": [
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "base_url": "https://api.openai.com",
+      "models": [
+        { "id": "gpt-4o", "name": "GPT-4o", "endpoint": "/v1/chat/completions", "protocol": "openai" }
+      ]
+    }
+  ]
+}
+```
+
+Supported providers (10): OpenAI, Anthropic, Google Gemini, DeepSeek, Groq, Mistral, xAI (Grok), OpenRouter, AITunnel, Ollama.
+
+---
+
+## 11. 📚 Docs Group in Xcode Navigator
 
 `📚 Docs` group in `project.pbxproj` — navigation only, not included in build.
 Contains root `architecture.md` + references to 4 target architecture files.
@@ -186,7 +224,7 @@ Contains root `architecture.md` + references to 4 target architecture files.
 
 ---
 
-## 11. Work Pipeline
+## 12. Work Pipeline
 
 1. `git_status` — check for uncommitted changes
 2. `git_commit` — checkpoint before changes
@@ -200,7 +238,7 @@ Contains root `architecture.md` + references to 4 target architecture files.
 
 ---
 
-## 12. Inviolable Agent Rules
+## 13. Inviolable Agent Rules
 
 **RULE-01: One task per pass** — decompose into backlog, execute one item, commit, repeat.
 
@@ -214,17 +252,8 @@ Contains root `architecture.md` + references to 4 target architecture files.
 
 ---
 
-## 13. Tech Debt
+## 14. Tech Debt
 
 | ID | Issue | Priority |
 |----|-------|----------|
 | TD-02 | `ChappieCoreTests` requires manual scheme switch in Xcode before ⌘+U | Low |
-
----
-
-## 14. Backlog
-
-| ID | Task | Priority |
-|----|------|----------|
-| BL-01 | Migrate ChatHistoryManager → SwiftData (per-thread chat history) | High |
-| BL-03 | Universal balance and message cost support for top-10 AI providers in Russia | Medium |
