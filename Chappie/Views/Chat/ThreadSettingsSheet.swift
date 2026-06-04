@@ -11,7 +11,7 @@
 // SETTINGS:
 // - Thread name (inline rename)
 // - API key selection (hidden for providers with requiresApiKey=false, e.g. Ollama)
-// - Context depth: slider 100...1000, step 100, default 300
+// - Context depth: slider 10...1000, step 10, default 300
 // - Unlimited context toggle
 //
 // NOTE: Provider + model selection happens ONLY via the "Модель" chip in the chat toolbar.
@@ -59,6 +59,8 @@ struct ThreadSettingsSheet: View {
         self._draftTitle = State(initialValue: thread.title)
         self._draftSettings = State(initialValue: thread.settings)
         self._draftKeyId = State(initialValue: thread.settings.activeKeyId)
+
+        print("[ThreadSettingsSheet] init: providerId=\(thread.settings.activeProviderId?.uuidString ?? "nil") keyId=\(thread.settings.activeKeyId?.uuidString ?? "nil") maxMsgs=\(thread.settings.maxMessagesInContext)")
     }
 
     // MARK: - Body
@@ -203,19 +205,23 @@ struct ThreadSettingsSheet: View {
                     .frame(minWidth: 44, alignment: .trailing)
             }
 
-            // Step 100: map slider 1...10 → actual value × 100
+            // Step 10: map slider 1...100 → actual value × 10
             Slider(
                 value: Binding(
-                    get: { Double(draftSettings.maxMessagesInContext / 100) },
-                    set: { draftSettings.maxMessagesInContext = Int($0) * 100 }
+                    get: { Double(draftSettings.maxMessagesInContext / 10) },
+                    set: {
+                        let newVal = Int($0) * 10
+                        print("[ThreadSettingsSheet] Slider set: raw=\($0) → maxMsgs=\(newVal)")
+                        draftSettings.maxMessagesInContext = newVal
+                    }
                 ),
-                in: 1...10,
+                in: 1...100,
                 step: 1
             )
             .accentColor(Color.accentColor)
 
             HStack {
-                Text("100")
+                Text("10")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -271,8 +277,21 @@ struct ThreadSettingsSheet: View {
                 let trimmedTitle = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
                 let finalTitle = trimmedTitle.isEmpty ? thread.title : trimmedTitle
                 var updatedSettings = draftSettings
-                updatedSettings.activeKeyId = draftKeyId
-                onSave(finalTitle, updatedSettings, nil, draftKeyId, nil)
+
+                // For keyless providers (e.g. Ollama) — preserve the original keyId unchanged.
+                // Only pass draftKeyId when the provider actually requires a key.
+                let effectiveKeyId: UUID?
+                if let provider = activeProvider, provider.requiresApiKey {
+                    effectiveKeyId = draftKeyId
+                } else {
+                    effectiveKeyId = thread.settings.activeKeyId
+                }
+
+                updatedSettings.activeKeyId = effectiveKeyId
+
+                print("[ThreadSettingsSheet] onSave: title='\(finalTitle)' maxMsgs=\(updatedSettings.maxMessagesInContext) keyId=\(effectiveKeyId?.uuidString ?? "nil") providerId=\(updatedSettings.activeProviderId?.uuidString ?? "nil") activeProvider=\(activeProvider?.displayName ?? "nil")")
+
+                onSave(finalTitle, updatedSettings, nil, effectiveKeyId, nil)
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.return, modifiers: .command)

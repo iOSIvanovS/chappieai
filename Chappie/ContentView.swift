@@ -92,6 +92,13 @@
 //   ViewModel sets loadMoreAnchorId to the first currently-visible message BEFORE prepend.
 //   ChatScrollView uses scrollPosition(id:) to anchor there after the VStack updates.
 //   ContentView resets loadMoreAnchorId via onLoadMoreScrollDone after scroll is applied.
+//
+// SETTINGS-SYNC:
+//   ThreadSettingsSheet always receives activeThreadSettings from ViewModel — not
+//   thread.settings from self.threads. This is critical because self.threads is NOT
+//   updated after switchProvider() — only activeThreadSettings is always current.
+//   buildThreadForSettings() merges activeThread + activeThreadSettings into a fresh
+//   ThreadMetadata so the sheet sees the correct providerId, keyId, maxMessagesInContext.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -176,6 +183,24 @@ struct ContentView: View {
         .onChange(of: viewModel.providers.count) { _, _ in }
     }
 
+    // MARK: - Thread for Settings
+
+    /// Builds a ThreadMetadata with CURRENT activeThreadSettings — not stale thread.settings.
+    ///
+    /// WHY: self.threads is NOT updated after switchProvider() — only activeThreadSettings
+    /// is always current. If we pass thread.settings from self.threads, the sheet sees
+    /// stale providerId/keyId/maxMessagesInContext from before the last model switch.
+    private func buildThreadForSettings(_ thread: ThreadMetadata) -> ThreadMetadata {
+        ThreadMetadata(
+            id: thread.id,
+            title: thread.title,
+            settings: viewModel.activeThreadSettings,
+            projectIds: thread.projectIds,
+            createdAt: thread.createdAt,
+            updatedAt: thread.updatedAt
+        )
+    }
+
     // MARK: - Main App Content
 
     private var mainContent: some View {
@@ -196,7 +221,7 @@ struct ContentView: View {
                 )
             }
             .sheet(item: $selectedThreadForSettings) { thread in
-                // MK-06: onSave receives keyId — full provider+key+model selection
+                // thread here already has activeThreadSettings injected via buildThreadForSettings()
                 ThreadSettingsSheet(
                     thread: thread,
                     providers: viewModel.providers,
@@ -301,7 +326,13 @@ struct ContentView: View {
                         viewModel.renameThread(thread, newTitle: newTitle)
                     },
                     onOpenThreadSettings: { thread in
-                        selectedThreadForSettings = thread
+                        // Use activeThreadSettings if this is the active thread —
+                        // self.threads may have stale settings after switchProvider().
+                        if thread.id == viewModel.activeThread?.id {
+                            selectedThreadForSettings = buildThreadForSettings(thread)
+                        } else {
+                            selectedThreadForSettings = thread
+                        }
                     },
                     onDismiss: {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
@@ -408,9 +439,9 @@ struct ContentView: View {
                         }
                     },
                     onOpenThreadSettings: {
+                        // Always inject fresh activeThreadSettings — self.threads may be stale.
                         if let thread = viewModel.activeThread {
-                            let fresh = viewModel.threads.first(where: { $0.id == thread.id }) ?? thread
-                            selectedThreadForSettings = fresh
+                            selectedThreadForSettings = buildThreadForSettings(thread)
                         }
                     }
                 )

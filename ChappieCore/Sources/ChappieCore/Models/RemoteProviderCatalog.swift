@@ -15,7 +15,9 @@
 //       "id": "openai",
 //       "name": "OpenAI",
 //       "base_url": "https://api.openai.com",
-//       "requires_api_key": true,   // optional, defaults to true
+//       "requires_api_key": true,
+//       "icon_name": "brain",
+//       "icon_color": "#000000",
 //       "models": [
 //         { "id": "gpt-4o", "name": "GPT-4o", "endpoint": "/v1/chat/completions", "protocol": "openai" }
 //       ]
@@ -62,6 +64,10 @@ public struct RemoteProvider: Codable, Sendable, Identifiable {
     public let baseURL: String
     /// Whether an API key is required. Defaults to true. False for local providers like Ollama.
     public let requiresApiKey: Bool
+    /// SF Symbol name for the provider icon, e.g. "brain", "sparkles".
+    public let iconName: String
+    /// Hex color string for the icon, e.g. "#10A37F". Defaults to accent color if nil.
+    public let iconColor: String?
     /// All models offered by this provider.
     public let models: [RemoteModel]
 
@@ -69,6 +75,8 @@ public struct RemoteProvider: Codable, Sendable, Identifiable {
         case id, name, models
         case baseURL = "base_url"
         case requiresApiKey = "requires_api_key"
+        case iconName = "icon_name"
+        case iconColor = "icon_color"
     }
 
     public init(from decoder: Decoder) throws {
@@ -76,8 +84,10 @@ public struct RemoteProvider: Codable, Sendable, Identifiable {
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         baseURL = try container.decode(String.self, forKey: .baseURL)
-        // Default to true — all existing providers require a key
         requiresApiKey = try container.decodeIfPresent(Bool.self, forKey: .requiresApiKey) ?? true
+        // Fallback to "cpu" if catalog doesn't have icon yet
+        iconName = try container.decodeIfPresent(String.self, forKey: .iconName) ?? "cpu"
+        iconColor = try container.decodeIfPresent(String.self, forKey: .iconColor)
         models = try container.decode([RemoteModel].self, forKey: .models)
     }
 
@@ -87,6 +97,8 @@ public struct RemoteProvider: Codable, Sendable, Identifiable {
         try container.encode(name, forKey: .name)
         try container.encode(baseURL, forKey: .baseURL)
         try container.encode(requiresApiKey, forKey: .requiresApiKey)
+        try container.encode(iconName, forKey: .iconName)
+        try container.encodeIfPresent(iconColor, forKey: .iconColor)
         try container.encode(models, forKey: .models)
     }
 

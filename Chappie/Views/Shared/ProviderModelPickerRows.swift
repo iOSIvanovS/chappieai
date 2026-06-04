@@ -20,9 +20,12 @@ struct ProviderPickRow: View {
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 8) {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 14))
-                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.3))
+                // Provider icon — small variant
+                ProviderIconView(
+                    iconName: provider.iconName,
+                    iconColor: provider.resolvedIconColor,
+                    size: 28
+                )
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(provider.displayName)
@@ -36,6 +39,12 @@ struct ProviderPickRow: View {
                 }
 
                 Spacer()
+
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)

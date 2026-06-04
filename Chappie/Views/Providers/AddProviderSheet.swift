@@ -18,9 +18,10 @@
 //
 // STEP 1 — Provider:
 //   Enter base URL, API key, optional provider name.
-//   Custom mode: explicit protocol picker + auth scheme picker.
+//   Custom mode: explicit protocol picker + auth scheme picker (Bearer / x-api-key / None).
 //   Catalog mode: protocol and auth inferred from catalog — pickers hidden.
 //   If catalog provider has requiresApiKey == false (e.g. Ollama) — key field hidden, button always enabled.
+//   If auth scheme == .none — key field hidden, validation skips key check.
 //
 // STEP 2 — Models:
 //   Catalog entry: models from catalog shown pre-selected, no fetch button.
@@ -104,9 +105,14 @@ struct AddProviderSheet: View {
 
     /// Whether this provider requires an API key (from catalog flag, default true).
     private var requiresApiKey: Bool {
-        let result = prefilledRemote?.requiresApiKey ?? true
-        print("[AddProviderSheet] requiresApiKey=\(result) prefilledRemote=\(prefilledRemote?.id ?? "nil")")
-        return result
+        editingProvider?.requiresApiKey ?? prefilledRemote?.requiresApiKey ?? true
+    }
+
+    /// Whether key field should be shown — hidden for no-auth and keyless catalog providers.
+    private var showKeyField: Bool {
+        if !requiresApiKey { return false }
+        if showCustomPickers && customAuthScheme == .none { return false }
+        return true
     }
 
     private var title: String { isEditing ? "Редактировать провайдера" : "Добавить провайдера" }
@@ -133,11 +139,9 @@ struct AddProviderSheet: View {
 
     private var canValidate: Bool {
         let urlOk = !baseURL.trimmingCharacters(in: .whitespaces).isEmpty
-        let reqKey = prefilledRemote?.requiresApiKey ?? true
-        print("[AddProviderSheet] canValidate: urlOk=\(urlOk) requiresApiKey=\(reqKey) baseURL='\(baseURL)'")
         if isEditing { return urlOk }
-        // Providers that don't require an API key (e.g. Ollama) — URL alone is enough.
-        if !reqKey { return urlOk }
+        // No key needed for keyless catalog providers or .none auth scheme.
+        if !showKeyField { return urlOk }
         if isOnboarding {
             return urlOk && pendingKeys.contains(where: {
                 !$0.value.trimmingCharacters(in: .whitespaces).isEmpty
@@ -221,11 +225,7 @@ struct AddProviderSheet: View {
         }
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
-        .onAppear {
-            print("[AddProviderSheet] onAppear — prefilledRemote=\(prefilledRemote?.id ?? "nil") requiresApiKey=\(prefilledRemote?.requiresApiKey ?? true)")
-            prefill()
-            print("[AddProviderSheet] after prefill — baseURL='\(baseURL)' canValidate=\(canValidate)")
-        }
+        .onAppear { prefill() }
         .alert("Провайдер уже существует", isPresented: $duplicateHostAlert) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -272,19 +272,23 @@ struct AddProviderSheet: View {
                     authSchemePickerSection
                 }
 
-                // Key section — hidden for providers that don't require an API key (e.g. Ollama).
-                if prefilledRemote?.requiresApiKey ?? true {
+                // Key section — hidden for no-auth providers and .none auth scheme.
+                if showKeyField {
                     if isOnboarding {
                         multiKeySection
                     } else {
                         singleKeySection
                     }
                 } else {
-                    // Local provider hint — no key needed.
+                    // No-auth hint.
                     HStack(spacing: 8) {
                         Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                        Text("Этот провайдер работает локально и не требует API-ключа.")
-                            .font(.subheadline).foregroundStyle(.secondary)
+                        Text(
+                            customAuthScheme == .none
+                                ? "Авторизация отключена — ключ не нужен."
+                                : "Этот провайдер работает локально и не требует API-ключа."
+                        )
+                        .font(.subheadline).foregroundStyle(.secondary)
                     }
                     .padding(12)
                     .background(Color.green.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
@@ -336,7 +340,10 @@ struct AddProviderSheet: View {
         let isSelected = customProtocol == proto
         Button {
             customProtocol = proto
-            customAuthScheme = proto == .anthropic ? .xApiKey : .bearer
+            // Auto-switch auth scheme when protocol changes, but only if not already .none.
+            if customAuthScheme != .none {
+                customAuthScheme = proto == .anthropic ? .xApiKey : .bearer
+            }
         } label: {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: icon)
@@ -377,33 +384,35 @@ struct AddProviderSheet: View {
             Label("Авторизация", systemImage: "key.horizontal")
                 .font(.headline)
 
-            HStack(spacing: 12) {
+            // Three options in a row — Bearer, x-api-key, None.
+            HStack(spacing: 8) {
                 authSchemeOption(
                     scheme: .bearer,
                     title: "Bearer Token",
-                    subtitle: "Authorization: Bearer {key}\nСтандарт для OpenAI и большинства прокси.",
+                    subtitle: "Authorization: Bearer {key}",
                     icon: "lock.shield"
                 )
                 authSchemeOption(
                     scheme: .xApiKey,
                     title: "x-api-key",
-                    subtitle: "x-api-key: {key}\nНативный Anthropic API и некоторые прокси.",
+                    subtitle: "x-api-key: {key}",
                     icon: "key.fill"
+                )
+                authSchemeOption(
+                    scheme: .none,
+                    title: "Без ключа",
+                    subtitle: "Без заголовка авторизации",
+                    icon: "lock.open"
                 )
             }
 
+            // Contextual hints for unusual combinations.
             if customProtocol == .anthropic && customAuthScheme == .bearer {
-                HStack(spacing: 6) {
-                    Image(systemName: "info.circle").foregroundStyle(.blue)
-                    Text("Bearer — нестандартный выбор для Anthropic. Используйте для прокси-сервисов (например, AITunnel с нативным Claude роутом).")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
+                infoHint("Bearer — нестандартный выбор для Anthropic. Используйте для прокси-сервисов (например, AITunnel с нативным Claude роутом).")
             } else if customProtocol == .openai && customAuthScheme == .xApiKey {
-                HStack(spacing: 6) {
-                    Image(systemName: "info.circle").foregroundStyle(.blue)
-                    Text("x-api-key — нестандартный выбор для OpenAI-совместимого протокола. Используйте только если провайдер требует именно этот заголовок.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
+                infoHint("x-api-key — нестандартный выбор для OpenAI-совместимого протокола. Используйте только если провайдер требует именно этот заголовок.")
+            } else if customAuthScheme == .none {
+                infoHint("Заголовок авторизации не будет отправлен. Используйте для локальных серверов (Ollama, LM Studio) и открытых API.")
             }
         }
     }
@@ -419,25 +428,26 @@ struct AddProviderSheet: View {
         Button {
             customAuthScheme = scheme
         } label: {
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: 8) {
                 Image(systemName: icon)
-                    .font(.system(size: 18))
+                    .font(.system(size: 16))
                     .foregroundStyle(isSelected ? Color.accentColor : .secondary)
-                    .frame(width: 24)
-                VStack(alignment: .leading, spacing: 3) {
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(isSelected ? Color.accentColor : .primary)
                     Text(subtitle)
-                        .font(.system(size: 11))
+                        .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 12))
                     .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.4))
             }
-            .padding(12)
+            .padding(10)
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(isSelected ? Color.accentColor.opacity(0.07) : Color.primary.opacity(0.04))
@@ -449,6 +459,14 @@ struct AddProviderSheet: View {
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func infoHint(_ text: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "info.circle").foregroundStyle(.blue)
+            Text(text).font(.caption).foregroundStyle(.secondary)
+        }
     }
 
     // MARK: - Catalog Badge
@@ -788,10 +806,9 @@ struct AddProviderSheet: View {
                 }
             }
 
-            // For providers that don't require a key — use empty string (Ollama accepts no auth).
-            let reqKey = prefilledRemote?.requiresApiKey ?? true
+            // Determine key to use — empty for no-auth providers.
             let keyToUse: String
-            if !reqKey {
+            if !showKeyField {
                 keyToUse = ""
             } else if isEditing && firstValidKeyValue.isEmpty, let existing = editingProvider,
                let store = providerStore, let firstKeyId = existing.keys.first?.id {
@@ -800,7 +817,7 @@ struct AddProviderSheet: View {
                 keyToUse = firstValidKeyValue
             }
 
-            if reqKey && keyToUse.isEmpty {
+            if showKeyField && keyToUse.isEmpty {
                 await MainActor.run { isValidating = false; validationError = "Введите API-ключ." }
                 return
             }
@@ -823,6 +840,7 @@ struct AddProviderSheet: View {
                     providerProtocol: effectiveProtocol,
                     authScheme: effectiveAuthScheme,
                     origin: editingProvider?.origin ?? effectiveOrigin,
+                    requiresApiKey: showKeyField,
                     keys: editingProvider?.keys ?? [],
                     models: editingProvider?.models ?? []
                 )
@@ -864,9 +882,8 @@ struct AddProviderSheet: View {
         fetchError = nil
 
         Task {
-            let reqKey = prefilledRemote?.requiresApiKey ?? true
             let keyToUse: String
-            if !reqKey {
+            if !showKeyField {
                 keyToUse = ""
             } else if isEditing && firstValidKeyValue.isEmpty, let existing = editingProvider,
                let store = providerStore, let firstKeyId = existing.keys.first?.id {
@@ -992,13 +1009,13 @@ struct AddProviderSheet: View {
                     }
 
                 } else {
-                    // Save provider — with or without key depending on requiresApiKey.
+                    // Save provider — with or without key depending on auth scheme.
                     let trimmedKeyValue = apiKeyValue.trimmingCharacters(in: .whitespaces)
                     let resolvedKeyName = apiKeyName.trimmingCharacters(in: .whitespaces)
                     try await store.addProvider(
                         finalProvider,
                         firstKeyName: resolvedKeyName.isEmpty ? "Default" : resolvedKeyName,
-                        firstKeyValue: trimmedKeyValue  // empty string for keyless providers like Ollama
+                        firstKeyValue: trimmedKeyValue  // empty string for keyless providers
                     )
                 }
 

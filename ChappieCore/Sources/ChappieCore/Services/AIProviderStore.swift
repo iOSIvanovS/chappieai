@@ -122,7 +122,6 @@ public actor AIProviderStore {
 
     /// Called at startup after the remote catalog is fetched.
     /// Updates requiresApiKey for existing catalog providers whose value changed in the JSON.
-    /// This handles the case where Ollama was added before requires_api_key: false was published.
     public func syncRequiresApiKey(from remoteProviders: [RemoteProvider]) async throws {
         let existing = try getProviders()
         var changed = false
@@ -136,6 +135,33 @@ public actor AIProviderStore {
             try persistProvider(provider)
             changed = true
             print("[AIProviderStore] Synced requiresApiKey=\(remote.requiresApiKey) for '\(provider.displayName)'")
+        }
+
+        if changed { try refreshCache() }
+    }
+
+    // MARK: - Sync icons from catalog
+
+    /// Called at startup after the remote catalog is fetched.
+    /// Updates iconName + iconColor for existing catalog providers.
+    /// Safe to call every launch — only writes when value actually changed.
+    public func syncIcons(from remoteProviders: [RemoteProvider]) async throws {
+        let existing = try getProviders()
+        var changed = false
+
+        for remote in remoteProviders {
+            guard let idx = existing.firstIndex(where: { $0.catalogId == remote.id }) else { continue }
+            var provider = existing[idx]
+
+            let iconChanged = provider.iconName != remote.iconName
+            let colorChanged = provider.iconColor != remote.iconColor
+            guard iconChanged || colorChanged else { continue }
+
+            provider.iconName = remote.iconName
+            provider.iconColor = remote.iconColor
+            try persistProvider(provider)
+            changed = true
+            print("[AIProviderStore] Synced icon '\(remote.iconName)' for '\(provider.displayName)'")
         }
 
         if changed { try refreshCache() }
@@ -206,7 +232,7 @@ public actor AIProviderStore {
         // Build AIModel list from remote catalog
         let allModels = buildModels(from: remote, selectedIds: selectedModelIds)
 
-        // Create the provider — copy requiresApiKey from catalog entry
+        // Create the provider — copy requiresApiKey + icon from catalog entry
         let provider = AIProvider(
             name: remote.name,
             baseURL: remote.baseURL,
@@ -214,6 +240,8 @@ public actor AIProviderStore {
             providerProtocol: dominantProtocol(in: remote),
             origin: .catalog,
             requiresApiKey: remote.requiresApiKey,
+            iconName: remote.iconName,
+            iconColor: remote.iconColor,
             models: allModels
         )
 

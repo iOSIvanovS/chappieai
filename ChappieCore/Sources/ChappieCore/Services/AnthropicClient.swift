@@ -16,6 +16,7 @@
 // AUTH SCHEME:
 // By default uses x-api-key (native Anthropic). Can be overridden to Bearer
 // for proxy providers (e.g. AITunnel routing to Claude via /v1/messages).
+// .none — no auth header (unusual for Anthropic, but supported for custom setups).
 //
 // TOOL CALL STREAMING:
 // Anthropic streams tool calls as content_block_start (type=tool_use, id, name)
@@ -409,12 +410,14 @@ public struct AnthropicClient: Sendable, AIClientProtocol {
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
         request.addValue(Self.anthropicVersion, forHTTPHeaderField: "anthropic-version")
 
-        // Apply auth scheme — x-api-key for native Anthropic, Bearer for proxies.
+        // Apply auth scheme — x-api-key for native Anthropic, Bearer for proxies, none for open endpoints.
         switch authScheme {
         case .xApiKey:
             request.addValue(apiKey, forHTTPHeaderField: "x-api-key")
         case .bearer:
             request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        case .none:
+            break // no auth header
         }
 
         request.timeoutInterval = AppConfig.shared.requestTimeoutSeconds

@@ -19,6 +19,11 @@
 //   inside a sheet on macOS does not behave as drill-down, it creates a full
 //   navigation window which breaks the sheet layout.
 //
+// LIVE UPDATES:
+//   Both ProvidersSettingsView and ProviderDetailView receive viewModel as a plain
+//   var — @Observable tracks property access automatically, so viewModel.providers
+//   changes propagate immediately without manual refresh.
+//
 // ORPHANED THREADS:
 //   Deleting a provider, key, or model is always allowed.
 //   Affected threads show a warning banner in the chat view.
@@ -32,6 +37,7 @@ struct ProvidersSettingsView: View {
 
     // MARK: - Dependencies
 
+    // Plain var — @Observable on ChappieViewModel handles reactivity automatically.
     var viewModel: ChappieViewModel
 
     // MARK: - State
@@ -204,6 +210,13 @@ private struct ProviderListRow: View {
     var body: some View {
         HStack(spacing: 12) {
 
+            // Provider icon
+            ProviderIconView(
+                iconName: provider.iconName,
+                iconColor: provider.resolvedIconColor,
+                size: 32
+            )
+
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(provider.displayName)
@@ -225,12 +238,14 @@ private struct ProviderListRow: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
 
-                    Text("·")
-                        .foregroundStyle(.secondary.opacity(0.5))
-
-                    Text("\(provider.keys.count) \(keysLabel(provider.keys.count))")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                    // Only show key count for providers that use keys
+                    if provider.requiresApiKey {
+                        Text("·")
+                            .foregroundStyle(.secondary.opacity(0.5))
+                        Text("\(provider.keys.count) \(keysLabel(provider.keys.count))")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
 
                     Text("·")
                         .foregroundStyle(.secondary.opacity(0.5))
@@ -286,15 +301,12 @@ struct ProviderDetailView: View {
     // MARK: - Input
 
     let provider: AIProvider
+    // Plain var — @Observable tracks viewModel.providers changes automatically.
     var viewModel: ChappieViewModel
     let onBack: () -> Void
 
     // MARK: - State
 
-    @State private var currentProvider: AIProvider
-    // Explicit arrays for models/keys — forces SwiftUI to re-render on mutation
-    @State private var displayedModels: [AIModel]
-    @State private var displayedKeys: [APIKey]
     @State private var showEditProvider: Bool = false
     @State private var showAddKey: Bool = false
     @State private var editingKey: APIKey? = nil
@@ -303,13 +315,9 @@ struct ProviderDetailView: View {
     @State private var deleteModelId: String? = nil
     @State private var errorMessage: String? = nil
 
-    init(provider: AIProvider, viewModel: ChappieViewModel, onBack: @escaping () -> Void) {
-        self.provider = provider
-        self.viewModel = viewModel
-        self.onBack = onBack
-        self._currentProvider = State(initialValue: provider)
-        self._displayedModels = State(initialValue: provider.models)
-        self._displayedKeys = State(initialValue: provider.keys)
+    // Derived from viewModel.providers — stays reactive without manual refresh.
+    private var currentProvider: AIProvider {
+        viewModel.providers.first(where: { $0.id == provider.id }) ?? provider
     }
 
     // MARK: - Body
@@ -351,11 +359,14 @@ struct ProviderDetailView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    keysSection
-                        .padding(.bottom, 8)
+                    // Keys section — hidden for providers that don't use API keys (e.g. Ollama)
+                    if currentProvider.requiresApiKey {
+                        keysSection
+                            .padding(.bottom, 8)
 
-                    Divider()
-                        .padding(.vertical, 8)
+                        Divider()
+                            .padding(.vertical, 8)
+                    }
 
                     modelsSection
                         .padding(.bottom, 8)
@@ -379,7 +390,6 @@ struct ProviderDetailView: View {
                 onSaved: {
                     showEditProvider = false
                     viewModel.reloadProviders()
-                    refreshCurrentProvider()
                 },
                 onCancel: { showEditProvider = false }
             )
@@ -392,7 +402,6 @@ struct ProviderDetailView: View {
                 onSaved: {
                     showAddKey = false
                     viewModel.reloadProviders()
-                    refreshCurrentProvider()
                 },
                 onCancel: { showAddKey = false }
             )
@@ -405,7 +414,6 @@ struct ProviderDetailView: View {
                 onSaved: {
                     editingKey = nil
                     viewModel.reloadProviders()
-                    refreshCurrentProvider()
                 },
                 onCancel: { editingKey = nil }
             )
@@ -413,7 +421,7 @@ struct ProviderDetailView: View {
         .sheet(isPresented: $showAddModel) {
             AddModelSheet(
                 provider: currentProvider,
-                existingModels: displayedModels,
+                existingModels: currentProvider.models,
                 providerStore: viewModel.providerStore,
                 remoteService: viewModel.providersRemoteService,
                 onSaved: { newModels in
@@ -453,9 +461,12 @@ struct ProviderDetailView: View {
 
     private var providerInfoCard: some View {
         HStack(spacing: 16) {
-            Image(systemName: "cpu.fill")
-                .font(.system(size: 28))
-                .foregroundStyle(Color.accentColor.opacity(0.8))
+            // Provider icon — larger in detail card
+            ProviderIconView(
+                iconName: currentProvider.iconName,
+                iconColor: currentProvider.resolvedIconColor,
+                size: 44
+            )
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
@@ -500,7 +511,7 @@ struct ProviderDetailView: View {
             HStack {
                 Text("Ключи")
                     .font(.headline)
-                Text("(\(displayedKeys.count))")
+                Text("(\(currentProvider.keys.count))")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -511,7 +522,7 @@ struct ProviderDetailView: View {
                 .buttonStyle(.bordered)
             }
 
-            if displayedKeys.isEmpty {
+            if currentProvider.keys.isEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
@@ -523,7 +534,7 @@ struct ProviderDetailView: View {
                 .background(Color.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
             } else {
                 VStack(spacing: 2) {
-                    ForEach(displayedKeys) { key in
+                    ForEach(currentProvider.keys) { key in
                         KeyRow(
                             key: key,
                             onEdit: { editingKey = key },
@@ -544,7 +555,7 @@ struct ProviderDetailView: View {
             HStack {
                 Text("Модели")
                     .font(.headline)
-                Text("(\(displayedModels.count))")
+                Text("(\(currentProvider.models.count))")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -555,7 +566,7 @@ struct ProviderDetailView: View {
                 .buttonStyle(.bordered)
             }
 
-            if displayedModels.isEmpty {
+            if currentProvider.models.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "square.stack.3d.up.slash")
                         .font(.system(size: 28))
@@ -568,7 +579,7 @@ struct ProviderDetailView: View {
                 .padding(.vertical, 20)
             } else {
                 VStack(spacing: 2) {
-                    ForEach(displayedModels) { model in
+                    ForEach(currentProvider.models) { model in
                         ModelRow(
                             model: model,
                             onDelete: { deleteModelId = model.id }
@@ -591,7 +602,6 @@ struct ProviderDetailView: View {
                     try await store.addModel(model, toProviderId: currentProvider.id)
                 }
                 viewModel.reloadProviders()
-                refreshCurrentProvider()
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -605,7 +615,6 @@ struct ProviderDetailView: View {
             do {
                 try await store.deleteKey(id: id, fromProviderId: currentProvider.id)
                 viewModel.reloadProviders()
-                refreshCurrentProvider()
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -619,19 +628,9 @@ struct ProviderDetailView: View {
             do {
                 try await store.deleteModel(id: modelId, fromProviderId: currentProvider.id)
                 viewModel.reloadProviders()
-                refreshCurrentProvider()
             } catch {
                 errorMessage = error.localizedDescription
             }
-        }
-    }
-
-    // Refresh currentProvider + explicitly update displayed arrays to trigger re-render
-    private func refreshCurrentProvider() {
-        if let updated = viewModel.providers.first(where: { $0.id == currentProvider.id }) {
-            currentProvider = updated
-            displayedModels = updated.models
-            displayedKeys = updated.keys
         }
     }
 }

@@ -226,15 +226,12 @@ private struct CatalogProviderRow: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 14) {
-                // Letter avatar
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.accentColor.opacity(0.12))
-                        .frame(width: 36, height: 36)
-                    Text(String(remote.name.prefix(1)).uppercased())
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color.accentColor)
-                }
+                // Provider icon from catalog
+                ProviderIconView(
+                    iconName: remote.iconName,
+                    iconColor: Color(hex: remote.iconColor ?? "") ?? .accentColor,
+                    size: 36
+                )
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(remote.name)

@@ -121,10 +121,13 @@ extension AIMessageContent: Decodable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         if let string = try? container.decode(String.self) {
+            // Preserve the string as-is — empty string normalization happens in AIClient.normalizeMessage()
+            // so that AITunnel (supportsCaching=true) is not affected.
             self = .text(string)
         } else if let blocks = try? container.decode([AIContentBlock].self) {
             self = .blocks(blocks)
         } else {
+            // Unknown content shape — treat as empty text; normalizeMessage() will convert to nil.
             self = .text("")
         }
     }
@@ -165,7 +168,11 @@ public struct AITunnelRequest: Encodable, Sendable {
 ///
 /// content is AIMessageContent? — polymorphic (.text / .blocks / .multimodal).
 /// contentString provides backward-compatible string access without manual unwrapping.
-public struct AIMessage: Codable, Sendable {
+///
+/// ENCODING: content uses encodeIfPresent — nil content is OMITTED from JSON (not null).
+/// Strict providers (Groq, Ollama) reject "content": null on assistant tool-call messages.
+/// Omitting the field entirely is the correct OpenAI spec behavior for tool-call turns.
+public struct AIMessage: Sendable {
     public var role: String
     public var content: AIMessageContent?
     public var tool_calls: [AIToolCall]?
@@ -238,6 +245,40 @@ public struct AIMessage: Codable, Sendable {
         self.tool_calls = toolCalls
         self.tool_call_id = tool_call_id
         self.name = name
+    }
+}
+
+// MARK: - AIMessage Codable
+
+extension AIMessage: Encodable {
+    private enum CodingKeys: String, CodingKey {
+        case role, content, tool_calls, tool_call_id, name
+    }
+
+    /// Manual encode — uses encodeIfPresent for content so nil is OMITTED (not null).
+    /// Groq and other strict providers reject "content": null on tool-call assistant messages.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(role, forKey: .role)
+        try container.encodeIfPresent(content, forKey: .content)
+        try container.encodeIfPresent(tool_calls, forKey: .tool_calls)
+        try container.encodeIfPresent(tool_call_id, forKey: .tool_call_id)
+        try container.encodeIfPresent(name, forKey: .name)
+    }
+}
+
+extension AIMessage: Decodable {
+    private enum DecodingKeys: String, CodingKey {
+        case role, content, tool_calls, tool_call_id, name
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: DecodingKeys.self)
+        role = try container.decode(String.self, forKey: .role)
+        content = try container.decodeIfPresent(AIMessageContent.self, forKey: .content)
+        tool_calls = try container.decodeIfPresent([AIToolCall].self, forKey: .tool_calls)
+        tool_call_id = try container.decodeIfPresent(String.self, forKey: .tool_call_id)
+        name = try container.decodeIfPresent(String.self, forKey: .name)
     }
 }
 

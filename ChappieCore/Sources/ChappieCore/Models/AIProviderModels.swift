@@ -18,6 +18,12 @@
 // authScheme tells the client which Authorization header format to use.
 // requiresApiKey = false for local providers (Ollama) — no key needed, empty string passed.
 //
+// ICONS:
+// iconName = SF Symbol name synced from catalog (e.g. "brain", "sparkles").
+// iconColor = hex string synced from catalog (e.g. "#10A37F"). nil = use accent color.
+// Custom providers get "wrench.and.screwdriver" + nil (accent color).
+// Icons are synced from catalog on every app launch via AIProviderStore.syncIcons().
+//
 // ORIGIN:
 // origin = .catalog → added from catalog, deduplication by catalogId is enforced.
 // origin = .custom  → added manually, no deduplication, created freely.
@@ -53,6 +59,8 @@ public enum AuthScheme: String, Codable, Sendable, CaseIterable {
     case bearer
     /// x-api-key: {key}             — native Anthropic API only.
     case xApiKey = "x_api_key"
+    /// No authorization header sent — for local/open providers (e.g. Ollama, LM Studio).
+    case none
 }
 
 // MARK: - ProviderOrigin
@@ -172,7 +180,7 @@ public struct AIProvider: Codable, Sendable, Identifiable, Equatable, Hashable {
     /// Default wire protocol for this provider.
     public var providerProtocol: ProviderProtocol
 
-    /// HTTP authorization scheme — Bearer or x-api-key.
+    /// HTTP authorization scheme — Bearer, x-api-key, or none.
     public var authScheme: AuthScheme
 
     /// How this provider was added — controls deduplication behavior.
@@ -180,8 +188,15 @@ public struct AIProvider: Codable, Sendable, Identifiable, Equatable, Hashable {
     public var origin: ProviderOrigin
 
     /// Whether an API key is required to use this provider.
-    /// False for local providers like Ollama — key column hidden, empty string passed to client.
+    /// False for local providers like Ollama — key field hidden, empty string passed to client.
     public var requiresApiKey: Bool
+
+    /// SF Symbol name for the provider icon, synced from catalog.
+    /// Custom providers use "wrench.and.screwdriver".
+    public var iconName: String
+
+    /// Hex color string for the icon, e.g. "#10A37F". nil = use accent color.
+    public var iconColor: String?
 
     /// Named API keys for this provider.
     public var keys: [APIKey]
@@ -215,6 +230,8 @@ public struct AIProvider: Codable, Sendable, Identifiable, Equatable, Hashable {
         authScheme: AuthScheme? = nil,
         origin: ProviderOrigin = .catalog,
         requiresApiKey: Bool = true,
+        iconName: String = "cpu",
+        iconColor: String? = nil,
         keys: [APIKey] = [],
         models: [AIModel] = []
     ) {
@@ -226,6 +243,8 @@ public struct AIProvider: Codable, Sendable, Identifiable, Equatable, Hashable {
         self.authScheme = authScheme ?? (providerProtocol == .anthropic ? .xApiKey : .bearer)
         self.origin = origin
         self.requiresApiKey = requiresApiKey
+        self.iconName = iconName
+        self.iconColor = iconColor
         self.keys = keys
         self.models = models
     }
@@ -239,6 +258,8 @@ public struct AIProvider: Codable, Sendable, Identifiable, Equatable, Hashable {
         case providerProtocol = "provider_protocol"
         case authScheme = "auth_scheme"
         case requiresApiKey = "requires_api_key"
+        case iconName = "icon_name"
+        case iconColor = "icon_color"
     }
 
     public init(from decoder: Decoder) throws {
@@ -253,8 +274,10 @@ public struct AIProvider: Codable, Sendable, Identifiable, Equatable, Hashable {
         let decodedScheme = try c.decodeIfPresent(AuthScheme.self, forKey: .authScheme)
         authScheme = decodedScheme ?? (providerProtocol == .anthropic ? .xApiKey : .bearer)
         origin = try c.decodeIfPresent(ProviderOrigin.self, forKey: .origin) ?? .catalog
-        // Old providers without this field default to true (all existing providers require a key)
         requiresApiKey = try c.decodeIfPresent(Bool.self, forKey: .requiresApiKey) ?? true
+        // Old providers without icon fields get defaults — synced from catalog on next launch
+        iconName = try c.decodeIfPresent(String.self, forKey: .iconName) ?? "cpu"
+        iconColor = try c.decodeIfPresent(String.self, forKey: .iconColor)
     }
 
     // MARK: - Hashable

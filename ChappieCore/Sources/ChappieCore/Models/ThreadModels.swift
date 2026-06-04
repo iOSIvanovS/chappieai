@@ -66,7 +66,7 @@ public final class ThreadEntity {
 /// WHY STRUCT, NOT @Model: Settings always belong to a thread, never standalone.
 public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
 
-    /// Max messages in context window. Range: 100...1000, step 100. Default: 300.
+    /// Max messages in context window. Range: 10...1000, step 10. Default: 100.
     public var maxMessagesInContext: Int
 
     /// When true — all trimming is disabled, everything is sent to the model.
@@ -102,8 +102,8 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
         activeKeyId: UUID? = nil,
         activeModelName: String? = nil
     ) {
-        // Clamp to valid range — guard against corrupted JSON values
-        self.maxMessagesInContext = max(100, min(1000, maxMessagesInContext))
+        // Clamp to valid range 10...1000 — guard against corrupted JSON values
+        self.maxMessagesInContext = max(10, min(1000, maxMessagesInContext))
         self.isUnlimitedContext = isUnlimitedContext
         self.activeProviderId = activeProviderId
         self.activeKeyId = activeKeyId

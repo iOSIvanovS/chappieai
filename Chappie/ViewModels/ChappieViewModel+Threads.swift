@@ -101,9 +101,17 @@ extension ChappieViewModel {
             let savedKeyId = settings.activeKeyId
             let savedModelName = settings.activeModelName
 
-            // Validate key still exists on provider
-            let actualKeyId = savedKeyId.flatMap { id in
-                provider.keys.contains(where: { $0.id == id }) ? id : nil
+            // For keyless providers (e.g. Ollama) — key validation is skipped entirely.
+            let requiresKey = provider.requiresApiKey
+
+            // Validate key still exists on provider (only if key is required)
+            let actualKeyId: UUID?
+            if requiresKey {
+                actualKeyId = savedKeyId.flatMap { id in
+                    provider.keys.contains(where: { $0.id == id }) ? id : nil
+                }
+            } else {
+                actualKeyId = nil
             }
 
             // Validate model still exists in provider's model list (by id)
@@ -111,15 +119,18 @@ extension ChappieViewModel {
                 provider.models.contains(where: { $0.id == name }) ? name : nil
             }
 
-            // If key or model was saved but is now gone — block orchestrator
-            if (savedKeyId != nil && actualKeyId == nil) || (savedModelName != nil && validatedModel == nil) {
-                let reason = (savedKeyId != nil && actualKeyId == nil) ? "Key" : "Model"
+            // Block orchestrator only if key is required but missing, or model is missing
+            let keyMissing = requiresKey && savedKeyId != nil && actualKeyId == nil
+            let modelMissing = savedModelName != nil && validatedModel == nil
+
+            if keyMissing || modelMissing {
+                let reason = keyMissing ? "Key" : "Model"
                 print("[ChappieViewModel] ⚠️ \(reason) missing for provider '\(provider.displayName)' — blocking orchestrator")
 
                 if let tStore = threadStore {
                     var healed = settings
-                    if actualKeyId == nil { healed.activeKeyId = nil }
-                    if validatedModel == nil { healed.activeModelName = nil }
+                    if keyMissing { healed.activeKeyId = nil }
+                    if modelMissing { healed.activeModelName = nil }
                     try? await tStore.updateSettings(healed, forThreadId: thread.id)
                 }
 
@@ -130,7 +141,7 @@ extension ChappieViewModel {
             // All valid — apply
             await switchProvider(
                 provider,
-                keyId: actualKeyId ?? savedKeyId,
+                keyId: requiresKey ? (actualKeyId ?? savedKeyId) : nil,
                 modelName: validatedModel,
                 from: provStore,
                 persistSettings: false
@@ -343,9 +354,9 @@ extension ChappieViewModel {
 
     /// Saves updated thread settings from ThreadSettingsSheet.
     ///
-    /// KEY CHANGE POLICY: if newKeyId differs from current activeKeyId for the same provider —
-    /// re-initialize the AI client with the new key so next request uses it immediately.
-    /// Provider and model are preserved unless newProviderId is explicitly passed.
+    /// The sheet owns the full ThreadSettings draft — we trust it completely.
+    /// Provider and model are preserved from activeThreadSettings (sheet doesn't change them).
+    /// Key change triggers immediate AI client re-init for the active thread.
     func updateThreadSettings(
         _ settings: ThreadSettings,
         newTitle: String,
@@ -360,7 +371,12 @@ extension ChappieViewModel {
             do {
                 try await store.renameThread(id: threadId, title: newTitle)
 
+                // Start from the sheet's draft — it already has correct maxMessagesInContext,
+                // isUnlimitedContext, and activeKeyId set by the sheet's footerView.
                 var updatedSettings = settings
+
+                print("[ChappieViewModel] updateThreadSettings: incoming maxMsgs=\(settings.maxMessagesInContext) keyId=\(settings.activeKeyId?.uuidString ?? "nil") providerId=\(settings.activeProviderId?.uuidString ?? "nil")")
+                print("[ChappieViewModel] updateThreadSettings: activeThreadSettings providerId=\(activeThreadSettings.activeProviderId?.uuidString ?? "nil") model=\(activeThreadSettings.activeModelName ?? "nil") keyId=\(activeThreadSettings.activeKeyId?.uuidString ?? "nil")")
 
                 if let providerId = newProviderId,
                    let provider = providers.first(where: { $0.id == providerId }) {
@@ -371,20 +387,21 @@ extension ChappieViewModel {
                     updatedSettings.activeKeyId = newKeyId
                     updatedSettings.activeModelName = model
                 } else {
-                    // Provider unchanged — preserve provider+model, apply key change if any
+                    // Provider unchanged — preserve provider+model from current active settings.
+                    // Key comes from the sheet (already set in settings.activeKeyId by footerView).
                     updatedSettings.activeProviderId = activeThreadSettings.activeProviderId
                     updatedSettings.activeModelName = activeThreadSettings.activeModelName
 
-                    let resolvedKeyId = newKeyId ?? activeThreadSettings.activeKeyId
-                    updatedSettings.activeKeyId = resolvedKeyId
+                    print("[ChappieViewModel] updateThreadSettings: after merge maxMsgs=\(updatedSettings.maxMessagesInContext) keyId=\(updatedSettings.activeKeyId?.uuidString ?? "nil") providerId=\(updatedSettings.activeProviderId?.uuidString ?? "nil")")
 
-                    // If key changed for the active thread — re-init the AI client immediately
+                    // If key changed for the active thread — re-init AI client immediately
                     if threadId == activeThread?.id,
-                       resolvedKeyId != activeKeyId,
+                       updatedSettings.activeKeyId != activeKeyId,
                        let provider = activeProvider {
+                        print("[ChappieViewModel] updateThreadSettings: key changed → re-init AI client with keyId=\(updatedSettings.activeKeyId?.uuidString ?? "nil")")
                         await switchProvider(
                             provider,
-                            keyId: resolvedKeyId,
+                            keyId: updatedSettings.activeKeyId,
                             modelName: activeModelName,
                             persistSettings: false
                         )
@@ -392,6 +409,7 @@ extension ChappieViewModel {
                 }
 
                 try await store.updateSettings(updatedSettings, forThreadId: threadId)
+                print("[ChappieViewModel] updateThreadSettings: saved maxMsgs=\(updatedSettings.maxMessagesInContext) keyId=\(updatedSettings.activeKeyId?.uuidString ?? "nil")")
 
                 let refreshed = try await store.loadThreads()
                 self.threads = refreshed

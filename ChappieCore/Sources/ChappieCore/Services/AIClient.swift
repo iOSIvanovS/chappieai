@@ -15,9 +15,20 @@
 // server bytes. Fix: check Task.isCancelled on every iteration.
 //
 // AUTH SCHEME:
-// Supports both Bearer and x-api-key auth headers.
-// Controlled by AuthScheme passed at init — allows OpenAI-format body with x-api-key
-// or any other combination needed by proxy providers.
+// Supports Bearer, x-api-key, and none (no auth header — for local providers like Ollama).
+// Controlled by AuthScheme passed at init — allows OpenAI-format body with any auth combo.
+//
+// CACHE CONTROL:
+// cache_control is an AITunnel-specific top-level field. Most providers (Groq, Ollama, etc.)
+// reject it with HTTP 400. Only sent when supportsCaching=true (AITunnel only).
+//
+// CONTENT NORMALIZATION:
+// When supportsCaching=false, normalizeMessage() is applied to every history message:
+//   .blocks     → joined plain string (cache blocks not supported by strict providers)
+//   .multimodal → joined text parts only (images dropped — strict providers reject data URIs)
+//   .text("")   → nil (empty string is rejected by Groq as "content is missing")
+//   .text       → unchanged
+//   nil         → unchanged (valid for tool-call assistant messages — field omitted in JSON)
 //
 // URL DESIGN:
 // Two inits exist to avoid double-path bugs:
@@ -67,16 +78,21 @@ public struct AIClient: Sendable, AIClientProtocol {
     private let authScheme: AuthScheme
     private let urlSession: URLSession
 
+    /// Whether to include cache_control in requests.
+    /// True only for AITunnel — all other providers reject this field with HTTP 400.
+    private let supportsCaching: Bool
+
     // MARK: - Init (from chat endpoint)
 
     /// Use when you have the full chat endpoint URL.
     /// baseURL is derived by stripping the path — works for simple providers (OpenAI, AITunnel).
     /// For providers with path prefixes (OpenRouter: /api/v1/...) use init(baseURL:) instead.
-    public init(endpoint: String, apiKey: String, modelName: String, authScheme: AuthScheme = .bearer) {
+    public init(endpoint: String, apiKey: String, modelName: String, authScheme: AuthScheme = .bearer, supportsCaching: Bool = false) {
         self.endpointURL = URL(string: endpoint) ?? URL(string: "https://api.openai.com/v1/chat/completions")!
         self.apiKey = apiKey
         self.modelName = modelName
         self.authScheme = authScheme
+        self.supportsCaching = supportsCaching
 
         // Derive base URL: strip path to get scheme+host only
         if let url = URL(string: endpoint), let scheme = url.scheme, let host = url.host {
@@ -97,13 +113,14 @@ public struct AIClient: Sendable, AIClientProtocol {
     /// Use for discovery/validation when you know the provider's base URL (e.g. "https://openrouter.ai/api").
     /// endpointURL = baseURL + /v1/chat/completions.
     /// fetchAvailableModels and validateProvider append /v1/models to baseURL directly — no double-path.
-    public init(baseURL: String, apiKey: String, modelName: String, authScheme: AuthScheme = .bearer) {
+    public init(baseURL: String, apiKey: String, modelName: String, authScheme: AuthScheme = .bearer, supportsCaching: Bool = false) {
         let base = URL(string: baseURL) ?? URL(string: "https://api.openai.com")!
         self.baseURL = base
         self.endpointURL = base.appendingPathComponent("v1/chat/completions")
         self.apiKey = apiKey
         self.modelName = modelName
         self.authScheme = authScheme
+        self.supportsCaching = supportsCaching
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = AppConfig.shared.requestTimeoutSeconds
@@ -170,7 +187,8 @@ public struct AIClient: Sendable, AIClientProtocol {
             messages: [AIMessage(role: "user", content: "hi")],
             temperature: 0.1,
             tools: nil,
-            stream: false
+            stream: false,
+            cacheControl: nil
         )
         let request = try buildURLRequest(body: body)
         let (data, response) = try await performRequest(request)
@@ -196,7 +214,8 @@ public struct AIClient: Sendable, AIClientProtocol {
             messages: messages,
             temperature: 0.7,
             tools: tools.isEmpty ? nil : tools,
-            stream: true
+            stream: true,
+            cacheControl: supportsCaching ? .oneHour : nil
         )
 
         let request = try buildURLRequest(body: body)
@@ -324,7 +343,8 @@ public struct AIClient: Sendable, AIClientProtocol {
             messages: messages,
             temperature: 0.7,
             tools: tools.isEmpty ? nil : tools,
-            stream: false
+            stream: false,
+            cacheControl: supportsCaching ? .oneHour : nil
         )
         let request = try buildURLRequest(body: body)
         let (data, response) = try await performRequest(request)
@@ -366,22 +386,92 @@ public struct AIClient: Sendable, AIClientProtocol {
     // MARK: - Private: Auth Header
 
     /// Applies the correct authorization header based on authScheme.
+    /// .none — no header added (local providers like Ollama, LM Studio).
     private func applyAuth(to request: inout URLRequest) {
         switch authScheme {
         case .bearer:
             request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         case .xApiKey:
             request.addValue(apiKey, forHTTPHeaderField: "x-api-key")
+        case .none:
+            break // no auth header for local/open providers
         }
     }
 
     // MARK: - Private: Message Building
 
+    /// Builds the final message array to send to the provider.
+    ///
+    /// When supportsCaching=false (all providers except AITunnel), normalizes every message
+    /// via normalizeMessage() — converts blocks/multimodal to plain strings, drops empty content.
     private func buildMessages(systemPrompt: String, chatHistory: [AIMessage]) -> [AIMessage] {
         var messages: [AIMessage] = [AIMessage(role: "system", content: systemPrompt)]
-        messages.append(contentsOf: chatHistory)
+
+        if supportsCaching {
+            // AITunnel: send as-is, blocks and cache_control are supported
+            messages.append(contentsOf: chatHistory)
+        } else {
+            // Strict providers: normalize all non-string content to plain text, filter empties
+            messages.append(contentsOf: chatHistory.compactMap { normalizeMessage($0) })
+        }
+
         print("[AIClient] Request: 1 system + \(chatHistory.count) msgs → \(endpointURL.host ?? "") / \(modelName)")
         return messages
+    }
+
+    /// Normalizes a message for strict OpenAI-compatible providers (Groq, Ollama, etc.).
+    ///
+    /// Returns nil for messages that should be dropped entirely (e.g. tool-result with empty content).
+    /// .blocks     → joined plain string (provider rejects content arrays)
+    /// .multimodal → text parts joined, images dropped (provider rejects data URIs)
+    /// .text("")   → nil (Groq rejects empty string as "content is missing")
+    /// .text       → unchanged
+    /// nil         → unchanged (valid for tool-call assistant messages — field omitted in JSON)
+    private func normalizeMessage(_ message: AIMessage) -> AIMessage? {
+        switch message.content {
+        case .blocks(let blocks):
+            let text = blocks.map(\.text).joined()
+            // Drop messages whose only content was empty blocks
+            guard !text.isEmpty else { return nil }
+            return AIMessage(
+                role: message.role,
+                content: text,
+                tool_calls: message.tool_calls,
+                tool_call_id: message.tool_call_id,
+                name: message.name
+            )
+        case .multimodal(let parts):
+            // Extract only text parts — drop images (strict providers reject data URIs)
+            let text = parts.compactMap { part -> String? in
+                if case .text(let t) = part { return t }
+                return nil
+            }.joined(separator: "\n")
+            guard !text.isEmpty else { return nil }
+            return AIMessage(
+                role: message.role,
+                content: text,
+                tool_calls: message.tool_calls,
+                tool_call_id: message.tool_call_id,
+                name: message.name
+            )
+        case .text(let s):
+            // Empty string → nil content (Groq: "content is missing" for empty strings)
+            if s.isEmpty {
+                // Keep the message but with nil content — valid for tool-result roles
+                // that Groq requires to be present but without content
+                return AIMessage(
+                    role: message.role,
+                    content: nil as String?,
+                    tool_calls: message.tool_calls,
+                    tool_call_id: message.tool_call_id,
+                    name: message.name
+                )
+            }
+            return message
+        case .none:
+            // nil content is valid for tool-call assistant messages — pass through
+            return message
+        }
     }
 
     // MARK: - Private: Cache Stats
@@ -413,7 +503,7 @@ public struct AIClient: Sendable, AIClientProtocol {
         continuation: AsyncThrowingStream<String, Error>.Continuation
     ) async throws -> (cost: Double?, balance: Double?) {
         let messages = buildMessages(systemPrompt: systemPrompt, chatHistory: chatHistory)
-        let body = AITunnelRequest(model: modelName, messages: messages, temperature: 0.7, tools: nil, stream: true)
+        let body = AITunnelRequest(model: modelName, messages: messages, temperature: 0.7, tools: nil, stream: true, cacheControl: supportsCaching ? .oneHour : nil)
         let request = try buildURLRequest(body: body)
         let (asyncBytes, response) = try await urlSession.bytes(for: request)
         try validateHTTPResponse(response, data: nil)

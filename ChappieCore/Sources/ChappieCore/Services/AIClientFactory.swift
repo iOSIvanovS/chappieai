@@ -18,6 +18,10 @@
 // make() uses AIClient.init(endpoint:) — full chat URL known from model.endpoint.
 // makeForValidation() uses AIClient.init(baseURL:) — no chat model yet, only base URL known.
 // This avoids the double-path bug where /v1/models gets appended twice.
+//
+// CACHE CONTROL:
+// cache_control is an AITunnel-specific extension — only sent when catalogId == "aitunnel".
+// All other providers (Groq, Ollama, OpenAI, etc.) reject this field with HTTP 400.
 
 import Foundation
 
@@ -34,6 +38,8 @@ public enum AIClientFactory {
         // Model-level protocol takes precedence over provider-level default.
         let proto = model.providerProtocol
         let auth = provider.authScheme
+        // cache_control is AITunnel-specific — only aitunnel catalog provider supports it.
+        let supportsCaching = provider.catalogId == "aitunnel"
 
         switch proto {
         case .anthropic:
@@ -50,7 +56,8 @@ public enum AIClientFactory {
                 endpoint: endpoint,
                 apiKey: apiKey,
                 modelName: model.id,
-                authScheme: auth
+                authScheme: auth,
+                supportsCaching: supportsCaching
             )
         }
     }
@@ -77,12 +84,13 @@ public enum AIClientFactory {
                 authScheme: resolvedAuth
             )
         case .openai:
-            // Use baseURL init — fetchAvailableModels will append /v1/models correctly.
+            // Validation requests never need caching — no catalogId context available here.
             return AIClient(
                 baseURL: baseURL,
                 apiKey: apiKey,
                 modelName: "",
-                authScheme: resolvedAuth
+                authScheme: resolvedAuth,
+                supportsCaching: false
             )
         }
     }

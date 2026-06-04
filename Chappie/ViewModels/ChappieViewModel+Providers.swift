@@ -18,6 +18,11 @@
 //   switchProvider() resolves the key secret from Keychain using activeKeyId.
 //   If activeKeyId is nil and provider requiresApiKey — orchestrator is blocked, banner shown.
 //   If provider does NOT require a key (e.g. Ollama) — keyId nil is valid, empty string used.
+//
+// THREADS IN-MEMORY SYNC:
+//   self.threads is ALWAYS updated after switchProvider, regardless of persistSettings.
+//   This ensures ThreadSettingsSheet always receives fresh data when opened.
+//   persistSettings only controls whether changes are written to SwiftData.
 
 import SwiftUI
 import ChappieCore
@@ -44,7 +49,9 @@ extension ChappieViewModel {
     /// and an empty string is passed to the client factory — which is valid for local providers.
     ///
     /// - Parameter persistSettings: When true (default), writes the new provider/key/model
-    ///   to the active thread's settings in the DB.
+    ///   to the active thread's settings in SwiftData.
+    ///   Regardless of this flag, self.threads is ALWAYS updated in-memory so
+    ///   ThreadSettingsSheet always gets fresh data when opened.
     func switchProvider(
         _ provider: AIProvider,
         keyId: UUID?,
@@ -55,8 +62,7 @@ extension ChappieViewModel {
         let provStore = store ?? self.providerStore
         guard let provStore else { return }
 
-        // Resolve model — required regardless of key
-        // Always look up the freshest provider from the in-memory list to avoid stale model list
+        // Always use the freshest provider from in-memory list to avoid stale model list
         let freshProvider = providers.first(where: { $0.id == provider.id }) ?? provider
         print("[ChappieViewModel] switchProvider: '\(freshProvider.displayName)' requiresApiKey=\(freshProvider.requiresApiKey) modelName=\(modelName ?? "nil") models=\(freshProvider.models.map(\.id))")
 
@@ -64,13 +70,15 @@ extension ChappieViewModel {
               let model = freshProvider.models.first(where: { $0.id == modelId }) else {
             print("[ChappieViewModel] switchProvider: model '\(modelName ?? "nil")' not found in provider '\(freshProvider.displayName)' — blocking orchestrator")
             await applyProviderWithoutModel(freshProvider, from: provStore)
-            if persistSettings, activeThread != nil {
+            if let threadId = activeThread?.id {
                 var settings = activeThreadSettings
                 settings.activeProviderId = freshProvider.id
                 settings.activeKeyId = keyId
                 settings.activeModelName = modelName?.isEmpty == false ? modelName : nil
                 activeThreadSettings = settings
-                if let threadId = activeThread?.id, let tStore = threadStore {
+                // Always sync in-memory threads so sheet gets fresh data
+                updateThreadInMemory(threadId: threadId, settings: settings)
+                if persistSettings, let tStore = threadStore {
                     try? await tStore.updateSettings(settings, forThreadId: threadId)
                 }
             }
@@ -84,13 +92,15 @@ extension ChappieViewModel {
                   let loadedKey = await provStore.loadApiKey(for: resolvedKeyId),
                   !loadedKey.isEmpty else {
                 await applyProviderWithoutModel(freshProvider, from: provStore)
-                if persistSettings, activeThread != nil {
+                if let threadId = activeThread?.id {
                     var settings = activeThreadSettings
                     settings.activeProviderId = freshProvider.id
                     settings.activeKeyId = keyId
                     settings.activeModelName = modelId
                     activeThreadSettings = settings
-                    if let threadId = activeThread?.id, let tStore = threadStore {
+                    // Always sync in-memory threads so sheet gets fresh data
+                    updateThreadInMemory(threadId: threadId, settings: settings)
+                    if persistSettings, let tStore = threadStore {
                         try? await tStore.updateSettings(settings, forThreadId: threadId)
                     }
                 }
@@ -114,18 +124,36 @@ extension ChappieViewModel {
             self.orchestrator = AIOrchestrator(aiClient: client, toolService: ts, fileSystem: fs, memoryManager: mm)
         }
 
-        if persistSettings, activeThread != nil {
+        if let threadId = activeThread?.id {
             var settings = activeThreadSettings
             settings.activeProviderId = freshProvider.id
             settings.activeKeyId = keyId
             settings.activeModelName = modelId
             activeThreadSettings = settings
-            if let threadId = activeThread?.id, let tStore = threadStore {
+            // Always sync in-memory threads so sheet gets fresh data
+            updateThreadInMemory(threadId: threadId, settings: settings)
+            if persistSettings, let tStore = threadStore {
                 try? await tStore.updateSettings(settings, forThreadId: threadId)
             }
         }
 
         print("[ChappieViewModel] Switched → \(freshProvider.displayName) / \(model.providerProtocol) / key: \(keyId?.uuidString ?? "none") / model: \(modelId)")
+    }
+
+    /// Updates the thread object in self.threads in-memory after settings change.
+    /// Avoids a full loadThreads() round-trip while keeping the array fresh.
+    /// Called after every switchProvider — regardless of persistSettings flag.
+    func updateThreadInMemory(threadId: UUID, settings: ThreadSettings) {
+        guard let idx = threads.firstIndex(where: { $0.id == threadId }) else { return }
+        let old = threads[idx]
+        threads[idx] = ThreadMetadata(
+            id: old.id,
+            title: old.title,
+            settings: settings,
+            projectIds: old.projectIds,
+            createdAt: old.createdAt,
+            updatedAt: Date()
+        )
     }
 
     func switchProvider(id: UUID) {

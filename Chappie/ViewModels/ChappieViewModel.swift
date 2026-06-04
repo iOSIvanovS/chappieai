@@ -262,18 +262,20 @@ final class ChappieViewModel {
             await preloadLastActiveThreadId()
             await refreshBalanceCacheIfNeeded()
 
-            // Sync requiresApiKey from the remote catalog BEFORE loading providers.
-            // This guarantees self.providers is populated with correct requiresApiKey values
+            // Sync catalog fields from the remote catalog BEFORE loading providers.
+            // This guarantees self.providers is populated with correct values
             // before loadThreadsAndSelectActive calls switchProvider.
-            // Without this ordering, switchProvider may run with stale requiresApiKey=true
-            // for providers like Ollama, blocking the orchestrator.
             if let catalog = try? await providersRemoteService.fetchCatalog() {
+                // requiresApiKey must be correct before switchProvider runs
                 try? await provStore.syncRequiresApiKey(from: catalog.providers)
                 print("[ChappieViewModel] requiresApiKey synced from catalog")
+                // Icons are cosmetic — sync after requiresApiKey
+                try? await provStore.syncIcons(from: catalog.providers)
+                print("[ChappieViewModel] Icons synced from catalog")
             }
 
             // Load providers FIRST — must complete before thread selection so that
-            // switchProvider() reads fresh requiresApiKey values from self.providers.
+            // switchProvider() reads fresh values from self.providers.
             await loadProvidersAndSetActive(from: provStore)
 
             // Load threads AFTER providers are ready.

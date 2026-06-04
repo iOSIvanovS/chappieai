@@ -12,7 +12,7 @@ import Foundation
 /// Centralized application configuration. All tuning parameters live here.
 ///
 /// DYNAMIC (IT-02): Created from ThreadSettings — each thread has its own config.
-/// AppConfig.shared is the default (300 messages = 150,000 tokens).
+/// AppConfig.shared is the default (100 messages).
 public struct AppConfig: Codable, Equatable, Sendable {
 
     // MARK: - Singleton
@@ -29,7 +29,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
     /// Formula: maxMessagesInContext × 500. Int.max when isUnlimitedContext = true.
     public let tokenBudget: Int
 
-    /// Hard limit on message count in context window.
+    /// Hard limit on message count in context window. Range: 10...1000.
     ///
     /// WHY SEPARATE FROM tokenBudget: tokenBudget controls volume, not count.
     public let maxMessagesInContext: Int
@@ -54,11 +54,11 @@ public struct AppConfig: Codable, Equatable, Sendable {
 
     // MARK: - Initialization
 
-    /// Default config: 300 messages, 150,000 tokens.
+    /// Default config: 100 messages.
     private init() {
         maxOrchestratorSteps     = 100
         maxMessagesInContext     = 100
-        tokenBudget              = 300 * 500
+        tokenBudget              = 100 * 500
         isUnlimitedContext       = false
         requestTimeoutSeconds    = 300
         connectionTimeoutSeconds = 30
@@ -79,7 +79,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
             maxMessagesInContext = Int.max
             tokenBudget          = Int.max
         } else {
-            let clamped          = max(100, min(1000, settings.maxMessagesInContext))
+            // Clamp 10...1000 — mirrors ThreadSettings valid range
+            let clamped          = max(10, min(1000, settings.maxMessagesInContext))
             maxMessagesInContext  = clamped
             tokenBudget          = clamped * 500
         }
@@ -87,7 +88,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
 
     /// Convenience init from raw message count — for tests and legacy code.
     public init(maxMessagesInContext: Int) {
-        let clamped              = max(100, min(1000, maxMessagesInContext))
+        let clamped              = max(10, min(1000, maxMessagesInContext))
         maxOrchestratorSteps     = 100
         self.maxMessagesInContext = clamped
         tokenBudget              = clamped * 500

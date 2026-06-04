@@ -9,6 +9,8 @@
 //        Key auto-resolution: same provider → keep current key.
 //        New provider → last used key (from thread settings) or first key.
 //        Keyless providers (requiresApiKey=false) → nil key always.
+//
+// ICONS: provider icon shown in chip and in each submenu entry.
 
 import SwiftUI
 import ChappieCore
@@ -55,18 +57,17 @@ struct ModelPickerRow: View {
             // Native macOS menu — label styled to match other chips
             Menu {
                 ForEach(providers) { provider in
-                    Menu(provider.displayName) {
+                    Menu {
                         ForEach(provider.models) { model in
-                            let isActive = provider.id == activeProvider?.id
-                                && model.id == activeModelName
                             Button {
                                 handleSelection(provider: provider, model: model)
                             } label: {
-                                if isActive {
-                                    Label(model.displayName, systemImage: "checkmark")
-                                } else {
-                                    Text(model.displayName)
-                                }
+                                let isActive = provider.id == activeProvider?.id
+                                    && model.id == activeModelName
+                                Label(
+                                    model.displayName,
+                                    systemImage: isActive ? "checkmark" : ""
+                                )
                             }
                         }
 
@@ -74,15 +75,25 @@ struct ModelPickerRow: View {
                             Text("Нет моделей")
                                 .foregroundStyle(.secondary)
                         }
+                    } label: {
+                        // Provider name in submenu — no icon support in macOS Menu labels
+                        Text(provider.displayName)
                     }
                 }
             } label: {
-                // Plain label — no background here, background is on the pill wrapper below
                 HStack(spacing: 4) {
-                    Image(systemName: isOrphaned ? "exclamationmark.triangle.fill" : "cpu")
-                        .font(.system(size: 10))
-                        .foregroundStyle(isOrphaned ? Color.orange : Color.accentColor.opacity(0.8))
-                        .fixedSize()
+                    // Show active provider icon if selected, otherwise generic cpu
+                    if let provider = activeProvider, !isOrphaned {
+                        Image(systemName: provider.iconName)
+                            .font(.system(size: 10))
+                            .foregroundStyle(provider.resolvedIconColor)
+                            .fixedSize()
+                    } else {
+                        Image(systemName: isOrphaned ? "exclamationmark.triangle.fill" : "cpu")
+                            .font(.system(size: 10))
+                            .foregroundStyle(isOrphaned ? Color.orange : Color.accentColor.opacity(0.8))
+                            .fixedSize()
+                    }
 
                     chipLabel
 
@@ -95,7 +106,6 @@ struct ModelPickerRow: View {
                 .padding(.vertical, 4)
             }
             .menuStyle(.borderlessButton)
-            // White pill background — same as other chips
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
@@ -109,7 +119,6 @@ struct ModelPickerRow: View {
                     )
             )
             .fixedSize()
-            //.disabled(streaming.isThinking)
             .shakeOnTap(isLocked: streaming.isThinking)
             .help(streaming.isThinking ? "Нельзя менять модель пока Чаппи думает" : "")
         }
