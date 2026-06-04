@@ -740,7 +740,8 @@
           "endpoint": "/v1/chat/completions",
           "protocol": "openai"
         }
-      ]
+      ],
+      "requires_api_key": false
     }
   ]
 }
