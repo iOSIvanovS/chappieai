@@ -1,7 +1,7 @@
 {
   "meta": {
     "version": "1.0",
-    "updated_at": "2026-06-04T14:38:55Z",
+    "updated_at": "2026-06-04T16:57:28Z",
     "providers_count": 10,
     "models_count": 111
   },
@@ -669,12 +669,6 @@
       "base_url": "http://localhost:11434",
       "models": [
         {
-          "id": "llama3.2",
-          "name": "Llama 3.2",
-          "endpoint": "/v1/chat/completions",
-          "protocol": "openai"
-        },
-        {
           "id": "llama3.1",
           "name": "Llama 3.1",
           "endpoint": "/v1/chat/completions",
@@ -737,6 +731,12 @@
         {
           "id": "codellama",
           "name": "Code Llama",
+          "endpoint": "/v1/chat/completions",
+          "protocol": "openai"
+        },
+        {
+          "id": "llama3.2:3b",
+          "name": "Llama 3.2 3B",
           "endpoint": "/v1/chat/completions",
           "protocol": "openai"
         }
