@@ -1,7 +1,7 @@
 {
   "meta": {
     "version": "1.0",
-    "updated_at": "2026-06-04T13:52:57Z",
+    "updated_at": "2026-06-04T14:20:10Z",
     "providers_count": 10,
     "models_count": 211
   },
@@ -1340,7 +1340,8 @@
           "endpoint": "/v1/chat/completions",
           "protocol": "openai"
         }
-      ]
+      ],
+      "requires_api_key": false
     }
   ]
 }
