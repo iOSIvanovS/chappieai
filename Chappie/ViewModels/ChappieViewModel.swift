@@ -339,8 +339,6 @@ final class ChappieViewModel {
         Task {
             await preloadLastActiveThreadId()
             await refreshBalanceCacheIfNeeded()
-
-            await runMigrationIfNeeded(threadStore: tStore, memoryStore: store)
             await loadProvidersAndSetActive(from: provStore)
             await loadThreadsAndSelectActive(from: tStore)
         }
@@ -375,29 +373,6 @@ final class ChappieViewModel {
         if messages.isEmpty {
             messages.append(.message(isUser: false, text: "Проект подключен. Я готов к работе!"))
         }
-    }
-
-    // MARK: - Migration
-
-    func runMigrationIfNeeded(threadStore: ThreadStore, memoryStore: MemoryStore) async {
-        let migrationService = MigrationService(threadStore: threadStore, memoryStore: memoryStore)
-
-        let chatHistoryURL: URL
-        if let workspaceURL = workspaceURL {
-            chatHistoryURL = workspaceURL.appendingPathComponent("chat_history.json")
-        } else {
-            chatHistoryURL = ChatHistoryManager.shared.fileURL
-        }
-
-        let docsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let semanticURL = docsURL.appendingPathComponent("Chappie").appendingPathComponent("semantic.json")
-
-        let didMigrate = await migrationService.migrate(
-            messageType: ChatMessage.self,
-            chatHistoryURL: chatHistoryURL,
-            semanticMemoryURL: semanticURL
-        )
-        if didMigrate { print("[ChappieViewModel] Migration IT-04 completed") }
     }
 
     // MARK: - Service Initialization
