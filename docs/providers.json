@@ -1,9 +1,9 @@
 {
   "meta": {
     "version": "1.0",
-    "updated_at": "2026-06-04T13:46:08Z",
+    "updated_at": "2026-06-04T13:52:57Z",
     "providers_count": 10,
-    "models_count": 218
+    "models_count": 211
   },
   "providers": [
     {
@@ -751,24 +751,6 @@
           "protocol": "openai"
         },
         {
-          "id": "openrouter/fusion",
-          "name": "OpenRouter: Fusion",
-          "endpoint": "/api/v1/chat/completions",
-          "protocol": "openai"
-        },
-        {
-          "id": "openrouter/owl-alpha",
-          "name": "Owl Alpha",
-          "endpoint": "/api/v1/chat/completions",
-          "protocol": "openai"
-        },
-        {
-          "id": "openrouter/pareto-code",
-          "name": "Pareto Code Router",
-          "endpoint": "/api/v1/chat/completions",
-          "protocol": "openai"
-        },
-        {
           "id": "meta-llama/llama-3.3-70b-instruct:free",
           "name": "Llama 3.3 70B Instruct (free)",
           "endpoint": "/api/v1/chat/completions",
@@ -801,24 +783,6 @@
         {
           "id": "nvidia/nemotron-3-super-120b-a12b:free",
           "name": "NVIDIA Nemotron 3 Super 120B (free)",
-          "endpoint": "/api/v1/chat/completions",
-          "protocol": "openai"
-        },
-        {
-          "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-          "name": "NVIDIA Nemotron 3 Nano Omni 30B (free)",
-          "endpoint": "/api/v1/chat/completions",
-          "protocol": "openai"
-        },
-        {
-          "id": "poolside/laguna-xs.2:free",
-          "name": "Poolside Laguna XS.2 (free)",
-          "endpoint": "/api/v1/chat/completions",
-          "protocol": "openai"
-        },
-        {
-          "id": "poolside/laguna-m.1:free",
-          "name": "Poolside Laguna M.1 (free)",
           "endpoint": "/api/v1/chat/completions",
           "protocol": "openai"
         }
@@ -1367,12 +1331,6 @@
         {
           "id": "codellama",
           "name": "Code Llama",
-          "endpoint": "/v1/chat/completions",
-          "protocol": "openai"
-        },
-        {
-          "id": "nomic-embed-text",
-          "name": "Nomic Embed Text",
           "endpoint": "/v1/chat/completions",
           "protocol": "openai"
         },
