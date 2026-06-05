@@ -2,11 +2,11 @@ import Foundation
 
 // MARK: - Prompt Caching: Content Blocks
 
-/// Cache control tag — placed at the top level of AITunnelRequest, not per-block.
+/// Cache control tag — placed inside a content block for explicit cache breakpoints.
 ///
-/// WHY TOP-LEVEL: AITunnel is an OpenAI-compatible gateway; passing cache_control inside
-/// message content arrays breaks the connection. Top-level placement lets the gateway
-/// move the breakpoint automatically as the conversation grows.
+/// WHY PER-BLOCK (not top-level): top-level cache_control only works when AITunnel routes
+/// to Anthropic directly. When routed via Bedrock/Vertex (sticky routing fallback),
+/// top-level is silently ignored. Per-block cache_control works on ALL routing targets.
 ///
 /// WHY 1H TTL: Default 5-min TTL means the system prompt is recomputed every break.
 /// 1h covers full dev sessions and saves ~80-90% of system prompt cost.
@@ -24,10 +24,12 @@ public struct AICacheControl: Codable, Sendable {
     public static let fiveMinutes = AICacheControl(type: "ephemeral", ttl: nil)
 }
 
-/// One content block — text with optional cache tag.
+/// One content block — text with optional cache breakpoint tag.
 ///
-/// Kept for response decoding compatibility. In requests we use top-level cache_control
-/// on AITunnelRequest instead — per-block cache_control is NOT sent to AITunnel.
+/// Used in two ways:
+/// 1. System message caching: AIClient wraps the system prompt in a single block with
+///    cache_control=oneHour — pins the breakpoint at the end of the system prompt.
+/// 2. Response decoding: models may return content as blocks; decoded but not re-sent.
 public struct AIContentBlock: Codable, Sendable {
     public let type: String
     public let text: String
@@ -93,8 +95,9 @@ public enum AIMultimodalPart: Encodable, Sendable {
 
 /// Polymorphic message content: plain string, cached blocks, or multimodal parts.
 ///
-/// .text — all non-multimodal messages (standard OpenAI format).
-/// .blocks — decoding only; NOT sent to AITunnel (gateway rejects arrays).
+/// .text      — standard messages for all providers.
+/// .blocks    — content block array with optional cache_control. Used for system message
+///              caching on AITunnel (supportsCaching=true). Not sent to strict providers.
 /// .multimodal — user messages with image/file attachments (OpenAI vision format).
 public enum AIMessageContent: Sendable {
     case text(String)
@@ -109,7 +112,8 @@ extension AIMessageContent: Encodable {
         case .text(let string):
             try container.encode(string)
         case .blocks(let blocks):
-            // WARNING: do NOT use in AITunnel requests — gateway rejects arrays.
+            // Sent as content array — supported by AITunnel for system message caching.
+            // Not used for strict providers (Groq, Ollama) — normalizeMessage() converts to .text first.
             try container.encode(blocks)
         case .multimodal(let parts):
             try container.encode(parts)
@@ -137,7 +141,8 @@ extension AIMessageContent: Decodable {
 
 /// POST request body for the AI provider API.
 ///
-/// cache_control is top-level (not per-block) — required by AITunnel gateway.
+/// cache_control at top level is kept for compatibility but no longer used for caching.
+/// Actual caching is done via per-block cache_control in the system message content array.
 /// stream=true → SSE chunks; stream=false → single blocking response.
 public struct AITunnelRequest: Encodable, Sendable {
     public let model: String
@@ -153,7 +158,7 @@ public struct AITunnelRequest: Encodable, Sendable {
         temperature: Double? = nil,
         tools: [AITool]? = nil,
         stream: Bool = false,
-        cacheControl: AICacheControl? = .oneHour
+        cacheControl: AICacheControl? = nil
     ) {
         self.model = model
         self.messages = messages
@@ -202,7 +207,8 @@ public struct AIMessage: Sendable {
         self.name = name
     }
 
-    /// Blocks initializer — kept for compatibility. NOT for AITunnel requests.
+    /// Blocks initializer — used for system message caching on AITunnel.
+    /// Sends content as a JSON array with optional cache_control on the last block.
     public init(
         role: String,
         contentBlocks: [AIContentBlock],

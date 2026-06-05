@@ -19,8 +19,16 @@
 // Controlled by AuthScheme passed at init — allows OpenAI-format body with any auth combo.
 //
 // CACHE CONTROL:
-// cache_control is an AITunnel-specific top-level field. Most providers (Groq, Ollama, etc.)
-// reject it with HTTP 400. Only sent when supportsCaching=true (AITunnel only).
+// AITunnel supports two caching modes (see docs.aitunnel.ru/features/prompt-caching.html):
+//   - Automatic (top-level cache_control): only works when routed to Anthropic directly.
+//     Fails silently when routed via Bedrock/Vertex — no CACHE HIT.
+//   - Explicit breakpoint (per-block cache_control in content array): works everywhere,
+//     including Bedrock/Vertex. This is our chosen approach.
+// When supportsCaching=true, the system message is sent as a content array with
+// cache_control on the last block — this pins the breakpoint at the system prompt,
+// caching both the persona and tools for the entire session.
+// All other providers (Groq, Ollama, etc.) reject content arrays → supportsCaching=false
+// uses plain string content.
 //
 // CONTENT NORMALIZATION:
 // When supportsCaching=false, normalizeMessage() is applied to every history message:
@@ -215,7 +223,7 @@ public struct AIClient: Sendable, AIClientProtocol {
             temperature: 0.7,
             tools: tools.isEmpty ? nil : tools,
             stream: true,
-            cacheControl: supportsCaching ? .oneHour : nil
+            cacheControl: nil  // explicit per-block cache_control on system message is used instead
         )
 
         let request = try buildURLRequest(body: body)
@@ -344,7 +352,7 @@ public struct AIClient: Sendable, AIClientProtocol {
             temperature: 0.7,
             tools: tools.isEmpty ? nil : tools,
             stream: false,
-            cacheControl: supportsCaching ? .oneHour : nil
+            cacheControl: nil  // explicit per-block cache_control on system message is used instead
         )
         let request = try buildURLRequest(body: body)
         let (data, response) = try await performRequest(request)
@@ -402,16 +410,31 @@ public struct AIClient: Sendable, AIClientProtocol {
 
     /// Builds the final message array to send to the provider.
     ///
-    /// When supportsCaching=false (all providers except AITunnel), normalizes every message
-    /// via normalizeMessage() — converts blocks/multimodal to plain strings, drops empty content.
+    /// For AITunnel (supportsCaching=true): system message is sent as a content block array
+    /// with cache_control on the last block — explicit breakpoint that works on all routing
+    /// targets (Anthropic direct, Bedrock, Vertex). History is sent as-is.
+    ///
+    /// For strict providers (supportsCaching=false): all messages are normalized to plain
+    /// strings via normalizeMessage() — content arrays and cache_control are rejected.
     private func buildMessages(systemPrompt: String, chatHistory: [AIMessage]) -> [AIMessage] {
-        var messages: [AIMessage] = [AIMessage(role: "system", content: systemPrompt)]
+        let systemMessage: AIMessage
+        if supportsCaching {
+            // Explicit cache breakpoint at the end of the system prompt.
+            // WHY BLOCKS: top-level cache_control only works when routed to Anthropic directly.
+            // Per-block cache_control works on Bedrock/Vertex too — more reliable for sticky routing.
+            systemMessage = AIMessage(
+                role: "system",
+                contentBlocks: [AIContentBlock(text: systemPrompt, cacheControl: .oneHour)]
+            )
+        } else {
+            systemMessage = AIMessage(role: "system", content: systemPrompt)
+        }
+
+        var messages: [AIMessage] = [systemMessage]
 
         if supportsCaching {
-            // AITunnel: send as-is, blocks and cache_control are supported
             messages.append(contentsOf: chatHistory)
         } else {
-            // Strict providers: normalize all non-string content to plain text, filter empties
             messages.append(contentsOf: chatHistory.compactMap { normalizeMessage($0) })
         }
 
@@ -431,7 +454,6 @@ public struct AIClient: Sendable, AIClientProtocol {
         switch message.content {
         case .blocks(let blocks):
             let text = blocks.map(\.text).joined()
-            // Drop messages whose only content was empty blocks
             guard !text.isEmpty else { return nil }
             return AIMessage(
                 role: message.role,
@@ -441,7 +463,6 @@ public struct AIClient: Sendable, AIClientProtocol {
                 name: message.name
             )
         case .multimodal(let parts):
-            // Extract only text parts — drop images (strict providers reject data URIs)
             let text = parts.compactMap { part -> String? in
                 if case .text(let t) = part { return t }
                 return nil
@@ -455,10 +476,7 @@ public struct AIClient: Sendable, AIClientProtocol {
                 name: message.name
             )
         case .text(let s):
-            // Empty string → nil content (Groq: "content is missing" for empty strings)
             if s.isEmpty {
-                // Keep the message but with nil content — valid for tool-result roles
-                // that Groq requires to be present but without content
                 return AIMessage(
                     role: message.role,
                     content: nil as String?,
@@ -469,7 +487,6 @@ public struct AIClient: Sendable, AIClientProtocol {
             }
             return message
         case .none:
-            // nil content is valid for tool-call assistant messages — pass through
             return message
         }
     }
@@ -503,7 +520,7 @@ public struct AIClient: Sendable, AIClientProtocol {
         continuation: AsyncThrowingStream<String, Error>.Continuation
     ) async throws -> (cost: Double?, balance: Double?) {
         let messages = buildMessages(systemPrompt: systemPrompt, chatHistory: chatHistory)
-        let body = AITunnelRequest(model: modelName, messages: messages, temperature: 0.7, tools: nil, stream: true, cacheControl: supportsCaching ? .oneHour : nil)
+        let body = AITunnelRequest(model: modelName, messages: messages, temperature: 0.7, tools: nil, stream: true, cacheControl: nil)
         let request = try buildURLRequest(body: body)
         let (asyncBytes, response) = try await urlSession.bytes(for: request)
         try validateHTTPResponse(response, data: nil)

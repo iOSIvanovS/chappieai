@@ -20,16 +20,16 @@ extension ToolExecutionService {
 
             AITool(function: AIFunctionDefinition(
                 name: "list_files",
-                description: "Получить список всех файлов в проекте (относительные пути).",
+                description: "Get the list of all files in the project (relative paths).",
                 parameters: AIToolParameters(properties: [:], required: [])
             )),
 
             AITool(function: AIFunctionDefinition(
                 name: "read_file",
-                description: "Прочитать содержимое файла в проекте.",
+                description: "Read the contents of a file in the project.",
                 parameters: AIToolParameters(
                     properties: [
-                        "path": AIToolProperty(type: "string", description: "Относительный путь к файлу")
+                        "path": AIToolProperty(type: "string", description: "Relative path to the file")
                     ],
                     required: ["path"]
                 )
@@ -37,11 +37,11 @@ extension ToolExecutionService {
 
             AITool(function: AIFunctionDefinition(
                 name: "write_file",
-                description: "Создать новый или полностью перезаписать существующий файл (подпапки создадутся автоматически).",
+                description: "Create a new file or fully overwrite an existing one (subdirectories are created automatically).",
                 parameters: AIToolParameters(
                     properties: [
-                        "path": AIToolProperty(type: "string", description: "Относительный путь к файлу"),
-                        "content": AIToolProperty(type: "string", description: "Полный код или текст для записи в файл")
+                        "path": AIToolProperty(type: "string", description: "Relative path to the file"),
+                        "content": AIToolProperty(type: "string", description: "Full code or text to write into the file")
                     ],
                     required: ["path", "content"]
                 )
@@ -49,10 +49,10 @@ extension ToolExecutionService {
 
             AITool(function: AIFunctionDefinition(
                 name: "delete_file",
-                description: "Удалить файл из проекта.",
+                description: "Delete a file from the project.",
                 parameters: AIToolParameters(
                     properties: [
-                        "path": AIToolProperty(type: "string", description: "Относительный путь к удаляемому файлу")
+                        "path": AIToolProperty(type: "string", description: "Relative path to the file to delete")
                     ],
                     required: ["path"]
                 )
@@ -61,15 +61,15 @@ extension ToolExecutionService {
             AITool(function: AIFunctionDefinition(
                 name: "web_fetch",
                 description: """
-                Загрузить веб-страницу по URL и вернуть её текстовое содержимое (без HTML-разметки).
-                Используй для получения документации, статей, GitHub-страниц и любых публичных веб-ресурсов.
-                Шум (nav, header, footer, рекламные блоки) автоматически удаляется — остаётся только смысловой контент.
-                Лимит: 100 000 символов после очистки. Если страница больше — контент обрезается с конца с пометкой.
+                Load a web page by URL and return its text content (without HTML markup).
+                Use to fetch documentation, articles, GitHub pages, and any public web resources.
+                Noise (nav, header, footer, ads) is automatically removed — only meaningful content remains.
+                Limit: 100,000 characters after cleanup. If the page is larger — content is truncated from the end with a note.
                 """,
                 parameters: AIToolParameters(
                     properties: [
-                        "url": AIToolProperty(type: "string", description: "Абсолютный URL страницы (http или https)."),
-                        "selector": AIToolProperty(type: "string", description: "Опциональный CSS-селектор для извлечения конкретного блока: имя тега ('article'), '.class-name' или '#element-id'. Если не указан — обрабатывается вся страница.")
+                        "url": AIToolProperty(type: "string", description: "Absolute URL of the page (http or https)."),
+                        "selector": AIToolProperty(type: "string", description: "Optional CSS selector to extract a specific block: tag name ('article'), '.class-name', or '#element-id'. If not specified — the entire page is processed.")
                     ],
                     required: ["url"]
                 )
@@ -80,12 +80,12 @@ extension ToolExecutionService {
             AITool(function: AIFunctionDefinition(
                 name: "memorize",
                 description: """
-                Запомнить важную информацию, договоренность, факт или правило в долгосрочную память.
-                Используй scope для выбора уровня:
-                  scope="global" — глобальная память (кросс-проектные правила, факты о пользователе).
-                  scope="thread" — память активного треда (контекст текущей задачи).
-                  targetName="ProjectName" — память конкретного проекта (архитектура, пайплайны).
-                Если scope и targetName не заданы — сохраняется в глобальную память.
+                Save important information, agreement, fact, or rule to long-term memory.
+                Use scope to choose the level:
+                  scope="global" — global memory (cross-project rules, facts about the user).
+                  scope="thread" — active thread memory (current task context).
+                  targetName="ProjectName" — specific project memory (architecture, pipelines).
+                If neither scope nor targetName is set — saves to global memory.
                 IMPORTANT: ALL fields (key, type, jsonString) MUST be in English. Cyrillic is REJECTED.
                 """,
                 parameters: AIToolParameters(
@@ -103,17 +103,17 @@ extension ToolExecutionService {
             AITool(function: AIFunctionDefinition(
                 name: "recall",
                 description: """
-                Вспомнить информацию из долгосрочной памяти по ключу.
-                Используй scope или targetName чтобы указать уровень памяти:
-                  scope="global" — глобальная память.
-                  scope="thread" — память активного треда.
-                  targetName="ProjectName" — память конкретного проекта.
+                Retrieve information from long-term memory by key.
+                Use scope or targetName to specify the memory level:
+                  scope="global" — global memory.
+                  scope="thread" — active thread memory.
+                  targetName="ProjectName" — specific project memory.
                 """,
                 parameters: AIToolParameters(
                     properties: [
-                        "key": AIToolProperty(type: "string", description: "Уникальный ключ/тема, который нужно вспомнить"),
-                        "scope": AIToolProperty(type: "string", description: "Область видимости: global (по умолчанию) или thread"),
-                        "targetName": AIToolProperty(type: "string", description: "Имя конкретного проекта среди прикреплённых к треду для поиска памяти строго в этом проекте")
+                        "key": AIToolProperty(type: "string", description: "Unique key/topic to recall"),
+                        "scope": AIToolProperty(type: "string", description: "Scope: global (default) or thread"),
+                        "targetName": AIToolProperty(type: "string", description: "Name of a specific project attached to the thread to search memory strictly in that project")
                     ],
                     required: ["key"]
                 )
@@ -122,17 +122,17 @@ extension ToolExecutionService {
             AITool(function: AIFunctionDefinition(
                 name: "search_memory",
                 description: """
-                Найти все записи в памяти по определенному типу.
-                Используй scope или targetName чтобы указать уровень памяти:
-                  scope="global" — глобальная память.
-                  scope="thread" — память активного треда.
-                  targetName="ProjectName" — память конкретного проекта.
+                Find all memory entries by a specific type.
+                Use scope or targetName to specify the memory level:
+                  scope="global" — global memory.
+                  scope="thread" — active thread memory.
+                  targetName="ProjectName" — specific project memory.
                 """,
                 parameters: AIToolParameters(
                     properties: [
-                        "type": AIToolProperty(type: "string", description: "Тип данных для поиска (например: rule, fact)"),
-                        "scope": AIToolProperty(type: "string", description: "Область видимости: global (по умолчанию) или thread"),
-                        "targetName": AIToolProperty(type: "string", description: "Имя конкретного проекта среди прикреплённых к треду для поиска памяти строго в этом проекте")
+                        "type": AIToolProperty(type: "string", description: "Data type to search for (e.g.: rule, fact)"),
+                        "scope": AIToolProperty(type: "string", description: "Scope: global (default) or thread"),
+                        "targetName": AIToolProperty(type: "string", description: "Name of a specific project attached to the thread to search memory strictly in that project")
                     ],
                     required: ["type"]
                 )
@@ -141,17 +141,17 @@ extension ToolExecutionService {
             AITool(function: AIFunctionDefinition(
                 name: "delete_memory",
                 description: """
-                Удалить запись из долгосрочной памяти по ключу.
-                Используй scope или targetName чтобы указать уровень памяти:
-                  scope="global" — глобальная память.
-                  scope="thread" — память активного треда.
-                  targetName="ProjectName" — память конкретного проекта.
+                Delete a memory entry by key.
+                Use scope or targetName to specify the memory level:
+                  scope="global" — global memory.
+                  scope="thread" — active thread memory.
+                  targetName="ProjectName" — specific project memory.
                 """,
                 parameters: AIToolParameters(
                     properties: [
-                        "key": AIToolProperty(type: "string", description: "Уникальный ключ/тема для удаления"),
-                        "scope": AIToolProperty(type: "string", description: "Область видимости: global (по умолчанию) или thread"),
-                        "targetName": AIToolProperty(type: "string", description: "Имя конкретного проекта среди прикреплённых к треду для удаления памяти строго из этого проекта")
+                        "key": AIToolProperty(type: "string", description: "Unique key/topic to delete"),
+                        "scope": AIToolProperty(type: "string", description: "Scope: global (default) or thread"),
+                        "targetName": AIToolProperty(type: "string", description: "Name of a specific project attached to the thread to delete memory strictly from that project")
                     ],
                     required: ["key"]
                 )
@@ -161,16 +161,16 @@ extension ToolExecutionService {
 
             AITool(function: AIFunctionDefinition(
                 name: "git_status",
-                description: "Показать текущий статус git-репозитория: изменённые, новые и удалённые файлы.",
+                description: "Show the current git repository status: modified, new, and deleted files.",
                 parameters: AIToolParameters(properties: [:], required: [])
             )),
 
             AITool(function: AIFunctionDefinition(
                 name: "git_diff",
-                description: "Показать содержимое изменений в коде.",
+                description: "Show the content of code changes.",
                 parameters: AIToolParameters(
                     properties: [
-                        "staged": AIToolProperty(type: "string", description: "true — показать staged изменения (после git add), false — unstaged (по умолчанию)")
+                        "staged": AIToolProperty(type: "string", description: "true — show staged changes (after git add), false — unstaged (default)")
                     ],
                     required: []
                 )
@@ -178,10 +178,10 @@ extension ToolExecutionService {
 
             AITool(function: AIFunctionDefinition(
                 name: "git_add",
-                description: "Добавить файлы в staging area (подготовить к коммиту).",
+                description: "Add files to the staging area (prepare for commit).",
                 parameters: AIToolParameters(
                     properties: [
-                        "paths": AIToolProperty(type: "string", description: "Пути через пробел, или '.' для всех файлов (по умолчанию '.')")
+                        "paths": AIToolProperty(type: "string", description: "Space-separated paths, or '.' for all files (default '.')")
                     ],
                     required: []
                 )
@@ -189,10 +189,10 @@ extension ToolExecutionService {
 
             AITool(function: AIFunctionDefinition(
                 name: "git_commit",
-                description: "Создать git-коммит с заданным сообщением.",
+                description: "Create a git commit with the given message.",
                 parameters: AIToolParameters(
                     properties: [
-                        "message": AIToolProperty(type: "string", description: "Текст коммита")
+                        "message": AIToolProperty(type: "string", description: "Commit message")
                     ],
                     required: ["message"]
                 )
@@ -200,10 +200,10 @@ extension ToolExecutionService {
 
             AITool(function: AIFunctionDefinition(
                 name: "git_log",
-                description: "Показать историю последних коммитов.",
+                description: "Show the history of recent commits.",
                 parameters: AIToolParameters(
                     properties: [
-                        "count": AIToolProperty(type: "string", description: "Количество коммитов (по умолчанию 10)")
+                        "count": AIToolProperty(type: "string", description: "Number of commits to show (default 10)")
                     ],
                     required: []
                 )
@@ -211,21 +211,21 @@ extension ToolExecutionService {
 
             AITool(function: AIFunctionDefinition(
                 name: "git_reset",
-                description: "Убрать все файлы из staging area (git reset HEAD).",
+                description: "Remove all files from the staging area (git reset HEAD).",
                 parameters: AIToolParameters(properties: [:], required: [])
             )),
 
             AITool(function: AIFunctionDefinition(
                 name: "git_revert",
                 description: """
-                Откатить один или несколько коммитов через git revert.
-                Все изменения собираются в один чистый коммит с заданным сообщением.
-                Используй когда нужно отменить конкретные коммиты не удаляя их из истории.
+                Revert one or more commits via git revert.
+                All changes are collected into a single clean commit with the given message.
+                Use when you need to undo specific commits without removing them from history.
                 """,
                 parameters: AIToolParameters(
                     properties: [
-                        "hashes": AIToolProperty(type: "string", description: "Хэши коммитов через пробел, которые нужно откатить (например: 'abc123 def456')"),
-                        "message": AIToolProperty(type: "string", description: "Сообщение для результирующего коммита отката")
+                        "hashes": AIToolProperty(type: "string", description: "Space-separated commit hashes to revert (e.g.: 'abc123 def456')"),
+                        "message": AIToolProperty(type: "string", description: "Message for the resulting revert commit")
                     ],
                     required: ["hashes", "message"]
                 )
@@ -234,14 +234,14 @@ extension ToolExecutionService {
             AITool(function: AIFunctionDefinition(
                 name: "git_checkout",
                 description: """
-                Восстановить конкретные файлы из заданного коммита или ветки.
-                Используй для хирургического отката отдельных файлов без затрагивания остального кода.
-                Примеры ref: HEAD~1, abc123, main
+                Restore specific files from a given commit or branch.
+                Use for surgical rollback of individual files without touching the rest of the code.
+                Examples of ref: HEAD~1, abc123, main
                 """,
                 parameters: AIToolParameters(
                     properties: [
-                        "ref": AIToolProperty(type: "string", description: "Коммит, ветка или относительная ссылка (например: HEAD~1, abc123, main)"),
-                        "paths": AIToolProperty(type: "string", description: "Пути к файлам через пробел для восстановления")
+                        "ref": AIToolProperty(type: "string", description: "Commit, branch, or relative ref (e.g.: HEAD~1, abc123, main)"),
+                        "paths": AIToolProperty(type: "string", description: "Space-separated file paths to restore")
                     ],
                     required: ["ref", "paths"]
                 )
@@ -251,16 +251,16 @@ extension ToolExecutionService {
 
             AITool(function: AIFunctionDefinition(
                 name: "build_project",
-                description: "Собрать проект Chappie.xcodeproj через xcodebuild. Возвращает успех или список ошибок компиляции.",
+                description: "Build the Chappie.xcodeproj project via xcodebuild. Returns success or a list of compilation errors.",
                 parameters: AIToolParameters(properties: [:], required: [])
             )),
 
             AITool(function: AIFunctionDefinition(
                 name: "run_tests",
-                description: "Запустить автотесты. Для ChappieCore используется swift test, для Chappie.app — xcodebuild test.",
+                description: "Run automated tests. ChappieCore uses swift test, Chappie.app uses xcodebuild test.",
                 parameters: AIToolParameters(
                     properties: [
-                        "target": AIToolProperty(type: "string", description: "Имя тест-таргета (например 'ChappieCoreTests'). Пусто = все тесты.")
+                        "target": AIToolProperty(type: "string", description: "Test target name (e.g. 'ChappieCoreTests'). Empty = all tests.")
                     ],
                     required: []
                 )
@@ -268,7 +268,7 @@ extension ToolExecutionService {
 
             AITool(function: AIFunctionDefinition(
                 name: "read_build_log",
-                description: "Прочитать полный лог последней сборки или запуска тестов.",
+                description: "Read the full log of the last build or test run.",
                 parameters: AIToolParameters(properties: [:], required: [])
             )),
 
@@ -276,12 +276,12 @@ extension ToolExecutionService {
 
             AITool(function: AIFunctionDefinition(
                 name: "add_project_to_thread",
-                description: "Добавить проект к текущему треду по имени папки. Используй когда пользователь просит привязать проект к беседе или когда задача явно относится к конкретному проекту.",
+                description: "Add a project to the current thread by folder name. Use when the user asks to attach a project to the conversation or when the task clearly belongs to a specific project.",
                 parameters: AIToolParameters(
                     properties: [
                         "display_name": AIToolProperty(
                             type: "string",
-                            description: "Отображаемое имя проекта (имя папки). Например: 'Chappie', 'MyApp', 'Backend'. Должно совпадать с реальным именем папки проекта."
+                            description: "Display name of the project (folder name). E.g.: 'Chappie', 'MyApp', 'Backend'. Must match the real folder name of the project."
                         )
                     ],
                     required: ["display_name"]
@@ -290,12 +290,12 @@ extension ToolExecutionService {
 
             AITool(function: AIFunctionDefinition(
                 name: "remove_project_from_thread",
-                description: "Убрать проект из текущего треда по имени. Используй когда пользователь просит убрать проект из беседы или задача больше не касается этого проекта.",
+                description: "Remove a project from the current thread by name. Use when the user asks to detach a project or the task no longer concerns this project.",
                 parameters: AIToolParameters(
                     properties: [
                         "display_name": AIToolProperty(
                             type: "string",
-                            description: "Отображаемое имя проекта для удаления из треда. Должно точно совпадать с именем добавленного проекта."
+                            description: "Display name of the project to remove from the thread. Must exactly match the name of the added project."
                         )
                     ],
                     required: ["display_name"]
@@ -304,7 +304,7 @@ extension ToolExecutionService {
 
             AITool(function: AIFunctionDefinition(
                 name: "list_thread_projects",
-                description: "Показать список проектов, привязанных к текущему треду. Используй чтобы узнать какие проекты уже добавлены перед add/remove операциями.",
+                description: "Show the list of projects attached to the current thread. Use to check which projects are already added before add/remove operations.",
                 parameters: AIToolParameters(properties: [:], required: [])
             )),
 
@@ -318,17 +318,17 @@ extension ToolExecutionService {
             AITool(function: AIFunctionDefinition(
                 name: "run_terminal",
                 description: """
-                Выполнить команду в терминале в рабочей директории проекта.
-                Сессия персистентна — команда cd запоминается между вызовами.
-                ТОЛЬКО КОГДА НЕТ СПЕЦИАЛИЗИРОВАННОГО ИНСТРУМЕНТА: для навигации по файлам используй list_files/read_file; для git — git_* инструменты; для сборки — build_project/run_tests.
-                Используй run_terminal для: запуска скриптов, установки зависимостей, CLI-утилит, и операций без специального инструмента.
-                ВАЖНО: если режим 'С подтверждением' — СНАЧАЛА спроси пользователя с точным описанием команды и причины, потом вызывай инструмент.
-                Опасные команды (rm -rf /, sudo rm, mkfs и др.) заблокированы безусловно.
+                Execute a command in the terminal in the project's working directory.
+                The session is persistent — cd commands are remembered between calls.
+                ONLY WHEN NO SPECIALIZED TOOL EXISTS: use list_files/read_file for file navigation; git_* for version control; build_project/run_tests for builds.
+                Use run_terminal for: running scripts, installing dependencies, CLI utilities, and operations with no dedicated tool.
+                IMPORTANT: if mode is 'With confirmation' — FIRST ask the user with the exact command and reason, then call the tool.
+                Dangerous commands (rm -rf /, sudo rm, mkfs, etc.) are unconditionally blocked.
                 """,
                 parameters: AIToolParameters(
                     properties: [
-                        "command": AIToolProperty(type: "string", description: "Shell-команда для выполнения."),
-                        "timeout": AIToolProperty(type: "string", description: "Таймаут в секундах (по умолчанию 30). Увеличь для долгих операций (сборка, npm install).")
+                        "command": AIToolProperty(type: "string", description: "Shell command to execute."),
+                        "timeout": AIToolProperty(type: "string", description: "Timeout in seconds (default 30). Increase for long operations (build, npm install).")
                     ],
                     required: ["command"]
                 )
