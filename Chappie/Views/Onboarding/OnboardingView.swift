@@ -5,8 +5,8 @@
 //
 // FLOW:
 // Step 1: User name (optional) — saved directly to global memory via viewModel.saveUserName()
-// Step 2: First AI provider setup (required) — uses CatalogPickerSheet in onboarding mode.
-//         Cannot proceed until at least one provider is saved.
+// Step 2: First AI provider setup — uses CatalogPickerSheet in onboarding mode.
+//         If at least one provider already exists, user can skip this step.
 //         CatalogPickerSheet → AddProviderSheet (catalog or custom).
 //         Multi-key input is available in AddProviderSheet onboarding mode.
 //
@@ -95,7 +95,7 @@ struct OnboardingView: View {
             VStack(spacing: 12) {
                 Image("Chappie")
                     .resizable()
-                    .scaledToFit()
+                    .scaledToFill()
                     .frame(width: 80, height: 80)
                     .clipShape(Circle())
                     .overlay(Circle().stroke(Color.accentColor.opacity(0.3), lineWidth: 2))
@@ -177,6 +177,17 @@ struct OnboardingView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
+
+            // Skip is available only when at least one provider is already configured
+            if !viewModel.providers.isEmpty {
+                Button {
+                    AppState.shared.completeOnboarding()
+                } label: {
+                    Text("Пропустить — провайдер уже настроен")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
 
             Button {
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {

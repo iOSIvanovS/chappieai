@@ -18,12 +18,8 @@
 //   and the next bind() on the same socket fails with "address already in use".
 //
 // SWIFTDATA SCHEMA:
-// V4 schema — StoredRecord is the only @Model. Legacy classes are gone.
-// Full migration chain: V1 → V2 → V3 → V4 (see AppSettingsMigration.swift).
-//
-// DATA MIGRATION:
-// DataStoreMigration.migrateIfNeeded() runs once at startup (before ViewModel init).
-// Idempotent — safe to call on every launch. No-ops if data is already in StoredRecord.
+// AppSettingsSchemaV1 — StoredRecord is the only @Model. Schema is frozen.
+// No migrations needed — domain structs evolve as Codable, not as @Model.
 //
 // WINDOW SIZE:
 // .defaultSize(width:height:) sets the initial window size on first launch (EULA screen).
@@ -75,21 +71,15 @@ struct ChappieApp: App {
 
     // MARK: - SwiftData Container
 
-    /// V4 schema: StoredRecord is the only @Model.
-    /// AppSettingsMigrationPlan handles the full V1→V2→V3→V4 chain automatically.
-    ///
+    /// StoredRecord is the only @Model. Schema is frozen at V1.
     /// ERROR HANDLING: if the container cannot be created (corrupted DB) — recreate from scratch.
     /// Data loss is acceptable here; better than a full app crash.
     let modelContainer: ModelContainer = {
-        let schema = Schema(AppSettingsSchemaV4.models)
+        let schema = Schema(versionedSchema: AppSettingsSchemaV1.self)
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
         do {
-            return try ModelContainer(
-                for: schema,
-                migrationPlan: AppSettingsMigrationPlan.self,
-                configurations: [config]
-            )
+            return try ModelContainer(for: schema, configurations: [config])
         } catch {
             print("[ChappieApp] Failed to create ModelContainer: \(error)")
             print("[ChappieApp] Attempting to recreate database...")
@@ -116,16 +106,7 @@ struct ChappieApp: App {
                 .environment(viewModel)
                 .environment(\.sparkleUpdater, updaterController.updater)
                 .onAppear {
-                    let container = modelContainer
-                    Task {
-                        let dataStore = ChappieDataStore(modelContainer: container)
-                        let migration = DataStoreMigration(
-                            modelContainer: container,
-                            dataStore: dataStore
-                        )
-                        await migration.migrateIfNeeded()
-                        viewModel.setModelContainer(container)
-                    }
+                    viewModel.setModelContainer(modelContainer)
                 }
                 .background(
                     Image("Chappie")

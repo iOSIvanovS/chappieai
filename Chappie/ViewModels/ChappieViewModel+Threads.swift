@@ -5,7 +5,6 @@
 
 import SwiftUI
 import ChappieCore
-import SwiftData
 
 extension ChappieViewModel {
 

@@ -21,7 +21,6 @@ import Foundation
 //
 // • ChappieDataStore       — the ONLY actor that knows about SwiftData. Single point of persistence.
 // • StoredRecord           — the ONLY @Model in the entire app. relation(String) + payload(Data).
-// • DataStoreMigration     — one-time migration from legacy @Model classes to StoredRecord.
 
 // MARK: Data Models (Models/)
 //
@@ -63,4 +62,4 @@ import Foundation
 // MARK: - Package Version
 
 /// Current ChappieCore version.
-public let coreVersion = "4.0.0"
+public let coreVersion = "4.1.0"

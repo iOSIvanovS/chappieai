@@ -18,15 +18,15 @@ ChappieCore/
     ├── DataStore/
     │   └── DataStore.swift             # THE ONLY file that imports SwiftData. StoredRecord @Model lives here.
     ├── Models/
-    │   ├── AIProviderModels.swift       # AIProvider, APIKey, AIModel + AIProviderEntity (legacy, to be removed)
+    │   ├── AIProviderModels.swift       # AIProvider, APIKey, AIModel
     │   ├── AITunnelModels.swift         # AIMessage, AIStreamChunk, AIUsage
     │   ├── AppConfig.swift             # Centralized config (dynamic, per-thread)
-    │   ├── AppSettings.swift           # AppSettings (legacy @Model, to be removed after DB-04)
+    │   ├── AppSettings.swift           # AppSettingsPayload (Codable, stored via DataStore)
     │   ├── ChappieError.swift          # ChappieError enum
-    │   ├── MemoryModels.swift          # MemoryEntity (legacy), MemoryEntry, MemoryContext
-    │   ├── ProjectModels.swift         # ProjectEntity (legacy), ProjectMetadata, ProjectSettings
+    │   ├── MemoryModels.swift          # MemoryEntry, MemoryContext, MemoryStorage
+    │   ├── ProjectModels.swift         # ProjectPayload, ProjectSettings, ProjectMetadata
     │   ├── RemoteProviderCatalog.swift  # DTOs for providers.json (GitHub-hosted catalog)
-    │   └── ThreadModels.swift          # ThreadEntity (legacy), ThreadSettings, ThreadMetadata
+    │   └── ThreadModels.swift          # ThreadPayload, ThreadSettings, ThreadMetadata
     └── Services/
         ├── AIClient.swift              # HTTP client for OpenAI-compatible APIs
         ├── AIClientProtocol.swift      # Protocol: validateProvider, streamChat, fetchModels
@@ -94,7 +94,7 @@ One row per relation. The payload is a JSON-encoded domain collection.
 ### DataStore API
 
 ```swift
-public actor DataStore {
+public actor ChappieDataStore {
     func load<T: Codable>(_ relation: Relation) throws -> T?
     func save<T: Codable>(_ value: T, for relation: Relation) throws
     func delete(_ relation: Relation) throws

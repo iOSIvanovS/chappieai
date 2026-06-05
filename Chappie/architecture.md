@@ -24,14 +24,14 @@ All business logic lives in ChappieCore. The UI target is responsible only for:
 
 ```
 Chappie/
-├── ChappieApp.swift                    # @main, ModelContainer, AppDelegate
+├── ChappieApp.swift                    # @main, ModelContainer (AppSettingsSchemaV1), AppDelegate
 ├── ContentView.swift                   # Conductor: assembles components, manages sheets
 ├── MCPHelperLauncher.swift             # Launches ChappieMCP child process
 ├── Models/
 │   ├── AppState.swift                  # @Observable singleton: onboarding state
 │   ├── ChatMessage.swift               # UI message model (enum: .message / .toolCall / .terminalConfirmation)
 │   ├── AttachedFile.swift              # Attached file model for input
-│   └── AppSettingsMigration.swift      # SwiftData migration: "New.AppSettings" → AppSettings
+│   └── AppSettingsMigration.swift      # SwiftData schema: AppSettingsSchemaV1 (StoredRecord only)
 ├── ViewModels/
 │   ├── ChappieViewModel.swift          # @Observable @MainActor ViewModel (core state)
 │   ├── ChappieViewModel+Send.swift     # send() — AI request pipeline
@@ -96,7 +96,7 @@ Chappie/
 ```mermaid
 graph TD
     subgraph Entry["App Entry"]
-        App["ChappieApp\n@main, ModelContainer\nAppSettingsMigrationPlan"]
+        App["ChappieApp\n@main, ModelContainer\nAppSettingsSchemaV1"]
         AS["AppState\n@Observable singleton\nonboarding flag"]
     end
 
@@ -177,12 +177,10 @@ graph TD
 
 **SwiftData schema:**
 ```swift
-Schema(AppSettingsSchemaV1.models)
-// Contains: ThreadEntity, ProjectEntity, MemoryEntity, AIProviderEntity, AppSettings
+// AppSettingsSchemaV1 — StoredRecord is the only @Model. Schema is frozen.
+// No migrations needed — domain structs evolve as Codable, not as @Model.
+let schema = Schema(versionedSchema: AppSettingsSchemaV1.self)
 ```
-
-**Migration:** `AppSettingsMigrationPlan` maps `"New.AppSettings"` → `AppSettings` on first launch.
-See `Chappie/Models/AppSettingsMigration.swift` — **DO NOT REMOVE** this migration plan.
 
 **AppDelegate:** `applicationWillTerminate` → `MCPHelperLauncher.shared.terminateHelper()`.
 
@@ -320,14 +318,7 @@ Auto-select: if provider has exactly one key → pre-selected automatically.
 
 ---
 
-## 11. AppSettingsMigration.swift
-
-**⚠️ DO NOT REMOVE** — maps `"New.AppSettings"` → `AppSettings`.
-Removing causes schema conflict crash on next launch for existing users.
-
----
-
-## 12. ChatScrollView — LazyVStack + Anti-Jump Streaming
+## 11. ChatScrollView — LazyVStack + Anti-Jump Streaming
 
 - Streaming → `proxy.scrollTo("bottom")` **without animation**
 - Discrete events → `withAnimation(.easeOut)`
@@ -335,7 +326,7 @@ Removing causes schema conflict crash on next launch for existing users.
 
 ---
 
-## 13. ContentView — Sheet Management
+## 12. ContentView — Sheet Management
 
 ```swift
 .sheet(isPresented: $showSettings) { SettingsView() }
@@ -347,7 +338,7 @@ Removing causes schema conflict crash on next launch for existing users.
 
 ---
 
-## 14. MCPHelperLauncher
+## 13. MCPHelperLauncher
 
 Launched ONLY when workspace path is known. `applicationWillTerminate` terminates the helper.
 
@@ -363,3 +354,4 @@ Launched ONLY when workspace path is known. `applicationWillTerminate` terminate
 | 2025-07 | Hot role reload: rebuildThreadSessionOnly() — no restart needed on settings change |
 | 2025-07 | MK-01..09 complete: multi-key provider system |
 | 2025-07 | M-10 complete: removed legacy MigrationService, ChatHistoryManager |
+| 2026-06 | Storage cleanup: removed DataStoreMigration, V2/V3 schema stubs; schema reset to V1 (StoredRecord only) |
