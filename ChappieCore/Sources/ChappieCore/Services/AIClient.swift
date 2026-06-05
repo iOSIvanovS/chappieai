@@ -18,9 +18,11 @@
 // Supports Bearer, x-api-key, and none (no auth header — for local providers like Ollama).
 // Controlled by AuthScheme passed at init — allows OpenAI-format body with any auth combo.
 //
-// CACHE CONTROL:
-// cache_control is an AITunnel-specific top-level field. Most providers (Groq, Ollama, etc.)
-// reject it with HTTP 400. Only sent when supportsCaching=true (AITunnel only).
+// CACHE CONTROL (AITunnel only):
+// Two-level caching when supportsCaching=true:
+//   1. top-level cache_control on AITunnelRequest → caches the tools array.
+//   2. cache_control on the system AIMessage      → caches the system prompt.
+// Both levels use TTL=1h. Other providers never see these fields (encodeIfPresent → absent).
 //
 // CONTENT NORMALIZATION:
 // When supportsCaching=false, normalizeMessage() is applied to every history message:
@@ -402,13 +404,25 @@ public struct AIClient: Sendable, AIClientProtocol {
 
     /// Builds the final message array to send to the provider.
     ///
-    /// When supportsCaching=false (all providers except AITunnel), normalizes every message
-    /// via normalizeMessage() — converts blocks/multimodal to plain strings, drops empty content.
+    /// AITunnel (supportsCaching=true):
+    ///   - System message gets cache_control=.oneHour → server caches system prompt for 1h.
+    ///   - History sent as-is (blocks and multimodal supported).
+    ///
+    /// All other providers (supportsCaching=false):
+    ///   - System message has no cache_control (nil → absent from JSON).
+    ///   - History normalized via normalizeMessage() — blocks/multimodal → plain text.
     private func buildMessages(systemPrompt: String, chatHistory: [AIMessage]) -> [AIMessage] {
-        var messages: [AIMessage] = [AIMessage(role: "system", content: systemPrompt)]
+        // System message: attach cache_control for AITunnel to enable 1h system prompt caching.
+        // For all other providers cache_control is nil → encodeIfPresent omits it from JSON entirely.
+        let systemMessage = AIMessage(
+            role: "system",
+            content: systemPrompt,
+            cacheControl: supportsCaching ? .oneHour : nil
+        )
+        var messages: [AIMessage] = [systemMessage]
 
         if supportsCaching {
-            // AITunnel: send as-is, blocks and cache_control are supported
+            // AITunnel: send history as-is, blocks and cache_control are supported
             messages.append(contentsOf: chatHistory)
         } else {
             // Strict providers: normalize all non-string content to plain text, filter empties
@@ -431,7 +445,6 @@ public struct AIClient: Sendable, AIClientProtocol {
         switch message.content {
         case .blocks(let blocks):
             let text = blocks.map(\.text).joined()
-            // Drop messages whose only content was empty blocks
             guard !text.isEmpty else { return nil }
             return AIMessage(
                 role: message.role,
@@ -457,8 +470,6 @@ public struct AIClient: Sendable, AIClientProtocol {
         case .text(let s):
             // Empty string → nil content (Groq: "content is missing" for empty strings)
             if s.isEmpty {
-                // Keep the message but with nil content — valid for tool-result roles
-                // that Groq requires to be present but without content
                 return AIMessage(
                     role: message.role,
                     content: nil as String?,
