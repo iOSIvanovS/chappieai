@@ -3,34 +3,17 @@
 //
 // Native Anthropic API client — implements AIClientProtocol.
 //
-// WIRE FORMAT DIFFERENCES vs OpenAI:
-// - Endpoint: POST /v1/messages (not /v1/chat/completions)
-// - System prompt: top-level "system" field (not a message with role "system")
+// WIRE FORMAT vs OpenAI:
+// - Endpoint: POST /v1/messages
+// - System prompt: top-level "system" field (not a message)
 // - Tool results: role "user" with content array of type "tool_result"
-// - Tool calls: content array blocks of type "tool_use" (not delta.tool_calls)
-// - Streaming: event: content_block_delta / event: message_delta (not data: {...})
-// - Default auth: x-api-key header + anthropic-version header
-// - max_tokens is REQUIRED (no default)
+// - Tool calls: content array blocks of type "tool_use"
+// - Streaming: event: content_block_delta / event: message_delta
+// - Auth: x-api-key + anthropic-version header (or Bearer for proxies)
+// - max_tokens is REQUIRED
 // - No /v1/models endpoint — fetchAvailableModels() returns []
-//
-// AUTH SCHEME:
-// By default uses x-api-key (native Anthropic). Can be overridden to Bearer
-// for proxy providers (e.g. AITunnel routing to Claude via /v1/messages).
-// .none — no auth header (unusual for Anthropic, but supported for custom setups).
-//
-// TOOL CALL STREAMING:
-// Anthropic streams tool calls as content_block_start (type=tool_use, id, name)
-// followed by content_block_delta (input_json_delta with partial JSON).
-// We accumulate them by content block index, same logic as OpenAI.
-//
-// BALANCE / COST:
-// Native Anthropic does not return balance or cost_rub — those are AITunnel extensions.
-// AnthropicUsage decodes them as optional so proxy providers (AITunnel /v1/messages)
-// can return billing info through the same client.
 
 import Foundation
-
-// MARK: - AnthropicClient
 
 public struct AnthropicClient: Sendable, AIClientProtocol {
 
@@ -63,8 +46,7 @@ public struct AnthropicClient: Sendable, AIClientProtocol {
     // MARK: - AIClientProtocol: validateProvider
 
     public func validateProvider() async throws {
-        // Anthropic has no /models endpoint — send a minimal messages request
-        // with max_tokens=1 to confirm auth works.
+        // Anthropic has no /models endpoint — send a minimal request to confirm auth.
         let body = AnthropicRequest(
             model: modelName.isEmpty ? "claude-3-haiku-20240307" : modelName,
             maxTokens: 1,
@@ -104,10 +86,9 @@ public struct AnthropicClient: Sendable, AIClientProtocol {
 
     // MARK: - AIClientProtocol: fetchAvailableModels
 
-    /// Anthropic has no public /models endpoint — returns empty array.
     public func fetchAvailableModels() async -> [String] { [] }
 
-    // MARK: - AIClientProtocol: sendRequest (non-streaming)
+    // MARK: - AIClientProtocol: sendRequest
 
     public func sendRequest(
         systemPrompt: String,
@@ -203,7 +184,6 @@ public struct AnthropicClient: Sendable, AIClientProtocol {
                 await watchdog.reset()
 
                 if line.hasPrefix("event: ") { continue }
-
                 guard line.hasPrefix("data: ") else { continue }
                 let jsonString = String(line.dropFirst(6))
                 guard !jsonString.isEmpty else { continue }
@@ -217,11 +197,7 @@ public struct AnthropicClient: Sendable, AIClientProtocol {
                 case "content_block_start":
                     if let block = json.contentBlock, block.type == "tool_use" {
                         let idx = json.index ?? 0
-                        state.toolBlocks[idx] = (
-                            id: block.id ?? "call_\(idx)",
-                            name: block.name ?? "",
-                            inputJSON: ""
-                        )
+                        state.toolBlocks[idx] = (id: block.id ?? "call_\(idx)", name: block.name ?? "", inputJSON: "")
                     }
 
                 case "content_block_delta":
@@ -234,11 +210,9 @@ public struct AnthropicClient: Sendable, AIClientProtocol {
                                 onToken?(text)
                             }
                         case "input_json_delta":
-                            if let partial = delta.partialJSON {
-                                if var existing = state.toolBlocks[idx] {
-                                    existing.inputJSON += partial
-                                    state.toolBlocks[idx] = existing
-                                }
+                            if let partial = delta.partialJSON, var existing = state.toolBlocks[idx] {
+                                existing.inputJSON += partial
+                                state.toolBlocks[idx] = existing
                             }
                         default: break
                         }
@@ -246,7 +220,6 @@ public struct AnthropicClient: Sendable, AIClientProtocol {
 
                 case "message_delta":
                     if let usage = json.usage {
-                        // Capture billing info — available from proxy providers like AITunnel.
                         state.finalCost = usage.costRub
                         state.finalBalance = usage.balance
                         logCacheStats(
@@ -369,8 +342,7 @@ public struct AnthropicClient: Sendable, AIClientProtocol {
         return mergeConsecutiveSameRole(result)
     }
 
-    /// Merges consecutive same-role messages.
-    /// Anthropic rejects requests where two consecutive messages have the same role.
+    /// Anthropic rejects requests where two consecutive messages share the same role.
     private func mergeConsecutiveSameRole(_ messages: [AnthropicMessage]) -> [AnthropicMessage] {
         var merged: [AnthropicMessage] = []
         for msg in messages {
@@ -410,14 +382,14 @@ public struct AnthropicClient: Sendable, AIClientProtocol {
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
         request.addValue(Self.anthropicVersion, forHTTPHeaderField: "anthropic-version")
 
-        // Apply auth scheme — x-api-key for native Anthropic, Bearer for proxies, none for open endpoints.
+        // x-api-key for native Anthropic, Bearer for proxies, none for open endpoints.
         switch authScheme {
         case .xApiKey:
             request.addValue(apiKey, forHTTPHeaderField: "x-api-key")
         case .bearer:
             request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         case .none:
-            break // no auth header
+            break
         }
 
         request.timeoutInterval = AppConfig.shared.requestTimeoutSeconds
@@ -453,7 +425,7 @@ public struct AnthropicClient: Sendable, AIClientProtocol {
         throw ChappieError.networkError("HTTP \(http.statusCode): \(body)")
     }
 
-    // MARK: - Private: Cache Stats
+    // MARK: - Private: Cache Stats Logging
 
     private func logCacheStats(
         inputTokens: Int,
@@ -474,221 +446,5 @@ public struct AnthropicClient: Sendable, AIClientProtocol {
         } else {
             print("[AnthropicClient] CACHE MISS | input: \(inputTokens) | output: \(outputTokens) | cost: \(costStr) | balance: \(balanceStr)")
         }
-    }
-}
-
-// MARK: - Anthropic Request Models
-
-private struct AnthropicRequest: Encodable {
-    let model: String
-    let maxTokens: Int
-    let system: String?
-    let messages: [AnthropicMessage]
-    let tools: [AnthropicTool]?
-    let stream: Bool
-
-    private enum CodingKeys: String, CodingKey {
-        case model, system, messages, tools, stream
-        case maxTokens = "max_tokens"
-    }
-}
-
-// MARK: - AnthropicMessage
-
-private struct AnthropicMessage: Encodable {
-    let role: String
-    let content: AnthropicMessageContent
-
-    var contentString: String? {
-        switch content {
-        case .text(let t): return t
-        case .blocks(let blocks): return blocks.compactMap { $0.text }.joined(separator: "\n")
-        case .toolResult(let r): return r.content
-        }
-    }
-}
-
-private enum AnthropicMessageContent: Encodable {
-    case text(String)
-    case blocks([AnthropicContentBlock])
-    case toolResult(AnthropicToolResultContent)
-
-    func encode(to encoder: Encoder) throws {
-        switch self {
-        case .text(let t):
-            var c = encoder.singleValueContainer()
-            try c.encode(t)
-        case .blocks(let blocks):
-            var c = encoder.singleValueContainer()
-            try c.encode(blocks)
-        case .toolResult(let r):
-            var c = encoder.singleValueContainer()
-            try c.encode([r])
-        }
-    }
-}
-
-private struct AnthropicContentBlock: Encodable {
-    let type: String
-    var text: String? = nil
-    var id: String? = nil
-    var name: String? = nil
-    var input: [String: Any]? = nil
-    var source: AnthropicImageSource? = nil
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(type, forKey: .type)
-        if let text { try container.encode(text, forKey: .text) }
-        if let id { try container.encode(id, forKey: .id) }
-        if let name { try container.encode(name, forKey: .name) }
-        if let source { try container.encode(source, forKey: .source) }
-        if let input {
-            let jsonData = try JSONSerialization.data(withJSONObject: input)
-            let jsonValue = try JSONDecoder().decode(JSONValue.self, from: jsonData)
-            try container.encode(jsonValue, forKey: .input)
-        }
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case type, text, id, name, input, source
-    }
-}
-
-private struct AnthropicImageSource: Encodable {
-    let type: String
-    let mediaType: String
-    let data: String
-
-    enum CodingKeys: String, CodingKey {
-        case type, data
-        case mediaType = "media_type"
-    }
-}
-
-private struct AnthropicToolResultContent: Encodable {
-    let type: String
-    let toolUseId: String
-    let content: String
-
-    enum CodingKeys: String, CodingKey {
-        case type, content
-        case toolUseId = "tool_use_id"
-    }
-}
-
-// MARK: - Anthropic Tool Models
-
-private struct AnthropicTool: Encodable {
-    let name: String
-    let description: String
-    let inputSchema: AnthropicToolInputSchema
-
-    enum CodingKeys: String, CodingKey {
-        case name, description
-        case inputSchema = "input_schema"
-    }
-}
-
-private struct AnthropicToolInputSchema: Encodable {
-    let type: String
-    let properties: [String: AnthropicToolProperty]
-    let required: [String]?
-}
-
-private struct AnthropicToolProperty: Encodable {
-    let type: String
-    let description: String?
-}
-
-// MARK: - Anthropic Streaming Event Models
-
-private struct AnthropicStreamEvent: Decodable {
-    let type: String
-    let index: Int?
-    let delta: AnthropicDelta?
-    let contentBlock: AnthropicContentBlockInfo?
-    let usage: AnthropicUsage?
-
-    enum CodingKeys: String, CodingKey {
-        case type, index, delta, usage
-        case contentBlock = "content_block"
-    }
-}
-
-private struct AnthropicDelta: Decodable {
-    let type: String
-    let text: String?
-    let partialJSON: String?
-
-    enum CodingKeys: String, CodingKey {
-        case type, text
-        case partialJSON = "partial_json"
-    }
-}
-
-private struct AnthropicContentBlockInfo: Decodable {
-    let type: String
-    let id: String?
-    let name: String?
-}
-
-/// Token usage and optional billing info from Anthropic / proxy responses.
-///
-/// Native Anthropic does not include costRub / balance — those are AITunnel extensions.
-/// Declared as optional so the same struct works for both native and proxy providers.
-private struct AnthropicUsage: Decodable {
-    let inputTokens: Int?
-    let outputTokens: Int?
-    let cacheReadInputTokens: Int?
-    let cacheCreationInputTokens: Int?
-    /// AITunnel extension — cost of this request in RUB.
-    let costRub: Double?
-    /// AITunnel extension — remaining balance in RUB after the request.
-    let balance: Double?
-
-    enum CodingKeys: String, CodingKey {
-        case inputTokens = "input_tokens"
-        case outputTokens = "output_tokens"
-        case cacheReadInputTokens = "cache_read_input_tokens"
-        case cacheCreationInputTokens = "cache_creation_input_tokens"
-        case costRub = "cost_rub"
-        case balance
-    }
-}
-
-// MARK: - JSONValue (for encoding arbitrary [String: Any])
-
-private enum JSONValue: Encodable, Decodable {
-    case string(String)
-    case int(Int)
-    case double(Double)
-    case bool(Bool)
-    case object([String: JSONValue])
-    case array([JSONValue])
-    case null
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        switch self {
-        case .string(let v): try container.encode(v)
-        case .int(let v): try container.encode(v)
-        case .double(let v): try container.encode(v)
-        case .bool(let v): try container.encode(v)
-        case .object(let v): try container.encode(v)
-        case .array(let v): try container.encode(v)
-        case .null: try container.encodeNil()
-        }
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if let v = try? container.decode(Bool.self) { self = .bool(v); return }
-        if let v = try? container.decode(Int.self) { self = .int(v); return }
-        if let v = try? container.decode(Double.self) { self = .double(v); return }
-        if let v = try? container.decode(String.self) { self = .string(v); return }
-        if let v = try? container.decode([String: JSONValue].self) { self = .object(v); return }
-        if let v = try? container.decode([JSONValue].self) { self = .array(v); return }
-        self = .null
     }
 }
