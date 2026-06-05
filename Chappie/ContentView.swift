@@ -99,42 +99,132 @@
 //   updated after switchProvider() — only activeThreadSettings is always current.
 //   buildThreadForSettings() merges activeThread + activeThreadSettings into a fresh
 //   ThreadMetadata so the sheet sees the correct providerId, keyId, maxMessagesInContext.
+//
+// SCREENSHOT DROP (BL-02):
+//   macOS screenshot thumbnail (Cmd+Shift+4) is an NSItemProvider with typeId "public.png".
+//   It does NOT carry a file URL — it carries raw PNG data as a file representation.
+//   loadItem(forTypeIdentifier:) fails on it because it can't produce a folder/URL.
+//   The correct API is loadFileRepresentation(forTypeIdentifier: "public.png") which
+//   writes the PNG to a temp file and returns its URL via callback.
+//
+//   DROP ROUTING (WHY URL-BASED, NOT TYPE-BASED):
+//   NSItemProvider.registeredTypeIdentifiers often includes BOTH .fileURL and .folder for
+//   any filesystem item — so itemProviders(for: [.folder]) returns results even for plain files.
+//   Routing by provider type leads to misclassification. Instead, we resolve all providers
+//   to actual URLs first, then check isDirectory via FileManager — ground truth, not hints.
+//
+//   IMAGE TYPE DETECTION:
+//   Screenshot providers have typeIds like ["public.png"] — no "public.file-url".
+//   We detect them by checking: has image conformance AND no file-url conformance.
+//   Such providers are routed to resolveImageProviders() which uses loadFileRepresentation.
 
 import SwiftUI
 import UniformTypeIdentifiers
 import SwiftData
+import AppKit
 import ChappieCore
 
 // MARK: - Silent Drop Delegate
 
 /// Minimal DropDelegate: silently accepts file drops, no visual overlay.
-/// Directories are rejected; only regular files are passed to the handler.
+/// Handles three drop sources:
+///   1. Regular files from Finder (.fileURL) — resolved to URL, routed by isDirectory check
+///   2. Folders from Finder (.folder) → added as projects
+///   3. macOS screenshot thumbnails — detected by image typeId + no file-url → loadFileRepresentation
 private final class SilentDropDelegate: DropDelegate {
 
     var onFilesDropped: ([NSItemProvider]) -> Void = { _ in }
     var onFoldersDropped: ([NSItemProvider]) -> Void = { _ in }
+    var onImageProviders: ([NSItemProvider]) -> Void = { _ in }
     var isThinkingGetter: () -> Bool = { false }
 
     func validateDrop(info: DropInfo) -> Bool {
-        return info.hasItemsConforming(to: [.fileURL, .folder])
+        let hasFile = info.hasItemsConforming(to: [.fileURL])
+        let hasFolder = info.hasItemsConforming(to: [.folder])
+        let hasData = info.hasItemsConforming(to: [.data])
+        return hasFile || hasFolder || hasData
     }
 
     func performDrop(info: DropInfo) -> Bool {
         guard !isThinkingGetter() else { return false }
-            
-            // Folders → add as project
-            let folderProviders = info.itemProviders(for: [.folder])
-            if !folderProviders.isEmpty {
-                onFoldersDropped(folderProviders)
-                return true
-            }
-            
-            // Files → attach
-            let providers = info.itemProviders(for: [.fileURL])
-            guard !providers.isEmpty else { return false }
-            onFilesDropped(providers)
-            return true
 
+        let allProviders = info.itemProviders(for: [.fileURL, .folder, .data])
+        guard !allProviders.isEmpty else { return false }
+
+        // Split providers into two buckets:
+        //   imageOnly  — has image type (e.g. "public.png") but NO file-url → screenshot thumbnail
+        //   fileOrDir  — has file-url or folder → regular Finder drop
+        var imageProviders: [NSItemProvider] = []
+        var fileOrDirProviders: [NSItemProvider] = []
+
+        for provider in allProviders {
+            let typeIds = provider.registeredTypeIdentifiers
+            let hasFileURL = provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+            let hasFolder  = provider.hasItemConformingToTypeIdentifier(UTType.folder.identifier)
+            let hasImage   = typeIds.contains { UTType($0)?.conforms(to: .image) == true }
+
+            if hasImage && !hasFileURL && !hasFolder {
+                // Screenshot thumbnail — raw image data, no file URL
+                imageProviders.append(provider)
+            } else if hasFileURL || hasFolder {
+                fileOrDirProviders.append(provider)
+            }
+        }
+
+        if !imageProviders.isEmpty {
+            onImageProviders(imageProviders)
+        }
+
+        if !fileOrDirProviders.isEmpty {
+            // Resolve to URLs, then route by isDirectory — ground truth.
+            Task {
+                var fileProviders: [NSItemProvider] = []
+                var folderProviders: [NSItemProvider] = []
+
+                for (i, provider) in fileOrDirProviders.enumerated() {
+                    let typeId = provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+                        ? UTType.fileURL.identifier
+                        : UTType.folder.identifier
+
+                    let url: URL? = await withCheckedContinuation { continuation in
+                        provider.loadItem(forTypeIdentifier: typeId, options: nil) { item, error in
+                            if let _ = error {
+                                continuation.resume(returning: nil)
+                                return
+                            }
+                            if let data = item as? Data,
+                               let resolved = URL(dataRepresentation: data, relativeTo: nil) {
+                                continuation.resume(returning: resolved)
+                            } else if let resolved = item as? URL {
+                                continuation.resume(returning: resolved)
+                            } else {
+                                continuation.resume(returning: nil)
+                            }
+                        }
+                    }
+
+                    guard let url else { continue }
+
+                    var isDir: ObjCBool = false
+                    let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+
+                    if exists && isDir.boolValue {
+                        folderProviders.append(provider)
+                    } else if exists {
+                        fileProviders.append(provider)
+                    }
+
+                    _ = i // suppress unused warning
+                }
+
+                await MainActor.run {
+                    if !folderProviders.isEmpty { self.onFoldersDropped(folderProviders) }
+                    if !fileProviders.isEmpty   { self.onFilesDropped(fileProviders) }
+                }
+            }
+        }
+
+        return !imageProviders.isEmpty || !fileOrDirProviders.isEmpty
     }
 }
 
@@ -192,6 +282,11 @@ struct ContentView: View {
             }
             dropDelegate.onFoldersDropped = { [self] providers in
                 resolveFolderDrop(providers)
+            }
+            dropDelegate.onImageProviders = { [self] providers in
+                // Screenshot thumbnail: has "public.png" typeId, no file-url.
+                // loadFileRepresentation writes PNG to a temp file and returns the URL.
+                resolveImageProviders(providers)
             }
         }
         .onChange(of: viewModel.providers.count) { _, _ in }
@@ -420,7 +515,10 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onDrop(of: [.fileURL], delegate: dropDelegate)
+        // .data is included so screenshot thumbnails (NSFilesPromisePboardType) reach the delegate.
+        // SwiftUI filters drops by UTType before calling the delegate — without .data,
+        // screenshot thumbnails are silently rejected and never reach validateDrop/performDrop.
+        .onDrop(of: [.fileURL, .folder, .data], delegate: dropDelegate)
     }
 
     // MARK: - Top Floating Panel
@@ -544,19 +642,21 @@ struct ContentView: View {
             }
         }
     }
-    
+
     private func resolveDroppedFiles(_ providers: [NSItemProvider]) {
         Task {
             var urls: [URL] = []
             for provider in providers {
-                guard provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) else {
-                    continue
-                }
+                guard provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) else { continue }
                 let url: URL? = await withCheckedContinuation { continuation in
                     provider.loadItem(
                         forTypeIdentifier: UTType.fileURL.identifier,
                         options: nil
-                    ) { item, _ in
+                    ) { item, error in
+                        if let _ = error {
+                            continuation.resume(returning: nil)
+                            return
+                        }
                         if let data = item as? Data,
                            let resolved = URL(dataRepresentation: data, relativeTo: nil) {
                             continuation.resume(returning: resolved)
@@ -583,6 +683,61 @@ struct ContentView: View {
                     .filter { !existingNames.contains($0.filename) }
                 withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
                     attachments.append(contentsOf: newFiles)
+                }
+            }
+        }
+    }
+
+    /// Handles screenshot thumbnail drops from macOS (Cmd+Shift+4).
+    ///
+    /// WHY loadFileRepresentation instead of loadItem:
+    /// Screenshot providers carry raw image data, NOT a file URL.
+    /// loadItem(forTypeIdentifier: "public.file-url") returns nil for them.
+    /// loadFileRepresentation writes the image to a temp file and returns its URL —
+    /// this is the correct API for image-type providers without a backing file URL.
+    private func resolveImageProviders(_ providers: [NSItemProvider]) {
+        Task {
+            var loaded: [AttachedFile] = []
+
+            for provider in providers {
+                // Pick the first image typeId the provider supports
+                let imageTypeId = provider.registeredTypeIdentifiers.first {
+                    UTType($0)?.conforms(to: .image) == true
+                }
+                guard let typeId = imageTypeId else { continue }
+
+                let url: URL? = await withCheckedContinuation { continuation in
+                    provider.loadFileRepresentation(forTypeIdentifier: typeId) { fileURL, error in
+                        guard let fileURL, error == nil else {
+                            continuation.resume(returning: nil)
+                            return
+                        }
+                        // Copy to our own temp dir — the system temp file is deleted after callback returns
+                        let dest = FileManager.default.temporaryDirectory
+                            .appendingPathComponent("ChappieShot-\(UUID().uuidString).\(fileURL.pathExtension)")
+                        do {
+                            try FileManager.default.copyItem(at: fileURL, to: dest)
+                            continuation.resume(returning: dest)
+                        } catch {
+                            continuation.resume(returning: nil)
+                        }
+                    }
+                }
+
+                if let url {
+                    if let file = AttachedFile.load(from: url) { loaded.append(file) }
+                    // Clean up our temp copy after loading into memory
+                    try? FileManager.default.removeItem(at: url)
+                }
+            }
+
+            guard !loaded.isEmpty else { return }
+
+            await MainActor.run {
+                let existingNames = Set(attachments.map(\.filename))
+                let unique = loaded.filter { !existingNames.contains($0.filename) }
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                    attachments.append(contentsOf: unique)
                 }
             }
         }
