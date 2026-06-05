@@ -1,9 +1,6 @@
 <!--
   Chappie/architecture.md
-
   ARCHITECTURE DOCUMENT — UI TARGET (Chappie.app)
-
-  This file is the single source of architectural truth for the UI layer.
   Update after every significant architectural change.
 -->
 
@@ -24,14 +21,15 @@ All business logic lives in ChappieCore. The UI target is responsible only for:
 
 ```
 Chappie/
-├── ChappieApp.swift                    # @main, ModelContainer (AppSettingsSchemaV1), AppDelegate
+├── ChappieApp.swift                    # @main, ModelContainer (AppSettingsSchema), AppDelegate
 ├── ContentView.swift                   # Conductor: assembles components, manages sheets
+├── DropHandler.swift                   # Drag-and-drop file handling
 ├── MCPHelperLauncher.swift             # Launches ChappieMCP child process
 ├── Models/
 │   ├── AppState.swift                  # @Observable singleton: onboarding state
 │   ├── ChatMessage.swift               # UI message model (enum: .message / .toolCall / .terminalConfirmation)
 │   ├── AttachedFile.swift              # Attached file model for input
-│   └── AppSettingsMigration.swift      # SwiftData schema: AppSettingsSchemaV1 (StoredRecord only)
+│   └── AppSettingsMigration.swift      # SwiftData schema: AppSettingsSchema (StoredRecord only)
 ├── ViewModels/
 │   ├── ChappieViewModel.swift          # @Observable @MainActor ViewModel (core state)
 │   ├── ChappieViewModel+Send.swift     # send() — AI request pipeline
@@ -45,7 +43,8 @@ Chappie/
 │   ├── ChappieViewModel+PersonaBlock.swift   # v2PersonaBlock + baseSystemPrompt constants
 │   └── StreamingState.swift            # Streaming state model (isolated from ViewModel)
 ├── Settings/
-│   └── SettingsView.swift              # App settings sheet (+ onboarding reset button)
+│   ├── SettingsView.swift              # App settings sheet (+ onboarding reset button)
+│   └── MemoryManagementView.swift      # Memory browser/editor sheet
 └── Views/
     ├── Chat/
     │   ├── ChatScrollView.swift         # Message feed (LazyVStack, anti-jump streaming)
@@ -71,7 +70,7 @@ Chappie/
     ├── Providers/
     │   ├── ProvidersSettingsView.swift  # Provider list + ProviderDetailView (keys + models)
     │   ├── AddProviderSheet.swift       # Add/edit provider (2-step: endpoint → models)
-    │   ├── CatalogPickerSheet.swift     # Catalog browser: pick provider or "Ручная настройка"
+    │   ├── CatalogPickerSheet.swift     # Catalog browser: pick provider or manual setup
     │   ├── EditKeySheet.swift           # Add/edit a named API key on a provider
     │   ├── AddModelSheet.swift          # Add models to a provider (fetch list + manual)
     │   └── NewThreadProviderSheet.swift # Provider+key+model picker when creating a thread
@@ -83,10 +82,12 @@ Chappie/
     │   └── ToolbarContent.swift         # Toolbar: sidebar toggle + thread title + settings gear
     ├── Shared/
     │   ├── ProviderModelPickerRows.swift # Shared: ProviderPickRow, ModelPickRow
+    │   ├── ProviderIconView.swift        # Provider logo/icon view
     │   ├── ShakeEffect.swift            # Shake animation modifier
     │   └── FlowLayout.swift             # Flow layout for chips
     └── Onboarding/
-        └── OnboardingView.swift         # Onboarding: welcome step + provider setup step
+        ├── OnboardingView.swift         # Onboarding: welcome step + provider setup step
+        └── EULAView.swift               # EULA/terms sheet
 ```
 
 ---
@@ -96,7 +97,7 @@ Chappie/
 ```mermaid
 graph TD
     subgraph Entry["App Entry"]
-        App["ChappieApp\n@main, ModelContainer\nAppSettingsSchemaV1"]
+        App["ChappieApp\n@main, ModelContainer\nAppSettingsSchema"]
         AS["AppState\n@Observable singleton\nonboarding flag"]
     end
 
@@ -116,12 +117,12 @@ graph TD
         BottomBar["ProjectChipsView\n(projects + balance)"]
         Sheets["ThreadSettingsSheet\nProjectSettingsSheet\nNewThreadProviderSheet"]
         Providers["ProvidersSettingsView\nAddProviderSheet\nCatalogPickerSheet\nEditKeySheet\nAddModelSheet"]
-        Onboarding["OnboardingView"]
+        Onboarding["OnboardingView\nEULAView"]
         Toolbar["ToolbarContent"]
+        Settings["SettingsView\nMemoryManagementView"]
     end
 
     subgraph Core["ChappieCore (Swift Package)"]
-        direction TB
         Orch["AIOrchestrator"]
         TSess["ThreadSession"]
         SPB["SystemPromptBuilder"]
@@ -129,11 +130,11 @@ graph TD
         TS["ThreadStore"]
         PS["ProjectStore"]
         MS["MemoryStore"]
-        APS["AIProviderStore\nmulti-key + Keychain"]
+        APS["AIProviderStore"]
         ASS["AppSettingsStore"]
         TES["ToolExecutionService"]
-        PRS["ProvidersRemoteService\nGitHub catalog"]
-        SSH["ShellSession\nbash per thread"]
+        PRS["ProvidersRemoteService"]
+        SSH["ShellSession"]
     end
 
     subgraph MCP["ChappieMCP (child process)"]
@@ -151,6 +152,7 @@ graph TD
     CV --> Providers
     CV --> Onboarding
     CV --> Toolbar
+    CV --> Settings
 
     VM --> Orch
     VM --> TSess
@@ -165,7 +167,6 @@ graph TD
     TSess --> SPB
     Orch --> TAC
     TES --> SSH
-
     TES -->|Unix Socket| MCPL
 ```
 
@@ -177,9 +178,9 @@ graph TD
 
 **SwiftData schema:**
 ```swift
-// AppSettingsSchemaV1 — StoredRecord is the only @Model. Schema is frozen.
+// AppSettingsSchema — StoredRecord is the only @Model. Schema is frozen.
 // No migrations needed — domain structs evolve as Codable, not as @Model.
-let schema = Schema(versionedSchema: AppSettingsSchemaV1.self)
+let schema = Schema(versionedSchema: AppSettingsSchema.self)
 ```
 
 **AppDelegate:** `applicationWillTerminate` → `MCPHelperLauncher.shared.terminateHelper()`.
@@ -187,14 +188,12 @@ let schema = Schema(versionedSchema: AppSettingsSchemaV1.self)
 **Critical rule:** every window that uses the main ViewModel MUST have:
 ```swift
 .environment(viewModel)
-viewModel.setModelContainer(modelContainer)
+viewModel.setModelContainer(modelContainer)  // called once in .onAppear
 ```
 
 ---
 
 ## 5. Top Bar Layout
-
-Two rows in the top panel of `ContentView`:
 
 | Row | Left | Right |
 |-----|------|-------|
@@ -228,11 +227,6 @@ Two rows in the top panel of `ContentView`:
 - Missing either → `applyProviderWithoutModel()` → blocks orchestrator, shows orange banner.
 - `AIClientFactory.make(for:apiKey:model:)` picks `AIClient` or `AnthropicClient` by `model.providerProtocol`.
 
-**Invalidation methods:**
-- `invalidateProviderIfDeleted(id:)` — clears everything if active provider deleted
-- `invalidateModelIfDeleted(name:providerId:)` — clears aiClient/orchestrator if active model deleted
-- `invalidateKeyIfDeleted(keyId:providerId:)` — clears aiClient/orchestrator if active key deleted
-
 ---
 
 ## 7. Terminal Confirmation Flow
@@ -248,15 +242,9 @@ AI calls run_terminal
   → appends ChatMessage(.terminalConfirmation) to messages
   → waits for user action
 
-User taps "Run" → ChappieViewModel+Terminal.approveTerminalCommand()
-  → executes command via ShellSession
-  → resumes streaming
-
-User taps "Cancel" → rejectTerminalCommand()
-  → returns cancellation message to AI
+User taps "Run"    → approveTerminalCommand() → executes → resumes streaming
+User taps "Cancel" → rejectTerminalCommand() → returns cancellation to AI
 ```
-
-`MessageBubbleView` renders `.terminalConfirmation` as an orange confirmation bubble with Run/Cancel buttons.
 
 ---
 
@@ -264,20 +252,12 @@ User taps "Cancel" → rejectTerminalCommand()
 
 ```
 ProvidersSettingsView / OnboardingView
-  → "Добавить провайдера" button
-  → CatalogPickerSheet
-      → ProvidersRemoteService.fetchCatalog()
-      → shows list of RemoteProvider entries
-      → user picks one → AddProviderSheet(prefilledRemote:)
-      → user picks "Ручная настройка" → AddProviderSheet(prefilledRemote: nil)
+  → CatalogPickerSheet → ProvidersRemoteService.fetchCatalog()
+      → user picks catalog entry → AddProviderSheet(prefilledRemote:)
+      → user picks "Manual setup" → AddProviderSheet(prefilledRemote: nil)
 
-AddProviderSheet (catalog mode):
-  Step 1 — pre-filled name + baseURL (locked), key entry
-  Step 2 — catalog models pre-selected, user can deselect or fetch live list
-
-AddProviderSheet (custom mode):
-  Step 1 — blank, user enters everything manually
-  Step 2 — no pre-selection, fetch live list or add manually
+AddProviderSheet (catalog): pre-filled name + baseURL (locked), key entry, models pre-selected
+AddProviderSheet (custom):  blank, user enters everything manually
 ```
 
 ---
@@ -291,11 +271,9 @@ AIProvider
 
 ThreadSettings
   ├── activeProviderId: UUID?
-  ├── activeKeyId: UUID?      — which key to use for this thread
+  ├── activeKeyId: UUID?
   └── activeModelName: String?
 ```
-
-Key selection UX appears in: `NewThreadProviderSheet`, `ThreadSettingsSheet`, `ModelPickerRow` popover.
 
 Auto-select: if provider has exactly one key → pre-selected automatically.
 
@@ -305,28 +283,12 @@ Auto-select: if provider has exactly one key → pre-selected automatically.
 
 **Pattern:** "dumb component" — knows nothing about SwiftData.
 - Receives `ProjectMetadata` and `onSave: (ProjectSettings) -> Void`
-- Edits `@State draft: ProjectSettings` (a copy, not the original)
+- Edits `@State draft: ProjectSettings` (copy, not original)
 - On "Save" → `onSave(draft)` → `viewModel.updateProjectSettings()`
 
-**Terminal access picker** (programming projects only):
-- `Нет доступа` / `С подтверждением` / `Автоматически`
-- Uses `.labelsHidden()` + `.pickerStyle(.segmented)` to avoid label crowding
-
-**Role indicator in chip:**
-- 🔒 (lock.fill) = advisor
-- ⚡ (bolt.fill) = executor
-
 ---
 
-## 11. ChatScrollView — LazyVStack + Anti-Jump Streaming
-
-- Streaming → `proxy.scrollTo("bottom")` **without animation**
-- Discrete events → `withAnimation(.easeOut)`
-- `LazyVStack` — renders only visible messages
-
----
-
-## 12. ContentView — Sheet Management
+## 11. ContentView — Sheet Management
 
 ```swift
 .sheet(isPresented: $showSettings) { SettingsView() }
@@ -338,20 +300,11 @@ Auto-select: if provider has exactly one key → pre-selected automatically.
 
 ---
 
-## 13. MCPHelperLauncher
-
-Launched ONLY when workspace path is known. `applicationWillTerminate` terminates the helper.
-
----
-
 ## 📚 Changelog
 
 | Date | Change |
 |------|--------|
-| 2025-07 | Provider catalog system: RemoteProviderCatalog, ProvidersRemoteService, CatalogPickerSheet, AIClientProtocol, AnthropicClient, AIClientFactory |
-| 2025-07 | run_terminal tool: ShellSession, TerminalTools, TerminalAccessLevel, confirmation flow |
-| 2025-07 | Top bar reorganized: ModelPickerRow (model+gear) top, ProjectChipsView (projects+balance) bottom |
-| 2025-07 | Hot role reload: rebuildThreadSessionOnly() — no restart needed on settings change |
-| 2025-07 | MK-01..09 complete: multi-key provider system |
-| 2025-07 | M-10 complete: removed legacy MigrationService, ChatHistoryManager |
-| 2026-06 | Storage cleanup: removed DataStoreMigration, V2/V3 schema stubs; schema reset to V1 (StoredRecord only) |
+| 2025-07 | Provider catalog, AnthropicClient, run_terminal, multi-key provider system |
+| 2026-06 | Storage cleanup: removed DataStoreMigration, V2/V3 schema stubs |
+| 2026-06 | Onboarding: skip provider step if provider already exists |
+| 2026-07 | T-06: architecture files actualized (added DropHandler, EULAView, MemoryManagementView, ProviderIconView) |

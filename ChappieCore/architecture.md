@@ -18,26 +18,34 @@ ChappieCore/
     ├── DataStore/
     │   └── DataStore.swift             # THE ONLY file that imports SwiftData. StoredRecord @Model lives here.
     ├── Models/
-    │   ├── AIProviderModels.swift       # AIProvider, APIKey, AIModel
-    │   ├── AITunnelModels.swift         # AIMessage, AIStreamChunk, AIUsage
-    │   ├── AppConfig.swift             # Centralized config (dynamic, per-thread)
-    │   ├── AppSettings.swift           # AppSettingsPayload (Codable, stored via DataStore)
+    │   ├── AIProviderModels.swift       # AIProvider, APIKey, AIModel, ProviderProtocol
+    │   ├── AITunnelModels.swift         # AIMessage, AIUsage, AIMessageContent
+    │   ├── AITunnelStreamModels.swift   # AIStreamChunk, SSE parsing models
+    │   ├── AITunnelContentModels.swift  # Content block types (text, tool_use, tool_result)
+    │   ├── AITunnelToolModels.swift     # Tool call/result wire models
+    │   ├── AITunnelCacheModels.swift    # Cache control models (Anthropic prompt caching)
+    │   ├── AppConfig.swift             # Centralized config (dynamic, per-thread). Default: 100 messages.
     │   ├── ChappieError.swift          # ChappieError enum
-    │   ├── MemoryModels.swift          # MemoryEntry, MemoryContext, MemoryStorage
+    │   ├── MemoryModels.swift          # MemoryEntry, MemoryScope, MemoryStorage
     │   ├── ProjectModels.swift         # ProjectPayload, ProjectSettings, ProjectMetadata
     │   ├── RemoteProviderCatalog.swift  # DTOs for providers.json (GitHub-hosted catalog)
-    │   └── ThreadModels.swift          # ThreadPayload, ThreadSettings, ThreadMetadata
+    │   ├── RequestLog.swift            # Request/response logging model
+    │   └── ThreadModels.swift          # ThreadSettings (default 30 msg), ThreadMetadata
     └── Services/
-        ├── AIClient.swift              # HTTP client for OpenAI-compatible APIs
+        ├── AIClient.swift              # OpenAI-compatible HTTP client (entry point)
+        ├── AIClient+HTTP.swift         # HTTP request building + response parsing
+        ├── AIClient+Streaming.swift    # SSE streaming parser
+        ├── AIClient+Discovery.swift    # fetchAvailableModels()
         ├── AIClientProtocol.swift      # Protocol: validateProvider, streamChat, fetchModels
         ├── AIClientFactory.swift       # Factory: picks AIClient or AnthropicClient by protocol
-        ├── AnthropicClient.swift       # HTTP client for native Anthropic API (/v1/messages)
+        ├── AnthropicClient.swift       # Anthropic native API (/v1/messages)
+        ├── AnthropicModels.swift       # Anthropic-specific request/response models
         ├── AIOrchestrator.swift        # Reasoning loop: prompt → tools → response
         ├── AIProviderStore.swift       # CRUD for AI providers + Keychain (multi-key)
         ├── AppSettingsStore.swift      # Actor-based CRUD for singleton AppSettings
         ├── FileSystemManager.swift     # Secure file system access (sandbox)
         ├── MCPToolBridge.swift         # Bridge to ChappieMCP via Unix socket
-        ├── MemoryManager.swift         # Semantic memory (read/write/search)
+        ├── MemoryManager.swift         # Semantic memory (read/write/search) via DataStore
         ├── MemoryStore.swift           # Persistence CRUD for memory scopes
         ├── ProjectStore.swift          # CRUD for projects
         ├── ProvidersRemoteService.swift # Fetches + caches providers.json from GitHub
@@ -115,16 +123,11 @@ Decode failure is non-fatal. Callers receive `nil` or `[]` and recover gracefull
 
 ## 4. Codable Compatibility Rules
 
-**These rules apply to ALL structs stored via DataStore. Violation = silent data corruption.**
+**Violation = silent data corruption.**
 
-1. **Never rename a stored property without adding `CodingKeys`.**
-   Old JSON has the old key name. Renaming without `CodingKeys` silently returns nil/default.
-
-2. **Never remove a stored property.**
-   Mark it `optional` with a default value. Old records must still decode cleanly.
-
+1. **Never rename a stored property without `CodingKeys`.**
+2. **Never remove a stored property** — mark `optional` with a default.
 3. **Always give new properties a default value.**
-   Old records don't have the new key — decoder must not fail.
 
 Structs that must follow these rules:
 
@@ -171,7 +174,7 @@ graph TD
         SPB["SystemPromptBuilder\nDeterministic prompt assembly"]
         TAC["ToolAccessController\nHard gate per tool call"]
         TSess["ThreadSession\nRuntime thread container"]
-        MemM["MemoryManager\nSemantic memory"]
+        MemM["MemoryManager\nSemantic memory (DataStore only)"]
         FSM["FileSystemManager\nSecure FS access"]
         SSH["ShellSession\nPersistent bash (per thread)"]
         MCP["MCPToolBridge\nUnix Socket client"]
@@ -183,13 +186,8 @@ graph TD
         AnthC["AnthropicClient\nAnthropic native HTTP"]
     end
 
-    subgraph Storage["Persistence"]
-        SD["SwiftData\n(StoredRecord only)"]
-        KC["Keychain\n(API key secrets)"]
-    end
-
-    DS --> SD
-    APS --> KC
+    DS --> SR
+    APS --> KC["Keychain\n(API key secrets)"]
 
     Orch --> AICF
     AICF --> AIC
@@ -213,6 +211,35 @@ graph TD
 
 ## 6. Key Models
 
+### ThreadSettings (default: 30 messages)
+
+```swift
+struct ThreadSettings: Codable, Sendable {
+    var maxMessagesInContext: Int   // 10...1000, step 10, default 30
+    var isUnlimitedContext: Bool
+    var activeProviderId: UUID?
+    var activeKeyId: UUID?
+    var activeModelName: String?
+}
+```
+
+### AppConfig (default: 100 messages)
+
+```swift
+struct AppConfig: Codable {
+    static let shared = AppConfig()            // default: 100 messages
+    init(settings: ThreadSettings)             // per-thread config
+    let maxMessagesInContext: Int              // 10...1000
+    let tokenBudget: Int                       // maxMessagesInContext × 500
+    let isUnlimitedContext: Bool
+    let maxOrchestratorSteps: Int             // 100, hardcoded
+    let stallTimeoutSeconds: TimeInterval     // 300s, hardcoded
+}
+```
+
+**Note:** `AppConfig.shared` uses 100 messages. `ThreadSettings` default is 30.
+When a thread has no custom settings — `AppConfig.shared` (100) is used.
+
 ### AIProvider / APIKey / AIModel
 
 ```swift
@@ -224,40 +251,6 @@ struct AIProvider: Codable {
     var providerProtocol: ProviderProtocol
     var keys: [APIKey]
     var models: [AIModel]
-}
-
-struct APIKey: Codable {
-    var id: UUID                  // Keychain entry key = apiKey.id.uuidString
-    var name: String
-}
-
-struct AIModel: Codable {
-    var id: String
-    var name: String
-    var endpoint: String
-    var providerProtocol: ProviderProtocol
-}
-```
-
-### ThreadSettings (Codable)
-
-```swift
-struct ThreadSettings: Codable, Sendable {
-    var maxMessagesInContext: Int   // 10...1000, default 100
-    var isUnlimitedContext: Bool
-    var activeProviderId: UUID?
-    var activeKeyId: UUID?
-    var activeModelName: String?
-}
-```
-
-### AppSettings (Codable, stored via DataStore)
-
-```swift
-struct AppSettingsPayload: Codable {
-    var workspaceBookmark: Data?
-    var lastActiveThreadIdString: String?
-    var balancesJSON: Data
 }
 ```
 
@@ -271,12 +264,7 @@ AIClientProtocol
     ├── streamChat(messages:config:onChunk:) async throws -> AIUsage
     └── fetchAvailableModels() async -> [String]
 
-AIClientFactory
-    ├── make(for provider: AIProvider, apiKey: String, model: AIModel) -> any AIClientProtocol
-    └── makeForValidation(...) -> any AIClientProtocol
-
-AIClient          — OpenAI-compatible (/v1/chat/completions, /v1/models)
-AnthropicClient   — Anthropic native (/v1/messages)
+AIClientFactory.make(for:apiKey:model:) → AIClient | AnthropicClient
 ```
 
 ---
@@ -296,17 +284,18 @@ process(prompt, history, config, memoryContext)
 
 ---
 
-## 9. SystemPromptBuilder
+## 9. SystemPromptBuilder — Injection Order
 
 Pure value transformer — no async, no SwiftData, no side effects.
 
-**Injection order:**
 1. Persona block
 2. `userName` if set
 3. Global memory block if not empty
 4. Thread memory block if not empty
 5. Per-project: `ProjectSettings.formatForSystemPrompt()` + project memory
 6. Tool manifest (injected separately by AIOrchestrator)
+
+Empty sections are omitted — no wasted tokens.
 
 ---
 
@@ -329,14 +318,7 @@ public enum AccessResult: Sendable {
 
 `ShellSession` — persistent bash process per thread ID.
 
-**Access control (TerminalAccessLevel):**
-- `.none` — terminal not available (default)
+**TerminalAccessLevel:**
+- `.none` — terminal unavailable (default)
 - `.confirm` — every command requires user approval
 - `.auto` — commands execute immediately
-
----
-
-## 12. Provider Catalog (GitHub-hosted)
-
-Hosted at: `https://raw.githubusercontent.com/iOSIvanovS/chappieai/main/docs/providers.json`
-Updated monthly via: `providers_1_clear.sh` → `providers_2_append.sh` → `providers_3_push.sh`

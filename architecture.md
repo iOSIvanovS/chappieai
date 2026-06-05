@@ -13,7 +13,8 @@
 └── Scripts/                                 # Internal maintenance scripts (not part of build)
     ├── providers_1_clear.sh                 # Initializes providers.json
     ├── providers_2_append.sh                # Appends a batch of providers/models (≤100)
-    └── providers_3_push.sh                  # Pushes providers.json to GitHub via API
+    ├── providers_3_push.sh                  # Pushes providers.json to GitHub via API
+    └── release_publish.sh                   # Publishes a release build
 ```
 
 ---
@@ -25,7 +26,7 @@
 | `Chappie` | SwiftUI App | UI shell, @MainActor, @Observable ViewModel |
 | `ChappieCore` | Swift Package Library | All business logic: AI, tools, memory |
 | `ChappieCoreTests` | Unit Test Bundle | Tests for ChappieCore |
-| `ChappieMCP` | Command Line Tool | Child process: git + xcodebuild |
+| `ChappieMCP` | Command Line Tool | Child process: git + xcodebuild + localization |
 
 ---
 
@@ -45,7 +46,7 @@ graph TD
     end
 
     subgraph Helper["Child Process"]
-        MCP["ChappieMCP — git + xcodebuild\nsee ChappieMCP/architecture.md"]
+        MCP["ChappieMCP — git + xcodebuild + loc\nsee ChappieMCP/architecture.md"]
     end
 
     Core -->|Unix Domain Socket IPC| MCP
@@ -164,8 +165,6 @@ Empty sections are omitted entirely — no wasted tokens.
 
 ## 9. DataStore Pattern — Deterministic Data Flow
 
-**The core architectural principle of persistence in Chappie.**
-
 ```
 Write:  DomainStruct (Codable) → JSONEncoder → Data → StoredRecord.payload → SwiftData
 Read:   SwiftData → StoredRecord.payload → Data → JSONDecoder → DomainStruct (Codable)
@@ -180,25 +179,20 @@ Read:   SwiftData → StoredRecord.payload → Data → JSONDecoder → DomainSt
 **Codable Compatibility Rules (CRITICAL — violation = silent data corruption):**
 
 1. **Never rename a stored property without `CodingKeys`.**
-   Old JSON has the old key name — rename without `CodingKeys` silently returns nil/default.
-
-2. **Never remove a stored property.**
-   Mark it `optional` with a default. Old records must decode cleanly.
-
+2. **Never remove a stored property** — mark `optional` with a default.
 3. **Always give new properties a default value.**
-   Old records don't have the new key — decoder must not fail.
 
 ---
 
 ## 10. Provider Catalog Pipeline
 
-`providers.json` is hosted publicly at:
+`providers.json` hosted at:
 `https://raw.githubusercontent.com/iOSIvanovS/chappieai/main/docs/providers.json`
 
-**Monthly update pipeline (run manually by maintainer):**
+**Monthly update pipeline:**
 1. `Scripts/providers_1_clear.sh` — initializes empty JSON structure
 2. `Scripts/providers_2_append.sh <json>` — appends batch of ≤100 models (run multiple times)
-3. `Scripts/providers_3_push.sh` — pushes final file to GitHub via API (requires `$GITHUB_TOKEN`)
+3. `Scripts/providers_3_push.sh` — pushes to GitHub via API (requires `$GITHUB_TOKEN`)
 
 Supported providers (10): OpenAI, Anthropic, Google Gemini, DeepSeek, Groq, Mistral, xAI (Grok), OpenRouter, AITunnel, Ollama.
 
@@ -215,14 +209,13 @@ Contains root `architecture.md` + references to 4 target architecture files.
 ## 12. Work Pipeline
 
 1. `git_status` — check for uncommitted changes
-2. `git_commit` — checkpoint before changes
-3. Implement (one task per pass)
-4. Add unit tests if needed (business logic, not trivial UI)
-5. `build_project`
-6. `run_tests` (only after green build)
-7. Fix until green
-8. `git_commit`
-9. Report to user
+2. Implement (one task per pass)
+3. Add unit tests if needed (business logic, not trivial UI)
+4. `build_project`
+5. `run_tests` (only after green build)
+6. Fix until green
+7. Report to user → wait for acceptance
+8. `git_commit` (only after user acceptance)
 
 ---
 
@@ -238,4 +231,4 @@ Contains root `architecture.md` + references to 4 target architecture files.
 
 **RULE-05: No final commit if build or tests are red** — a broken commit is worse than none.
 
-
+**RULE-06: Commit only after user acceptance** — never commit autonomously after task completion.
