@@ -52,7 +52,7 @@ graph TD
     App -->|embeds in Contents/Helpers/| MCP
 
     subgraph Storage["Persistence"]
-        SD["SwiftData\n(ThreadEntity, ProjectEntity, MemoryEntity\nAIProviderEntity, AppSettings)"]
+        DS["DataStore (actor)\nSingle SwiftData gateway\nStoredRecord — the only @Model"]
         KC["Keychain\n(API keys by apiKey.id.uuidString)"]
     end
 
@@ -60,7 +60,7 @@ graph TD
         GH["GitHub\nproviders.json (public)"]
     end
 
-    Core --> SD
+    Core --> DS
     Core --> KC
     Core -->|HTTP GET on launch| GH
 ```
@@ -89,7 +89,7 @@ ChappieMCP
 |---|---|
 | Swift 6 (Full Concurrency) | Entire project |
 | SwiftUI macOS 26+ | UI layer |
-| SwiftData macOS 26+ | Thread, project, memory, and settings persistence |
+| SwiftData macOS 26+ | Single-model persistence via DataStore |
 | @Observable | ViewModel |
 | Actors | ChappieCore services |
 | OpenAI-compatible API | Default wire protocol (AIClient) |
@@ -105,17 +105,15 @@ ChappieMCP
 
 | What | Where | Key/Format |
 |---|---|---|
-| Threads, messages, settings | SwiftData `ThreadEntity` | JSON-in-Data fields |
-| Projects (folder registry) | SwiftData `ProjectEntity` | bookmarkData + path |
-| Memory (3 levels) | SwiftData `MemoryEntity` | scope + targetId |
-| AI providers | SwiftData `AIProviderEntity` | JSON blob (AIProvider struct) |
+| Threads, messages, settings | `DataStore.Relation.threads` | `[ThreadPayload]` JSON |
+| Projects (folder registry) | `DataStore.Relation.projects` | `[ProjectPayload]` JSON |
+| Memory (3 levels) | `DataStore.Relation.memory` | `[MemoryScope]` JSON |
+| AI providers | `DataStore.Relation.providers` | `[AIProvider]` JSON |
+| App settings | `DataStore.Relation.appSettings` | `AppSettingsPayload` JSON |
 | API keys | Keychain | `apiKey.id.uuidString` |
-| Provider balances | SwiftData `AppSettings.balancesJSON` | `{ "<uuid>": Double }` |
-| Last active thread | SwiftData `AppSettings.lastActiveThreadIdString` | UUID string |
-| Workspace bookmark | SwiftData `AppSettings.workspaceBookmark` | Data |
-| One-time migration flags | UserDefaults | `migrationIT04Completed` |
 
-**UserDefaults is used only for one-time migration flags. All domain data lives in SwiftData or Keychain.**
+**Rule: DataStore.swift is the ONLY file in the project that imports SwiftData.**
+**StoredRecord is the ONLY @Model. Its schema never changes. No migrations ever needed.**
 
 ---
 
@@ -123,9 +121,9 @@ ChappieMCP
 
 | Level | Owner | Physical Location | Tool Parameter |
 |---|---|---|---|
-| Global | `AppSettings` | `MemoryEntity` scope=`"global"` | `scope:"global"` |
-| Thread | `ThreadEntity` | `MemoryEntity` scope=`thread.id` | `scope:"thread"` |
-| Project | `ThreadProject` (per thread) | `MemoryEntity` scope=`project.id` | `targetName:"Name"` |
+| Global | `AppSettings` | `MemoryScope` scope=`"global"` | `scope:"global"` |
+| Thread | `ThreadEntity` | `MemoryScope` scope=`thread.id` | `scope:"thread"` |
+| Project | `ThreadProject` (per thread) | `MemoryScope` scope=`project.id` | `targetName:"Name"` |
 
 Project memory is **per thread** — the same project in two threads has independent memory.
 
@@ -152,7 +150,7 @@ Empty sections are omitted entirely — no wasted tokens.
 | `ThreadSession` | Runtime container assembled on thread activation, discarded on switch |
 | `SystemPromptBuilder` | Deterministic prompt assembly from `PromptContext`; pure value transformer |
 | `ToolAccessController` | Hard gate before every tool execution; returns structured `AccessResult` |
-| `AppSettingsStore` | Actor-based CRUD for the singleton `AppSettings` SwiftData record |
+| `AppSettingsStore` | Actor-based CRUD for the singleton AppSettings record |
 
 **Provider/model validation on thread load:**
 1. Resolve `providerId` → if not found: show orange banner, block AI calls
@@ -164,24 +162,31 @@ Empty sections are omitted entirely — no wasted tokens.
 
 ---
 
-## 9. JSON-in-SwiftData Pattern
+## 9. DataStore Pattern — Deterministic Data Flow
 
-All complex domain objects are stored as JSON inside SwiftData primitive fields.
-SwiftData `@Model` classes contain only: `UUID`, `Date`, `Bool`, `Int`, `String`, `Data`.
+**The core architectural principle of persistence in Chappie.**
 
-**Why:** SwiftData schema migrations are painful. JSON-in-Data means the schema never
-changes — only the `Codable` struct evolves freely.
+```
+Write:  DomainStruct (Codable) → JSONEncoder → Data → StoredRecord.payload → SwiftData
+Read:   SwiftData → StoredRecord.payload → Data → JSONDecoder → DomainStruct (Codable)
+```
 
-**⚠️ CRITICAL: Never rename a `Codable` property stored in SwiftData without adding `CodingKeys`.**
+**Why this works:**
+- SwiftData schema is frozen at one model (`StoredRecord`). No migrations ever.
+- Domain structs evolve freely as `Codable` — no SwiftData involvement.
+- Decode failure is non-fatal. Callers receive `nil`/`[]` and recover gracefully.
+- The entire persistence layer is replaceable without touching domain logic.
 
-Persisted structs (must follow the rename rule):
+**Codable Compatibility Rules (CRITICAL — violation = silent data corruption):**
 
-| Struct | Stored in |
-|---|---|
-| `ThreadSettings` | `ThreadEntity.settingsJSON` |
-| `ProjectSettings` | `ProjectEntity.settingsJSON` |
-| `AIProvider` | `AIProviderEntity.json` |
-| `[ChatMessage]` | `ThreadEntity.messagesJSON` |
+1. **Never rename a stored property without `CodingKeys`.**
+   Old JSON has the old key name — rename without `CodingKeys` silently returns nil/default.
+
+2. **Never remove a stored property.**
+   Mark it `optional` with a default. Old records must decode cleanly.
+
+3. **Always give new properties a default value.**
+   Old records don't have the new key — decoder must not fail.
 
 ---
 
@@ -194,23 +199,6 @@ Persisted structs (must follow the rename rule):
 1. `Scripts/providers_1_clear.sh` — initializes empty JSON structure
 2. `Scripts/providers_2_append.sh <json>` — appends batch of ≤100 models (run multiple times)
 3. `Scripts/providers_3_push.sh` — pushes final file to GitHub via API (requires `$GITHUB_TOKEN`)
-
-**JSON structure:**
-```json
-{
-  "meta": { "version": "1.0", "updated_at": "...", "providers_count": 10, "models_count": 209 },
-  "providers": [
-    {
-      "id": "openai",
-      "name": "OpenAI",
-      "base_url": "https://api.openai.com",
-      "models": [
-        { "id": "gpt-4o", "name": "GPT-4o", "endpoint": "/v1/chat/completions", "protocol": "openai" }
-      ]
-    }
-  ]
-}
-```
 
 Supported providers (10): OpenAI, Anthropic, Google Gemini, DeepSeek, Groq, Mistral, xAI (Grok), OpenRouter, AITunnel, Ollama.
 
