@@ -2,12 +2,11 @@ import Foundation
 
 // MARK: - Prompt Caching: Content Blocks
 
-/// Cache control tag — placed at the top level of AITunnelRequest AND on the system message.
+/// Cache control tag — placed at the top level of AITunnelRequest, not per-block.
 ///
-/// WHY TWO PLACEMENTS:
-///   top-level cache_control on AITunnelRequest → tells AITunnel to cache tools array.
-///   cache_control on the system AIMessage       → tells AITunnel to cache the system prompt.
-/// Both are needed for full caching coverage (system + tools).
+/// WHY TOP-LEVEL: AITunnel is an OpenAI-compatible gateway; passing cache_control inside
+/// message content arrays breaks the connection. Top-level placement lets the gateway
+/// move the breakpoint automatically as the conversation grows.
 ///
 /// WHY 1H TTL: Default 5-min TTL means the system prompt is recomputed every break.
 /// 1h covers full dev sessions and saves ~80-90% of system prompt cost.
@@ -138,8 +137,7 @@ extension AIMessageContent: Decodable {
 
 /// POST request body for the AI provider API.
 ///
-/// cache_control is top-level (not per-block) — caches the tools array on AITunnel.
-/// System prompt caching is handled via cache_control on the system AIMessage itself.
+/// cache_control is top-level (not per-block) — required by AITunnel gateway.
 /// stream=true → SSE chunks; stream=false → single blocking response.
 public struct AITunnelRequest: Encodable, Sendable {
     public let model: String
@@ -171,10 +169,6 @@ public struct AITunnelRequest: Encodable, Sendable {
 /// content is AIMessageContent? — polymorphic (.text / .blocks / .multimodal).
 /// contentString provides backward-compatible string access without manual unwrapping.
 ///
-/// cache_control — AITunnel-only field for per-message caching (system prompt).
-/// Set only on the system message when supportsCaching=true. NEVER sent to other providers
-/// because AIMessage.encode() uses encodeIfPresent — nil = field absent from JSON.
-///
 /// ENCODING: content uses encodeIfPresent — nil content is OMITTED from JSON (not null).
 /// Strict providers (Groq, Ollama) reject "content": null on assistant tool-call messages.
 /// Omitting the field entirely is the correct OpenAI spec behavior for tool-call turns.
@@ -184,9 +178,6 @@ public struct AIMessage: Sendable {
     public var tool_calls: [AIToolCall]?
     public var tool_call_id: String?
     public var name: String?
-    /// AITunnel-only: cache this message's content for 1h.
-    /// nil on all other providers — encodeIfPresent ensures the field is absent from JSON.
-    public var cache_control: AICacheControl?
 
     public var contentString: String? {
         guard let content else { return nil }
@@ -202,15 +193,13 @@ public struct AIMessage: Sendable {
         content: String? = nil,
         tool_calls: [AIToolCall]? = nil,
         tool_call_id: String? = nil,
-        name: String? = nil,
-        cacheControl: AICacheControl? = nil
+        name: String? = nil
     ) {
         self.role = role
         self.content = content.map { .text($0) }
         self.tool_calls = tool_calls
         self.tool_call_id = tool_call_id
         self.name = name
-        self.cache_control = cacheControl
     }
 
     /// Blocks initializer — kept for compatibility. NOT for AITunnel requests.
@@ -226,7 +215,6 @@ public struct AIMessage: Sendable {
         self.tool_calls = tool_calls
         self.tool_call_id = tool_call_id
         self.name = name
-        self.cache_control = nil
     }
 
     /// Multimodal initializer — encodes to OpenAI vision array format.
@@ -242,7 +230,6 @@ public struct AIMessage: Sendable {
         self.tool_calls = tool_calls
         self.tool_call_id = tool_call_id
         self.name = name
-        self.cache_control = nil
     }
 
     /// Streaming assistant message initializer — creates a message from the accumulated stream buffer.
@@ -258,7 +245,6 @@ public struct AIMessage: Sendable {
         self.tool_calls = toolCalls
         self.tool_call_id = tool_call_id
         self.name = name
-        self.cache_control = nil
     }
 }
 
@@ -266,11 +252,11 @@ public struct AIMessage: Sendable {
 
 extension AIMessage: Encodable {
     private enum CodingKeys: String, CodingKey {
-        case role, content, tool_calls, tool_call_id, name, cache_control
+        case role, content, tool_calls, tool_call_id, name
     }
 
-    /// Manual encode — uses encodeIfPresent for optional fields.
-    /// cache_control is nil for all non-AITunnel providers → absent from JSON → they never see it.
+    /// Manual encode — uses encodeIfPresent for content so nil is OMITTED (not null).
+    /// Groq and other strict providers reject "content": null on tool-call assistant messages.
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(role, forKey: .role)
@@ -278,13 +264,12 @@ extension AIMessage: Encodable {
         try container.encodeIfPresent(tool_calls, forKey: .tool_calls)
         try container.encodeIfPresent(tool_call_id, forKey: .tool_call_id)
         try container.encodeIfPresent(name, forKey: .name)
-        try container.encodeIfPresent(cache_control, forKey: .cache_control)
     }
 }
 
 extension AIMessage: Decodable {
     private enum DecodingKeys: String, CodingKey {
-        case role, content, tool_calls, tool_call_id, name, cache_control
+        case role, content, tool_calls, tool_call_id, name
     }
 
     public init(from decoder: Decoder) throws {
@@ -294,7 +279,6 @@ extension AIMessage: Decodable {
         tool_calls = try container.decodeIfPresent([AIToolCall].self, forKey: .tool_calls)
         tool_call_id = try container.decodeIfPresent(String.self, forKey: .tool_call_id)
         name = try container.decodeIfPresent(String.self, forKey: .name)
-        cache_control = try container.decodeIfPresent(AICacheControl.self, forKey: .cache_control)
     }
 }
 
