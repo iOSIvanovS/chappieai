@@ -1,44 +1,44 @@
 // MCPHelperLauncher.swift
 // Chappie
 //
-// ЗАЧЕМ ЭТОТ ФАЙЛ:
-// Управляет жизненным циклом дочернего процесса ChappieMCP.
+// WHY THIS FILE:
+// Manages the lifecycle of the ChappieMCP child process.
 //
-// АРХИТЕКТУРА ПЕРЕДАЧИ ПУТИ К СОКЕТУ:
-// Сокет кладётся в /tmp/ — это стандартный путь, доступный всем процессам
-// без sandbox-ограничений (sandbox удалён из проекта).
-// Путь вычисляется один раз в init() и хранится в константе.
+// SOCKET PATH ARCHITECTURE:
+// Socket is placed in /tmp/ — standard path accessible to all processes
+// without sandbox restrictions (sandbox removed from project).
+// Path is computed once in init() and stored as a constant.
 //
-// ПОЧЕМУ ПЕРЕДАЁМ ПУТЬ ЧЕРЕЗ АРГУМЕНТ, А НЕ ХАРДКОДИМ В ХЕЛПЕРЕ:
-// Родитель (Chappie.app) является единственным источником истины о пути сокета.
-// Хелпер не должен самостоятельно принимать решение о пути — это упрощает
-// диагностику и позволяет менять путь централизованно.
+// WHY WE PASS PATH VIA ARGUMENT INSTEAD OF HARDCODING IN HELPER:
+// Parent (Chappie.app) is the single source of truth about the socket path.
+// Helper should not independently decide on file paths — simplifies diagnostics
+// and allows centralized path changes.
 //
 // LIFECYCLE:
 // 1. ChappieApp.onAppear → MCPHelperLauncher.shared.launch(workspacePath:)
-// 2. Лаунчер берёт socketPath (вычислен в init)
-// 3. Запускает Process с аргументами: [workspacePath, socketPath]
-// 4. MCPToolBridge использует тот же socketPath для подключения
-// 5. При завершении Chappie.app → terminateHelper() убивает дочерний процесс
+// 2. Launcher takes socketPath (computed in init)
+// 3. Starts Process with arguments: [workspacePath, socketPath]
+// 4. MCPToolBridge uses the same socketPath to connect
+// 5. On Chappie.app exit → terminateHelper() kills child process
 //
-// ПОЧЕМУ @Observable, А НЕ ObservableObject:
-// В Swift 6 / macOS 26 предпочтительна макро-система @Observable из Observation.
-// Она не требует Combine и работает нативно с @MainActor без предупреждений.
+// WHY @Observable, NOT ObservableObject:
+// In Swift 6 / macOS 26, @Observable macro system is preferred.
+// It doesn't require Combine and works natively with @MainActor without warnings.
 //
-// ВАЖНО — lazy vs init():
-// @Observable макрос генерирует обёртки для каждого хранимого свойства.
-// Ключевое слово lazy несовместимо с этой генерацией — компилятор падает
-// с ошибкой "init accessor cannot refer to property '_socketPath'".
-// Поэтому socketPath вычисляется в init() и хранится как обычное var.
+// IMPORTANT — stdout/stderr via Pipe, NOT FileHandle.standardOutput:
+// Passing FileHandle.standardOutput/standardError directly to the child process
+// causes PTY errors (ErrorCode: 7, Errno: 6 "Device not configured") on macOS 26.5.
+// Using Pipe isolates the child's output from the parent's PTY entirely.
+// We read logs from the pipe asynchronously and forward them via print().
 
 import Foundation
 import AppKit
 import Observation
 
-/// Синглтон для управления дочерним процессом ChappieMCP.
+/// Singleton for managing the ChappieMCP child process.
 ///
-/// Зачем @MainActor: все операции с Process и состоянием лаунчера
-/// должны происходить на главном потоке, чтобы избежать гонок данных.
+/// Why @MainActor: all Process operations and state updates
+/// must happen on the main thread to avoid data races.
 @MainActor
 @Observable
 final class MCPHelperLauncher {
@@ -47,57 +47,47 @@ final class MCPHelperLauncher {
 
     static let shared = MCPHelperLauncher()
 
-    // MARK: - Состояние
+    // MARK: - State
 
-    /// Текущий статус хелпера — для отображения в UI.
+    /// Current helper status — for UI display.
     var status: HelperStatus = .notStarted
 
-    /// Путь к Unix Domain Socket.
+    /// Path to Unix Domain Socket.
     ///
-    /// ПОЧЕМУ НЕ lazy: @Observable макрос несовместим с lazy — он генерирует
-    /// init accessor, который не может обращаться к backing storage (_socketPath).
-    /// Вычисляем путь в init() и сохраняем как обычное свойство.
-    ///
-    /// ПУТЬ /tmp/: sandbox удалён из проекта, поэтому /tmp/ доступен.
+    /// WHY NOT lazy: @Observable macro is incompatible with lazy — it generates
+    /// init accessor that cannot access backing storage (_socketPath).
+    /// Compute path in init() and store as a regular property.
     private(set) var socketPath: String = ""
 
-    /// Дочерний процесс ChappieMCP.
+    /// Child process for ChappieMCP.
     private var helperProcess: Process?
 
-    /// Путь к воркспейсу, с которым был запущен хелпер.
+    /// Workspace path the helper was launched with.
     private var currentWorkspacePath: String?
 
-    // MARK: - Инициализация
+    // MARK: - Init
 
     private init() {
-        // Вычисляем путь к сокету один раз при инициализации синглтона.
-        // Используем /tmp/ — стандартное место для Unix Domain Sockets на macOS.
-        // Имя файла включает bundle identifier для уникальности.
         socketPath = "/tmp/com.chappie.mcp.sock"
     }
 
-    // MARK: - Публичный интерфейс
+    // MARK: - Public Interface
 
-    /// Запускает хелпер ChappieMCP с указанным путём воркспейса.
+    /// Launches ChappieMCP helper with the given workspace path.
     ///
-    /// БЕЗОПАСНОСТЬ ОТ ДВОЙНОГО ЗАПУСКА:
-    /// Если хелпер уже запущен с тем же путём — ничего не делаем.
-    /// Если путь изменился — перезапускаем.
-    ///
-    /// - Parameter workspacePath: Путь к папке проекта. Передаётся хелперу
-    ///   как argv[1] — он использует его как рабочий каталог для git/build команд.
+    /// DOUBLE-LAUNCH SAFETY:
+    /// If helper is already running with the same path — do nothing.
+    /// If path changed — restart.
     func launch(workspacePath: String? = nil) {
         let path = workspacePath ?? FileManager.default.currentDirectoryPath
 
-        // Если хелпер уже запущен с тем же путём — не трогаем
         if let process = helperProcess, process.isRunning, currentWorkspacePath == path {
-            print("[MCPHelperLauncher] ℹ️ Хелпер уже запущен для: \(path)")
+            print("[MCPHelperLauncher] ℹ️ Helper already running for: \(path)")
             return
         }
 
-        // Если запущен с другим путём — останавливаем и перезапускаем
         if let process = helperProcess, process.isRunning {
-            print("[MCPHelperLauncher] 🔄 Перезапуск хелпера для нового воркспейса: \(path)")
+            print("[MCPHelperLauncher] 🔄 Restarting helper for new workspace: \(path)")
             process.terminate()
             helperProcess = nil
         }
@@ -105,33 +95,28 @@ final class MCPHelperLauncher {
         startHelper(workspacePath: path)
     }
 
-    /// Перезапускает хелпер с новым путём воркспейса.
-    /// Вызывается из ChappieViewModel.setWorkspace() при смене проекта.
+    /// Restarts helper with a new workspace path.
+    /// Called from ChappieViewModel.setWorkspace() on project change.
     func restartWithWorkspace(_ url: URL) {
         launch(workspacePath: url.path)
     }
 
-    /// Завершает дочерний процесс.
-    /// Вызывается из ChappieApp при завершении приложения.
+    /// Terminates the child process.
+    /// Called from ChappieApp on application exit.
     func terminateHelper() {
         guard let process = helperProcess, process.isRunning else { return }
-        print("[MCPHelperLauncher] 🛑 Завершение хелпера ChappieMCP")
+        print("[MCPHelperLauncher] 🛑 Terminating ChappieMCP helper")
         process.terminate()
         helperProcess = nil
         status = .stopped
-
-        // Удаляем файл сокета при завершении — чистим за собой
         try? FileManager.default.removeItem(atPath: socketPath)
     }
 
-    // MARK: - Приватная логика запуска
+    // MARK: - Private Launch Logic
 
-    /// Находит бинарник в bundle и запускает его как дочерний процесс.
+    /// Finds the binary in bundle and launches it as a child process.
     private func startHelper(workspacePath: String) {
-        // Ищем бинарник ChappieMCP в стандартной папке Helpers внутри .app bundle.
-        // forAuxiliaryExecutable ищет в Contents/MacOS/ и Contents/Helpers/.
         guard let helperURL = Bundle.main.url(forAuxiliaryExecutable: "ChappieMCP") else {
-            // Fallback: ищем вручную в Contents/Helpers/
             let fallbackURL = Bundle.main.bundleURL
                 .appendingPathComponent("Contents")
                 .appendingPathComponent("Helpers")
@@ -140,10 +125,10 @@ final class MCPHelperLauncher {
             if FileManager.default.fileExists(atPath: fallbackURL.path) {
                 startProcess(at: fallbackURL, workspacePath: workspacePath)
             } else {
-                print("[MCPHelperLauncher] ❌ Бинарник ChappieMCP не найден в bundle!")
-                print("[MCPHelperLauncher] ℹ️ Ожидаемый путь: \(fallbackURL.path)")
-                print("[MCPHelperLauncher] ℹ️ Добавьте ChappieMCP в Copy Files Build Phase → Helpers")
-                status = .failed("Бинарник не найден в bundle")
+                print("[MCPHelperLauncher] ❌ ChappieMCP binary not found in bundle!")
+                print("[MCPHelperLauncher] ℹ️ Expected path: \(fallbackURL.path)")
+                print("[MCPHelperLauncher] ℹ️ Add ChappieMCP to Copy Files Build Phase → Helpers")
+                status = .failed("Binary not found in bundle")
             }
             return
         }
@@ -151,34 +136,48 @@ final class MCPHelperLauncher {
         startProcess(at: helperURL, workspacePath: workspacePath)
     }
 
-    /// Создаёт и запускает Process для хелпера.
+    /// Creates and starts the Process for the helper.
     private func startProcess(at url: URL, workspacePath: String) {
         let process = Process()
         process.executableURL = url
-
-        // Передаём два аргумента:
-        // argv[1] = путь к воркспейсу (рабочий каталог для git/build)
-        // argv[2] = путь к Unix Domain Socket
-        //
-        // Зачем передавать socketPath через аргумент:
-        // Родитель является единственным источником истины о пути сокета.
-        // Хелпер не принимает самостоятельных решений о расположении файлов.
         process.arguments = [workspacePath, socketPath]
 
-        // Пробрасываем стандартные потоки вывода — логи хелпера видны в консоли Xcode.
-        process.standardOutput = FileHandle.standardOutput
-        process.standardError = FileHandle.standardError
+        // Use Pipe instead of FileHandle.standardOutput/standardError.
+        // WHY: passing FileHandle.standardOutput directly to the child process
+        // causes PTY errors (ErrorCode: 7, Errno: 6) on macOS 26.5 beta.
+        // Pipe completely isolates the child's I/O from the parent's PTY.
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
 
-        // Обработчик завершения процесса.
-        // Зачем Task { @MainActor in }: terminationHandler вызывается на фоновом потоке,
-        // но мы обновляем свойства @Observable — нужен главный поток.
+        // Forward child logs to parent's console asynchronously.
+        // WHY async: reading synchronously would block the main thread.
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+            let trimmed = text.trimmingCharacters(in: .newlines)
+            if !trimmed.isEmpty {
+                print("[ChappieMCP] \(trimmed)")
+            }
+        }
+
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+            let trimmed = text.trimmingCharacters(in: .newlines)
+            if !trimmed.isEmpty {
+                print("[ChappieMCP:err] \(trimmed)")
+            }
+        }
+
         process.terminationHandler = { [weak self] terminatedProcess in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 let code = terminatedProcess.terminationStatus
-                print("[MCPHelperLauncher] ⚠️ Хелпер завершился с кодом: \(code)")
+                print("[MCPHelperLauncher] ⚠️ Helper exited with code: \(code)")
 
-                // Код 15 = SIGTERM — мы сами завершили процесс, это нормально.
+                // Code 15 = SIGTERM — we terminated it intentionally, that's normal.
                 if code != 15 {
                     self.status = .crashed(code: Int(code))
                     self.helperProcess = nil
@@ -191,11 +190,11 @@ final class MCPHelperLauncher {
             helperProcess = process
             currentWorkspacePath = workspacePath
             status = .running
-            print("[MCPHelperLauncher] ✅ Хелпер ChappieMCP запущен (PID: \(process.processIdentifier))")
-            print("[MCPHelperLauncher] 📁 Воркспейс: \(workspacePath)")
-            print("[MCPHelperLauncher] 🔌 Сокет: \(socketPath)")
+            print("[MCPHelperLauncher] ✅ ChappieMCP helper started (PID: \(process.processIdentifier))")
+            print("[MCPHelperLauncher] 📁 Workspace: \(workspacePath)")
+            print("[MCPHelperLauncher] 🔌 Socket: \(socketPath)")
         } catch {
-            print("[MCPHelperLauncher] ❌ Не удалось запустить хелпер: \(error)")
+            print("[MCPHelperLauncher] ❌ Failed to start helper: \(error)")
             status = .failed(error.localizedDescription)
         }
     }
@@ -203,10 +202,10 @@ final class MCPHelperLauncher {
 
 // MARK: - HelperStatus
 
-/// Статус жизненного цикла хелпера.
+/// Helper lifecycle status.
 ///
-/// Зачем enum вместо Bool: позволяет передавать детали ошибки в UI
-/// без дополнительных свойств.
+/// Why enum instead of Bool: allows passing error details to UI
+/// without additional properties.
 enum HelperStatus: Equatable {
     case notStarted
     case running
@@ -216,11 +215,11 @@ enum HelperStatus: Equatable {
 
     var description: String {
         switch self {
-        case .notStarted:        return "Не запущен"
-        case .running:           return "Работает"
-        case .stopped:           return "Остановлен"
-        case .failed(let msg):   return "Ошибка: \(msg)"
-        case .crashed(let code): return "Упал (код \(code))"
+        case .notStarted:        return "Not started"
+        case .running:           return "Running"
+        case .stopped:           return "Stopped"
+        case .failed(let msg):   return "Error: \(msg)"
+        case .crashed(let code): return "Crashed (code \(code))"
         }
     }
 }

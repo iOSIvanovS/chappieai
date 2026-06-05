@@ -292,6 +292,13 @@ extension ToolExecutionService {
                     parameters: AIToolParameters(properties: [:], required: [])
                 )))
             }
+
+            // MARK: - Localization tools (Xcode only)
+            // xcstrings is an Xcode-specific format — inject only for Xcode projects.
+
+            if env == .xcode {
+                tools.append(contentsOf: localizationTools())
+            }
         }
 
         // MARK: - Project management (IT-07, always)
@@ -361,57 +368,192 @@ extension ToolExecutionService {
         return tools
     }
 
+    // MARK: - Localization tool definitions (Xcode / xcstrings)
+
+    private func localizationTools() -> [AITool] {
+        let pathArg = AIToolProperty(type: "string", description: "Relative path to the .xcstrings file (e.g. 'Chappie/Localizable.xcstrings')")
+        let keyArg  = AIToolProperty(type: "string", description: "Localization key string")
+
+        return [
+            AITool(function: AIFunctionDefinition(
+                name: "loc_info",
+                description: """
+                Returns a map of all .xcstrings files in the project with per-language coverage stats.
+                Use at the start of any localization session to understand current state.
+                """,
+                parameters: AIToolParameters(properties: [:], required: [])
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "loc_create",
+                description: "Create a new .xcstrings localization file at the given path. Standard path: 'Chappie/Localizable.xcstrings'.",
+                parameters: AIToolParameters(
+                    properties: [
+                        "path": AIToolProperty(type: "string", description: "Relative path for the new file (e.g. 'Chappie/Localizable.xcstrings')"),
+                        "sourceLanguage": AIToolProperty(type: "string", description: "Source language code (default: 'en')")
+                    ],
+                    required: ["path"]
+                )
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "loc_rename",
+                description: "Rename (move) a .xcstrings file. Remember to update the file reference in Xcode project navigator.",
+                parameters: AIToolParameters(
+                    properties: [
+                        "from": AIToolProperty(type: "string", description: "Current relative path"),
+                        "to": AIToolProperty(type: "string", description: "New relative path")
+                    ],
+                    required: ["from", "to"]
+                )
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "loc_delete",
+                description: "Delete a .xcstrings file. Remember to remove the reference from Xcode project navigator.",
+                parameters: AIToolParameters(
+                    properties: ["path": pathArg],
+                    required: ["path"]
+                )
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "loc_add_language",
+                description: "Add a target language to a .xcstrings file (or all files if path is omitted). All existing keys will be marked for translation.",
+                parameters: AIToolParameters(
+                    properties: [
+                        "language": AIToolProperty(type: "string", description: "Language code to add (e.g. 'ru', 'de', 'zh-Hans', 'ja')"),
+                        "path": AIToolProperty(type: "string", description: "Relative path to specific .xcstrings file. Omit to apply to all files.")
+                    ],
+                    required: ["language"]
+                )
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "loc_remove_language",
+                description: "Remove a target language from a .xcstrings file (or all files if path is omitted). Cannot remove source language.",
+                parameters: AIToolParameters(
+                    properties: [
+                        "language": AIToolProperty(type: "string", description: "Language code to remove"),
+                        "path": AIToolProperty(type: "string", description: "Relative path to specific .xcstrings file. Omit to apply to all files.")
+                    ],
+                    required: ["language"]
+                )
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "loc_key_check",
+                description: "Check translation status for a specific key across all languages. Shows value and state per language.",
+                parameters: AIToolParameters(
+                    properties: [
+                        "key": keyArg,
+                        "path": pathArg
+                    ],
+                    required: ["key", "path"]
+                )
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "loc_next_batch",
+                description: """
+                Returns the next batch of keys needing translation.
+                Batch size = 100 / number of target languages — never more than 100 translations per call.
+                Tracks state in /tmp so repeated calls return new keys, not the same ones.
+                Call this before translating to know exactly what to translate next.
+                """,
+                parameters: AIToolParameters(
+                    properties: ["path": pathArg],
+                    required: ["path"]
+                )
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "loc_submit_batch",
+                description: """
+                Submit a batch of translations to the .xcstrings file.
+                Writes translations without duplicates. Always sets state: "translated".
+                translations format: JSON object {"key": {"ru": "Перевод", "de": "Übersetzung"}}
+                """,
+                parameters: AIToolParameters(
+                    properties: [
+                        "path": pathArg,
+                        "translations": AIToolProperty(type: "string", description: "JSON string: {\"key\": {\"lang\": \"value\", ...}, ...}")
+                    ],
+                    required: ["path", "translations"]
+                )
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "loc_dead_keys",
+                description: """
+                Scans all .swift files in the project and reports which keys in the .xcstrings file
+                are not referenced anywhere in code. Use to clean up unused translations.
+                """,
+                parameters: AIToolParameters(
+                    properties: ["path": pathArg],
+                    required: ["path"]
+                )
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "loc_add_key",
+                description: "Add a new localization key with its English value. Use before submitting translations for new UI strings.",
+                parameters: AIToolParameters(
+                    properties: [
+                        "path": pathArg,
+                        "key": keyArg,
+                        "value": AIToolProperty(type: "string", description: "English text for this key"),
+                        "comment": AIToolProperty(type: "string", description: "Optional context comment for translators")
+                    ],
+                    required: ["path", "key", "value"]
+                )
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "loc_remove_key",
+                description: "Remove a localization key and all its translations from the .xcstrings file.",
+                parameters: AIToolParameters(
+                    properties: [
+                        "path": pathArg,
+                        "key": keyArg
+                    ],
+                    required: ["path", "key"]
+                )
+            ))
+        ]
+    }
+
     // MARK: - Env-specific tool descriptions
 
     /// build_project description tailored to the active dev environment.
     private func buildProjectDescription(for env: DevEnvironment) -> String {
         switch env {
-        case .xcode:
-            return "Build the Xcode project via xcodebuild. Returns success or a list of compilation errors."
-        case .nodejs:
-            return "Build the Node.js project (npm run build). Returns success or a list of build errors."
-        case .go:
-            return "Build the Go project (go build ./...). Returns success or a list of compilation errors."
-        case .rust:
-            return "Build the Rust project (cargo build). Returns success or a list of compilation errors."
-        case .java:
-            return "Build the Java project (mvn compile or gradle build). Returns success or a list of compilation errors."
-        case .kotlin:
-            return "Build the Kotlin/Android project (gradle build). Returns success or a list of compilation errors."
-        case .flutter:
-            return "Build the Flutter project (flutter build). Returns success or a list of build errors."
-        case .dotnet:
-            return "Build the .NET project (dotnet build). Returns success or a list of compilation errors."
-        default:
-            return "Build the project. Returns success or a list of build errors."
+        case .xcode:    return "Build the Xcode project via xcodebuild. Returns success or a list of compilation errors."
+        case .nodejs:   return "Build the Node.js project (npm run build). Returns success or a list of build errors."
+        case .go:       return "Build the Go project (go build ./...). Returns success or a list of compilation errors."
+        case .rust:     return "Build the Rust project (cargo build). Returns success or a list of compilation errors."
+        case .java:     return "Build the Java project (mvn compile or gradle build). Returns success or a list of compilation errors."
+        case .kotlin:   return "Build the Kotlin/Android project (gradle build). Returns success or a list of compilation errors."
+        case .flutter:  return "Build the Flutter project (flutter build). Returns success or a list of build errors."
+        case .dotnet:   return "Build the .NET project (dotnet build). Returns success or a list of compilation errors."
+        default:        return "Build the project. Returns success or a list of build errors."
         }
     }
 
     /// run_tests description tailored to the active dev environment.
     private func runTestsDescription(for env: DevEnvironment) -> String {
         switch env {
-        case .xcode:
-            return "Run automated tests via xcodebuild test. Specify target name or leave empty for all tests."
-        case .nodejs:
-            return "Run automated tests (npm test). Specify test file/pattern or leave empty for all tests."
-        case .python:
-            return "Run automated tests (pytest or unittest). Specify test file/pattern or leave empty for all tests."
-        case .go:
-            return "Run automated tests (go test ./...). Specify package path or leave empty for all tests."
-        case .rust:
-            return "Run automated tests (cargo test). Specify test name filter or leave empty for all tests."
-        case .java:
-            return "Run automated tests (mvn test or gradle test). Specify test class or leave empty for all tests."
-        case .kotlin:
-            return "Run automated tests (gradle test). Specify test class or leave empty for all tests."
-        case .flutter:
-            return "Run automated tests (flutter test). Specify test file or leave empty for all tests."
-        case .reacttypescript:
-            return "Run automated tests (npm test or vitest). Specify test file/pattern or leave empty for all tests."
-        case .dotnet:
-            return "Run automated tests (dotnet test). Specify test project or leave empty for all tests."
-        default:
-            return "Run automated tests. Specify target or leave empty for all tests."
+        case .xcode:            return "Run automated tests via xcodebuild test. Specify target name or leave empty for all tests."
+        case .nodejs:           return "Run automated tests (npm test). Specify test file/pattern or leave empty for all tests."
+        case .python:           return "Run automated tests (pytest or unittest). Specify test file/pattern or leave empty for all tests."
+        case .go:               return "Run automated tests (go test ./...). Specify package path or leave empty for all tests."
+        case .rust:             return "Run automated tests (cargo test). Specify test name filter or leave empty for all tests."
+        case .java:             return "Run automated tests (mvn test or gradle test). Specify test class or leave empty for all tests."
+        case .kotlin:           return "Run automated tests (gradle test). Specify test class or leave empty for all tests."
+        case .flutter:          return "Run automated tests (flutter test). Specify test file or leave empty for all tests."
+        case .reacttypescript:  return "Run automated tests (npm test or vitest). Specify test file/pattern or leave empty for all tests."
+        case .dotnet:           return "Run automated tests (dotnet test). Specify test project or leave empty for all tests."
+        default:                return "Run automated tests. Specify target or leave empty for all tests."
         }
     }
 }

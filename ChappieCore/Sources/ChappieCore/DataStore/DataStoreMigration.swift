@@ -1,19 +1,18 @@
 // DataStoreMigration.swift
 // ChappieCore
 //
-// One-time migration from legacy @Model classes to DataStore (StoredRecord).
-// Reads old SwiftData entities, encodes them into DataStore format, writes via DataStore.
+// One-time migration from legacy @Model classes to ChappieDataStore (StoredRecord).
+// Reads old SwiftData entities, encodes them into ChappieDataStore format, writes via ChappieDataStore.
 //
 // SAFETY CONTRACT:
 // - Migration is READ-ONLY on legacy entities — nothing is deleted here.
-// - Old @Model classes are removed in DB-05, after all Stores are switched to DataStore.
-// - Migration is idempotent: if DataStore already has data for a relation, it is skipped.
+// - Old @Model classes are removed in DB-05, after all Stores are switched to ChappieDataStore.
+// - Migration is idempotent: if ChappieDataStore already has data for a relation, it is skipped.
 //   This prevents double-migration if the app is launched multiple times before DB-05.
 //
 // MEMORY LAYOUT IN DATASTORE:
-// MemoryEntity rows (one per scope) are collapsed into a single [String: [MemoryEntry]] dict.
-// Key = scope string ("global", project UUID, thread UUID), value = entries array.
-// This matches MemoryStore's access pattern: always read/write the full scope at once.
+// MemoryEntity rows (one per scope) are collapsed into a single MemoryStorage struct.
+// MemoryStorage.scopes: [scope string → [MemoryEntry]] — matches MemoryStore's access pattern.
 
 import Foundation
 import SwiftData
@@ -23,7 +22,7 @@ import SwiftData
 // Sendable Codable structs — safe to pass across actor boundaries.
 // Mirror legacy @Model fields exactly so data survives the transition.
 
-/// Portable representation of a thread for DataStore storage.
+/// Portable representation of a thread for ChappieDataStore storage.
 /// Mirrors ThreadEntity fields — all heavy data stays as opaque Data blobs.
 public struct ThreadPayload: Codable, Sendable {
     public let id: UUID
@@ -51,9 +50,19 @@ public struct ThreadPayload: Codable, Sendable {
         self.settingsJSON = settingsJSON
         self.projectBindingsJSON = projectBindingsJSON
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case createdAt          = "created_at"
+        case updatedAt          = "updated_at"
+        case messagesJSON       = "messages_json"
+        case settingsJSON       = "settings_json"
+        case projectBindingsJSON = "project_bindings_json"
+    }
 }
 
-/// Portable representation of a project for DataStore storage.
+/// Portable representation of a project for ChappieDataStore storage.
 /// Mirrors ProjectEntity fields.
 public struct ProjectPayload: Codable, Sendable {
     public let id: UUID
@@ -75,9 +84,17 @@ public struct ProjectPayload: Codable, Sendable {
         self.createdAt = createdAt
         self.settingsJSON = settingsJSON
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case displayName    = "display_name"
+        case bookmarkData   = "bookmark_data"
+        case createdAt      = "created_at"
+        case settingsJSON   = "settings_json"
+    }
 }
 
-/// AppSettings payload for DataStore storage.
+/// AppSettings payload for ChappieDataStore storage.
 /// Mirrors AppSettings fields exactly.
 public struct AppSettingsPayload: Codable, Sendable {
     public var workspaceBookmark: Data?
@@ -94,11 +111,10 @@ public struct AppSettingsPayload: Codable, Sendable {
         self.balancesJSON = balancesJSON
     }
 
-    // CodingKeys guard against future renames — required by DataStore Codable contract.
     private enum CodingKeys: String, CodingKey {
-        case workspaceBookmark = "workspace_bookmark"
-        case lastActiveThreadIdString = "last_active_thread_id"
-        case balancesJSON = "balances_json"
+        case workspaceBookmark          = "workspace_bookmark"
+        case lastActiveThreadIdString   = "last_active_thread_id"
+        case balancesJSON               = "balances_json"
     }
 }
 
@@ -113,36 +129,33 @@ public struct ProvidersPayload: Codable, Sendable {
         self.providers = providers
         self.defaultProviderId = defaultProviderId
     }
-}
 
-/// Memory storage — all scopes in one dict: scope → entries.
-/// Stored as a single DataStore record under Relation.memory.
-public struct MemoryStorage: Codable, Sendable {
-    /// scope string → array of MemoryEntry
-    public var scopes: [String: [MemoryEntry]]
-
-    public init(scopes: [String: [MemoryEntry]] = [:]) {
-        self.scopes = scopes
+    private enum CodingKeys: String, CodingKey {
+        case providers
+        case defaultProviderId = "default_provider_id"
     }
 }
 
+// Note: MemoryStorage is defined in MemoryModels.swift — shared between
+// DataStoreMigration and MemoryStore to avoid duplication.
+
 // MARK: - DataStoreMigration
 
-/// Performs one-time migration from legacy @Model entities to DataStore.
+/// Performs one-time migration from legacy @Model entities to ChappieDataStore.
 /// Called once at startup, before any Store initializes.
 public actor DataStoreMigration {
 
     private let modelContainer: ModelContainer
-    private let dataStore: DataStore
+    private let dataStore: ChappieDataStore
 
-    public init(modelContainer: ModelContainer, dataStore: DataStore) {
+    public init(modelContainer: ModelContainer, dataStore: ChappieDataStore) {
         self.modelContainer = modelContainer
         self.dataStore = dataStore
     }
 
     // MARK: - Entry point
 
-    /// Runs migration for all relations that don't yet exist in DataStore.
+    /// Runs migration for all relations that don't yet exist in ChappieDataStore.
     /// Safe to call on every launch — skips relations already migrated.
     public func migrateIfNeeded() async {
         print("[DataStoreMigration] Starting migration check...")
@@ -159,7 +172,6 @@ public actor DataStoreMigration {
     // MARK: - Threads
 
     private func migrateThreads() async {
-        // Skip if DataStore already has threads — idempotency guard.
         guard (try? await dataStore.exists(.threads)) == false else {
             print("[DataStoreMigration] Threads: already migrated, skipping.")
             return
@@ -216,7 +228,6 @@ public actor DataStoreMigration {
             return
         }
 
-        // Build Sendable payloads before crossing the actor boundary.
         let payloads: [ProjectPayload] = entities.map { e in
             ProjectPayload(
                 id: e.id,
@@ -254,8 +265,7 @@ public actor DataStoreMigration {
             return
         }
 
-        // Collapse multiple MemoryEntity rows (one per scope) into a single dict.
-        // entries property decodes from entriesJSON — value types, safe to copy.
+        // Collapse multiple MemoryEntity rows (one per scope) into a single MemoryStorage dict.
         var scopeDict: [String: [MemoryEntry]] = [:]
         for entity in entities {
             scopeDict[entity.scope] = entity.entries
@@ -293,7 +303,6 @@ public actor DataStoreMigration {
             return
         }
 
-        // toProvider() returns Sendable AIProvider structs — safe to cross actor boundary.
         let providers = entities.compactMap { $0.toProvider() }
         let defaultId = entities.first(where: { $0.isDefault })?.id
         let payload = ProvidersPayload(providers: providers, defaultProviderId: defaultId)
@@ -316,14 +325,13 @@ public actor DataStoreMigration {
 
         let context = ModelContext(modelContainer)
         guard let entity = try? context.fetch(FetchDescriptor<AppSettings>()).first else {
-            // No legacy record — create a blank default so DataStore is initialized.
+            // No legacy record — create a blank default so ChappieDataStore is initialized.
             let blank = AppSettingsPayload()
             try? await dataStore.save(blank, for: .appSettings)
             print("[DataStoreMigration] AppSettings: no legacy record, created blank default.")
             return
         }
 
-        // Copy primitive/value fields out of @Model before crossing the actor boundary.
         let payload = AppSettingsPayload(
             workspaceBookmark: entity.workspaceBookmark,
             lastActiveThreadIdString: entity.lastActiveThreadIdString,

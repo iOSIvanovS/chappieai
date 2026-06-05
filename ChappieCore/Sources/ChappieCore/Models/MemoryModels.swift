@@ -5,7 +5,15 @@
 //   "global"      — cross-project facts, user preferences
 //   "<projectId>" — project-specific decisions, pipelines
 //   "<threadId>"  — current task context, session notes
-// All levels share one SwiftData table, differentiated by scope string.
+//
+// STORAGE:
+// All scopes are stored as a single MemoryStorage record in DataStore (Relation.memory).
+// MemoryEntity (@Model) is kept only for DataStoreMigration (DB-02) and will be removed in DB-05.
+//
+// CODABLE COMPATIBILITY CONTRACT (enforced — see DataStore.swift for full rules):
+//   1. Never rename a stored property without adding CodingKeys.
+//   2. Never remove a stored property — mark optional with a default instead.
+//   3. Always give new properties a default value so old records decode cleanly.
 
 import Foundation
 import SwiftData
@@ -48,29 +56,30 @@ public struct ActiveMemoryContext: Sendable {
     public var projectIds: [UUID] { projects.map { $0.id } }
 }
 
-// MARK: - MemoryEntity
+// MARK: - MemoryStorage
 
-/// SwiftData container for one memory scope.
-/// Stores all entries as a single JSON blob — we always read the full scope at once.
-@Model
-public final class MemoryEntity {
+/// Root payload stored under DataStore.Relation.memory.
+/// Holds all scopes in one Codable struct — one DataStore round-trip loads everything.
+public struct MemoryStorage: Codable, Sendable {
+    /// scope string → array of MemoryEntry
+    public var scopes: [String: [MemoryEntry]]
 
-    public var id: UUID
-    public var scope: String   // "global", project UUID, or thread UUID
-    public var entriesJSON: Data  // encoded [MemoryEntry]; Dictionary fields require Data, not direct storage
-    public var updatedAt: Date
+    public init(scopes: [String: [MemoryEntry]] = [:]) {
+        self.scopes = scopes
+    }
 
-    public init(id: UUID = UUID(), scope: String, entries: [MemoryEntry] = []) {
-        self.id = id
-        self.scope = scope
-        self.updatedAt = Date()
-        self.entriesJSON = (try? JSONEncoder().encode(entries)) ?? Data()
+    // CodingKeys guard against future renames.
+    private enum CodingKeys: String, CodingKey {
+        case scopes
     }
 }
 
 // MARK: - MemoryEntry
 
-/// Single memory record — key/type/value triple, scoped to a MemoryEntity.
+/// Single memory record — key/type/value triple, scoped via MemoryStorage.
+///
+/// CODABLE COMPATIBILITY: CodingKeys defined — safe to rename Swift properties
+/// without breaking existing stored records, as long as raw values stay stable.
 public struct MemoryEntry: Codable, Sendable, Identifiable, Equatable {
 
     public let id: UUID
@@ -99,9 +108,41 @@ public struct MemoryEntry: Codable, Sendable, Identifiable, Equatable {
         self.createdAt = Date()
         self.updatedAt = Date()
     }
+
+    // CodingKeys — stable raw values protect against Swift property renames.
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case key
+        case type
+        case jsonString = "json_string"
+        case metadata
+        case createdAt  = "created_at"
+        case updatedAt  = "updated_at"
+    }
 }
 
-// MARK: - MemoryEntity helpers
+// MARK: - MemoryEntity (legacy — kept for DataStoreMigration only, removed in DB-05)
+
+/// SwiftData container for one memory scope.
+/// DO NOT USE in new code — use MemoryStore + DataStore instead.
+/// Kept alive so DataStoreMigration can read legacy records before DB-05 cleanup.
+@Model
+public final class MemoryEntity {
+
+    public var id: UUID
+    public var scope: String
+    public var entriesJSON: Data
+    public var updatedAt: Date
+
+    public init(id: UUID = UUID(), scope: String, entries: [MemoryEntry] = []) {
+        self.id = id
+        self.scope = scope
+        self.updatedAt = Date()
+        self.entriesJSON = (try? JSONEncoder().encode(entries)) ?? Data()
+    }
+}
+
+// MARK: - MemoryEntity helpers (migration use only)
 
 extension MemoryEntity {
 
@@ -113,42 +154,11 @@ extension MemoryEntity {
         return decoded
     }
 
-    /// Encodes and persists new entries. SwiftData tracks the change automatically.
+    /// Encodes and persists new entries.
     public func setEntries(_ newEntries: [MemoryEntry]) {
         if let data = try? JSONEncoder().encode(newEntries) {
             entriesJSON = data
             updatedAt = Date()
-        } else {
-            print("[MemoryModels] ⚠️ Failed to serialize entries for scope='\(scope)'")
         }
-    }
-
-    /// Formats memory entries as a prompt block.
-    ///
-    /// Output:
-    /// ```
-    /// ## <title>
-    /// - [type] key: value
-    /// ```
-    /// Returns nil if there are no entries.
-    public func formatForPrompt(title: String) -> String? {
-        let currentEntries = entries
-        guard !currentEntries.isEmpty else { return nil }
-
-        var lines = ["## \(title)"]
-        for entry in currentEntries {
-            // Try to extract a readable scalar from the JSON string
-            let displayValue: String
-            if let data = entry.jsonString.data(using: .utf8),
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let value = json.values.first {
-                displayValue = "\(value)"
-            } else {
-                displayValue = entry.jsonString
-            }
-            lines.append("- [\(entry.type)] \(entry.key): \(displayValue)")
-        }
-
-        return lines.joined(separator: "\n")
     }
 }

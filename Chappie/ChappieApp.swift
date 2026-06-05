@@ -21,11 +21,11 @@
 // V3 schema — StoredRecord is the permanent @Model going forward.
 // Legacy @Model classes (ThreadEntity, ProjectEntity, MemoryEntity,
 // AIProviderEntity, AppSettings) remain in V3 for migration compatibility.
-// They will be removed in V4 once all Stores are switched to DataStore (DB-05).
+// They will be removed in V4 once all Stores are switched to ChappieDataStore (DB-05).
 //
 // DATA MIGRATION:
 // DataStoreMigration.migrateIfNeeded() runs once at startup (before ViewModel init).
-// It reads legacy @Model rows and writes them into DataStore as StoredRecord payloads.
+// It reads legacy @Model rows and writes them into ChappieDataStore as StoredRecord payloads.
 // Migration is idempotent — safe to call on every launch.
 //
 // WINDOW SIZE:
@@ -138,7 +138,7 @@ struct ChappieApp: App {
                     // Migration is idempotent — safe on every launch.
                     let container = modelContainer
                     Task {
-                        let dataStore = DataStore(modelContainer: container)
+                        let dataStore = ChappieDataStore(modelContainer: container)
                         let migration = DataStoreMigration(
                             modelContainer: container,
                             dataStore: dataStore

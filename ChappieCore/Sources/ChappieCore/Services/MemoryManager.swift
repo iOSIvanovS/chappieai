@@ -1,7 +1,10 @@
-// MemoryManager.swift — central memory manager for the three-level memory system (IT-08).
+// MemoryManager.swift
+// ChappieCore
 //
-// STORAGE BACKENDS:
-// - SwiftData (MemoryStore) — primary backend for all memory operations.
+// Central memory manager for the three-level memory system (IT-08).
+//
+// STORAGE BACKEND:
+// - DataStore (via MemoryStore) — primary backend for all memory operations.
 // - ~/Documents/Chappie/semantic.json — legacy file (migration/fallback only).
 //
 // SCOPE RESOLUTION (IT-08):
@@ -100,11 +103,11 @@ public actor MemoryManager {
         self.workspaceURL = workspaceURL
     }
 
-    // MARK: - SwiftData backend setup
+    // MARK: - DataStore backend setup
 
     public func setMemoryStore(_ store: MemoryStore) {
         self.memoryStore = store
-        print("[MemoryManager] MemoryStore connected (SwiftData backend active)")
+        print("[MemoryManager] MemoryStore connected (DataStore backend active)")
     }
 
     // MARK: - Workspace initialization
@@ -172,12 +175,12 @@ public actor MemoryManager {
             }
         }
 
-        // Global memory: merge SwiftData + legacy file (SwiftData wins on key conflict).
-        let globalSwiftDataEntries = entriesByScope["global"] ?? []
+        // Global memory: merge DataStore + legacy file (DataStore wins on key conflict).
+        let globalDataStoreEntries = entriesByScope["global"] ?? []
         let legacyEntries = loadLegacyMemoryForPrompt()
         let globalBlock = buildMemoryBlock(
             title: "Global Memory",
-            swiftDataEntries: globalSwiftDataEntries,
+            primaryEntries: globalDataStoreEntries,
             legacyEntries: legacyEntries
         )
         if let block = globalBlock {
@@ -188,9 +191,7 @@ public actor MemoryManager {
         for info in memoryContext.projectInfos {
             let projectEntries = entriesByScope[info.id.uuidString] ?? []
             guard !projectEntries.isEmpty else { continue }
-
-            let tempEntity = MemoryEntity(scope: info.id.uuidString, entries: projectEntries)
-            if let block = tempEntity.formatForPrompt(title: "Project Memory: \(info.name)") {
+            if let block = formatEntriesForPrompt(projectEntries, title: "Project Memory: \(info.name)") {
                 memoryBlocks.append(block)
             }
         }
@@ -199,8 +200,7 @@ public actor MemoryManager {
         if let threadId = memoryContext.threadId {
             let threadEntries = entriesByScope[threadId.uuidString] ?? []
             if !threadEntries.isEmpty {
-                let tempEntity = MemoryEntity(scope: threadId.uuidString, entries: threadEntries)
-                if let block = tempEntity.formatForPrompt(title: "Thread Context") {
+                if let block = formatEntriesForPrompt(threadEntries, title: "Thread Context") {
                     memoryBlocks.append(block)
                 }
             }
@@ -488,35 +488,17 @@ public actor MemoryManager {
     private func loadLegacyMemoryForPrompt() -> [MemoryEntry] {
         let storage = readStorage(at: globalFileURL)
         guard !storage.isEmpty else { return [] }
-
         return storage.map { key, record in
             MemoryEntry(key: key, type: record.type, jsonString: record.data)
         }
     }
 
-    /// Merges SwiftData and legacy entries into a formatted memory block.
-    /// SwiftData wins on key conflict (deduplication).
-    private func buildMemoryBlock(
-        title: String,
-        swiftDataEntries: [MemoryEntry],
-        legacyEntries: [MemoryEntry]
-    ) -> String? {
-        var mergedByKey: [String: MemoryEntry] = [:]
-
-        for entry in legacyEntries {
-            mergedByKey[entry.key] = entry
-        }
-
-        for entry in swiftDataEntries {
-            mergedByKey[entry.key] = entry
-        }
-
-        guard !mergedByKey.isEmpty else { return nil }
-
-        let sorted = mergedByKey.values.sorted { $0.key < $1.key }
+    /// Formats a list of entries into a titled memory block for the system prompt.
+    private func formatEntriesForPrompt(_ entries: [MemoryEntry], title: String) -> String? {
+        guard !entries.isEmpty else { return nil }
 
         var lines = ["## \(title)"]
-        for entry in sorted {
+        for entry in entries {
             let displayValue: String
             if let data = entry.jsonString.data(using: .utf8),
                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -529,6 +511,29 @@ public actor MemoryManager {
         }
 
         return lines.joined(separator: "\n")
+    }
+
+    /// Merges DataStore and legacy entries into a formatted memory block.
+    /// DataStore wins on key conflict (deduplication).
+    private func buildMemoryBlock(
+        title: String,
+        primaryEntries: [MemoryEntry],
+        legacyEntries: [MemoryEntry]
+    ) -> String? {
+        var mergedByKey: [String: MemoryEntry] = [:]
+
+        for entry in legacyEntries {
+            mergedByKey[entry.key] = entry
+        }
+        // DataStore entries overwrite legacy on conflict.
+        for entry in primaryEntries {
+            mergedByKey[entry.key] = entry
+        }
+
+        guard !mergedByKey.isEmpty else { return nil }
+
+        let sorted = mergedByKey.values.sorted { $0.key < $1.key }
+        return formatEntriesForPrompt(sorted, title: title)
     }
 
     // MARK: - Private: low-level file operations (legacy backend)

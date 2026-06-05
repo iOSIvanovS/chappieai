@@ -129,6 +129,11 @@ final class ChappieViewModel {
     // MARK: - SwiftData
 
     var modelContainer: ModelContainer?
+
+    // ChappieDataStore is the single point of contact with SwiftData.
+    // All Stores receive it via dependency injection — no Store touches ModelContainer directly.
+    var chappieDataStore: ChappieDataStore?
+
     var memoryStore: MemoryStore?
     var threadStore: ThreadStore?
     var projectStore: ProjectStore?
@@ -218,7 +223,12 @@ final class ChappieViewModel {
         guard self.modelContainer == nil else { return }
         self.modelContainer = container
 
-        let store = MemoryStore(modelContainer: container)
+        // ChappieDataStore is created first — it is the only object that owns ModelContainer.
+        // All other Stores receive ChappieDataStore via DI and never touch ModelContainer directly.
+        let ds = ChappieDataStore(modelContainer: container)
+        self.chappieDataStore = ds
+
+        let store = MemoryStore(dataStore: ds)
         self.memoryStore = store
 
         let tStore = ThreadStore(modelContainer: container)
@@ -234,7 +244,7 @@ final class ChappieViewModel {
 
         if let mm = memoryManager { Task { await mm.setMemoryStore(store) } }
 
-        print("[ChappieViewModel] ModelContainer connected")
+        print("[ChappieViewModel] ModelContainer connected, ChappieDataStore initialized")
 
         if let ts = toolService {
             registerProjectToolHandlers(toolService: ts, projectStore: pStore, threadStore: tStore)

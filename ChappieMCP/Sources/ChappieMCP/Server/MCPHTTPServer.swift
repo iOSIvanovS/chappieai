@@ -272,10 +272,12 @@ struct ToolResult: Sendable {
 final class ToolDispatcher: Sendable {
     private let gitTools: GitTools
     private let buildTools: BuildTools
+    private let locTools: LocalizationTools
 
     init(projectPath: String) {
         self.gitTools = GitTools(projectPath: projectPath)
         self.buildTools = BuildTools(projectPath: projectPath)
+        self.locTools = LocalizationTools(projectPath: projectPath)
     }
 
     func execute(tool: String, args: [String: String]) async -> ToolResult {
@@ -306,10 +308,7 @@ final class ToolDispatcher: Sendable {
         case "git_reset":
             return await gitTools.reset()
 
-        // Rollback tools
         case "git_revert":
-            // hashes: space-separated commit hashes to revert, e.g. "abc123 def456"
-            // message: commit message for the combined revert commit
             guard let hashes = args["hashes"], !hashes.isEmpty else {
                 return .failure("Argument 'hashes' is required for git_revert (space-separated commit hashes)")
             }
@@ -317,8 +316,6 @@ final class ToolDispatcher: Sendable {
             return await gitTools.revert(hashes: hashes, message: message)
 
         case "git_checkout":
-            // ref: commit hash, branch name, or relative ref like HEAD~1
-            // paths: space-separated file paths to restore
             guard let ref = args["ref"], !ref.isEmpty else {
                 return .failure("Argument 'ref' is required for git_checkout (e.g. HEAD~1, abc123, main)")
             }
@@ -338,12 +335,102 @@ final class ToolDispatcher: Sendable {
         case "read_build_log":
             return await buildTools.readLastLog()
 
+        // Localization tools (Xcode / xcstrings)
+        case "loc_info":
+            return locTools.info()
+
+        case "loc_create":
+            guard let path = args["path"], !path.isEmpty else {
+                return .failure("Argument 'path' is required (e.g. 'Chappie/Localizable.xcstrings')")
+            }
+            let lang = args["sourceLanguage"] ?? "en"
+            return locTools.create(relativePath: path, sourceLanguage: lang)
+
+        case "loc_rename":
+            guard let from = args["from"], !from.isEmpty else {
+                return .failure("Argument 'from' is required")
+            }
+            guard let to = args["to"], !to.isEmpty else {
+                return .failure("Argument 'to' is required")
+            }
+            return locTools.rename(fromRelativePath: from, toRelativePath: to)
+
+        case "loc_delete":
+            guard let path = args["path"], !path.isEmpty else {
+                return .failure("Argument 'path' is required")
+            }
+            return locTools.delete(relativePath: path)
+
+        case "loc_add_language":
+            guard let language = args["language"], !language.isEmpty else {
+                return .failure("Argument 'language' is required (e.g. 'ru', 'de', 'zh-Hans')")
+            }
+            return locTools.addLanguage(language: language, relativePath: args["path"])
+
+        case "loc_remove_language":
+            guard let language = args["language"], !language.isEmpty else {
+                return .failure("Argument 'language' is required")
+            }
+            return locTools.removeLanguage(language: language, relativePath: args["path"])
+
+        case "loc_key_check":
+            guard let key = args["key"], !key.isEmpty else {
+                return .failure("Argument 'key' is required")
+            }
+            guard let path = args["path"], !path.isEmpty else {
+                return .failure("Argument 'path' is required")
+            }
+            return locTools.keyCheck(key: key, relativePath: path)
+
+        case "loc_next_batch":
+            guard let path = args["path"], !path.isEmpty else {
+                return .failure("Argument 'path' is required")
+            }
+            return locTools.nextBatch(relativePath: path)
+
+        case "loc_submit_batch":
+            guard let path = args["path"], !path.isEmpty else {
+                return .failure("Argument 'path' is required")
+            }
+            guard let translations = args["translations"], !translations.isEmpty else {
+                return .failure("Argument 'translations' is required (JSON: {\"key\": {\"ru\": \"...\", \"de\": \"...\"}})")
+            }
+            return locTools.submitBatch(relativePath: path, translationsJSON: translations)
+
+        case "loc_dead_keys":
+            guard let path = args["path"], !path.isEmpty else {
+                return .failure("Argument 'path' is required")
+            }
+            return locTools.deadKeys(relativePath: path)
+
+        case "loc_add_key":
+            guard let path = args["path"], !path.isEmpty else {
+                return .failure("Argument 'path' is required")
+            }
+            guard let key = args["key"], !key.isEmpty else {
+                return .failure("Argument 'key' is required")
+            }
+            guard let value = args["value"], !value.isEmpty else {
+                return .failure("Argument 'value' is required (English text)")
+            }
+            return locTools.addKey(relativePath: path, key: key, englishValue: value, comment: args["comment"])
+
+        case "loc_remove_key":
+            guard let path = args["path"], !path.isEmpty else {
+                return .failure("Argument 'path' is required")
+            }
+            guard let key = args["key"], !key.isEmpty else {
+                return .failure("Argument 'key' is required")
+            }
+            return locTools.removeKey(relativePath: path, key: key)
+
         default:
             return .failure(
                 "Unknown tool: \(tool). Available: " +
-                "git_status, git_diff, git_add, git_commit, git_log, git_reset, " +
-                "git_revert, git_checkout, " +
-                "build_project, run_tests, read_build_log"
+                "git_status, git_diff, git_add, git_commit, git_log, git_reset, git_revert, git_checkout, " +
+                "build_project, run_tests, read_build_log, " +
+                "loc_info, loc_create, loc_rename, loc_delete, loc_add_language, loc_remove_language, " +
+                "loc_key_check, loc_next_batch, loc_submit_batch, loc_dead_keys, loc_add_key, loc_remove_key"
             )
         }
     }

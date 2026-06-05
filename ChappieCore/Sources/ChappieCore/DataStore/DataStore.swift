@@ -20,8 +20,12 @@
 //   3. Always give new properties a default value so old records decode cleanly.
 //
 // THREAD SAFETY:
-// DataStore is an actor. ModelContext is created per-operation (not stored),
+// ChappieDataStore is an actor. ModelContext is created per-operation (not stored),
 // which is the correct pattern for background SwiftData usage in Swift 6.
+//
+// WHY ChappieDataStore (not DataStore):
+// SwiftData framework exports its own `DataStore` protocol — naming conflict avoided
+// by prefixing with Chappie. The actor name is unique across the entire codebase.
 
 import Foundation
 import SwiftData
@@ -33,11 +37,11 @@ import SwiftData
 @Model
 public final class StoredRecord {
 
-    // Unique relation key — matches DataStore.Relation.rawValue.
+    // Unique relation key — matches ChappieDataStore.Relation.rawValue.
     // @Attribute(.unique) ensures exactly one row per relation.
     @Attribute(.unique) public var relation: String
 
-    // JSON-encoded payload. Encoding/decoding is handled by DataStore — callers never touch this.
+    // JSON-encoded payload. Encoding/decoding is handled by ChappieDataStore — callers never touch this.
     public var payload: Data
 
     public init(relation: String, payload: Data) {
@@ -46,11 +50,11 @@ public final class StoredRecord {
     }
 }
 
-// MARK: - DataStore
+// MARK: - ChappieDataStore
 
 /// Actor-isolated facade over SwiftData.
 /// All Stores (MemoryStore, ThreadStore, etc.) use this as their only persistence backend.
-public actor DataStore {
+public actor ChappieDataStore {
 
     // MARK: - Relation
 
@@ -102,7 +106,7 @@ public actor DataStore {
         do {
             return try JSONDecoder().decode(T.self, from: record.payload)
         } catch {
-            print("[DataStore] ⚠️ Decode failed for '\(relation.rawValue)': \(error)")
+            print("[ChappieDataStore] ⚠️ Decode failed for '\(relation.rawValue)': \(error)")
             return nil
         }
     }
@@ -133,7 +137,7 @@ public actor DataStore {
         guard let record = try findRecord(relation, in: context) else { return }
         context.delete(record)
         try context.save()
-        print("[DataStore] 🗑 Deleted relation '\(relation.rawValue)'")
+        print("[ChappieDataStore] 🗑 Deleted relation '\(relation.rawValue)'")
     }
 
     // MARK: - Existence check
