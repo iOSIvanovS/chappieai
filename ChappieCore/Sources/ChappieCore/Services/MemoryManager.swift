@@ -3,9 +3,7 @@
 //
 // Central memory manager for the three-level memory system (IT-08).
 //
-// STORAGE BACKEND:
-// - DataStore (via MemoryStore) — primary backend for all memory operations.
-// - ~/Documents/Chappie/semantic.json — legacy file (migration/fallback only).
+// STORAGE BACKEND: DataStore (via MemoryStore) — single source of truth.
 //
 // SCOPE RESOLUTION (IT-08):
 // ToolExecutionService passes ActiveMemoryContext on each memory tool call.
@@ -21,27 +19,6 @@
 // 4. Thread Context
 
 import Foundation
-
-// MARK: - Legacy models (file backend only)
-
-/// Memory record for legacy JSON file backend.
-public struct MemoryRecord: Codable, Sendable {
-    public let type: String
-    public let timestamp: Date
-    public let data: String
-
-    public init(type: String, timestamp: Date = Date(), data: String) {
-        self.type = type
-        self.timestamp = timestamp
-        self.data = data
-    }
-}
-
-/// Legacy scope enum — used only in old public API.
-public enum MemoryScope: String, Codable, Sendable {
-    case project
-    case global
-}
 
 // MARK: - Workspace target models
 
@@ -77,7 +54,7 @@ public struct TargetScanResult: Sendable {
 
 /// Central memory manager for Chappie.
 ///
-/// Uses `actor` for safe concurrent access (Swift 6): all file system operations
+/// Uses `actor` for safe concurrent access (Swift 6): all operations
 /// are serialized, preventing data races from parallel tool calls.
 public actor MemoryManager {
 
@@ -91,11 +68,6 @@ public actor MemoryManager {
     private var targets: [WorkspaceTarget] = []
     private var isInitialized: Bool = false
     private var memoryStore: MemoryStore?
-
-    private var globalFileURL: URL {
-        let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
-        return docs.appendingPathComponent("Chappie/semantic.json")
-    }
 
     // MARK: - Init
 
@@ -112,22 +84,18 @@ public actor MemoryManager {
 
     // MARK: - Workspace initialization
 
-    /// Sets up file structure for the workspace memory.
+    /// Sets up workspace target discovery.
     /// NOTE: architecture.md files are NOT created automatically — only by explicit user agreement.
     public func initializeWorkspaceMemory() async {
         guard !isInitialized else { return }
 
         print("[MemoryManager] Initializing workspace memory structure...")
 
-        setupGlobalMemory()
-
         let discovered = discoverTargets()
         self.targets = discovered
 
-        cleanupLegacyFiles()
-
         isInitialized = true
-        print("[MemoryManager] Initialization complete. Targets: \(targets.count). Memory: ~/Documents/Chappie/semantic.json")
+        print("[MemoryManager] Initialization complete. Targets: \(targets.count).")
     }
 
     // MARK: - System prompt assembly (IT-08, IT-09)
@@ -136,8 +104,6 @@ public actor MemoryManager {
     ///
     /// Block order (IT-09): Project Settings → Global Memory → Project Memory → Thread Context.
     /// Project Settings is first so the agent knows its rights before reading memory.
-    ///
-    /// Falls back to base prompt only if MemoryStore is not connected.
     public func buildSystemPrompt(
         basePrompt: String,
         memoryContext: MemoryContext
@@ -175,15 +141,9 @@ public actor MemoryManager {
             }
         }
 
-        // Global memory: merge DataStore + legacy file (DataStore wins on key conflict).
-        let globalDataStoreEntries = entriesByScope["global"] ?? []
-        let legacyEntries = loadLegacyMemoryForPrompt()
-        let globalBlock = buildMemoryBlock(
-            title: "Global Memory",
-            primaryEntries: globalDataStoreEntries,
-            legacyEntries: legacyEntries
-        )
-        if let block = globalBlock {
+        // Global memory block.
+        let globalEntries = entriesByScope["global"] ?? []
+        if let block = formatEntriesForPrompt(globalEntries, title: "Global Memory") {
             memoryBlocks.append(block)
         }
 
@@ -230,15 +190,12 @@ public actor MemoryManager {
         return await buildSystemPrompt(basePrompt: basePrompt, memoryContext: context)
     }
 
-    // MARK: - Three-level memory CRUD (IT-08, primary path)
+    // MARK: - Three-level memory CRUD (IT-08)
 
     public func saveMemoryEntry(key: String, type: String, jsonString: String, scope: String) async -> String? {
         guard let store = memoryStore else {
-            writeRecord(key: key, type: type, data: jsonString, to: globalFileURL)
-            print("[MemoryManager] MemoryStore unavailable, saved to legacy file")
-            return nil
+            return "Memory save error: MemoryStore not connected"
         }
-
         do {
             try await store.saveEntry(key: key, type: type, jsonString: jsonString, scope: scope)
             return nil
@@ -248,11 +205,7 @@ public actor MemoryManager {
     }
 
     public func readMemoryEntry(key: String, scope: String) async -> String? {
-        guard let store = memoryStore else {
-            let storage = readStorage(at: globalFileURL)
-            return storage[key]?.data
-        }
-
+        guard let store = memoryStore else { return nil }
         do {
             return try await store.readEntry(key: key, scope: scope)
         } catch {
@@ -262,15 +215,7 @@ public actor MemoryManager {
     }
 
     public func searchMemoryEntries(type: String, scope: String) async -> [String: String] {
-        guard let store = memoryStore else {
-            let storage = readStorage(at: globalFileURL)
-            var results: [String: String] = [:]
-            for (k, v) in storage where v.type == type {
-                results[k] = v.data
-            }
-            return results
-        }
-
+        guard let store = memoryStore else { return [:] }
         do {
             return try await store.searchEntries(type: type, scope: scope)
         } catch {
@@ -281,49 +226,13 @@ public actor MemoryManager {
 
     public func deleteMemoryEntry(key: String, scope: String) async -> String? {
         guard let store = memoryStore else {
-            var storage = readStorage(at: globalFileURL)
-            storage.removeValue(forKey: key)
-            writeStorage(storage, to: globalFileURL)
-            return nil
+            return "Memory delete error: MemoryStore not connected"
         }
-
         do {
             try await store.deleteEntry(key: key, scope: scope)
             return nil
         } catch {
             return "Memory delete error: \(error.localizedDescription)"
-        }
-    }
-
-    // MARK: - Legacy public API (file backend)
-
-    public func saveMemory(key: String, type: String, jsonString: String, scope: MemoryScope = .project, targetName: String? = nil) async {
-        await ensureInitialized()
-        writeRecord(key: key, type: type, data: jsonString, to: globalFileURL)
-    }
-
-    public func readMemory(key: String, targetName: String? = nil) async -> String? {
-        await ensureInitialized()
-        let storage = readStorage(at: globalFileURL)
-        return storage[key]?.data
-    }
-
-    public func searchMemory(type: String, targetName: String? = nil) async -> [String: String] {
-        await ensureInitialized()
-        let storage = readStorage(at: globalFileURL)
-        var results: [String: String] = [:]
-        for (k, v) in storage where v.type == type {
-            results[k] = v.data
-        }
-        return results
-    }
-
-    public func deleteMemory(key: String, targetName: String? = nil) async {
-        await ensureInitialized()
-        var storage = readStorage(at: globalFileURL)
-        if storage.keys.contains(key) {
-            storage.removeValue(forKey: key)
-            writeStorage(storage, to: globalFileURL)
         }
     }
 
@@ -344,18 +253,6 @@ public actor MemoryManager {
     private func ensureInitialized() async {
         guard !isInitialized else { return }
         await initializeWorkspaceMemory()
-    }
-
-    private func setupGlobalMemory() {
-        let globalDir = globalFileURL.deletingLastPathComponent()
-
-        if !fileManager.fileExists(atPath: globalDir.path) {
-            try? fileManager.createDirectory(at: globalDir, withIntermediateDirectories: true)
-        }
-
-        if !fileManager.fileExists(atPath: globalFileURL.path) {
-            try? "{}".write(to: globalFileURL, atomically: true, encoding: .utf8)
-        }
     }
 
     private func discoverTargets() -> [WorkspaceTarget] {
@@ -417,80 +314,10 @@ public actor MemoryManager {
         return .library
     }
 
-    private func cleanupLegacyFiles() {
-        for target in targets {
-            let legacyAIDocsURL = target.directoryURL.appendingPathComponent("AI_Docs")
-            if fileManager.fileExists(atPath: legacyAIDocsURL.path) {
-                let legacySemanticURL = legacyAIDocsURL.appendingPathComponent("semantic.json")
-                if fileManager.fileExists(atPath: legacySemanticURL.path) {
-                    migrateSemanticFile(from: legacySemanticURL, label: "\(target.name)/AI_Docs/semantic.json")
-                }
-                do {
-                    try fileManager.removeItem(at: legacyAIDocsURL)
-                    print("[MemoryManager] Removed legacy folder: \(target.name)/AI_Docs/")
-                } catch {
-                    print("[MemoryManager] Failed to remove \(target.name)/AI_Docs/: \(error)")
-                }
-            }
-
-            let targetSemanticURL = target.directoryURL.appendingPathComponent("semantic.json")
-            if fileManager.fileExists(atPath: targetSemanticURL.path) {
-                migrateSemanticFile(from: targetSemanticURL, label: "\(target.name)/semantic.json")
-                do {
-                    try fileManager.removeItem(at: targetSemanticURL)
-                    print("[MemoryManager] Removed legacy file: \(target.name)/semantic.json")
-                } catch {
-                    print("[MemoryManager] Failed to remove \(target.name)/semantic.json: \(error)")
-                }
-            }
-        }
-
-        let rootAIDocsURL = workspaceURL.appendingPathComponent("AI_Docs")
-        if fileManager.fileExists(atPath: rootAIDocsURL.path) {
-            let legacySemanticURL = rootAIDocsURL.appendingPathComponent("semantic.json")
-            if fileManager.fileExists(atPath: legacySemanticURL.path) {
-                migrateSemanticFile(from: legacySemanticURL, label: "root/AI_Docs/semantic.json")
-            }
-            let chatHistoryURL = rootAIDocsURL.appendingPathComponent("chat_history.json")
-            if !fileManager.fileExists(atPath: chatHistoryURL.path) {
-                do {
-                    try fileManager.removeItem(at: rootAIDocsURL)
-                    print("[MemoryManager] Removed root legacy folder AI_Docs/")
-                } catch {
-                    print("[MemoryManager] Failed to remove root AI_Docs/: \(error)")
-                }
-            }
-        }
-    }
-
-    private func migrateSemanticFile(from sourceURL: URL, label: String) {
-        let oldStorage = readStorage(at: sourceURL)
-        guard !oldStorage.isEmpty else { return }
-
-        var globalStorage = readStorage(at: globalFileURL)
-        var migratedCount = 0
-        for (key, record) in oldStorage where globalStorage[key] == nil {
-            globalStorage[key] = record
-            migratedCount += 1
-        }
-        if migratedCount > 0 {
-            writeStorage(globalStorage, to: globalFileURL)
-            print("[MemoryManager] Migrated \(migratedCount) entries from \(label)")
-        }
-    }
-
     // MARK: - Private: helpers
 
     private func appTarget() -> WorkspaceTarget? {
         targets.first { $0.kind == .appTarget }
-    }
-
-    private func loadLegacyMemoryForPrompt() -> [MemoryEntry] {
-        let storage = readStorage(at: globalFileURL)
-        guard !storage.isEmpty else { return [] }
-        return storage.map { key, record in
-            MemoryEntry(key: key, type: record.type, jsonString: record.data)
-        }
     }
 
     /// Formats a list of entries into a titled memory block for the system prompt.
@@ -511,62 +338,5 @@ public actor MemoryManager {
         }
 
         return lines.joined(separator: "\n")
-    }
-
-    /// Merges DataStore and legacy entries into a formatted memory block.
-    /// DataStore wins on key conflict (deduplication).
-    private func buildMemoryBlock(
-        title: String,
-        primaryEntries: [MemoryEntry],
-        legacyEntries: [MemoryEntry]
-    ) -> String? {
-        var mergedByKey: [String: MemoryEntry] = [:]
-
-        for entry in legacyEntries {
-            mergedByKey[entry.key] = entry
-        }
-        // DataStore entries overwrite legacy on conflict.
-        for entry in primaryEntries {
-            mergedByKey[entry.key] = entry
-        }
-
-        guard !mergedByKey.isEmpty else { return nil }
-
-        let sorted = mergedByKey.values.sorted { $0.key < $1.key }
-        return formatEntriesForPrompt(sorted, title: title)
-    }
-
-    // MARK: - Private: low-level file operations (legacy backend)
-
-    private func readStorage(at url: URL) -> [String: MemoryRecord] {
-        guard fileManager.fileExists(atPath: url.path),
-              let data = try? Data(contentsOf: url) else {
-            return [:]
-        }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        guard let storage = try? decoder.decode([String: MemoryRecord].self, from: data) else {
-            return [:]
-        }
-        return storage
-    }
-
-    private func writeStorage(_ storage: [String: MemoryRecord], to url: URL) {
-        let dir = url.deletingLastPathComponent()
-        if !fileManager.fileExists(atPath: dir.path) {
-            try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
-        }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        if let data = try? encoder.encode(storage) {
-            try? data.write(to: url, options: .atomic)
-        }
-    }
-
-    private func writeRecord(key: String, type: String, data: String, to url: URL) {
-        var storage = readStorage(at: url)
-        storage[key] = MemoryRecord(type: type, data: data)
-        writeStorage(storage, to: url)
     }
 }
