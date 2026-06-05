@@ -4,30 +4,18 @@
 // Swift Package entry point — public facade of the entire package.
 //
 // WHY THIS FILE:
-// Swift Package Manager doesn't require explicit re-exports, but having a central
-// file with documentation gives three advantages:
-//
-// 1. READABILITY: Any developer opening the package immediately sees
-//    the complete public API list in one place.
-//
-// 2. VERSIONING: When the public API changes, updating this file
-//    makes the change immediately visible in git diff.
-//
-// 3. DOCUMENTATION: This file serves as the package "table of contents" —
-//    describes what is exported and why.
+// Central documentation of the public API — gives three advantages:
+// 1. READABILITY: Any developer sees the complete public API in one place.
+// 2. VERSIONING: API changes are immediately visible in git diff.
+// 3. DOCUMENTATION: Serves as the package "table of contents".
 //
 // PACKAGE ARCHITECTURE:
-// ChappieCore is Chappie's brain. It is intentionally separated from the SwiftUI layer
-// (the Chappie target) so that the logic is testable and reusable
-// independently of any specific UI framework.
+// ChappieCore is Chappie's brain — intentionally separated from the SwiftUI layer
+// so that logic is testable and reusable independently of any UI framework.
 
 import Foundation
 
 // MARK: - ChappieCore Public API
-
-// All public types the package provides to consumers are listed below.
-// They are all declared as `public` in their own files — here we just
-// document their presence for architectural clarity.
 
 // MARK: Data Models (Models/)
 //
@@ -47,7 +35,7 @@ import Foundation
 //
 // REFACTOR-THREADS IT-01:
 // • ThreadEntity           — SwiftData thread model
-// • ThreadSettings         — Codable thread settings (IT-10: + activeProviderId)
+// • ThreadSettings         — Codable thread settings
 // • ThreadMetadata         — Sendable DTO for thread metadata
 // • ProjectEntity          — SwiftData project model
 // • ProjectSettings        — Codable project settings (IT-09: full agent permissions)
@@ -63,13 +51,12 @@ import Foundation
 // MARK: Services (Services/)
 //
 // • AIClient               — universal HTTP client for any OpenAI-compatible endpoint (IT-10)
-// • AITunnelClient         — legacy HTTP client (deprecated, kept for migration)
+// • AnthropicClient        — native Anthropic /v1/messages client
 // • AIOrchestrator         — main actor: agentic cycle "request → tool → response"
 // • AIProviderStore        — actor, CRUD for AI providers + Keychain key storage (IT-10)
 // • ToolExecutionService   — registry and executor of all Chappie tools
 // • FileSystemManager      — safe file system access with path traversal protection
 // • MemoryManager          — long-term memory: write, read, search entries
-// • ChatHistoryManager     — persistent chat history storage between sessions [DEPRECATED]
 //
 // REFACTOR-THREADS IT-01:
 // • ThreadStore            — actor, CRUD operations on threads via SwiftData
@@ -78,4 +65,4 @@ import Foundation
 // MARK: - Package Version
 
 /// Current ChappieCore version.
-public let coreVersion = "3.0.0" // IT-10: Universal AI Provider — AIClient + AIProviderStore
+public let coreVersion = "3.0.0"

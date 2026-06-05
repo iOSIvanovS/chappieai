@@ -1,11 +1,10 @@
 // ToolExecutionService.swift
 // ChappieCore
 //
-// WHY THIS FILE:
 // Core actor declaration, init, dependency injection, context setters,
 // project handler registration, and the main execute() dispatcher.
 //
-// ARCHITECTURE OVERVIEW — see each extension file for details:
+// ARCHITECTURE:
 //   ToolDefinitions.swift   — availableTools array
 //   ToolAccessControl.swift — IT-09 access check (role, git, tests, terminal)
 //   MemoryTools.swift       — IT-08 scope resolution + memory execution cases
@@ -16,49 +15,35 @@
 // MCP CONNECTION:
 // MCPToolBridge is created with a socketPath injected via init().
 // Path is computed by MCPHelperLauncher in Chappie.app (sandbox container path).
-// ChappieCore has no access to MCPHelperLauncher — DI keeps dependencies clean.
 //
 // PROJECT MANAGEMENT TOOLS (IT-07):
 // add/remove/list_thread_projects use closures registered via registerProjectHandlers().
-// Closures are @Sendable — required for Swift 6 actor boundary crossing.
 //
 // THREE-LEVEL MEMORY (IT-08):
 // memorize/recall/search_memory/delete_memory work with UUID-based scope strings.
-// Scope resolution: resolveScope() in MemoryTools.swift.
 //
 // ACCESS CONTROL (IT-09):
 // execute() checks ProjectSettings before running any file/git/build/terminal tool.
-// Full check logic in ToolAccessControl.swift.
 //
 // FILE TOOL PROTECTION (PROJECT GUARD):
 // File/git/build/terminal tools require at least one project attached to the thread.
-// Checked via hasActiveProjects before checkToolAccess().
 //
 // FILE SYSTEM READINESS GUARD:
 // File/git/build tools are blocked while syncFileSystemForActiveThread() is running.
-// isFileSystemReady flag is set to false before sync starts, true after it completes.
-// Prevents stale or empty FileSystemManager from answering tool calls during thread switch.
 //
 // TERMINAL TOOL:
 // run_terminal uses a persistent bash session per thread (ShellSession in TerminalTools.swift).
-// In .confirm mode the tool returns a PendingTerminalCommand marker — ViewModel renders
-// an inline confirmation UI and calls executeConfirmedCommand() after user approval.
-// In .auto mode the command runs immediately.
+// In .confirm mode returns PendingTerminalCommand — ViewModel renders inline confirmation UI.
 //
 // IRON ENGLISH BARRIER (MEMORY-ENGLISH):
 // memorize validates all fields for Cyrillic — code-level barrier, not prompt-level.
-// validateMemoryEnglish() + containsCyrillic() in MemoryTools.swift.
 //
 // LIVE PROJECT UNAVAILABILITY (B-05):
-// onProjectUnavailable is called from FileTools when a FS operation fails.
-// ViewModel registers this callback via setOnProjectUnavailable() and marks
-// the matching project chip orange without requiring a thread re-entry.
+// onProjectUnavailable fires on MainActor when FS operation fails for a specific project.
 //
 // MEMORY CHANGE CALLBACK:
-// onMemoryChanged is called from MemoryTools after every memorize/delete_memory.
-// ViewModel registers this via setOnMemoryChanged() to invalidate the cached
-// system prompt immediately — so the next message picks up fresh memory.
-// Without this, memory changes are only visible after app restart.
+// onMemoryChanged fires on MainActor after every memorize/delete_memory to invalidate
+// the cached system prompt immediately.
 
 import Foundation
 
@@ -83,7 +68,6 @@ enum ToolAccessResult {
 /// Why actor: async file system + network ops require isolation in Swift 6.
 public actor ToolExecutionService {
     // WHY var: V2 thread isolation swaps fileSystem per thread via setFileSystem().
-    // V1 path sets it once in init and never changes it.
     var fileSystem: FileSystemManager
     let memoryManager: MemoryManager
     let mcpBridge: MCPToolBridge
@@ -101,7 +85,6 @@ public actor ToolExecutionService {
 
     /// False while syncFileSystemForActiveThread() is resolving bookmarks.
     /// File/git/build tools return a "please wait" message when false.
-    /// Set via setFileSystemReady() from ChappieViewModel on MainActor.
     var isFileSystemReady: Bool = true
 
     // MARK: - Project handlers (IT-07)
@@ -113,22 +96,17 @@ public actor ToolExecutionService {
     // MARK: - Live unavailability callback (B-05)
 
     /// Called on MainActor when a FS tool fails for a specific project.
-    /// ViewModel uses this to mark the project chip orange in real time.
     var onProjectUnavailable: (@MainActor (String) -> Void)?
 
     // MARK: - Memory change callback
 
-    /// Called on MainActor after every memorize/delete_memory.
-    /// ViewModel uses this to invalidate the cached system prompt immediately,
-    /// so the next message picks up the updated memory without app restart.
+    /// Called on MainActor after every memorize/delete_memory to invalidate cached system prompt.
     var onMemoryChanged: (@MainActor () -> Void)?
 
     // MARK: - IT-09: Project settings cache
 
     /// Settings by project UUID — passed from ViewModel via setProjectSettings().
-    ///
-    /// WHY CACHE: ActiveMemoryContext contains only UUIDs/names.
-    /// ProjectSettings live in SwiftData and can't be in ActiveMemoryContext directly.
+    /// WHY CACHE: ActiveMemoryContext contains only UUIDs/names; ProjectSettings live in SwiftData.
     var projectSettingsCache: [UUID: ProjectSettings] = [:]
 
     public init(
@@ -156,15 +134,11 @@ public actor ToolExecutionService {
     }
 
     /// V2 M-09: Swaps the active FileSystemManager to point at the thread's first project.
-    /// Called from assembleThreadSession() when V2 flag is ON and projects are present.
-    /// On thread deactivation (no projects) — pass the global fileSystem to restore default.
     public func setFileSystem(_ fs: FileSystemManager) {
         self.fileSystem = fs
         print("[ToolExecutionService] 📂 FileSystem switched to: \(fs.workspaceURL.path)")
     }
 
-    /// Marks whether the FileSystem is ready for tool calls.
-    /// Called false before syncFileSystemForActiveThread() starts, true when it completes.
     public func setFileSystemReady(_ ready: Bool) {
         self.isFileSystemReady = ready
         if ready {
@@ -174,40 +148,18 @@ public actor ToolExecutionService {
         }
     }
 
-    /// IT-09: Updates project settings cache from ViewModel.
     public func setProjectSettings(_ settings: [UUID: ProjectSettings]) {
         self.projectSettingsCache = settings
         print("[ToolExecutionService] ⚙️ Project settings updated (\(settings.count) projects)")
     }
 
-    /// B-05: Registers a callback that fires on MainActor when a FS tool fails for a project.
-    /// ViewModel uses this to mark the project chip orange in real time.
     public func setOnProjectUnavailable(_ callback: @escaping @MainActor (String) -> Void) {
         self.onProjectUnavailable = callback
     }
 
-    /// Registers a callback that fires on MainActor after every memorize/delete_memory.
-    /// ViewModel uses this to invalidate the cached system prompt so memory changes
-    /// are visible in the next message without requiring an app restart.
     public func setOnMemoryChanged(_ callback: @escaping @MainActor () -> Void) {
         self.onMemoryChanged = callback
         print("[ToolExecutionService] ✅ Memory change callback registered")
-    }
-
-    /// Backward compatibility shim — maps names to placeholder UUIDs.
-    public func setActiveProjectNames(_ names: [String]) {
-        let projects = names.map { name in
-            ActiveMemoryContext.ProjectInfo(id: UUID(), name: name)
-        }
-        self.activeMemoryContext = ActiveMemoryContext(
-            threadId: activeMemoryContext.threadId,
-            projects: projects
-        )
-        if names.isEmpty {
-            print("[ToolExecutionService] 🔒 File tools blocked (no projects in thread)")
-        } else {
-            print("[ToolExecutionService] 🔓 File tools unlocked: \(names.joined(separator: ", "))")
-        }
     }
 
     // MARK: - Project handler registration (IT-07)
@@ -244,7 +196,6 @@ public actor ToolExecutionService {
             "run_terminal"
         ]
 
-        // FS READINESS GUARD: block file/git/build/terminal tools while FileSystem is syncing.
         if projectRequiredTools.contains(name) && !isFileSystemReady {
             return """
             ⏳ Проекты ещё загружаются — файловые инструменты временно недоступны.
@@ -252,7 +203,6 @@ public actor ToolExecutionService {
             """
         }
 
-        // PROJECT GUARD: block file/git/build/terminal tools without an attached project.
         if projectRequiredTools.contains(name) && !hasActiveProjects {
             return """
             ❌ Инструмент '\(name)' недоступен: к текущему треду не привязан ни один проект.
@@ -263,7 +213,6 @@ public actor ToolExecutionService {
             """
         }
 
-        // IT-09: TOOL ACCESS CHECK — check rights from ProjectSettings.
         if projectRequiredTools.contains(name) {
             let accessResult = checkToolAccess(toolName: name)
             if case .denied(let message) = accessResult {

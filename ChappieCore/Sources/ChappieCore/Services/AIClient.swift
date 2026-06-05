@@ -19,14 +19,10 @@
 // Controlled by AuthScheme passed at init — allows OpenAI-format body with any auth combo.
 //
 // CACHE CONTROL:
-// AITunnel supports two caching modes (see docs.aitunnel.ru/features/prompt-caching.html):
-//   - Automatic (top-level cache_control): only works when routed to Anthropic directly.
-//     Fails silently when routed via Bedrock/Vertex — no CACHE HIT.
-//   - Explicit breakpoint (per-block cache_control in content array): works everywhere,
-//     including Bedrock/Vertex. This is our chosen approach.
-// When supportsCaching=true, the system message is sent as a content array with
-// cache_control on the last block — this pins the breakpoint at the system prompt,
-// caching both the persona and tools for the entire session.
+// AITunnel supports explicit breakpoint caching (per-block cache_control in content array):
+// works everywhere including Bedrock/Vertex. When supportsCaching=true, the system message
+// is sent as a content array with cache_control on the last block — pins the breakpoint at
+// the system prompt, caching both the persona and tools for the entire session.
 // All other providers (Groq, Ollama, etc.) reject content arrays → supportsCaching=false
 // uses plain string content.
 //
@@ -42,9 +38,6 @@
 // Two inits exist to avoid double-path bugs:
 //   init(endpoint:) — for chat requests. baseURL is derived by stripping the path.
 //   init(baseURL:)  — for discovery/validation. endpointURL = baseURL + /v1/chat/completions.
-// fetchAvailableModels and validateProvider always use baseURL.appendingPathComponent("v1/models").
-// This means callers must pass the correct base (e.g. "https://openrouter.ai/api"),
-// NOT the full models URL.
 
 import Foundation
 
@@ -352,7 +345,7 @@ public struct AIClient: Sendable, AIClientProtocol {
             temperature: 0.7,
             tools: tools.isEmpty ? nil : tools,
             stream: false,
-            cacheControl: nil  // explicit per-block cache_control on system message is used instead
+            cacheControl: nil
         )
         let request = try buildURLRequest(body: body)
         let (data, response) = try await performRequest(request)
@@ -363,32 +356,6 @@ public struct AIClient: Sendable, AIClientProtocol {
             throw ChappieError.parsingError("Model returned empty choices array")
         }
         return (choice.message, result.usage?.cost_rub, result.usage?.balance)
-    }
-
-    // MARK: - Legacy streaming (deprecated)
-
-    public func streamRequest(
-        systemPrompt: String,
-        chatHistory: [AIMessage]
-    ) -> (stream: AsyncThrowingStream<String, Error>, getUsage: @Sendable () async -> (cost: Double?, balance: Double?)) {
-        let usageBox = UsageBox()
-        let stream = AsyncThrowingStream<String, Error> { continuation in
-            Task {
-                do {
-                    let usage = try await self.performStreamRequest(
-                        systemPrompt: systemPrompt,
-                        chatHistory: chatHistory,
-                        continuation: continuation
-                    )
-                    await usageBox.set(usage)
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-        }
-        let getUsage: @Sendable () async -> (cost: Double?, balance: Double?) = { await usageBox.get() }
-        return (stream, getUsage)
     }
 
     // MARK: - Private: Auth Header
@@ -402,7 +369,7 @@ public struct AIClient: Sendable, AIClientProtocol {
         case .xApiKey:
             request.addValue(apiKey, forHTTPHeaderField: "x-api-key")
         case .none:
-            break // no auth header for local/open providers
+            break
         }
     }
 
@@ -420,8 +387,7 @@ public struct AIClient: Sendable, AIClientProtocol {
         let systemMessage: AIMessage
         if supportsCaching {
             // Explicit cache breakpoint at the end of the system prompt.
-            // WHY BLOCKS: top-level cache_control only works when routed to Anthropic directly.
-            // Per-block cache_control works on Bedrock/Vertex too — more reliable for sticky routing.
+            // WHY BLOCKS: per-block cache_control works on Bedrock/Vertex too — more reliable than top-level.
             systemMessage = AIMessage(
                 role: "system",
                 contentBlocks: [AIContentBlock(text: systemPrompt, cacheControl: .oneHour)]
@@ -444,12 +410,10 @@ public struct AIClient: Sendable, AIClientProtocol {
 
     /// Normalizes a message for strict OpenAI-compatible providers (Groq, Ollama, etc.).
     ///
-    /// Returns nil for messages that should be dropped entirely (e.g. tool-result with empty content).
+    /// Returns nil for messages that should be dropped entirely.
     /// .blocks     → joined plain string (provider rejects content arrays)
     /// .multimodal → text parts joined, images dropped (provider rejects data URIs)
     /// .text("")   → nil (Groq rejects empty string as "content is missing")
-    /// .text       → unchanged
-    /// nil         → unchanged (valid for tool-call assistant messages — field omitted in JSON)
     private func normalizeMessage(_ message: AIMessage) -> AIMessage? {
         switch message.content {
         case .blocks(let blocks):
@@ -512,36 +476,6 @@ public struct AIClient: Sendable, AIClientProtocol {
         }
     }
 
-    // MARK: - Private: Legacy Stream
-
-    private func performStreamRequest(
-        systemPrompt: String,
-        chatHistory: [AIMessage],
-        continuation: AsyncThrowingStream<String, Error>.Continuation
-    ) async throws -> (cost: Double?, balance: Double?) {
-        let messages = buildMessages(systemPrompt: systemPrompt, chatHistory: chatHistory)
-        let body = AITunnelRequest(model: modelName, messages: messages, temperature: 0.7, tools: nil, stream: true, cacheControl: nil)
-        let request = try buildURLRequest(body: body)
-        let (asyncBytes, response) = try await urlSession.bytes(for: request)
-        try validateHTTPResponse(response, data: nil)
-
-        var finalCost: Double? = nil
-        var finalBalance: Double? = nil
-
-        for try await line in asyncBytes.lines {
-            guard !line.isEmpty, line.hasPrefix("data: ") else { continue }
-            let jsonString = String(line.dropFirst(6))
-            if jsonString == "[DONE]" { break }
-            guard let chunkData = jsonString.data(using: .utf8) else { continue }
-            guard let chunk = try? JSONDecoder().decode(AIStreamChunk.self, from: chunkData) else { continue }
-            if let usage = chunk.usage { finalCost = usage.cost_rub; finalBalance = usage.balance }
-            guard let choice = chunk.choices.first else { continue }
-            if let token = choice.delta.content, !token.isEmpty { continuation.yield(token) }
-        }
-
-        return (finalCost, finalBalance)
-    }
-
     // MARK: - Private: HTTP Helpers
 
     private func buildURLRequest(body: AITunnelRequest) throws -> URLRequest {
@@ -595,18 +529,4 @@ public struct AIClient: Sendable, AIClientProtocol {
             throw ChappieError.parsingError("Failed to decode model response: \(error.localizedDescription)")
         }
     }
-}
-
-// MARK: - UsageBox
-
-private actor UsageBox {
-    private var cost: Double? = nil
-    private var balance: Double? = nil
-
-    func set(_ usage: (cost: Double?, balance: Double?)) {
-        self.cost = usage.cost
-        self.balance = usage.balance
-    }
-
-    func get() -> (cost: Double?, balance: Double?) { (cost, balance) }
 }
