@@ -13,6 +13,7 @@
 // - Universal tools (file, memory, web, project mgmt, terminal) — always injected.
 // - Git tools — only if isProgrammingProject = true.
 // - Env-specific tools (build, test, loc) — only if isProgrammingProject = true AND devEnvironment != .unknown.
+// - git_diff is intentionally OMITTED: it dumps the entire project into AI context (cost + noise).
 
 import Foundation
 
@@ -170,23 +171,13 @@ extension ToolExecutionService {
         )))
 
         // MARK: - Git tools (programming project only)
+        // git_diff is intentionally excluded — dumps entire project into context.
 
         if isProg {
             tools.append(AITool(function: AIFunctionDefinition(
                 name: "git_status",
                 description: "Show the current git repository status: modified, new, and deleted files.",
                 parameters: AIToolParameters(properties: [:], required: [])
-            )))
-
-            tools.append(AITool(function: AIFunctionDefinition(
-                name: "git_diff",
-                description: "Show the content of code changes.",
-                parameters: AIToolParameters(
-                    properties: [
-                        "staged": AIToolProperty(type: "string", description: "true — show staged changes (after git add), false — unstaged (default)")
-                    ],
-                    required: []
-                )
             )))
 
             tools.append(AITool(function: AIFunctionDefinition(
@@ -293,9 +284,7 @@ extension ToolExecutionService {
                 )))
             }
 
-            // MARK: - Localization tools (Xcode only)
-            // xcstrings is an Xcode-specific format — inject only for Xcode projects.
-
+            // Xcstrings is an Xcode-specific format — inject only for Xcode projects.
             if env == .xcode {
                 tools.append(contentsOf: localizationTools())
             }
@@ -338,11 +327,8 @@ extension ToolExecutionService {
         )))
 
         // MARK: - Terminal (LAST RESORT, always for programming projects)
-        // WHY LAST: run_terminal is a universal hammer — it can do anything.
-        // That's exactly why it must be the last option, not the first.
-        // Always prefer specialized tools: list_files/read_file for navigation,
-        // git_* for version control, build_project/run_tests for builds.
-        // Use run_terminal ONLY when no specialized tool exists for the task.
+        // WHY LAST: run_terminal is a universal hammer — prefer specialized tools always.
+        // Use ONLY when no dedicated tool exists for the task.
 
         if isProg {
             tools.append(AITool(function: AIFunctionDefinition(
@@ -525,7 +511,6 @@ extension ToolExecutionService {
 
     // MARK: - Env-specific tool descriptions
 
-    /// build_project description tailored to the active dev environment.
     private func buildProjectDescription(for env: DevEnvironment) -> String {
         switch env {
         case .xcode:    return "Build the Xcode project via xcodebuild. Returns success or a list of compilation errors."
@@ -540,7 +525,6 @@ extension ToolExecutionService {
         }
     }
 
-    /// run_tests description tailored to the active dev environment.
     private func runTestsDescription(for env: DevEnvironment) -> String {
         switch env {
         case .xcode:            return "Run automated tests via xcodebuild test. Specify target name or leave empty for all tests."

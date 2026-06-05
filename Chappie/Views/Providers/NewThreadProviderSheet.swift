@@ -292,19 +292,19 @@ struct NewThreadProviderSheet: View {
                     .frame(minWidth: 44, alignment: .trailing)
             }
 
-            // Step 100: map slider 1...10 → actual value × 100
+            // Step 10: map slider 1...100 → actual value × 10
             Slider(
                 value: Binding(
-                    get: { Double(draftSettings.maxMessagesInContext / 100) },
-                    set: { draftSettings.maxMessagesInContext = Int($0) * 100 }
+                    get: { Double(draftSettings.maxMessagesInContext / 10) },
+                    set: { draftSettings.maxMessagesInContext = Int($0) * 10 }
                 ),
-                in: 1...10,
+                in: 1...100,
                 step: 1
             )
             .accentColor(Color.accentColor)
 
             HStack {
-                Text("100").font(.caption2).foregroundStyle(.secondary)
+                Text("10").font(.caption2).foregroundStyle(.secondary)
                 Spacer()
                 Text("1 000").font(.caption2).foregroundStyle(.secondary)
             }

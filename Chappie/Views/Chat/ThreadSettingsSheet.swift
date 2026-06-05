@@ -11,7 +11,7 @@
 // SETTINGS:
 // - Thread name (inline rename)
 // - API key selection (hidden for providers with requiresApiKey=false, e.g. Ollama)
-// - Context depth: slider 10...1000, step 10, default 300
+// - Context depth: slider 10...1000, step 10, default 30
 // - Unlimited context toggle
 //
 // NOTE: Provider + model selection happens ONLY via the "Модель" chip in the chat toolbar.

@@ -238,10 +238,4 @@ Contains root `architecture.md` + references to 4 target architecture files.
 
 **RULE-05: No final commit if build or tests are red** — a broken commit is worse than none.
 
----
 
-## 14. Tech Debt
-
-| ID | Issue | Priority |
-|----|-------|----------|
-| TD-02 | `ChappieCoreTests` requires manual scheme switch in Xcode before ⌘+U | Low |

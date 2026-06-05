@@ -23,7 +23,7 @@ import Foundation
 /// WHY STRUCT, NOT @Model: Settings always belong to a thread, never standalone.
 public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
 
-    /// Max messages in context window. Range: 10...1000, step 10. Default: 100.
+    /// Max messages in context window. Range: 10...1000, step 10. Default: 30.
     public var maxMessagesInContext: Int
 
     /// When true — all trimming is disabled, everything is sent to the model.
@@ -53,7 +53,7 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
     public var activeModelName: String?
 
     public init(
-        maxMessagesInContext: Int = 100,
+        maxMessagesInContext: Int = 30,
         isUnlimitedContext: Bool = false,
         activeProviderId: UUID? = nil,
         activeKeyId: UUID? = nil,
