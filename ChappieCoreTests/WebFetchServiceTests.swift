@@ -7,190 +7,154 @@
 // TESTING STRATEGY:
 // WebFetchService is an actor — all calls use `await`.
 // Network tests use real HTTP requests against stable public endpoints.
-// Pure logic tests (stripHTML, selector, limit) are tested via the public fetch()
-// interface with mocked responses where possible, and via internal behavior
-// observable through output.
-//
-// WHAT IS TESTED:
-//   - URL validation (invalid scheme, empty, malformed)
-//   - HTML stripping: noise removal, entity decoding, whitespace collapse
-//   - CSS selector: tag, .class, #id
-//   - Size limit: truncation with note
-//   - Real HTTP: fetch a known stable page and verify non-empty result
-//   - Error messages: all error paths start with "❌"
+// Pure logic tests are tested via the public fetch() interface.
+// Network-dependent tests are skipped when the endpoint is unreachable.
 
-import XCTest
+import Testing
 @testable import ChappieCore
 
-final class WebFetchServiceTests: XCTestCase {
-
-    // MARK: - Subject under test
-
-    private var service: WebFetchService!
-
-    override func setUp() async throws {
-        try await super.setUp()
-        // Small limit for truncation tests; real timeout for network tests
-        service = WebFetchService(maxOutputLength: 500, timeoutSeconds: 15)
-    }
-
-    override func tearDown() async throws {
-        service = nil
-        try await super.tearDown()
-    }
+@Suite("WebFetchService")
+struct WebFetchServiceTests {
 
     // MARK: - URL Validation
 
-    func testInvalidSchemeReturnsError() async {
+    @Test func invalidSchemeReturnsError() async {
+        let service = WebFetchService(maxOutputLength: 500, timeoutSeconds: 15)
         let result = await service.fetch(urlString: "ftp://example.com/file.txt")
-        XCTAssertTrue(result.hasPrefix("❌"), "ftp:// should be rejected: \(result)")
+        #expect(result.hasPrefix("❌"), "ftp:// should be rejected: \(result)")
     }
 
-    func testEmptyURLReturnsError() async {
+    @Test func emptyURLReturnsError() async {
+        let service = WebFetchService(maxOutputLength: 500, timeoutSeconds: 15)
         let result = await service.fetch(urlString: "")
-        XCTAssertTrue(result.hasPrefix("❌"), "Empty URL should be rejected: \(result)")
+        #expect(result.hasPrefix("❌"), "Empty URL should be rejected: \(result)")
     }
 
-    func testMalformedURLReturnsError() async {
+    @Test func malformedURLReturnsError() async {
+        let service = WebFetchService(maxOutputLength: 500, timeoutSeconds: 15)
         let result = await service.fetch(urlString: "not a url at all")
-        XCTAssertTrue(result.hasPrefix("❌"), "Malformed URL should be rejected: \(result)")
+        #expect(result.hasPrefix("❌"), "Malformed URL should be rejected: \(result)")
     }
 
-    func testFileSchemeReturnsError() async {
+    @Test func fileSchemeReturnsError() async {
+        let service = WebFetchService(maxOutputLength: 500, timeoutSeconds: 15)
         let result = await service.fetch(urlString: "file:///etc/passwd")
-        XCTAssertTrue(result.hasPrefix("❌"), "file:// should be rejected: \(result)")
+        #expect(result.hasPrefix("❌"), "file:// should be rejected: \(result)")
+    }
+
+    @Test func javascriptSchemeReturnsError() async {
+        let service = WebFetchService(maxOutputLength: 500, timeoutSeconds: 15)
+        let result = await service.fetch(urlString: "javascript:alert(1)")
+        #expect(result.hasPrefix("❌"), "javascript: should be rejected: \(result)")
     }
 
     // MARK: - Size Limit
 
-    func testSizeLimitTruncatesContent() async throws {
-        // Build a fake large HTML page in-memory using a data: URI — not supported,
-        // so we test the limit logic indirectly via a real page.
-        // Instead, create a service with a very small limit and fetch a real page.
-        let tinyService = WebFetchService(maxOutputLength: 50, timeoutSeconds: 15)
+    @Test func sizeLimitTruncatesContent() async throws {
+        let service = WebFetchService(maxOutputLength: 50, timeoutSeconds: 15)
+        let result = await service.fetch(urlString: "https://httpbin.org/html")
 
-        // Use httpbin which is a stable test endpoint
-        let result = await tinyService.fetch(urlString: "https://httpbin.org/html")
-
-        // Either we got content (possibly truncated) or a network error
-        if result.hasPrefix("❌") {
-            // Network unavailable in CI — skip assertion
+        guard !result.hasPrefix("❌") else {
             throw XCTSkip("Network unavailable")
         }
 
-        // If fetched successfully, content must be ≤ 50 chars + truncation note, OR ≤ 50 chars
-        // The note itself is longer than 50 chars, so total may exceed limit — that's expected.
-        // Key check: truncation note is present if original was > 50 chars
+        // If content was longer than 50 chars, truncation note must be present
         let containsTruncationNote = result.contains("[content truncated:")
         let isShort = result.count <= 50
-        XCTAssertTrue(containsTruncationNote || isShort,
+        #expect(containsTruncationNote || isShort,
             "Expected truncation note or short content, got: \(result.prefix(100))")
     }
 
-    // MARK: - HTML Stripping (via internal behavior)
+    // MARK: - HTML Stripping
 
-    func testHTMLStrippingRemovesScriptTags() async throws {
-        // We can't inject mock HTML directly, but we verify the service
-        // doesn't return raw HTML tags in its output from a real page.
+    @Test func htmlStrippingRemovesScriptTags() async throws {
+        let service = WebFetchService(maxOutputLength: 500, timeoutSeconds: 15)
         let result = await service.fetch(urlString: "https://httpbin.org/html")
 
-        if result.hasPrefix("❌") {
+        guard !result.hasPrefix("❌") else {
             throw XCTSkip("Network unavailable")
         }
 
-        // Result should not contain raw <script> blocks
-        XCTAssertFalse(result.lowercased().contains("<script"),
-            "Output should not contain raw <script> tags")
-        XCTAssertFalse(result.lowercased().contains("<style"),
-            "Output should not contain raw <style> tags")
+        #expect(!result.lowercased().contains("<script"), "Output must not contain raw <script> tags")
+        #expect(!result.lowercased().contains("<style"), "Output must not contain raw <style> tags")
     }
 
-    func testHTMLStrippingRemovesHTMLTags() async throws {
+    @Test func htmlStrippingRemovesStructuralTags() async throws {
+        let service = WebFetchService(maxOutputLength: 500, timeoutSeconds: 15)
         let result = await service.fetch(urlString: "https://httpbin.org/html")
 
-        if result.hasPrefix("❌") {
+        guard !result.hasPrefix("❌") else {
             throw XCTSkip("Network unavailable")
         }
 
-        // Should not contain angle-bracket HTML tags (except possible false positives in content)
-        // Check for common structural tags that should always be stripped
-        XCTAssertFalse(result.contains("</div>"), "Output should not contain </div>")
-        XCTAssertFalse(result.contains("</p>"), "Output should not contain </p>")
-        XCTAssertFalse(result.contains("<html"), "Output should not contain <html")
-        XCTAssertFalse(result.contains("<body"), "Output should not contain <body")
+        #expect(!result.contains("</div>"), "Output must not contain </div>")
+        #expect(!result.contains("</p>"), "Output must not contain </p>")
+        #expect(!result.contains("<html"), "Output must not contain <html")
+        #expect(!result.contains("<body"), "Output must not contain <body")
     }
 
     // MARK: - Real HTTP Fetch
 
-    func testFetchRealPageReturnsNonEmptyText() async throws {
-        // Use a stable, lightweight page
+    @Test func fetchRealPageReturnsNonEmptyText() async throws {
+        let service = WebFetchService(maxOutputLength: 500, timeoutSeconds: 15)
         let result = await service.fetch(urlString: "https://httpbin.org/html")
 
-        if result.hasPrefix("❌") {
+        guard !result.hasPrefix("❌") else {
             throw XCTSkip("Network unavailable")
         }
 
-        XCTAssertFalse(result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        #expect(!result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             "Fetched page should produce non-empty text")
     }
 
-    func testFetchHTTPSPage() async throws {
+    @Test func fetchExampleComReturnsKnownContent() async throws {
+        let service = WebFetchService(maxOutputLength: 500, timeoutSeconds: 15)
         let result = await service.fetch(urlString: "https://example.com")
 
-        if result.hasPrefix("❌") {
+        guard !result.hasPrefix("❌") else {
             throw XCTSkip("Network unavailable")
         }
 
-        // example.com always has "Example Domain" in its content
-        XCTAssertTrue(result.contains("Example Domain") || !result.isEmpty,
+        #expect(result.contains("Example Domain") || !result.isEmpty,
             "example.com should return recognizable content")
     }
 
     // MARK: - HTTP Error Handling
 
-    func testHTTP404ReturnsError() async throws {
+    @Test func http404ReturnsError() async throws {
+        let service = WebFetchService(maxOutputLength: 500, timeoutSeconds: 15)
         let result = await service.fetch(urlString: "https://httpbin.org/status/404")
 
-        if result.contains("network error") || result.contains("timed out") {
+        guard !result.contains("network error"), !result.contains("timed out") else {
             throw XCTSkip("Network unavailable or unexpected error")
         }
 
-        XCTAssertTrue(result.hasPrefix("❌"), "HTTP 404 should return error: \(result)")
-        XCTAssertTrue(result.contains("404"), "Error should mention status code: \(result)")
+        #expect(result.hasPrefix("❌"), "HTTP 404 should return error: \(result)")
+        #expect(result.contains("404"), "Error should mention status code: \(result)")
     }
 
-    func testHTTP500ReturnsError() async throws {
+    @Test func http500ReturnsError() async throws {
+        let service = WebFetchService(maxOutputLength: 500, timeoutSeconds: 15)
         let result = await service.fetch(urlString: "https://httpbin.org/status/500")
 
-        if result.contains("network error") || result.contains("timed out") {
+        guard !result.contains("network error"), !result.contains("timed out") else {
             throw XCTSkip("Network unavailable or unexpected error")
         }
 
-        XCTAssertTrue(result.hasPrefix("❌"), "HTTP 500 should return error: \(result)")
-        XCTAssertTrue(result.contains("500"), "Error should mention status code: \(result)")
+        #expect(result.hasPrefix("❌"), "HTTP 500 should return error: \(result)")
+        #expect(result.contains("500"), "Error should mention status code: \(result)")
     }
 
-    // MARK: - Selector Tests
+    // MARK: - Selector
 
-    func testTagSelectorFiltersContent() async throws {
-        // Fetch with a tag selector — result should be more focused than without
-        let withoutSelector = await service.fetch(urlString: "https://example.com")
-        let withSelector = await service.fetch(urlString: "https://example.com", selector: "body")
+    @Test func tagSelectorReturnsNonEmptyContent() async throws {
+        let service = WebFetchService(maxOutputLength: 500, timeoutSeconds: 15)
+        let result = await service.fetch(urlString: "https://example.com", selector: "body")
 
-        if withoutSelector.hasPrefix("❌") || withSelector.hasPrefix("❌") {
+        guard !result.hasPrefix("❌") else {
             throw XCTSkip("Network unavailable")
         }
 
-        // Both should return non-empty content
-        XCTAssertFalse(withoutSelector.isEmpty, "Without selector should return content")
-        XCTAssertFalse(withSelector.isEmpty, "With 'body' selector should return content")
-    }
-
-    // MARK: - Error Message Format
-
-    func testAllErrorsStartWithRedX() async {
-        let invalidURLResult = await service.fetch(urlString: "javascript:alert(1)")
-        XCTAssertTrue(invalidURLResult.hasPrefix("❌"),
-            "Invalid URL error should start with ❌: \(invalidURLResult)")
+        #expect(!result.isEmpty, "Fetching with 'body' selector should return content")
     }
 }
