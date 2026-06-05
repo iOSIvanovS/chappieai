@@ -1,234 +1,29 @@
 // ContentView.swift
 // Chappie
 //
-// ContentView is a pure "conductor". It assembles all components together
-// and passes data from ViewModel to the right places.
+// Pure "conductor" — assembles all components, passes data from ViewModel to the right places.
+// Drop logic lives in DropHandler.swift.
 //
-// LAYOUT ARCHITECTURE:
-// The entire app is a ZStack assembled in ChappieApp.swift:
-//   - Back layer (ChappieApp): background image fills the full NSWindow frame.
-//   - Middle layer (ContentView): main content (top panel + chat + bottom panel).
-//   - Front layer (conditional, ContentView): dim overlay + floating sidebar.
+// LAYOUT:
+//   ZStack (ChappieApp): background image fills full NSWindow frame (below safe areas).
+//   ContentView: main content (top panel + chat + bottom panel).
+//   Conditional: dim overlay + floating sidebar.
 //
-// WHY BACKGROUND IS IN ChappieApp:
-// Placing the background image at WindowGroup level puts it below ALL safe areas,
-// toolbar insets, and layout passes. ContentView never needs to know about it.
-// This eliminates white strips at top/bottom that appeared when GeometryReader
-// was inside ContentView's layout tree.
+// TOP PANEL: two floating pills — ModelPickerRow (model + thread gear) + ProjectChipsView.
+// BOTTOM PANEL: InputMorphView — ultraThinMaterial.
+// Top panel reports height so ChatScrollView adds a matching header spacer.
+// Bottom panel height measured via onGeometryChange (CPU-22).
 //
-// FLOATING PANELS LAYOUT:
-//   Top panel: two rows, each an independent floating rounded pill with ultraThinMaterial.
-//     Row 1 (ModelPickerRow): model selector (left) + thread settings gear (right).
-//                             Shown only when a provider is configured.
-//     Row 2 (ProjectChipsView): project chips (left) + balance pill (right, nil = hidden).
-//                               Always shown when a thread is active.
-//   Bottom panel: InputMorphView — ultraThinMaterial.
-//   Top panel reports its height so ChatScrollView can add a matching header spacer.
-//   Bottom panel height is measured via onGeometryChange — exact, no manual math.
-//
-// CPU-08: WHY onGeometryChange INSTEAD OF GeometryReader:
-//   GeometryReader placed in .background participates in measurement and can cause
-//   a render loop: parent changes size → GeometryReader fires → state update →
-//   parent re-renders → GeometryReader fires again. This produced 35% idle CPU.
-//   onGeometryChange (macOS 14+) is a pure side-effect observer — it does NOT
-//   participate in layout, does NOT trigger a layout pass, and fires only when
-//   the measured value actually changes. Zero render-loop risk.
-//
-// CPU-09: WHY NO .animation(value: activeThread?.id) ON mainChatArea:
-//   Animating the entire ZStack on thread switch caused SwiftUI to re-render
-//   every child view on every @Published change to activeThread — including
-//   title updates, model changes, etc. Animations are now applied point-locally
-//   on topPanel transitions only (transition(.opacity.combined(with:.move))).
-//
-// CPU-11: DRAFT DEBOUNCE:
-//   onChange(of: prompt) used to call setDraft on every keystroke, publishing
-//   into ViewModel on every character. Now debounced via Task + 300ms sleep.
-//   Draft is still saved immediately on thread switch (direct call, no debounce).
-//
-// CPU-13: STREAMING ISOLATION:
-//   ContentView no longer reads viewModel.isThinking, viewModel.streamingText,
-//   viewModel.runningCost, or viewModel.currentToolCall directly.
-//   Instead, viewModel.streaming (StreamingState) is passed as a `let` reference
-//   to ChatScrollView and InputMorphView. ContentView's body does NOT subscribe
-//   to StreamingState — so 30+ token updates/sec no longer invalidate topPanel,
-//   bottomPanel, or any other ContentView subtree.
-//
-// CPU-15: BALANCE ISOLATION:
-//   currentBalance lives in StreamingState. ProjectChipsView receives `streaming`
-//   reference and reads streaming.currentBalance directly — balance updates during
-//   streaming no longer invalidate ContentView or topPanel.
-//   ContentView does NOT read streaming.currentBalance — only ProjectChipsView does.
-//
-// CPU-20: SCROLL ANCHOR FIX:
-//   footerHeight changed from maxPanelHeight (268pt) to minPanelHeight (88pt).
-//   Sentinel "bottom" uses anchor:.top — TOP of sentinel aligns with BOTTOM of viewport.
-//   This means the last message lands just above the collapsed input panel, not in the
-//   middle of the screen. Footer spacer provides physical clearance from panel chrome.
-//
-// CPU-22: EXACT FOOTER HEIGHT via onGeometryChange:
-//   currentPanelHeight is now measured directly from the rendered InputMorphView via
-//   onGeometryChange on the bottomPanel view. This replaces the manual formula in
-//   updatePanelHeight() which was inaccurate when attachment row appeared.
-//   panelHeight Binding removed from InputMorphView — it no longer needs to know
-//   about its own height. ContentView owns the measurement.
-//   ChatScrollView footerHeight = currentPanelHeight — grows with the actual panel.
-//
-// CPU-23: THINKING INDICATOR CPU:
-//   currentToolCall in StreamingState is throttled to 200ms via setToolCall().
-//   thinkingView animation fires at most 5x/sec instead of 30+/sec.
-//
-// ONBOARDING TRIGGER (MK-04):
-//   Onboarding is shown when appState.shouldShowOnboarding == true.
-//   AppState is @Observable singleton — SwiftUI tracks reads automatically.
-//   @State var appState = AppState.shared ensures SwiftUI subscribes to changes.
-//   Debug: AppState.shared.debugForceOnboarding = true to force re-show onboarding.
-//
-// MK-07: MODEL PICKER POPOVER — 3 COLUMNS:
-//   ModelPickerRow.onSelectProvider now receives (providerId, keyId, modelName).
-//   ContentView passes all three into switchProvider() — full thread-isolated key selection.
-//
-// BUG-01: LOAD MORE SCROLL FIX (v3):
-//   loadMoreAnchorId replaces the old isLoadingMore + firstLoadedMessageId pair.
-//   ViewModel sets loadMoreAnchorId to the first currently-visible message BEFORE prepend.
-//   ChatScrollView uses scrollPosition(id:) to anchor there after the VStack updates.
-//   ContentView resets loadMoreAnchorId via onLoadMoreScrollDone after scroll is applied.
-//
-// SETTINGS-SYNC:
-//   ThreadSettingsSheet always receives activeThreadSettings from ViewModel — not
-//   thread.settings from self.threads. This is critical because self.threads is NOT
-//   updated after switchProvider() — only activeThreadSettings is always current.
-//   buildThreadForSettings() merges activeThread + activeThreadSettings into a fresh
-//   ThreadMetadata so the sheet sees the correct providerId, keyId, maxMessagesInContext.
-//
-// SCREENSHOT DROP (BL-02):
-//   macOS screenshot thumbnail (Cmd+Shift+4) is an NSItemProvider with typeId "public.png".
-//   It does NOT carry a file URL — it carries raw PNG data as a file representation.
-//   loadItem(forTypeIdentifier:) fails on it because it can't produce a folder/URL.
-//   The correct API is loadFileRepresentation(forTypeIdentifier: "public.png") which
-//   writes the PNG to a temp file and returns its URL via callback.
-//
-//   DROP ROUTING (WHY URL-BASED, NOT TYPE-BASED):
-//   NSItemProvider.registeredTypeIdentifiers often includes BOTH .fileURL and .folder for
-//   any filesystem item — so itemProviders(for: [.folder]) returns results even for plain files.
-//   Routing by provider type leads to misclassification. Instead, we resolve all providers
-//   to actual URLs first, then check isDirectory via FileManager — ground truth, not hints.
-//
-//   IMAGE TYPE DETECTION:
-//   Screenshot providers have typeIds like ["public.png"] — no "public.file-url".
-//   We detect them by checking: has image conformance AND no file-url conformance.
-//   Such providers are routed to resolveImageProviders() which uses loadFileRepresentation.
+// CPU-08: onGeometryChange instead of GeometryReader — pure side-effect, no layout loop.
+// CPU-13: streaming state isolated to ChatScrollView + InputMorphView — not read in body.
+// CPU-22: currentPanelHeight measured directly from rendered InputMorphView.
+// BUG-01: loadMoreAnchorId anchors scroll position after message prepend.
 
 import SwiftUI
 import UniformTypeIdentifiers
 import SwiftData
 import AppKit
 import ChappieCore
-
-// MARK: - Silent Drop Delegate
-
-/// Minimal DropDelegate: silently accepts file drops, no visual overlay.
-/// Handles three drop sources:
-///   1. Regular files from Finder (.fileURL) — resolved to URL, routed by isDirectory check
-///   2. Folders from Finder (.folder) → added as projects
-///   3. macOS screenshot thumbnails — detected by image typeId + no file-url → loadFileRepresentation
-private final class SilentDropDelegate: DropDelegate {
-
-    var onFilesDropped: ([NSItemProvider]) -> Void = { _ in }
-    var onFoldersDropped: ([NSItemProvider]) -> Void = { _ in }
-    var onImageProviders: ([NSItemProvider]) -> Void = { _ in }
-    var isThinkingGetter: () -> Bool = { false }
-
-    func validateDrop(info: DropInfo) -> Bool {
-        let hasFile = info.hasItemsConforming(to: [.fileURL])
-        let hasFolder = info.hasItemsConforming(to: [.folder])
-        let hasData = info.hasItemsConforming(to: [.data])
-        return hasFile || hasFolder || hasData
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-        guard !isThinkingGetter() else { return false }
-
-        let allProviders = info.itemProviders(for: [.fileURL, .folder, .data])
-        guard !allProviders.isEmpty else { return false }
-
-        // Split providers into two buckets:
-        //   imageOnly  — has image type (e.g. "public.png") but NO file-url → screenshot thumbnail
-        //   fileOrDir  — has file-url or folder → regular Finder drop
-        var imageProviders: [NSItemProvider] = []
-        var fileOrDirProviders: [NSItemProvider] = []
-
-        for provider in allProviders {
-            let typeIds = provider.registeredTypeIdentifiers
-            let hasFileURL = provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
-            let hasFolder  = provider.hasItemConformingToTypeIdentifier(UTType.folder.identifier)
-            let hasImage   = typeIds.contains { UTType($0)?.conforms(to: .image) == true }
-
-            if hasImage && !hasFileURL && !hasFolder {
-                // Screenshot thumbnail — raw image data, no file URL
-                imageProviders.append(provider)
-            } else if hasFileURL || hasFolder {
-                fileOrDirProviders.append(provider)
-            }
-        }
-
-        if !imageProviders.isEmpty {
-            onImageProviders(imageProviders)
-        }
-
-        if !fileOrDirProviders.isEmpty {
-            // Resolve to URLs, then route by isDirectory — ground truth.
-            Task {
-                var fileProviders: [NSItemProvider] = []
-                var folderProviders: [NSItemProvider] = []
-
-                for (i, provider) in fileOrDirProviders.enumerated() {
-                    let typeId = provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
-                        ? UTType.fileURL.identifier
-                        : UTType.folder.identifier
-
-                    let url: URL? = await withCheckedContinuation { continuation in
-                        provider.loadItem(forTypeIdentifier: typeId, options: nil) { item, error in
-                            if let _ = error {
-                                continuation.resume(returning: nil)
-                                return
-                            }
-                            if let data = item as? Data,
-                               let resolved = URL(dataRepresentation: data, relativeTo: nil) {
-                                continuation.resume(returning: resolved)
-                            } else if let resolved = item as? URL {
-                                continuation.resume(returning: resolved)
-                            } else {
-                                continuation.resume(returning: nil)
-                            }
-                        }
-                    }
-
-                    guard let url else { continue }
-
-                    var isDir: ObjCBool = false
-                    let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
-
-                    if exists && isDir.boolValue {
-                        folderProviders.append(provider)
-                    } else if exists {
-                        fileProviders.append(provider)
-                    }
-
-                    _ = i // suppress unused warning
-                }
-
-                await MainActor.run {
-                    if !folderProviders.isEmpty { self.onFoldersDropped(folderProviders) }
-                    if !fileProviders.isEmpty   { self.onFilesDropped(fileProviders) }
-                }
-            }
-        }
-
-        return !imageProviders.isEmpty || !fileOrDirProviders.isEmpty
-    }
-}
-
-// MARK: - ContentView
 
 struct ContentView: View {
 
@@ -246,19 +41,17 @@ struct ContentView: View {
     @State private var topPanelHeight: CGFloat = 0
     @State private var safeAreaTop: CGFloat = 0
 
-    // CPU-22: measured directly from rendered InputMorphView via onGeometryChange.
+    // CPU-22: measured directly from rendered InputMorphView via onGeometryChange
     @State private var currentPanelHeight: CGFloat = InputLayout.minPanelHeight
 
-    // CPU-11: debounce task reference — cancelled on every new keystroke
+    // CPU-11: cancelled on every new keystroke, fires draft save after 300ms idle
     @State private var draftDebounceTask: Task<Void, Never>? = nil
 
-    // MK-04: @State so SwiftUI subscribes to @Observable AppState changes
     @State private var appState = AppState.shared
 
     @Environment(\.modelContext) private var modelContext
 
     private var orphanedThreadIds: Set<UUID> { [] }
-
     private let sidebarWidth: CGFloat = 260
 
     var body: some View {
@@ -267,7 +60,6 @@ struct ContentView: View {
                 ProgressView("Загрузка...")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if appState.shouldShowOnboarding {
-                // MK-04: AppState-driven onboarding replaces the old providers.isEmpty check
                 OnboardingView(viewModel: viewModel)
             } else {
                 mainContent
@@ -275,30 +67,18 @@ struct ContentView: View {
         }
         .onAppear {
             viewModel.setModelContainer(modelContext.container)
-
             dropDelegate.isThinkingGetter = { [self] in viewModel.streaming.isThinking }
-            dropDelegate.onFilesDropped = { [self] providers in
-                resolveDroppedFiles(providers)
-            }
-            dropDelegate.onFoldersDropped = { [self] providers in
-                resolveFolderDrop(providers)
-            }
-            dropDelegate.onImageProviders = { [self] providers in
-                // Screenshot thumbnail: has "public.png" typeId, no file-url.
-                // loadFileRepresentation writes PNG to a temp file and returns the URL.
-                resolveImageProviders(providers)
-            }
+            dropDelegate.onFilesDropped   = { [self] providers in resolveDroppedFiles(providers, attachments: $attachments) }
+            dropDelegate.onFoldersDropped = { [self] providers in resolveFolderDrop(providers, addProject: { viewModel.addProject(url: $0) }) }
+            dropDelegate.onImageProviders = { [self] providers in resolveImageProviders(providers, attachments: $attachments) }
         }
         .onChange(of: viewModel.providers.count) { _, _ in }
     }
 
     // MARK: - Thread for Settings
 
-    /// Builds a ThreadMetadata with CURRENT activeThreadSettings — not stale thread.settings.
-    ///
-    /// WHY: self.threads is NOT updated after switchProvider() — only activeThreadSettings
-    /// is always current. If we pass thread.settings from self.threads, the sheet sees
-    /// stale providerId/keyId/maxMessagesInContext from before the last model switch.
+    /// Builds ThreadMetadata with CURRENT activeThreadSettings — not stale thread.settings.
+    /// self.threads is NOT updated after switchProvider() — only activeThreadSettings is always current.
     private func buildThreadForSettings(_ thread: ThreadMetadata) -> ThreadMetadata {
         ThreadMetadata(
             id: thread.id,
@@ -324,13 +104,10 @@ struct ContentView: View {
                         viewModel.updateProjectSettings(newSettings, forProjectId: project.id)
                         selectedProjectForSettings = nil
                     },
-                    onDismiss: {
-                        selectedProjectForSettings = nil
-                    }
+                    onDismiss: { selectedProjectForSettings = nil }
                 )
             }
             .sheet(item: $selectedThreadForSettings) { thread in
-                // thread here already has activeThreadSettings injected via buildThreadForSettings()
                 ThreadSettingsSheet(
                     thread: thread,
                     providers: viewModel.providers,
@@ -345,9 +122,7 @@ struct ContentView: View {
                         )
                         selectedThreadForSettings = nil
                     },
-                    onDismiss: {
-                        selectedThreadForSettings = nil
-                    }
+                    onDismiss: { selectedThreadForSettings = nil }
                 )
             }
             .sheet(isPresented: $viewModel.showNewThreadProviderPicker) {
@@ -366,9 +141,7 @@ struct ContentView: View {
                             )
                         }
                     },
-                    onCancel: {
-                        viewModel.cancelNewThread()
-                    }
+                    onCancel: { viewModel.cancelNewThread() }
                 )
             }
             .alert("Нет активной модели", isPresented: $viewModel.showNoProviderAlert) {
@@ -428,15 +201,9 @@ struct ContentView: View {
                         }
                         viewModel.createNewThread()
                     },
-                    onDeleteThread: { thread in
-                        viewModel.deleteThread(thread)
-                    },
-                    onRenameThread: { thread, newTitle in
-                        viewModel.renameThread(thread, newTitle: newTitle)
-                    },
+                    onDeleteThread: { thread in viewModel.deleteThread(thread) },
+                    onRenameThread: { thread, newTitle in viewModel.renameThread(thread, newTitle: newTitle) },
                     onOpenThreadSettings: { thread in
-                        // Use activeThreadSettings if this is the active thread —
-                        // self.threads may have stale settings after switchProvider().
                         if thread.id == viewModel.activeThread?.id {
                             selectedThreadForSettings = buildThreadForSettings(thread)
                         } else {
@@ -459,11 +226,7 @@ struct ContentView: View {
         .toolbarBackground(.ultraThinMaterial, for: .windowToolbar)
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: isSidebarVisible)
         .onChange(of: viewModel.activeThread?.id) { _, newThreadId in
-            if let id = newThreadId {
-                prompt = viewModel.getDraft(for: id)
-            } else {
-                prompt = ""
-            }
+            prompt = newThreadId.map { viewModel.getDraft(for: $0) } ?? ""
         }
         .onChange(of: prompt) { _, newValue in
             guard let threadId = viewModel.activeThread?.id else { return }
@@ -475,9 +238,7 @@ struct ContentView: View {
             }
         }
         .onChange(of: viewModel.streaming.isThinking) { _, thinking in
-            if thinking && showSettings {
-                showSettings = false
-            }
+            if thinking && showSettings { showSettings = false }
         }
     }
 
@@ -496,17 +257,10 @@ struct ContentView: View {
                 headerHeight: topPanelHeight + safeAreaTop,
                 footerHeight: currentPanelHeight,
                 loadMoreAnchorId: viewModel.loadMoreAnchorId,
-                onLoadMoreScrollDone: {
-                    // BUG-01: reset anchor after ChatScrollView has applied scrollPosition.
-                    viewModel.loadMoreAnchorId = nil
-                }
+                onLoadMoreScrollDone: { viewModel.loadMoreAnchorId = nil }
             )
             .ignoresSafeArea(edges: .top)
-            .onGeometryChange(for: CGFloat.self) { geo in
-                geo.safeAreaInsets.top
-            } action: { newValue in
-                safeAreaTop = newValue
-            }
+            .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { safeAreaTop = $0 }
 
             VStack(spacing: 0) {
                 topPanel
@@ -515,9 +269,8 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // .data is included so screenshot thumbnails (NSFilesPromisePboardType) reach the delegate.
-        // SwiftUI filters drops by UTType before calling the delegate — without .data,
-        // screenshot thumbnails are silently rejected and never reach validateDrop/performDrop.
+        // .data catches screenshot thumbnails (NSFilesPromisePboardType) — without it
+        // SwiftUI silently rejects them before reaching validateDrop/performDrop.
         .onDrop(of: [.fileURL, .folder, .data], delegate: dropDelegate)
     }
 
@@ -525,8 +278,6 @@ struct ContentView: View {
 
     private var topPanel: some View {
         VStack(spacing: 6) {
-            // Row 1: model selector (left) + thread settings gear (right).
-            // Hidden when no provider is configured.
             if viewModel.activeThread != nil && !viewModel.providers.isEmpty {
                 ModelPickerRow(
                     activeProvider: viewModel.activeProvider,
@@ -537,7 +288,6 @@ struct ContentView: View {
                     threadName: viewModel.activeThread?.title,
                     streaming: viewModel.streaming,
                     onSelectProvider: { providerId, keyId, modelName in
-                        // MK-07: full provider+key+model selection from inline popover
                         if let provider = viewModel.providers.first(where: { $0.id == providerId }),
                            let store = viewModel.providerStore {
                             Task {
@@ -551,7 +301,6 @@ struct ContentView: View {
                         }
                     },
                     onOpenThreadSettings: {
-                        // Always inject fresh activeThreadSettings — self.threads may be stale.
                         if let thread = viewModel.activeThread {
                             selectedThreadForSettings = buildThreadForSettings(thread)
                         }
@@ -560,8 +309,6 @@ struct ContentView: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
-            // Row 2: project chips (left) + balance pill (right, nil = hidden).
-            // Always visible when a thread is active.
             if viewModel.activeThread != nil {
                 ProjectChipsView(
                     projects: viewModel.activeProjects,
@@ -582,11 +329,7 @@ struct ContentView: View {
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)
-        .onGeometryChange(for: CGFloat.self) { geo in
-            geo.size.height
-        } action: { newValue in
-            topPanelHeight = newValue
-        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { topPanelHeight = $0 }
     }
 
     // MARK: - Bottom Floating Panel
@@ -597,19 +340,13 @@ struct ContentView: View {
             attachments: $attachments,
             isWorkspaceSelected: viewModel.workspaceURL != nil,
             streaming: viewModel.streaming,
-            onSend: { attachedFiles in
-                sendMessage(attachments: attachedFiles)
-            },
+            onSend: { attachedFiles in sendMessage(attachments: attachedFiles) },
             onCancel: { viewModel.cancelCurrentRequest() }
         )
-        .onGeometryChange(for: CGFloat.self) { geo in
-            geo.size.height
-        } action: { newValue in
-            currentPanelHeight = newValue
-        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { currentPanelHeight = $0 }
     }
 
-    // MARK: - Private Helpers
+    // MARK: - Send
 
     private func sendMessage(attachments: [AttachedFile]) {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -620,127 +357,6 @@ struct ContentView: View {
         }
         viewModel.send(prompt: prompt, attachments: attachments)
         prompt = ""
-    }
-
-    private func resolveFolderDrop(_ providers: [NSItemProvider]) {
-        Task {
-            for provider in providers {
-                let url: URL? = await withCheckedContinuation { continuation in
-                    provider.loadItem(forTypeIdentifier: UTType.folder.identifier, options: nil) { item, _ in
-                        if let data = item as? Data, let resolved = URL(dataRepresentation: data, relativeTo: nil) {
-                            continuation.resume(returning: resolved)
-                        } else if let resolved = item as? URL {
-                            continuation.resume(returning: resolved)
-                        } else {
-                            continuation.resume(returning: nil)
-                        }
-                    }
-                }
-                if let url {
-                    await MainActor.run { viewModel.addProject(url: url) }
-                }
-            }
-        }
-    }
-
-    private func resolveDroppedFiles(_ providers: [NSItemProvider]) {
-        Task {
-            var urls: [URL] = []
-            for provider in providers {
-                guard provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) else { continue }
-                let url: URL? = await withCheckedContinuation { continuation in
-                    provider.loadItem(
-                        forTypeIdentifier: UTType.fileURL.identifier,
-                        options: nil
-                    ) { item, error in
-                        if let _ = error {
-                            continuation.resume(returning: nil)
-                            return
-                        }
-                        if let data = item as? Data,
-                           let resolved = URL(dataRepresentation: data, relativeTo: nil) {
-                            continuation.resume(returning: resolved)
-                        } else if let resolved = item as? URL {
-                            continuation.resume(returning: resolved)
-                        } else {
-                            continuation.resume(returning: nil)
-                        }
-                    }
-                }
-                if let url { urls.append(url) }
-            }
-
-            let fileURLs = urls.filter { url in
-                var isDir: ObjCBool = false
-                let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
-                return exists && !isDir.boolValue
-            }
-
-            await MainActor.run {
-                let existingNames = Set(attachments.map(\.filename))
-                let newFiles = fileURLs
-                    .compactMap { AttachedFile.load(from: $0) }
-                    .filter { !existingNames.contains($0.filename) }
-                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                    attachments.append(contentsOf: newFiles)
-                }
-            }
-        }
-    }
-
-    /// Handles screenshot thumbnail drops from macOS (Cmd+Shift+4).
-    ///
-    /// WHY loadFileRepresentation instead of loadItem:
-    /// Screenshot providers carry raw image data, NOT a file URL.
-    /// loadItem(forTypeIdentifier: "public.file-url") returns nil for them.
-    /// loadFileRepresentation writes the image to a temp file and returns its URL —
-    /// this is the correct API for image-type providers without a backing file URL.
-    private func resolveImageProviders(_ providers: [NSItemProvider]) {
-        Task {
-            var loaded: [AttachedFile] = []
-
-            for provider in providers {
-                // Pick the first image typeId the provider supports
-                let imageTypeId = provider.registeredTypeIdentifiers.first {
-                    UTType($0)?.conforms(to: .image) == true
-                }
-                guard let typeId = imageTypeId else { continue }
-
-                let url: URL? = await withCheckedContinuation { continuation in
-                    provider.loadFileRepresentation(forTypeIdentifier: typeId) { fileURL, error in
-                        guard let fileURL, error == nil else {
-                            continuation.resume(returning: nil)
-                            return
-                        }
-                        // Copy to our own temp dir — the system temp file is deleted after callback returns
-                        let dest = FileManager.default.temporaryDirectory
-                            .appendingPathComponent("ChappieShot-\(UUID().uuidString).\(fileURL.pathExtension)")
-                        do {
-                            try FileManager.default.copyItem(at: fileURL, to: dest)
-                            continuation.resume(returning: dest)
-                        } catch {
-                            continuation.resume(returning: nil)
-                        }
-                    }
-                }
-
-                if let url {
-                    if let file = AttachedFile.load(from: url) { loaded.append(file) }
-                    // Clean up our temp copy after loading into memory
-                    try? FileManager.default.removeItem(at: url)
-                }
-            }
-
-            guard !loaded.isEmpty else { return }
-
-            await MainActor.run {
-                let existingNames = Set(attachments.map(\.filename))
-                let unique = loaded.filter { !existingNames.contains($0.filename) }
-                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                    attachments.append(contentsOf: unique)
-                }
-            }
-        }
     }
 }
 
