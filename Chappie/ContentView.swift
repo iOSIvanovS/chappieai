@@ -115,7 +115,11 @@ struct ContentView: View {
                         viewModel.updateProjectSettings(newSettings, forProjectId: project.id)
                         selectedProjectForSettings = nil
                     },
-                    onDismiss: { selectedProjectForSettings = nil }
+                    onDismiss: { selectedProjectForSettings = nil },
+                    onDetectEnvironment: { completion in
+                        // AI detection — runs in ViewModel, calls back with result on MainActor
+                        viewModel.detectDevEnvironment(for: project, completion: completion)
+                    }
                 )
             }
             .sheet(item: $selectedThreadForSettings) { thread in

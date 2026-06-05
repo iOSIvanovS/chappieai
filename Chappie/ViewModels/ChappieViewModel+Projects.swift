@@ -2,6 +2,7 @@
 // Chappie
 //
 // Project management: add/remove via UI or AI tool, settings update, reload after change.
+// detectDevEnvironment: sends file list to AI and parses the detected DevEnvironment.
 
 import SwiftUI
 import ChappieCore
@@ -109,6 +110,80 @@ extension ChappieViewModel {
                 print("[ChappieViewModel] Project settings updated (id: \(projectId))")
             } catch {
                 print("[ChappieViewModel] Error updating project settings: \(error)")
+            }
+        }
+    }
+
+    // MARK: - Dev Environment Auto-Detection
+
+    /// Sends the project file list to the active AI model and asks it to identify
+    /// the dev environment. Calls completion on MainActor with the detected value.
+    /// Falls back to .unknown on any error or if no AI client is available.
+    func detectDevEnvironment(
+        for project: ProjectMetadata,
+        completion: @escaping @MainActor (DevEnvironment) -> Void
+    ) {
+        guard let client = aiClient else {
+            print("[ChappieViewModel] detectDevEnvironment: no AI client")
+            Task { @MainActor in completion(.unknown) }
+            return
+        }
+
+        Task {
+            // Collect file list from the project's file system if available,
+            // otherwise fall back to the active workspace file list.
+            let fileList: String
+            if let fs = fileSystem {
+                let files = (try? await fs.listFiles()) ?? []
+                fileList = files.prefix(200).joined(separator: "\n")
+            } else {
+                fileList = "(file list unavailable)"
+            }
+
+            // Build a minimal one-shot prompt — no tools, no history.
+            let hints = DevEnvironment.allCases
+                .filter { $0 != .unknown }
+                .map { env in "\(env.rawValue): \(env.detectionHints.joined(separator: ", "))" }
+                .joined(separator: "\n")
+
+            let systemPrompt = """
+            You are a dev environment detector. Respond with EXACTLY one raw value from this list:
+            unknown, xcode, nodejs, python, go, rust, java, kotlin, flutter, react_typescript, dotnet
+
+            Detection hints (env: marker files):
+            \(hints)
+
+            Rules:
+            - If you see .xcodeproj, .xcworkspace, or .swift files → xcode
+            - If you see package.json → nodejs
+            - If you see pubspec.yaml → flutter
+            - If you see tsconfig.json or .tsx files → react_typescript
+            - Respond with the single raw value only. No explanation, no punctuation.
+            """
+
+            let userMessage = AIMessage(
+                role: "user",
+                content: "Project file list:\n\(fileList)\n\nWhat is the dev environment?"
+            )
+
+            do {
+                let result = try await client.sendRequest(
+                    systemPrompt: systemPrompt,
+                    chatHistory: [userMessage],
+                    tools: []
+                )
+
+                // contentString extracts plain text from AIMessageContent (.text/.blocks/.multimodal)
+                let raw = (result.message.contentString ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+
+                let detected = DevEnvironment(rawValue: raw) ?? .unknown
+                print("[ChappieViewModel] detectDevEnvironment → '\(raw)' → \(detected.displayName)")
+                await MainActor.run { completion(detected) }
+            } catch {
+                print("[ChappieViewModel] detectDevEnvironment failed: \(error.localizedDescription)")
+                await MainActor.run { completion(.unknown) }
             }
         }
     }

@@ -9,6 +9,12 @@
 // 1. Role .advisor — show only basic settings + explanation.
 // 2. Role .executor + isProgrammingProject = false — show role only.
 // 3. Role .executor + isProgrammingProject = true — show all advanced settings.
+//
+// ENV DETECTION:
+// "Определить" button calls onDetectEnvironment — async AI call in ViewModel.
+// isDetecting=true shows spinner inside the button while waiting.
+// The callback from ViewModel arrives on any thread; we hop to MainActor before
+// mutating @State (draft.devEnvironment, isDetecting).
 
 import SwiftUI
 import ChappieCore
@@ -20,15 +26,24 @@ struct ProjectSettingsSheet: View {
     let project: ProjectMetadata
     let onSave: (ProjectSettings) -> Void
     let onDismiss: () -> Void
+    /// Called when user taps "Определить". Receives a @Sendable callback to invoke with the result.
+    let onDetectEnvironment: (@Sendable @escaping (DevEnvironment) -> Void) -> Void
 
     @State private var draft: ProjectSettings
     @State private var showingDowngradeAlert = false
     @State private var pendingRoleChange: AgentRole? = nil
+    @State private var isDetecting = false
 
-    init(project: ProjectMetadata, onSave: @escaping (ProjectSettings) -> Void, onDismiss: @escaping () -> Void) {
+    init(
+        project: ProjectMetadata,
+        onSave: @escaping (ProjectSettings) -> Void,
+        onDismiss: @escaping () -> Void,
+        onDetectEnvironment: @escaping (@Sendable @escaping (DevEnvironment) -> Void) -> Void = { _ in }
+    ) {
         self.project = project
         self.onSave = onSave
         self.onDismiss = onDismiss
+        self.onDetectEnvironment = onDetectEnvironment
         self._draft = State(initialValue: project.settings)
     }
 
@@ -47,6 +62,8 @@ struct ProjectSettingsSheet: View {
                         projectTypeSection
 
                         if draft.isProgrammingProject {
+                            Divider().padding(.vertical, 4)
+                            devEnvironmentSection
                             Divider().padding(.vertical, 4)
                             gitSection
                             testsSection
@@ -176,6 +193,67 @@ struct ProjectSettingsSheet: View {
                 }
             }
             .toggleStyle(.switch)
+        }
+    }
+
+    // MARK: - Dev environment section
+
+    private var devEnvironmentSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("Среда разработки", systemImage: "laptopcomputer")
+
+            HStack(spacing: 8) {
+                Picker("Среда", selection: $draft.devEnvironment) {
+                    ForEach(DevEnvironment.allCases, id: \.self) { env in
+                        Text(env.displayName).tag(env)
+                    }
+                }
+                .pickerStyle(.menu)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .disabled(isDetecting)
+
+                // Detect button — triggers AI detection, shows spinner while waiting.
+                // Callback arrives on any thread — hop to MainActor before mutating @State.
+                Button {
+                    isDetecting = true
+                    onDetectEnvironment { detected in
+                        Task { @MainActor in
+                            draft.devEnvironment = detected
+                            isDetecting = false
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        if isDetecting {
+                            ProgressView()
+                                .progressViewStyle(.circular)
+                                .scaleEffect(0.65)
+                                .frame(width: 14, height: 14)
+                        } else {
+                            Image(systemName: "wand.and.stars")
+                        }
+                        Text(isDetecting ? "Определяю…" : "Определить")
+                            .font(.callout)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(isDetecting)
+                .help("Чаппи определит среду разработки по файлам проекта")
+            }
+
+            if draft.devEnvironment != .unknown {
+                let tools = draft.devEnvironment.specificTools
+                if !tools.isEmpty {
+                    Text("Дополнительные инструменты: \(tools.joined(separator: ", "))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text("Выберите среду или нажмите «Определить» — Чаппи проанализирует файлы проекта")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -377,6 +455,7 @@ struct ProjectSettingsSheet: View {
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.return, modifiers: .command)
+            .disabled(isDetecting)
         }
         .padding(16)
     }
@@ -412,6 +491,7 @@ struct ProjectSettingsSheet: View {
             settings: ProjectSettings(
                 agentRole: .executor,
                 isProgrammingProject: true,
+                devEnvironment: .xcode,
                 gitAccess: .write,
                 testsAccess: .write,
                 architectureEnabled: true,

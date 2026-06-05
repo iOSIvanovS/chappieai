@@ -169,6 +169,87 @@ public enum ProjectLanguage: String, Codable, Sendable, CaseIterable {
     }
 }
 
+// MARK: - DevEnvironment
+
+/// Development environment / language stack for a programming project.
+/// Controls which env-specific tools are injected into the system prompt.
+/// .unknown means not yet detected or selected.
+public enum DevEnvironment: String, Codable, Sendable, CaseIterable {
+    case unknown        = "unknown"
+    case xcode          = "xcode"
+    case nodejs         = "nodejs"
+    case python         = "python"
+    case go             = "go"
+    case rust           = "rust"
+    case java           = "java"
+    case kotlin         = "kotlin"
+    case flutter        = "flutter"
+    case reacttypescript = "react_typescript"
+    case dotnet         = "dotnet"
+
+    public var displayName: String {
+        switch self {
+        case .unknown:        return "Не определена"
+        case .xcode:          return "Xcode (Swift / Obj-C)"
+        case .nodejs:         return "Node.js"
+        case .python:         return "Python"
+        case .go:             return "Go"
+        case .rust:           return "Rust"
+        case .java:           return "Java"
+        case .kotlin:         return "Kotlin (Android)"
+        case .flutter:        return "Flutter (Dart)"
+        case .reacttypescript: return "React / TypeScript"
+        case .dotnet:         return ".NET (C#)"
+        }
+    }
+
+    /// Marker files used by AI to auto-detect the environment from a file list.
+    public var detectionHints: [String] {
+        switch self {
+        case .unknown:        return []
+        case .xcode:          return [".xcodeproj", ".xcworkspace", ".swift"]
+        case .nodejs:         return ["package.json", "node_modules", ".nvmrc"]
+        case .python:         return ["requirements.txt", "pyproject.toml", "setup.py", ".py"]
+        case .go:             return ["go.mod", "go.sum", ".go"]
+        case .rust:           return ["Cargo.toml", "Cargo.lock", ".rs"]
+        case .java:           return ["pom.xml", "build.gradle", ".java"]
+        case .kotlin:         return ["build.gradle.kts", "AndroidManifest.xml", ".kt"]
+        case .flutter:        return ["pubspec.yaml", "pubspec.lock", ".dart"]
+        case .reacttypescript: return ["tsconfig.json", "vite.config.ts", "next.config.ts", ".tsx"]
+        case .dotnet:         return [".csproj", ".sln", ".cs"]
+        }
+    }
+
+    /// Env-specific tools injected into the system prompt when this env is active.
+    /// Universal tools (git, memory, web_fetch) are always injected regardless.
+    public var specificTools: [String] {
+        switch self {
+        case .unknown:
+            return []
+        case .xcode:
+            return ["build_project", "run_tests", "read_build_log"]
+        case .nodejs:
+            return ["build_project", "run_tests", "read_build_log"]
+        case .python:
+            return ["run_tests", "read_build_log"]
+        case .go:
+            return ["build_project", "run_tests", "read_build_log"]
+        case .rust:
+            return ["build_project", "run_tests", "read_build_log"]
+        case .java:
+            return ["build_project", "run_tests", "read_build_log"]
+        case .kotlin:
+            return ["build_project", "run_tests", "read_build_log"]
+        case .flutter:
+            return ["build_project", "run_tests", "read_build_log"]
+        case .reacttypescript:
+            return ["run_tests", "read_build_log"]
+        case .dotnet:
+            return ["build_project", "run_tests", "read_build_log"]
+        }
+    }
+}
+
 // MARK: - ProjectSettings
 
 /// Agent rights and configuration for a project. Serialized to JSON in ProjectEntity.
@@ -179,6 +260,9 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
 
     // Unlocks git/tests/architecture/comments/terminal settings in the UI and prompt.
     public var isProgrammingProject: Bool
+
+    // Dev environment — controls env-specific tool injection. .unknown = not set.
+    public var devEnvironment: DevEnvironment
 
     public var gitAccess: GitAccessLevel
     public var testsAccess: TestsAccessLevel
@@ -191,6 +275,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
     public init(
         agentRole: AgentRole = .advisor,
         isProgrammingProject: Bool = false,
+        devEnvironment: DevEnvironment = .unknown,
         gitAccess: GitAccessLevel = .none,
         testsAccess: TestsAccessLevel = .none,
         architectureEnabled: Bool = false,
@@ -201,6 +286,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
     ) {
         self.agentRole = agentRole
         self.isProgrammingProject = isProgrammingProject
+        self.devEnvironment = devEnvironment
         self.gitAccess = gitAccess
         self.testsAccess = testsAccess
         self.architectureEnabled = architectureEnabled
@@ -239,6 +325,11 @@ extension ProjectSettings {
         lines.append("- Programming project: \(isProgrammingProject ? "yes" : "no")")
 
         if isProgrammingProject {
+            // Dev environment line
+            if devEnvironment != .unknown {
+                lines.append("- Dev environment: \(devEnvironment.displayName)")
+            }
+
             if gitAccess == .none {
                 lines.append("- Git: BLOCKED (enable in project settings)")
             } else {
