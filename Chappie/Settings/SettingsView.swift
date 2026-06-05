@@ -9,6 +9,7 @@
 //   - Memory: shortcut to MemoryManagementView (per-thread history cleanup).
 //   - Updates: Sparkle "Check for Updates" button + current app version.
 //   - Onboarding: manual re-run trigger (calls AppState.resetOnboarding).
+//   - EULA: manual re-show trigger (calls AppState.resetEULA) — for debug/review.
 //   - Security: Keychain info.
 //
 // NOTE: There is no "active provider" concept at the global level.
@@ -38,6 +39,7 @@ struct SettingsView: View {
     @State private var showMemory: Bool = false
     @State private var nameSaved: Bool = false
     @State private var showOnboardingConfirm: Bool = false
+    @State private var showEULAConfirm: Bool = false
 
     // Sparkle updater passed via environment from ChappieApp.
     @Environment(\.sparkleUpdater) private var sparkleUpdater
@@ -228,12 +230,21 @@ struct SettingsView: View {
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
 
-                        Button {
-                            showOnboardingConfirm = true
-                        } label: {
-                            Label("Запустить онбординг", systemImage: "arrow.clockwise")
+                        HStack(spacing: 12) {
+                            Button {
+                                showOnboardingConfirm = true
+                            } label: {
+                                Label("Запустить онбординг", systemImage: "arrow.clockwise")
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button {
+                                showEULAConfirm = true
+                            } label: {
+                                Label("Показать соглашение", systemImage: "doc.text")
+                            }
+                            .buttonStyle(.bordered)
                         }
-                        .buttonStyle(.bordered)
                     }
 
                     Divider()
@@ -288,6 +299,17 @@ struct SettingsView: View {
             Button("Отмена", role: .cancel) {}
         } message: {
             Text("Мастер настройки откроется снова. Ваши данные, треды и провайдеры сохранятся.")
+        }
+        .alert("Показать соглашение?", isPresented: $showEULAConfirm) {
+            Button("Показать") {
+                dismiss()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    AppState.shared.resetEULA()
+                }
+            }
+            Button("Отмена", role: .cancel) {}
+        } message: {
+            Text("Лицензионное соглашение откроется снова. Ваши данные не затронуты.")
         }
         .onAppear { loadCurrentName() }
     }

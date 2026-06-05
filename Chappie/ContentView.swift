@@ -14,6 +14,12 @@
 // Top panel reports height so ChatScrollView adds a matching header spacer.
 // Bottom panel height measured via onGeometryChange (CPU-22).
 //
+// LAUNCH SEQUENCE:
+//   1. Loading spinner — while viewModel.isAppReady == false
+//   2. EULAView — if AppState.shouldShowEULA (first launch only)
+//   3. OnboardingView — if AppState.shouldShowOnboarding (no provider configured)
+//   4. Main app
+//
 // CPU-08: onGeometryChange instead of GeometryReader — pure side-effect, no layout loop.
 // CPU-13: streaming state isolated to ChatScrollView + InputMorphView — not read in body.
 // CPU-22: currentPanelHeight measured directly from rendered InputMorphView.
@@ -59,9 +65,14 @@ struct ContentView: View {
             if !viewModel.isAppReady {
                 ProgressView("Загрузка...")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if appState.shouldShowEULA {
+                // Step 1: EULA — must be accepted before anything else
+                EULAView()
             } else if appState.shouldShowOnboarding {
+                // Step 2: Onboarding — configure first provider
                 OnboardingView(viewModel: viewModel)
             } else {
+                // Step 3: Main app
                 mainContent
             }
         }

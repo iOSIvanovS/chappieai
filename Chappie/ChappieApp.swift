@@ -26,9 +26,9 @@
 //   Previously stored as "New.AppSettings" — AppSettingsMigrationPlan handles the rename.
 //
 // WINDOW SIZE:
-// .defaultSize(width:height:) sets the initial window size on first launch.
-// .defaultPosition(.center) ensures the window appears centered on screen.
-// These are hints — the system may override them if the user has resized/moved.
+// .defaultSize(width:height:) sets the initial window size on first launch (EULA screen).
+// 480×600 fits all Mac screens and looks like a focused dialog, not a full app.
+// After the user accepts EULA they can freely resize — macOS remembers the last size/position.
 //
 // BACKGROUND IMAGE:
 // Image("Chappie") is placed as .background on ContentView — NOT inside a GeometryReader.
@@ -145,7 +145,9 @@ struct ChappieApp: App {
                 )
         }
         .modelContainer(modelContainer)
-        .defaultSize(width: 1100, height: 720)
+        // 480×600 — compact dialog size for EULA on first launch.
+        // After acceptance the user freely resizes; macOS remembers the last size/position.
+        .defaultSize(width: 480, height: 600)
         .defaultPosition(.center)
         .commands {
             // Standard macOS commands (Quit, Minimize, etc.)
