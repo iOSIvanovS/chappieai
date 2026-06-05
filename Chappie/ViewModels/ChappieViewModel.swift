@@ -1,28 +1,9 @@
 // ChappieViewModel.swift
 // Chappie
 //
-// Core @Observable class: state properties, init, service wiring, pagination, drafts, balance.
+// Core @Observable class: state, init, service wiring, pagination, drafts, balance.
 // Business logic is split into extensions:
 //   +Threads, +Providers, +Projects, +Send, +Memory, +AppSettings, +ThreadSession
-//
-// CPU-13: STREAMING ISOLATION
-// streamingText, runningCost, currentToolCall, isThinking are moved into a
-// dedicated StreamingState object. ContentView passes `streaming` as a `let`
-// reference without reading any of its properties — so token updates no longer
-// invalidate ContentView, topPanel, or bottomPanel. Only ChatScrollView and
-// InputMorphView subscribe to StreamingState directly.
-//
-// CPU-15: currentBalance MOVED TO StreamingState.
-// Was updated via onBalanceUpdate on every streaming token — caused topPanel
-// (ModelPickerRow) to re-render on every cost delta. Before this move: topPanel
-// read viewModel.currentBalance → ContentView subscribed to ViewModel for balance
-// → every balance update re-rendered topPanel + all its children.
-// After: ModelPickerRow receives `streaming` reference and reads streaming.currentBalance
-// directly — balance updates are isolated to ModelPickerRow only.
-//
-// CPU-23: currentToolCall setter routes through streaming.setToolCall() — throttled to 200ms.
-// Direct writes to streaming.currentToolCall are replaced with setToolCall() so the
-// thinkingView animation fires at most 5x/sec instead of 30+/sec during tool calls.
 
 import SwiftUI
 import ChappieCore
@@ -32,17 +13,18 @@ import SwiftData
 @MainActor
 final class ChappieViewModel {
 
-    // MARK: - Pagination constants (CPU-01)
+    // MARK: - Pagination constants
 
     let pageSize = 30
     let pageSizeLoad = 30
-    // maxDisplayed only applies to appendToDisplayed (new messages arriving).
-    // loadMoreMessages does NOT trim the bottom — user must be able to scroll
-    // freely through history without new messages disappearing.
+    // maxDisplayed applies only to appendToDisplayed (new messages arriving).
+    // loadMoreMessages does NOT trim the bottom — user must scroll freely through history.
     let maxDisplayed = 60
 
-    // MARK: - CPU-13: Isolated streaming state
+    // MARK: - Isolated streaming state
 
+    // Streaming properties live in StreamingState so token updates don't invalidate
+    // ContentView, topPanel, or bottomPanel — only ChatScrollView and InputMorphView subscribe.
     let streaming = StreamingState()
 
     // MARK: - Backward-compat accessors
@@ -62,13 +44,13 @@ final class ChappieViewModel {
         set { streaming.runningCost = newValue }
     }
 
-    // CPU-23: throttled via setToolCall()
+    // Throttled via setToolCall() — fires thinkingView animation at most 5x/sec.
     var currentToolCall: String? {
         get { streaming.currentToolCall }
         set { streaming.setToolCall(newValue) }
     }
 
-    /// CPU-15: balance forwarded to/from StreamingState.
+    // Balance forwarded to/from StreamingState so ModelPickerRow re-renders in isolation.
     var currentBalance: Double? {
         get { streaming.currentBalance }
         set { streaming.currentBalance = newValue }
@@ -142,7 +124,6 @@ final class ChappieViewModel {
     // MARK: - Shared remote services
 
     /// Single shared instance — caches the catalog for the entire app session.
-    /// CatalogPickerSheet uses this instead of creating a new instance each time.
     let providersRemoteService = ProvidersRemoteService()
 
     // MARK: - SwiftData
@@ -164,8 +145,7 @@ final class ChappieViewModel {
 
     public init() {
         loadWorkspaceWithSecurityScope()
-        // Pre-warm the catalog cache at startup — forceRefresh ensures we always
-        // get the latest providers.json, not a stale in-memory copy.
+        // Pre-warm catalog cache at startup so CatalogPickerSheet opens instantly.
         Task {
             do {
                 let catalog = try await providersRemoteService.fetchCatalog(forceRefresh: true)
@@ -176,7 +156,7 @@ final class ChappieViewModel {
         }
     }
 
-    // MARK: - Pagination (CPU-01)
+    // MARK: - Pagination
 
     func resetPagination(fireScrollTrigger: Bool = false) {
         let count = messages.count
@@ -204,17 +184,13 @@ final class ChappieViewModel {
         displayedMessages = additional + displayedMessages
         hasMoreMessages = displayedStart > 0
 
-        // WHY: do NOT trim the bottom here. Trimming new messages while the user
-        // scrolls up through history causes visible messages to disappear.
-        // maxDisplayed cap applies only in appendToDisplayed (new messages arriving
-        // while at the bottom of the chat). History browsing must be uncapped.
+        // Do NOT trim the bottom here — trimming while user scrolls up causes visible
+        // messages to disappear. maxDisplayed cap applies only in appendToDisplayed.
     }
 
     func appendToDisplayed(_ message: ChatMessage) {
         displayedMessages.append(message)
-        // Cap the window only when new messages arrive — trim oldest from the top.
-        // This keeps memory bounded during long active sessions without affecting
-        // history browsing (loadMoreMessages is uncapped).
+        // Trim oldest from the top to keep memory bounded during long active sessions.
         if displayedMessages.count > maxDisplayed {
             let excess = displayedMessages.count - maxDisplayed
             displayedMessages = Array(displayedMessages.dropFirst(excess))
@@ -268,20 +244,16 @@ final class ChappieViewModel {
             await preloadLastActiveThreadId()
             await refreshBalanceCacheIfNeeded()
 
-            // Sync catalog fields from the remote catalog BEFORE loading providers.
-            // This guarantees self.providers is populated with correct values
-            // before loadThreadsAndSelectActive calls switchProvider.
+            // Sync catalog fields before loading providers — requiresApiKey must be
+            // correct before switchProvider() runs.
             if let catalog = try? await providersRemoteService.fetchCatalog() {
-                // requiresApiKey must be correct before switchProvider runs
                 try? await provStore.syncRequiresApiKey(from: catalog.providers)
                 print("[ChappieViewModel] requiresApiKey synced from catalog")
-                // Icons are cosmetic — sync after requiresApiKey
                 try? await provStore.syncIcons(from: catalog.providers)
                 print("[ChappieViewModel] Icons synced from catalog")
             }
 
-            // Load providers FIRST — must complete before thread selection so that
-            // switchProvider() reads fresh values from self.providers.
+            // Load providers FIRST — switchProvider() reads from self.providers.
             await loadProvidersAndSetActive(from: provStore)
 
             // Load threads AFTER providers are ready.

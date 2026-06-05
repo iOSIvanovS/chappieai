@@ -1,49 +1,14 @@
 // ToolExecutionService.swift
 // ChappieCore
 //
-// Core actor declaration, init, dependency injection, context setters,
-// project handler registration, and the main execute() dispatcher.
-//
-// ARCHITECTURE:
+// Core actor: init, dependency injection, context setters, and main execute() dispatcher.
+// Tool implementations are split by domain:
 //   ToolDefinitions.swift   — availableTools array
 //   ToolAccessControl.swift — IT-09 access check (role, git, tests, terminal)
 //   MemoryTools.swift       — IT-08 scope resolution + memory execution cases
 //   FileTools.swift         — file system + web_fetch execution
 //   GitBuildTools.swift     — git + build/test execution
 //   TerminalTools.swift     — persistent bash session + run_terminal execution
-//
-// MCP CONNECTION:
-// MCPToolBridge is created with a socketPath injected via init().
-// Path is computed by MCPHelperLauncher in Chappie.app (sandbox container path).
-//
-// PROJECT MANAGEMENT TOOLS (IT-07):
-// add/remove/list_thread_projects use closures registered via registerProjectHandlers().
-//
-// THREE-LEVEL MEMORY (IT-08):
-// memorize/recall/search_memory/delete_memory work with UUID-based scope strings.
-//
-// ACCESS CONTROL (IT-09):
-// execute() checks ProjectSettings before running any file/git/build/terminal tool.
-//
-// FILE TOOL PROTECTION (PROJECT GUARD):
-// File/git/build/terminal tools require at least one project attached to the thread.
-//
-// FILE SYSTEM READINESS GUARD:
-// File/git/build tools are blocked while syncFileSystemForActiveThread() is running.
-//
-// TERMINAL TOOL:
-// run_terminal uses a persistent bash session per thread (ShellSession in TerminalTools.swift).
-// In .confirm mode returns PendingTerminalCommand — ViewModel renders inline confirmation UI.
-//
-// IRON ENGLISH BARRIER (MEMORY-ENGLISH):
-// memorize validates all fields for Cyrillic — code-level barrier, not prompt-level.
-//
-// LIVE PROJECT UNAVAILABILITY (B-05):
-// onProjectUnavailable fires on MainActor when FS operation fails for a specific project.
-//
-// MEMORY CHANGE CALLBACK:
-// onMemoryChanged fires on MainActor after every memorize/delete_memory to invalidate
-// the cached system prompt immediately.
 
 import Foundation
 
@@ -57,7 +22,6 @@ enum ScopeResolution {
 
 // MARK: - ToolAccessResult (IT-09)
 
-/// Result of access check for a tool.
 enum ToolAccessResult {
     case allowed
     case denied(String)
@@ -84,7 +48,6 @@ public actor ToolExecutionService {
     // MARK: - File system readiness flag
 
     /// False while syncFileSystemForActiveThread() is resolving bookmarks.
-    /// File/git/build tools return a "please wait" message when false.
     var isFileSystemReady: Bool = true
 
     // MARK: - Project handlers (IT-07)
@@ -93,12 +56,10 @@ public actor ToolExecutionService {
     var removeProjectHandler: (@Sendable (String) async -> String)?
     var listProjectsHandler: (@Sendable () async -> String)?
 
-    // MARK: - Live unavailability callback (B-05)
+    // MARK: - Callbacks
 
-    /// Called on MainActor when a FS tool fails for a specific project.
+    /// Called on MainActor when a FS tool fails for a specific project (B-05).
     var onProjectUnavailable: (@MainActor (String) -> Void)?
-
-    // MARK: - Memory change callback
 
     /// Called on MainActor after every memorize/delete_memory to invalidate cached system prompt.
     var onMemoryChanged: (@MainActor () -> Void)?
@@ -106,7 +67,6 @@ public actor ToolExecutionService {
     // MARK: - IT-09: Project settings cache
 
     /// Settings by project UUID — passed from ViewModel via setProjectSettings().
-    /// WHY CACHE: ActiveMemoryContext contains only UUIDs/names; ProjectSettings live in SwiftData.
     var projectSettingsCache: [UUID: ProjectSettings] = [:]
 
     public init(
@@ -177,8 +137,6 @@ public actor ToolExecutionService {
 
     // MARK: - Tool execution dispatcher
 
-    /// Executes the specified tool and returns a string result.
-    ///
     /// CHECK ORDER:
     /// 1. FS READINESS GUARD — block file/git/build tools while FileSystem is syncing.
     /// 2. PROJECT GUARD — require attached project for file/git/build/terminal tools.

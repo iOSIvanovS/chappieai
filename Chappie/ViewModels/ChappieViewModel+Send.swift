@@ -2,44 +2,6 @@
 // Chappie
 //
 // send(), cancel, history building, multimodal encoding, response cleanup.
-//
-// MULTIMODAL ARCHITECTURE (MULTIMODAL-STEP3):
-//   1. User message is stored in messages[] with attachments (for UI + persistence).
-//   2. buildRawNetworkHistory(excludingLast:1) returns completed pairs — excludes the new user message.
-//   3. buildCurrentAIMessage() encodes the current turn (possibly multimodal) separately.
-//   4. orchestrator.process(currentMessage:) appends it as the final user turn.
-// WHY: old approach passed full messages[] and relied on string dedup — broke for multimodal
-// because contentString is nil, causing double-send.
-//
-// CANCEL STATE FIX:
-// catch blocks dispatch to @MainActor explicitly — currentRequestTask runs in an unstructured
-// Task with no MainActor isolation, so withAnimation{} from a background thread is silently
-// ignored by SwiftUI. Without this, isThinking stays true and InputMorphView never morphs back.
-//
-// CANCEL UX (CANCEL-FIX):
-// On CancellationError — partial streamingText is preserved as a cancelled message in history.
-// This gives the AI context that the previous operation was interrupted by the user, so it
-// doesn't get confused on the next message. Format:
-//   [partial stream text, if any]
-//   ---
-//   *(Operation cancelled by user)*
-//
-// V2 SYSTEM PROMPT + TOOL PERMISSIONS:
-// v2SystemPrompt() is awaited → passed as overrideSystemPrompt (AIOrchestrator skips MemoryManager).
-// v2ToolPermissions() is awaited → passed as overrideToolPermissions (orchestrator uses
-// ToolAccessController.check() instead of legacy ToolAccessControl in ToolExecutionService).
-//
-// NO PROVIDER ALERT:
-// When orchestrator is nil (model/provider deleted from under the thread), send() triggers
-// showNoProviderAlert instead of injecting a system message into chat history.
-// WHY: system messages pollute AI context and confuse history. An alert is ephemeral UI —
-// it informs the user without leaving noise in the conversation.
-//
-// TERMINAL CONFIRMATION:
-// When the orchestrator response contains a PendingTerminalCommand marker, the normal
-// .message bubble is NOT added. Instead, a .terminalConfirmation bubble is inserted —
-// MessageBubbleView renders Run/Cancel buttons. After the user decides, the bubble is
-// replaced with the command result (see ChappieViewModel+Terminal.swift).
 
 import SwiftUI
 import ChappieCore
@@ -116,8 +78,8 @@ extension ChappieViewModel {
 
                 let rawResponse = self.cleanAIResponse(result.finalResponse)
 
-                // TERMINAL CONFIRMATION: if the response is a pending command marker,
-                // show inline Run/Cancel UI instead of a normal message bubble.
+                // If the response is a pending terminal command marker, show inline
+                // Run/Cancel UI instead of a normal message bubble.
                 if let pending = PendingTerminalCommand.decode(from: rawResponse) {
                     Task { @MainActor in
                         withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
@@ -193,11 +155,8 @@ extension ChappieViewModel {
 
     // MARK: - Private: Cancellation Handler
 
-    /// Cleans up UI state and adds a cancelled message to history.
-    ///
-    /// WHY ADD TO HISTORY:
-    /// If partial stream text exists, the AI needs to know the operation was interrupted —
-    /// otherwise on the next message it may think its previous response was complete.
+    /// Preserves partial stream text as a cancelled message so the AI knows the
+    /// previous response was interrupted — avoids confusion on the next message.
     @MainActor
     private func handleCancellation(activeThreadId: UUID?) {
         let partial = streamingText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -237,7 +196,6 @@ extension ChappieViewModel {
 
     // MARK: - V2 Tool Permissions
 
-    /// Returns ToolPermissions from the active ThreadSession, nil if no session.
     func v2ToolPermissions() async -> ToolPermissions? {
         guard let session = _activeThreadSession else { return nil }
         return try? await session.toolPermissions()
@@ -246,7 +204,7 @@ extension ChappieViewModel {
     // MARK: - Build Network History
 
     /// Returns AIMessage history excluding the last N messages.
-    /// In send(), excludingLast:1 removes the just-appended user message — it's passed separately as currentMessage.
+    /// In send(), excludingLast:1 removes the just-appended user message — passed separately as currentMessage.
     func buildRawNetworkHistory(excludingLast: Int = 0) -> [AIMessage] {
         let sourceMessages = excludingLast > 0 && messages.count > excludingLast
             ? Array(messages.dropLast(excludingLast))
