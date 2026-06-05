@@ -176,7 +176,6 @@ public enum ProjectLanguage: String, Codable, Sendable, CaseIterable {
 public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
 
     public var agentRole: AgentRole
-    public var preferredLanguage: String?
 
     // Unlocks git/tests/architecture/comments/terminal settings in the UI and prompt.
     public var isProgrammingProject: Bool
@@ -191,7 +190,6 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
 
     public init(
         agentRole: AgentRole = .advisor,
-        preferredLanguage: String? = nil,
         isProgrammingProject: Bool = false,
         gitAccess: GitAccessLevel = .none,
         testsAccess: TestsAccessLevel = .none,
@@ -202,7 +200,6 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         terminalAccess: TerminalAccessLevel = .none
     ) {
         self.agentRole = agentRole
-        self.preferredLanguage = preferredLanguage
         self.isProgrammingProject = isProgrammingProject
         self.gitAccess = gitAccess
         self.testsAccess = testsAccess
@@ -276,8 +273,6 @@ extension ProjectSettings {
             case .none:
                 lines.append("- Terminal: BLOCKED (enable in project settings)")
             case .confirm:
-                // Remind the agent that it must ask before executing — the confirmation
-                // mechanism is enforced in the tool itself, but the prompt reinforces it.
                 lines.append("- Terminal: enabled with confirmation. BEFORE running any command you MUST ask the user for explicit approval in chat. Do NOT call run_terminal until user says 'yes', 'go ahead', or equivalent.")
             case .auto:
                 lines.append("- Terminal: enabled, auto-execute (no confirmation needed). Use responsibly.")

@@ -1,21 +1,14 @@
 // ProjectSettingsSheet.swift
 // Chappie
 //
-// НАЗНАЧЕНИЕ (IT-09):
-// Sheet с настройками проекта — открывается по тапу на чип проекта в ProjectChipsView.
+// Sheet with project settings — opened by tapping a project chip in ProjectChipsView.
+// Local @State draft: ProjectSettings — edits a copy, not the original.
+// On "Save" — calls onSave with final settings.
 //
-// АРХИТЕКТУРА:
-// Компонент получает ProjectMetadata и коллбэк onSave(ProjectSettings).
-// Локальное состояние @State draft: ProjectSettings — редактируем копию, не оригинал.
-// При нажатии "Сохранить" — вызываем onSave с финальными настройками.
-//
-// ЛОГИКА РАЗБЛОКИРОВКИ:
-// 1. Роль .advisor — показываем только базовые настройки + объяснение ограничений.
-// 2. Роль .executor + isProgrammingProject = false — показываем только роль и язык.
-// 3. Роль .executor + isProgrammingProject = true — показываем все расширенные настройки.
-//
-// АЛЕРТ ПРИ СМЕНЕ РОЛИ:
-// При переключении executor → advisor — показываем алерт с предупреждением о сбросе прав.
+// UNLOCK LOGIC:
+// 1. Role .advisor — show only basic settings + explanation.
+// 2. Role .executor + isProgrammingProject = false — show role only.
+// 3. Role .executor + isProgrammingProject = true — show all advanced settings.
 
 import SwiftUI
 import ChappieCore
@@ -48,7 +41,6 @@ struct ProjectSettingsSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     roleSection
-                    languageSection
 
                     if draft.agentRole == .executor {
                         Divider().padding(.vertical, 4)
@@ -86,7 +78,7 @@ struct ProjectSettingsSheet: View {
         }
     }
 
-    // MARK: - Заголовок
+    // MARK: - Header
 
     private var headerView: some View {
         HStack {
@@ -116,7 +108,7 @@ struct ProjectSettingsSheet: View {
         .padding(16)
     }
 
-    // MARK: - Секция роли
+    // MARK: - Role section
 
     private var roleSection: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -168,33 +160,7 @@ struct ProjectSettingsSheet: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    // MARK: - Секция языка
-
-    private var languageSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Язык общения", systemImage: "globe")
-
-            HStack {
-                Text("Предпочтительный язык:")
-                    .font(.callout)
-
-                Spacer()
-
-                Picker("Язык", selection: Binding(
-                    get: { draft.preferredLanguage ?? "" },
-                    set: { draft.preferredLanguage = $0.isEmpty ? nil : $0 }
-                )) {
-                    Text("Системный").tag("")
-                    Text("Русский").tag("ru")
-                    Text("English").tag("en")
-                }
-                .pickerStyle(.menu)
-                .frame(width: 140)
-            }
-        }
-    }
-
-    // MARK: - Секция типа проекта
+    // MARK: - Project type section
 
     private var projectTypeSection: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -213,7 +179,7 @@ struct ProjectSettingsSheet: View {
         }
     }
 
-    // MARK: - Секция Git
+    // MARK: - Git section
 
     private var gitSection: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -244,7 +210,7 @@ struct ProjectSettingsSheet: View {
         }
     }
 
-    // MARK: - Секция тестов
+    // MARK: - Tests section
 
     private var testsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -271,7 +237,7 @@ struct ProjectSettingsSheet: View {
         }
     }
 
-    // MARK: - Секция архитектурных файлов
+    // MARK: - Architecture section
 
     private var architectureSection: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -305,7 +271,7 @@ struct ProjectSettingsSheet: View {
         }
     }
 
-    // MARK: - Секция комментариев
+    // MARK: - Comments section
 
     private var commentsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -339,13 +305,12 @@ struct ProjectSettingsSheet: View {
         }
     }
 
-    // MARK: - Секция терминала
+    // MARK: - Terminal section
 
     private var terminalSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeader("Терминал", systemImage: "terminal.fill")
 
-            // .labelsHidden() prevents the picker label from squeezing the segments
             Picker("Доступ к терминалу", selection: $draft.terminalAccess) {
                 ForEach(TerminalAccessLevel.allCases, id: \.self) { level in
                     Text(level.displayName).tag(level)
@@ -359,12 +324,10 @@ struct ProjectSettingsSheet: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            // Warning for auto mode — user should understand the risk.
             if draft.terminalAccess == .auto {
                 autoTerminalWarningView
             }
 
-            // Info about the safety net for enabled modes.
             if draft.terminalAccess != .none {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "shield.fill")
@@ -397,7 +360,7 @@ struct ProjectSettingsSheet: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    // MARK: - Кнопки действий
+    // MARK: - Footer
 
     private var footerView: some View {
         HStack {
@@ -418,7 +381,7 @@ struct ProjectSettingsSheet: View {
         .padding(16)
     }
 
-    // MARK: - Вспомогательные методы
+    // MARK: - Helpers
 
     private func sectionHeader(_ title: String, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
