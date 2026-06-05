@@ -18,12 +18,15 @@
 //   and the next bind() on the same socket fails with "address already in use".
 //
 // SWIFTDATA SCHEMA:
-// - ThreadEntity: threads with message history and settings
-// - ProjectEntity: projects with security-scoped bookmarks
-// - MemoryEntity: three-level memory (global/project/thread)
-// - AIProviderEntity: AI provider configurations
-// - AppSettings: global settings (balance, last active thread, workspace bookmark)
-//   Previously stored as "New.AppSettings" — AppSettingsMigrationPlan handles the rename.
+// V3 schema — StoredRecord is the permanent @Model going forward.
+// Legacy @Model classes (ThreadEntity, ProjectEntity, MemoryEntity,
+// AIProviderEntity, AppSettings) remain in V3 for migration compatibility.
+// They will be removed in V4 once all Stores are switched to DataStore (DB-05).
+//
+// DATA MIGRATION:
+// DataStoreMigration.migrateIfNeeded() runs once at startup (before ViewModel init).
+// It reads legacy @Model rows and writes them into DataStore as StoredRecord payloads.
+// Migration is idempotent — safe to call on every launch.
 //
 // WINDOW SIZE:
 // .defaultSize(width:height:) sets the initial window size on first launch (EULA screen).
@@ -84,16 +87,15 @@ struct ChappieApp: App {
     /// not in ViewModel, to guarantee a single instance throughout the app's lifetime.
     /// Creating multiple ModelContainers for the same schema causes conflicts and data loss.
     ///
-    /// MIGRATION:
-    /// AppSettings was previously stored as "New.AppSettings" (namespace wrapper).
-    /// AppSettingsMigrationPlan maps the old entity name to the new one on first launch.
+    /// V3 SCHEMA: includes StoredRecord alongside legacy @Model classes.
+    /// AppSettingsMigrationPlan handles the full V1→V2→V3 chain automatically.
     ///
     /// ERROR HANDLING:
     /// If the container cannot be created — this is a critical error (corrupted DB).
     /// In this case we try to recreate from scratch. This means data loss,
     /// but it's better than a full app crash.
     let modelContainer: ModelContainer = {
-        let schema = Schema(AppSettingsSchemaV1.models)
+        let schema = Schema(AppSettingsSchemaV3.models)
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
         do {
@@ -103,7 +105,7 @@ struct ChappieApp: App {
                 configurations: [config]
             )
         } catch {
-            print("[ChappieApp] Failed to create ModelContainer with migration: \(error)")
+            print("[ChappieApp] Failed to create ModelContainer: \(error)")
             print("[ChappieApp] Attempting to recreate database...")
 
             let recoveryConfig = ModelConfiguration(
@@ -115,7 +117,6 @@ struct ChappieApp: App {
             do {
                 return try ModelContainer(
                     for: schema,
-                    migrationPlan: AppSettingsMigrationPlan.self,
                     configurations: [recoveryConfig]
                 )
             } catch {
@@ -133,7 +134,20 @@ struct ChappieApp: App {
                 // Pass updater into environment so SettingsView can trigger manual checks.
                 .environment(\.sparkleUpdater, updaterController.updater)
                 .onAppear {
-                    viewModel.setModelContainer(modelContainer)
+                    // Run data migration before ViewModel initializes its Stores.
+                    // Migration is idempotent — safe on every launch.
+                    let container = modelContainer
+                    Task {
+                        let dataStore = DataStore(modelContainer: container)
+                        let migration = DataStoreMigration(
+                            modelContainer: container,
+                            dataStore: dataStore
+                        )
+                        await migration.migrateIfNeeded()
+
+                        // ViewModel gets the container after migration completes.
+                        viewModel.setModelContainer(container)
+                    }
                 }
                 .background(
                     Image("Chappie")
