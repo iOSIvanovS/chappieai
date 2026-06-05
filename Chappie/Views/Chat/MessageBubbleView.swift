@@ -4,17 +4,6 @@
 // WHY THIS FILE EXISTS:
 // Renders individual chat message bubbles in the conversation scroll view.
 //
-// BUBBLE WIDTH STRATEGY:
-// availableWidth is measured once by ChatScrollView via GeometryReader and passed in.
-// This breaks the layout cycle that containerRelativeFrame caused: ScrollView was
-// "negotiating" its own width with bubble widths on every resize step, causing
-// 30+ iterations to shrink the window. GeometryReader measures the parent once,
-// bubbles get a concrete maxWidth — no feedback loop, instant resize.
-//
-// User bubbles: max 72% of available width.
-// Chappie bubbles: max 88% — wider to accommodate code blocks and tables.
-// Both have a hard floor at 220pt so very narrow windows don't break layout.
-//
 // ATTACHMENTS STRATEGY (simplified, IT-14 rev2):
 // Replaced FlowLayout thumbnails with a plain vertical list (AttachmentRowView).
 // Each attachment is one row: icon + filename + file size.
@@ -30,15 +19,9 @@
 import SwiftUI
 import QuickLook
 
-private let userBubbleWidthFraction: CGFloat = 0.72
-private let chappieBubbleWidthFraction: CGFloat = 0.88
-private let minBubbleWidth: CGFloat = 220
 
 // MARK: - MessageBubbleView (public entry point)
 
-/// Renders a single chat message bubble.
-/// availableWidth is passed from ChatScrollView (measured via GeometryReader once).
-/// This avoids the layout cycle that containerRelativeFrame caused on window resize.
 struct MessageBubbleView: View {
 
     let msg: ChatMessage
@@ -68,7 +51,7 @@ struct MessageBubbleView: View {
         attachments: [AttachedFile]
     ) -> some View {
         HStack(alignment: .bottom, spacing: 0) {
-            if isUser { Spacer(minLength: 24) }
+            if isUser { Spacer() }
 
             if isUser {
                 userBubble(text: text, attachments: attachments)
@@ -76,7 +59,7 @@ struct MessageBubbleView: View {
                 chappieBubble(text: text, cost: cost, attachments: attachments)
             }
 
-            if !isUser { Spacer(minLength: 24) }
+            if !isUser { Spacer() }
         }
         .transition(
             .asymmetric(
@@ -153,10 +136,10 @@ struct MessageBubbleView: View {
                 )
                 .stroke(Color.orange.opacity(0.4), lineWidth: 1.5)
             )
-            .frame(maxWidth: max(availableWidth * chappieBubbleWidthFraction, minBubbleWidth))
 
             Spacer(minLength: 24)
         }
+        .frame(maxWidth: .infinity)
         .transition(
             .asymmetric(
                 insertion: .move(edge: .bottom).combined(with: .opacity),
@@ -181,7 +164,6 @@ struct MessageBubbleView: View {
                     .foregroundStyle(.white)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
         .padding(.horizontal, 14)
@@ -195,54 +177,53 @@ struct MessageBubbleView: View {
                 topTrailingRadius: 12
             )
         )
-        // Concrete maxWidth from parent measurement — no layout cycle on resize.
-        .frame(maxWidth: max(availableWidth * userBubbleWidthFraction, minBubbleWidth))
     }
 
     // MARK: - Chappie Bubble
 
     @ViewBuilder
     private func chappieBubble(text: String, cost: Double?, attachments: [AttachedFile]) -> some View {
-        ZStack(alignment: .bottomTrailing) {
-            VStack(alignment: .leading, spacing: 6) {
-                if !attachments.isEmpty {
-                    AttachmentListView(attachments: attachments, isUser: false)
+        HStack {
+            ZStack(alignment: .bottomTrailing) {
+                VStack(alignment: .leading, spacing: 6) {
+                    if !attachments.isEmpty {
+                        AttachmentListView(attachments: attachments, isUser: false)
+                    }
+                    if !text.isEmpty {
+                        MarkdownTextView(text: text, fontSize: 14)
+                            .padding(.bottom, cost != nil ? 18 : 0)
+                    }
                 }
-                if !text.isEmpty {
-                    MarkdownTextView(text: text, fontSize: 14)
-                        .padding(.bottom, cost != nil ? 18 : 0)
+                
+                if let cost = cost {
+                    Text(String(format: "🪙 %.2f ₽", cost))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            if let cost = cost {
-                Text(String(format: "🪙 %.2f ₽", cost))
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color(NSColor.textBackgroundColor))
+            .clipShape(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 12,
+                    bottomLeadingRadius: 4,
+                    bottomTrailingRadius: 12,
+                    topTrailingRadius: 12
+                )
+            )
+            .overlay(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 12,
+                    bottomLeadingRadius: 4,
+                    bottomTrailingRadius: 12,
+                    topTrailingRadius: 12
+                )
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            )
+            
+            Spacer()
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Color(NSColor.textBackgroundColor))
-        .clipShape(
-            UnevenRoundedRectangle(
-                topLeadingRadius: 12,
-                bottomLeadingRadius: 4,
-                bottomTrailingRadius: 12,
-                topTrailingRadius: 12
-            )
-        )
-        .overlay(
-            UnevenRoundedRectangle(
-                topLeadingRadius: 12,
-                bottomLeadingRadius: 4,
-                bottomTrailingRadius: 12,
-                topTrailingRadius: 12
-            )
-            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
-        // Concrete maxWidth from parent measurement — no layout cycle on resize.
-        .frame(maxWidth: max(availableWidth * chappieBubbleWidthFraction, minBubbleWidth))
     }
 }
 

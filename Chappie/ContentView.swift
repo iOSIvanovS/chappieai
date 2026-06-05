@@ -112,18 +112,29 @@ import ChappieCore
 private final class SilentDropDelegate: DropDelegate {
 
     var onFilesDropped: ([NSItemProvider]) -> Void = { _ in }
+    var onFoldersDropped: ([NSItemProvider]) -> Void = { _ in }
     var isThinkingGetter: () -> Bool = { false }
 
     func validateDrop(info: DropInfo) -> Bool {
-        return true
+        return info.hasItemsConforming(to: [.fileURL, .folder])
     }
 
     func performDrop(info: DropInfo) -> Bool {
         guard !isThinkingGetter() else { return false }
-        let providers = info.itemProviders(for: [.fileURL])
-        guard !providers.isEmpty else { return false }
-        onFilesDropped(providers)
-        return true
+            
+            // Folders → add as project
+            let folderProviders = info.itemProviders(for: [.folder])
+            if !folderProviders.isEmpty {
+                onFoldersDropped(folderProviders)
+                return true
+            }
+            
+            // Files → attach
+            let providers = info.itemProviders(for: [.fileURL])
+            guard !providers.isEmpty else { return false }
+            onFilesDropped(providers)
+            return true
+
     }
 }
 
@@ -178,6 +189,9 @@ struct ContentView: View {
             dropDelegate.isThinkingGetter = { [self] in viewModel.streaming.isThinking }
             dropDelegate.onFilesDropped = { [self] providers in
                 resolveDroppedFiles(providers)
+            }
+            dropDelegate.onFoldersDropped = { [self] providers in
+                resolveFolderDrop(providers)
             }
         }
         .onChange(of: viewModel.providers.count) { _, _ in }
@@ -510,6 +524,27 @@ struct ContentView: View {
         prompt = ""
     }
 
+    private func resolveFolderDrop(_ providers: [NSItemProvider]) {
+        Task {
+            for provider in providers {
+                let url: URL? = await withCheckedContinuation { continuation in
+                    provider.loadItem(forTypeIdentifier: UTType.folder.identifier, options: nil) { item, _ in
+                        if let data = item as? Data, let resolved = URL(dataRepresentation: data, relativeTo: nil) {
+                            continuation.resume(returning: resolved)
+                        } else if let resolved = item as? URL {
+                            continuation.resume(returning: resolved)
+                        } else {
+                            continuation.resume(returning: nil)
+                        }
+                    }
+                }
+                if let url {
+                    await MainActor.run { viewModel.addProject(url: url) }
+                }
+            }
+        }
+    }
+    
     private func resolveDroppedFiles(_ providers: [NSItemProvider]) {
         Task {
             var urls: [URL] = []

@@ -42,7 +42,7 @@ struct MarkdownTextView: View {
         VStack(alignment: .leading, spacing: 10) {
             ForEach(blocks) { block in blockView(block) }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+//        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
