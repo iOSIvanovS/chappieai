@@ -8,141 +8,21 @@
 // - Migration is READ-ONLY on legacy entities — nothing is deleted here.
 // - Old @Model classes are removed in DB-05, after all Stores are switched to ChappieDataStore.
 // - Migration is idempotent: if ChappieDataStore already has data for a relation, it is skipped.
-//   This prevents double-migration if the app is launched multiple times before DB-05.
 //
-// MEMORY LAYOUT IN DATASTORE:
-// MemoryEntity rows (one per scope) are collapsed into a single MemoryStorage struct.
-// MemoryStorage.scopes: [scope string → [MemoryEntry]] — matches MemoryStore's access pattern.
+// STORAGE FORMAT (matches what the new Stores expect):
+// - Relation.threads              → [ThreadPayload]       (ThreadStore.swift)
+// - Relation.threadMessages(uuid) → raw JSON Data         (saveRawData — already-encoded JSON)
+// - Relation.projects             → [ProjectPayload]      (ProjectStore.swift)
+// - Relation.projectBookmark(uuid)→ Data                  (save<Data>)
+// - Relation.memory               → MemoryStorage         (MemoryModels.swift)
+// - Relation.providers            → [AIProvider]          (AIProviderModels.swift)
+// - Relation.appSettings          → AppSettingsPayload    (AppSettingsStore.swift)
 
 import Foundation
 import SwiftData
 
-// MARK: - Payload types
-
-// Sendable Codable structs — safe to pass across actor boundaries.
-// Mirror legacy @Model fields exactly so data survives the transition.
-
-/// Portable representation of a thread for ChappieDataStore storage.
-/// Mirrors ThreadEntity fields — all heavy data stays as opaque Data blobs.
-public struct ThreadPayload: Codable, Sendable {
-    public let id: UUID
-    public var title: String
-    public var createdAt: Date
-    public var updatedAt: Date
-    public var messagesJSON: Data
-    public var settingsJSON: Data
-    public var projectBindingsJSON: Data
-
-    public init(
-        id: UUID,
-        title: String,
-        createdAt: Date,
-        updatedAt: Date,
-        messagesJSON: Data,
-        settingsJSON: Data,
-        projectBindingsJSON: Data
-    ) {
-        self.id = id
-        self.title = title
-        self.createdAt = createdAt
-        self.updatedAt = updatedAt
-        self.messagesJSON = messagesJSON
-        self.settingsJSON = settingsJSON
-        self.projectBindingsJSON = projectBindingsJSON
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case id
-        case title
-        case createdAt          = "created_at"
-        case updatedAt          = "updated_at"
-        case messagesJSON       = "messages_json"
-        case settingsJSON       = "settings_json"
-        case projectBindingsJSON = "project_bindings_json"
-    }
-}
-
-/// Portable representation of a project for ChappieDataStore storage.
-/// Mirrors ProjectEntity fields.
-public struct ProjectPayload: Codable, Sendable {
-    public let id: UUID
-    public var displayName: String
-    public var bookmarkData: Data
-    public var createdAt: Date
-    public var settingsJSON: Data
-
-    public init(
-        id: UUID,
-        displayName: String,
-        bookmarkData: Data,
-        createdAt: Date,
-        settingsJSON: Data
-    ) {
-        self.id = id
-        self.displayName = displayName
-        self.bookmarkData = bookmarkData
-        self.createdAt = createdAt
-        self.settingsJSON = settingsJSON
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case id
-        case displayName    = "display_name"
-        case bookmarkData   = "bookmark_data"
-        case createdAt      = "created_at"
-        case settingsJSON   = "settings_json"
-    }
-}
-
-/// AppSettings payload for ChappieDataStore storage.
-/// Mirrors AppSettings fields exactly.
-public struct AppSettingsPayload: Codable, Sendable {
-    public var workspaceBookmark: Data?
-    public var lastActiveThreadIdString: String?
-    public var balancesJSON: Data
-
-    public init(
-        workspaceBookmark: Data? = nil,
-        lastActiveThreadIdString: String? = nil,
-        balancesJSON: Data = Data()
-    ) {
-        self.workspaceBookmark = workspaceBookmark
-        self.lastActiveThreadIdString = lastActiveThreadIdString
-        self.balancesJSON = balancesJSON
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case workspaceBookmark          = "workspace_bookmark"
-        case lastActiveThreadIdString   = "last_active_thread_id"
-        case balancesJSON               = "balances_json"
-    }
-}
-
-/// Provider payload — wraps AIProvider list plus the default provider ID.
-public struct ProvidersPayload: Codable, Sendable {
-    /// All providers in creation order.
-    public var providers: [AIProvider]
-    /// UUID of the default provider. nil = use first in list.
-    public var defaultProviderId: UUID?
-
-    public init(providers: [AIProvider] = [], defaultProviderId: UUID? = nil) {
-        self.providers = providers
-        self.defaultProviderId = defaultProviderId
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case providers
-        case defaultProviderId = "default_provider_id"
-    }
-}
-
-// Note: MemoryStorage is defined in MemoryModels.swift — shared between
-// DataStoreMigration and MemoryStore to avoid duplication.
-
 // MARK: - DataStoreMigration
 
-/// Performs one-time migration from legacy @Model entities to ChappieDataStore.
-/// Called once at startup, before any Store initializes.
 public actor DataStoreMigration {
 
     private let modelContainer: ModelContainer
@@ -155,8 +35,6 @@ public actor DataStoreMigration {
 
     // MARK: - Entry point
 
-    /// Runs migration for all relations that don't yet exist in ChappieDataStore.
-    /// Safe to call on every launch — skips relations already migrated.
     public func migrateIfNeeded() async {
         print("[DataStoreMigration] Starting migration check...")
 
@@ -178,31 +56,32 @@ public actor DataStoreMigration {
         }
 
         let context = ModelContext(modelContainer)
-        guard let entities = try? context.fetch(FetchDescriptor<ThreadEntity>()) else {
+        guard let entities = try? context.fetch(FetchDescriptor<ThreadEntity>()),
+              !entities.isEmpty else {
             print("[DataStoreMigration] Threads: no legacy data found.")
             return
         }
 
-        guard !entities.isEmpty else {
-            print("[DataStoreMigration] Threads: legacy table empty, nothing to migrate.")
-            return
-        }
-
-        // Build Sendable payloads from @Model entities before crossing the actor boundary.
+        // Build ThreadPayload array matching ThreadStore's storage format.
         let payloads: [ThreadPayload] = entities.map { e in
             ThreadPayload(
                 id: e.id,
                 title: e.title,
-                createdAt: e.createdAt,
-                updatedAt: e.updatedAt,
-                messagesJSON: e.messagesJSON,
-                settingsJSON: e.settingsJSON,
-                projectBindingsJSON: e.projectBindingsJSON
+                settings: (try? JSONDecoder().decode(ThreadSettings.self, from: e.settingsJSON)) ?? ThreadSettings(),
+                projectIds: (try? JSONDecoder().decode([UUID].self, from: e.projectBindingsJSON)) ?? []
             )
         }
 
         do {
             try await dataStore.save(payloads, for: .threads)
+
+            // Migrate per-thread messages as raw JSON Data (saveRawData — no re-encoding).
+            for entity in entities where !entity.messagesJSON.isEmpty {
+                let relation = ChappieDataStore.Relation.threadMessages(entity.id)
+                guard (try? await dataStore.exists(relation)) == false else { continue }
+                try await dataStore.saveRawData(entity.messagesJSON, for: relation)
+            }
+
             print("[DataStoreMigration] ✅ Threads: migrated \(payloads.count) records.")
         } catch {
             print("[DataStoreMigration] ❌ Threads migration failed: \(error)")
@@ -218,28 +97,26 @@ public actor DataStoreMigration {
         }
 
         let context = ModelContext(modelContainer)
-        guard let entities = try? context.fetch(FetchDescriptor<ProjectEntity>()) else {
+        guard let entities = try? context.fetch(FetchDescriptor<ProjectEntity>()),
+              !entities.isEmpty else {
             print("[DataStoreMigration] Projects: no legacy data found.")
             return
         }
 
-        guard !entities.isEmpty else {
-            print("[DataStoreMigration] Projects: legacy table empty, nothing to migrate.")
-            return
-        }
-
         let payloads: [ProjectPayload] = entities.map { e in
-            ProjectPayload(
-                id: e.id,
-                displayName: e.displayName,
-                bookmarkData: e.bookmarkData,
-                createdAt: e.createdAt,
-                settingsJSON: e.settingsJSON
-            )
+            ProjectPayload(id: e.id, displayName: e.displayName, settings: e.settings)
         }
 
         do {
             try await dataStore.save(payloads, for: .projects)
+
+            // Migrate per-project bookmarks.
+            for entity in entities {
+                let relation = ChappieDataStore.Relation.projectBookmark(entity.id)
+                guard (try? await dataStore.exists(relation)) == false else { continue }
+                try await dataStore.save(entity.bookmarkData, for: relation)
+            }
+
             print("[DataStoreMigration] ✅ Projects: migrated \(payloads.count) records.")
         } catch {
             print("[DataStoreMigration] ❌ Projects migration failed: \(error)")
@@ -255,26 +132,19 @@ public actor DataStoreMigration {
         }
 
         let context = ModelContext(modelContainer)
-        guard let entities = try? context.fetch(FetchDescriptor<MemoryEntity>()) else {
+        guard let entities = try? context.fetch(FetchDescriptor<MemoryEntity>()),
+              !entities.isEmpty else {
             print("[DataStoreMigration] Memory: no legacy data found.")
             return
         }
 
-        guard !entities.isEmpty else {
-            print("[DataStoreMigration] Memory: legacy table empty, nothing to migrate.")
-            return
-        }
-
-        // Collapse multiple MemoryEntity rows (one per scope) into a single MemoryStorage dict.
         var scopeDict: [String: [MemoryEntry]] = [:]
         for entity in entities {
             scopeDict[entity.scope] = entity.entries
         }
 
-        let storage = MemoryStorage(scopes: scopeDict)
-
         do {
-            try await dataStore.save(storage, for: .memory)
+            try await dataStore.save(MemoryStorage(scopes: scopeDict), for: .memory)
             print("[DataStoreMigration] ✅ Memory: migrated \(scopeDict.count) scopes.")
         } catch {
             print("[DataStoreMigration] ❌ Memory migration failed: \(error)")
@@ -293,22 +163,28 @@ public actor DataStoreMigration {
         let descriptor = FetchDescriptor<AIProviderEntity>(
             sortBy: [SortDescriptor(\.createdAt, order: .forward)]
         )
-        guard let entities = try? context.fetch(descriptor) else {
+        guard let entities = try? context.fetch(descriptor),
+              !entities.isEmpty else {
             print("[DataStoreMigration] Providers: no legacy data found.")
             return
         }
 
-        guard !entities.isEmpty else {
-            print("[DataStoreMigration] Providers: legacy table empty, nothing to migrate.")
-            return
+        // Decode providers and embed isDefault from the entity row.
+        var providers: [AIProvider] = []
+        for entity in entities {
+            if var provider = entity.toProvider() {
+                provider.isDefault = entity.isDefault
+                providers.append(provider)
+            }
         }
 
-        let providers = entities.compactMap { $0.toProvider() }
-        let defaultId = entities.first(where: { $0.isDefault })?.id
-        let payload = ProvidersPayload(providers: providers, defaultProviderId: defaultId)
+        // Ensure exactly one default.
+        if !providers.isEmpty, !providers.contains(where: { $0.isDefault }) {
+            providers[0].isDefault = true
+        }
 
         do {
-            try await dataStore.save(payload, for: .providers)
+            try await dataStore.save(providers, for: .providers)
             print("[DataStoreMigration] ✅ Providers: migrated \(providers.count) records.")
         } catch {
             print("[DataStoreMigration] ❌ Providers migration failed: \(error)")
@@ -324,18 +200,20 @@ public actor DataStoreMigration {
         }
 
         let context = ModelContext(modelContainer)
+
         guard let entity = try? context.fetch(FetchDescriptor<AppSettings>()).first else {
-            // No legacy record — create a blank default so ChappieDataStore is initialized.
-            let blank = AppSettingsPayload()
-            try? await dataStore.save(blank, for: .appSettings)
+            try? await dataStore.save(AppSettingsPayload(), for: .appSettings)
             print("[DataStoreMigration] AppSettings: no legacy record, created blank default.")
             return
         }
 
+        // Convert legacy [String: Double] balances dict to the new format.
+        let balances = entity.balances  // already [String: Double] from AppSettings.balances getter
+
         let payload = AppSettingsPayload(
             workspaceBookmark: entity.workspaceBookmark,
-            lastActiveThreadIdString: entity.lastActiveThreadIdString,
-            balancesJSON: entity.balancesJSON
+            lastActiveThreadId: entity.lastActiveThreadId,
+            balances: balances
         )
 
         do {

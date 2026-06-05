@@ -1,173 +1,197 @@
 // ProjectStore.swift
 // ChappieCore
 //
-// Actor for CRUD operations on projects via SwiftData.
-// Each project stores a security-scoped bookmark for folder access.
-// Threads reference projects by UUID (in projectBindingsJSON).
+// Actor for CRUD operations on projects via ChappieDataStore.
+// No SwiftData imports here — all persistence goes through ChappieDataStore.Relation.projects.
 //
-// Why background context: ModelContext(modelContainer) instead of mainContext
-// avoids Swift 6 @MainActor isolation violations.
+// STORAGE LAYOUT:
+// All projects stored as [ProjectPayload] under Relation.projects.
+// Bookmarks are stored separately under Relation.projectBookmark("<uuid>") —
+// they are large binary blobs not worth loading with the list.
 //
 // CACHING:
 // cachedProjects holds all projects in RAM after first load.
 // loadProjects() / loadProject(id:) / loadProjects(ids:) are served from cache.
-// loadBookmark() always hits SwiftData — bookmarks are large binary blobs,
-// not worth caching, and accessed rarely (only during FS sync).
+// loadBookmark() always hits DataStore — accessed rarely (only during FS sync).
 // All writes call refreshCache() to keep the cache consistent.
+//
+// CODABLE COMPATIBILITY (see DataStore.swift for full rules):
+//   1. Never rename ProjectPayload fields without CodingKeys.
+//   2. Never remove fields — mark optional with a default instead.
+//   3. New fields must have a default value so old records decode cleanly.
 
 import Foundation
-import SwiftData
+
+// MARK: - ProjectPayload
+
+/// Codable struct stored inside [ProjectPayload] under Relation.projects.
+/// Replaces the legacy @Model ProjectEntity class.
+///
+/// WHY STRUCT, NOT @MODEL: plain Codable — no SwiftData migrations ever needed.
+public struct ProjectPayload: Codable, Sendable, Identifiable {
+
+    public let id: UUID
+    public var displayName: String
+    public var createdAt: Date
+    public var settingsJSON: Data
+
+    public init(
+        id: UUID = UUID(),
+        displayName: String,
+        settings: ProjectSettings = ProjectSettings()
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.createdAt = Date()
+        self.settingsJSON = (try? JSONEncoder().encode(settings)) ?? Data()
+    }
+
+    // CodingKeys guard against future renames.
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case displayName = "display_name"
+        case createdAt   = "created_at"
+        case settingsJSON = "settings_json"
+    }
+}
 
 // MARK: - ProjectStore
 
-/// Actor managing projects in SwiftData.
+/// Actor managing projects via ChappieDataStore.
 public actor ProjectStore {
 
-    private let modelContainer: ModelContainer
-
-    // In-memory cache — populated on first read, invalidated on every write.
+    private let dataStore: ChappieDataStore
     private var cachedProjects: [ProjectMetadata]? = nil
 
-    public init(modelContainer: ModelContainer) {
-        self.modelContainer = modelContainer
+    public init(dataStore: ChappieDataStore) {
+        self.dataStore = dataStore
     }
 
-    private func makeContext() -> ModelContext {
-        ModelContext(modelContainer)
+    // MARK: - Private helpers
+
+    private func loadPayloads() async throws -> [ProjectPayload] {
+        return (try await dataStore.load(.projects)) ?? []
     }
 
-    // MARK: - Cache Management
-
-    /// Reloads all projects from SwiftData into cachedProjects.
-    private func refreshCache() throws {
-        let context = makeContext()
-        let descriptor = FetchDescriptor<ProjectEntity>(
-            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-        )
-        cachedProjects = try context.fetch(descriptor).map { ProjectMetadata(from: $0) }
+    private func savePayloads(_ payloads: [ProjectPayload]) async throws {
+        try await dataStore.save(payloads, for: .projects)
     }
 
-    /// Returns cached projects, loading from SwiftData on first call.
-    private func getProjects() throws -> [ProjectMetadata] {
+    private func bookmarkRelation(for projectId: UUID) -> ChappieDataStore.Relation {
+        .projectBookmark(projectId)
+    }
+
+    private func refreshCache() async throws {
+        let payloads = try await loadPayloads()
+        cachedProjects = payloads
+            .sorted { $0.createdAt > $1.createdAt }
+            .map { ProjectMetadata(from: $0) }
+    }
+
+    private func getProjects() async throws -> [ProjectMetadata] {
         if let cached = cachedProjects { return cached }
-        try refreshCache()
+        try await refreshCache()
         return cachedProjects ?? []
     }
 
     // MARK: - Create
 
     /// Adds a new project. Returns the new project's UUID.
-    ///
-    /// Why return UUID: ProjectEntity is not Sendable, so we pass only primitives across the actor boundary.
     public func addProject(
         displayName: String,
         bookmarkData: Data,
         settings: ProjectSettings = ProjectSettings()
-    ) throws -> UUID {
-        let context = makeContext()
-        let project = ProjectEntity(
-            displayName: displayName,
-            bookmarkData: bookmarkData,
-            settings: settings
-        )
-        context.insert(project)
-        try context.save()
-
-        try refreshCache()
-
+    ) async throws -> UUID {
+        var payloads = try await loadPayloads()
+        let project = ProjectPayload(displayName: displayName, settings: settings)
+        payloads.append(project)
+        try await savePayloads(payloads)
+        // Store bookmark separately — large binary blob
+        try await dataStore.save(bookmarkData, for: bookmarkRelation(for: project.id))
+        try await refreshCache()
         print("[ProjectStore] ✅ Added project '\(displayName)' (id: \(project.id))")
         return project.id
     }
 
     // MARK: - Read
 
-    /// Loads all projects sorted by creation date (newest first).
-    /// Served from in-memory cache — no SwiftData hit on warm calls.
-    public func loadProjects() throws -> [ProjectMetadata] {
-        return try getProjects()
+    public func loadProjects() async throws -> [ProjectMetadata] {
+        return try await getProjects()
     }
 
-    /// Loads a single project by UUID. Returns nil if not found.
-    /// Served from in-memory cache.
-    public func loadProject(id: UUID) throws -> ProjectMetadata? {
-        return try getProjects().first(where: { $0.id == id })
+    public func loadProject(id: UUID) async throws -> ProjectMetadata? {
+        return try await getProjects().first(where: { $0.id == id })
     }
 
-    /// Loads projects for a list of UUIDs, preserving the order of `ids`.
-    /// Served from in-memory cache.
-    public func loadProjects(ids: [UUID]) throws -> [ProjectMetadata] {
+    public func loadProjects(ids: [UUID]) async throws -> [ProjectMetadata] {
         guard !ids.isEmpty else { return [] }
-        let map = Dictionary(uniqueKeysWithValues: try getProjects().map { ($0.id, $0) })
+        let map = Dictionary(uniqueKeysWithValues: try await getProjects().map { ($0.id, $0) })
         return ids.compactMap { map[$0] }
     }
 
-    /// Loads the security-scoped bookmark for a project. Used when resolving workspace URL.
-    /// Always hits SwiftData — bookmarks are large binary blobs, not worth caching.
-    public func loadBookmark(forProjectId id: UUID) throws -> Data? {
-        let context = makeContext()
-        let descriptor = FetchDescriptor<ProjectEntity>(
-            predicate: #Predicate { $0.id == id }
-        )
-        return try context.fetch(descriptor).first?.bookmarkData
+    /// Loads the security-scoped bookmark for a project.
+    /// Always hits DataStore — bookmarks are large binary blobs, not worth caching.
+    public func loadBookmark(forProjectId id: UUID) async throws -> Data? {
+        return try await dataStore.load(bookmarkRelation(for: id))
     }
 
     // MARK: - Update
 
-    public func updateSettings(_ settings: ProjectSettings, forProjectId projectId: UUID) throws {
-        let context = makeContext()
-        let descriptor = FetchDescriptor<ProjectEntity>(
-            predicate: #Predicate { $0.id == projectId }
-        )
-        guard let project = try context.fetch(descriptor).first else { return }
-        project.settingsJSON = (try? JSONEncoder().encode(settings)) ?? project.settingsJSON
-        try context.save()
-
-        try refreshCache()
-
-        print("[ProjectStore] ✅ Updated settings for '\(project.displayName)'")
+    public func updateSettings(_ settings: ProjectSettings, forProjectId projectId: UUID) async throws {
+        var payloads = try await loadPayloads()
+        guard let idx = payloads.firstIndex(where: { $0.id == projectId }) else { return }
+        payloads[idx].settingsJSON = (try? JSONEncoder().encode(settings)) ?? payloads[idx].settingsJSON
+        try await savePayloads(payloads)
+        try await refreshCache()
+        print("[ProjectStore] ✅ Updated settings for project \(projectId)")
     }
 
-    public func updateBookmark(_ bookmarkData: Data, forProjectId projectId: UUID) throws {
-        let context = makeContext()
-        let descriptor = FetchDescriptor<ProjectEntity>(
-            predicate: #Predicate { $0.id == projectId }
-        )
-        guard let project = try context.fetch(descriptor).first else { return }
-        project.bookmarkData = bookmarkData
-        try context.save()
-
+    public func updateBookmark(_ bookmarkData: Data, forProjectId projectId: UUID) async throws {
+        try await dataStore.save(bookmarkData, for: bookmarkRelation(for: projectId))
         // No cache refresh needed — bookmark is not stored in ProjectMetadata
-        print("[ProjectStore] ✅ Updated bookmark for '\(project.displayName)'")
+        print("[ProjectStore] ✅ Updated bookmark for project \(projectId)")
     }
 
-    public func renameProject(id projectId: UUID, name: String) throws {
-        let context = makeContext()
-        let descriptor = FetchDescriptor<ProjectEntity>(
-            predicate: #Predicate { $0.id == projectId }
-        )
-        guard let project = try context.fetch(descriptor).first else { return }
-        project.displayName = name
-        try context.save()
-
-        try refreshCache()
+    public func renameProject(id projectId: UUID, name: String) async throws {
+        var payloads = try await loadPayloads()
+        guard let idx = payloads.firstIndex(where: { $0.id == projectId }) else { return }
+        payloads[idx].displayName = name
+        try await savePayloads(payloads)
+        try await refreshCache()
     }
 
     // MARK: - Delete
 
-    /// Deletes a project. Threads that reference it will get an unresolvable UUID —
-    /// UI should handle this gracefully (e.g. show "Project deleted").
-    public func deleteProject(id projectId: UUID) throws {
-        let context = makeContext()
-        let descriptor = FetchDescriptor<ProjectEntity>(
-            predicate: #Predicate { $0.id == projectId }
-        )
-        guard let project = try context.fetch(descriptor).first else { return }
-        let name = project.displayName
-        context.delete(project)
-        try context.save()
-
-        try refreshCache()
-
+    /// Deletes a project and its bookmark.
+    /// Threads that reference it will get an unresolvable UUID — UI handles gracefully.
+    public func deleteProject(id projectId: UUID) async throws {
+        var payloads = try await loadPayloads()
+        guard let idx = payloads.firstIndex(where: { $0.id == projectId }) else { return }
+        let name = payloads[idx].displayName
+        payloads.remove(at: idx)
+        try await savePayloads(payloads)
+        try await dataStore.delete(bookmarkRelation(for: projectId))
+        try await refreshCache()
         print("[ProjectStore] 🗑 Deleted project '\(name)'")
+    }
+}
+
+// MARK: - ProjectMetadata init from ProjectPayload
+
+extension ProjectMetadata {
+
+    /// Creates ProjectMetadata from a ProjectPayload (inside actor only).
+    init(from payload: ProjectPayload) {
+        self.id = payload.id
+        self.displayName = payload.displayName
+        self.createdAt = payload.createdAt
+        self.isUnavailable = false
+
+        if !payload.settingsJSON.isEmpty,
+           let decoded = try? JSONDecoder().decode(ProjectSettings.self, from: payload.settingsJSON) {
+            self.settings = decoded
+        } else {
+            self.settings = ProjectSettings()
+        }
     }
 }

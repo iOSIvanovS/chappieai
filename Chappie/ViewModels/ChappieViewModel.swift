@@ -188,9 +188,6 @@ final class ChappieViewModel {
         displayedStart = newStart
         displayedMessages = additional + displayedMessages
         hasMoreMessages = displayedStart > 0
-
-        // Do NOT trim the bottom here — trimming while user scrolls up causes visible
-        // messages to disappear. maxDisplayed cap applies only in appendToDisplayed.
     }
 
     func appendToDisplayed(_ message: ChatMessage) {
@@ -223,24 +220,24 @@ final class ChappieViewModel {
         guard self.modelContainer == nil else { return }
         self.modelContainer = container
 
-        // ChappieDataStore is created first — it is the only object that owns ModelContainer.
-        // All other Stores receive ChappieDataStore via DI and never touch ModelContainer directly.
+        // ChappieDataStore is created first — the only object that owns ModelContainer.
+        // All Stores receive ChappieDataStore via DI and never touch ModelContainer directly.
         let ds = ChappieDataStore(modelContainer: container)
         self.chappieDataStore = ds
 
         let store = MemoryStore(dataStore: ds)
         self.memoryStore = store
 
-        let tStore = ThreadStore(modelContainer: container)
+        let tStore = ThreadStore(dataStore: ds)
         self.threadStore = tStore
 
-        let pStore = ProjectStore(modelContainer: container)
+        let pStore = ProjectStore(dataStore: ds)
         self.projectStore = pStore
 
-        let provStore = AIProviderStore(modelContainer: container)
+        let provStore = AIProviderStore(dataStore: ds)
         self.providerStore = provStore
 
-        connectAppSettingsStore(container: container)
+        self.appSettingsStore = AppSettingsStore(dataStore: ds)
 
         if let mm = memoryManager { Task { await mm.setMemoryStore(store) } }
 
@@ -254,8 +251,6 @@ final class ChappieViewModel {
             await preloadLastActiveThreadId()
             await refreshBalanceCacheIfNeeded()
 
-            // Sync catalog fields before loading providers — requiresApiKey must be
-            // correct before switchProvider() runs.
             if let catalog = try? await providersRemoteService.fetchCatalog() {
                 try? await provStore.syncRequiresApiKey(from: catalog.providers)
                 print("[ChappieViewModel] requiresApiKey synced from catalog")
@@ -263,10 +258,7 @@ final class ChappieViewModel {
                 print("[ChappieViewModel] Icons synced from catalog")
             }
 
-            // Load providers FIRST — switchProvider() reads from self.providers.
             await loadProvidersAndSetActive(from: provStore)
-
-            // Load threads AFTER providers are ready.
             await loadThreadsAndSelectActive(from: tStore)
         }
     }

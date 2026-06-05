@@ -3,9 +3,9 @@
 //
 // Domain models for AI providers.
 //
-// ARCHITECTURE: JSON-SERIALIZATION PATTERN (swiftdata_json_pattern rule)
-// AIProvider is a plain Codable struct. AIProviderEntity stores it as JSON string.
-// This gives full freedom to evolve the model without SwiftData migrations.
+// ARCHITECTURE: JSON-SERIALIZATION PATTERN
+// AIProvider is a plain Codable struct stored directly in ChappieDataStore as [AIProvider].
+// No SwiftData @Model needed — schema never changes, no migrations ever.
 //
 // KEYCHAIN STORAGE:
 // API keys are stored in Keychain, NOT in SwiftData.
@@ -34,6 +34,11 @@
 // APIKey     — one named key with stable UUID. Keychain entry keyed by apiKey.id.uuidString.
 // Thread stores (activeProviderId, activeKeyId, activeModelName) — picks one key+model.
 // Deleting provider or model is always allowed — orphaned threads show a warning banner.
+//
+// CODABLE COMPATIBILITY CONTRACT:
+//   1. Never rename a stored property without adding/updating CodingKeys.
+//   2. Never remove a stored property — mark optional with a default instead.
+//   3. Always give new properties a default value so old records decode cleanly.
 
 import Foundation
 import SwiftData
@@ -42,65 +47,36 @@ import SwiftData
 
 /// Wire protocol used to communicate with a provider.
 public enum ProviderProtocol: String, Codable, Sendable, CaseIterable {
-    /// OpenAI-compatible REST API (/v1/chat/completions, /v1/models, etc.)
     case openai
-    /// Anthropic native API (/v1/messages)
     case anthropic
 }
 
 // MARK: - AuthScheme
 
 /// HTTP authorization header format used by the provider.
-///
-/// Decoupled from ProviderProtocol so that proxy providers (e.g. AITunnel routing
-/// to Claude via /v1/messages) can use Bearer auth even with Anthropic wire format.
 public enum AuthScheme: String, Codable, Sendable, CaseIterable {
-    /// Authorization: Bearer {key}  — default for OpenAI-compatible providers.
     case bearer
-    /// x-api-key: {key}             — native Anthropic API only.
     case xApiKey = "x_api_key"
-    /// No authorization header sent — for local/open providers (e.g. Ollama, LM Studio).
     case none
 }
 
 // MARK: - ProviderOrigin
 
-/// How the provider was added — determines deduplication behavior.
 public enum ProviderOrigin: String, Codable, Sendable {
-    /// Added from catalog — only one instance per catalogId is allowed.
     case catalog
-    /// Added manually — no deduplication, any number of custom providers allowed.
     case custom
 }
 
 // MARK: - AIModel
 
-/// A saved model belonging to a provider.
-///
-/// Richer than a plain String — carries the endpoint path and protocol
-/// so the AI client knows how to call it without guessing.
 public struct AIModel: Codable, Sendable, Identifiable, Equatable, Hashable {
 
-    // MARK: - Fields
-
-    /// Model ID as expected by the API, e.g. "gpt-4o", "claude-opus-4-20250514".
     public let id: String
-
-    /// Human-readable display name, e.g. "GPT-4o".
-    /// Falls back to id if not set.
     public var name: String
-
-    /// Path component of the endpoint, e.g. "/v1/chat/completions", "/v1/messages".
     public var endpoint: String
-
-    /// Wire protocol for this model.
     public var providerProtocol: ProviderProtocol
 
-    // MARK: - Computed
-
     public var displayName: String { name.isEmpty ? id : name }
-
-    // MARK: - Init
 
     public init(
         id: String,
@@ -114,112 +90,55 @@ public struct AIModel: Codable, Sendable, Identifiable, Equatable, Hashable {
         self.providerProtocol = providerProtocol
     }
 
-    // MARK: - Codable (CodingKeys guard against future renames)
-
     private enum CodingKeys: String, CodingKey {
         case id, name, endpoint
         case providerProtocol = "provider_protocol"
     }
-
-    // MARK: - Hashable
 
     public func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
 // MARK: - APIKey
 
-/// A single named API key belonging to a provider.
-///
-/// IMMUTABLE BY DESIGN: mutations go through AIProviderStore which re-serializes AIProvider JSON.
-/// The actual secret is stored in Keychain under apiKey.id.uuidString — NOT in this struct.
 public struct APIKey: Codable, Sendable, Identifiable, Equatable, Hashable {
 
-    // MARK: - Fields
-
-    /// Stable unique identifier. Never changes after creation.
     public let id: UUID
-
-    /// User-defined label, e.g. "Work key", "Personal", "Client project".
     public var name: String
-
-    // MARK: - Init
 
     public init(id: UUID = UUID(), name: String) {
         self.id = id
         self.name = name
     }
 
-    // MARK: - Hashable
-
     public func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
 // MARK: - AIProvider
 
-/// A single AI provider configuration — one base URL, multiple keys, multiple saved models.
-///
-/// IMMUTABLE BY DESIGN:
-/// All mutations go through AIProviderStore which re-serializes to JSON.
+/// A single AI provider configuration — stored directly as Codable in ChappieDataStore.
+/// isDefault is stored inline — no separate entity needed.
 public struct AIProvider: Codable, Sendable, Identifiable, Equatable, Hashable {
 
-    // MARK: - Fields
-
-    /// Stable unique identifier. Never changes after creation.
     public let id: UUID
-
-    /// User-defined display name, e.g. "Work OpenAI", "Personal Groq".
     public var name: String
-
-    /// Base URL without path, e.g. "https://api.openai.com".
     public var baseURL: String
-
-    /// Links this provider to a RemoteProvider entry, e.g. "openai", "groq".
-    /// nil → manually added custom provider (no catalog entry).
     public var catalogId: String?
-
-    /// Default wire protocol for this provider.
     public var providerProtocol: ProviderProtocol
-
-    /// HTTP authorization scheme — Bearer, x-api-key, or none.
     public var authScheme: AuthScheme
-
-    /// How this provider was added — controls deduplication behavior.
-    /// Old providers without this field default to .catalog via decodeIfPresent.
     public var origin: ProviderOrigin
-
-    /// Whether an API key is required to use this provider.
-    /// False for local providers like Ollama — key field hidden, empty string passed to client.
     public var requiresApiKey: Bool
-
-    /// SF Symbol name for the provider icon, synced from catalog.
-    /// Custom providers use "wrench.and.screwdriver".
     public var iconName: String
-
-    /// Hex color string for the icon, e.g. "#10A37F". nil = use accent color.
     public var iconColor: String?
-
-    /// Named API keys for this provider.
     public var keys: [APIKey]
-
-    /// Models the user has saved for this provider.
     public var models: [AIModel]
 
-    // MARK: - Computed
+    /// Whether this provider is the default. Stored inline — replaces AIProviderEntity.isDefault.
+    /// Old records without this field default to false via decodeIfPresent.
+    public var isDefault: Bool
 
-    /// Display-friendly host extracted from baseURL.
-    public var displayHost: String {
-        URL(string: baseURL)?.host ?? baseURL
-    }
-
-    /// The label shown in lists — user name if set, otherwise the host.
-    public var displayName: String {
-        name.isEmpty ? displayHost : name
-    }
-
-    /// True if this provider was added from the catalog (not custom).
+    public var displayHost: String { URL(string: baseURL)?.host ?? baseURL }
+    public var displayName: String { name.isEmpty ? displayHost : name }
     public var isFromCatalog: Bool { catalogId != nil }
-
-    // MARK: - Init
 
     public init(
         id: UUID = UUID(),
@@ -233,7 +152,8 @@ public struct AIProvider: Codable, Sendable, Identifiable, Equatable, Hashable {
         iconName: String = "cpu",
         iconColor: String? = nil,
         keys: [APIKey] = [],
-        models: [AIModel] = []
+        models: [AIModel] = [],
+        isDefault: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -247,61 +167,54 @@ public struct AIProvider: Codable, Sendable, Identifiable, Equatable, Hashable {
         self.iconColor = iconColor
         self.keys = keys
         self.models = models
+        self.isDefault = isDefault
     }
-
-    // MARK: - Codable
 
     private enum CodingKeys: String, CodingKey {
         case id, name, keys, models, origin
-        case baseURL = "base_url"
-        case catalogId = "catalog_id"
+        case baseURL          = "base_url"
+        case catalogId        = "catalog_id"
         case providerProtocol = "provider_protocol"
-        case authScheme = "auth_scheme"
-        case requiresApiKey = "requires_api_key"
-        case iconName = "icon_name"
-        case iconColor = "icon_color"
+        case authScheme       = "auth_scheme"
+        case requiresApiKey   = "requires_api_key"
+        case iconName         = "icon_name"
+        case iconColor        = "icon_color"
+        case isDefault        = "is_default"
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = try c.decode(UUID.self, forKey: .id)
-        name = try c.decode(String.self, forKey: .name)
-        baseURL = try c.decode(String.self, forKey: .baseURL)
-        catalogId = try c.decodeIfPresent(String.self, forKey: .catalogId)
+        id              = try c.decode(UUID.self, forKey: .id)
+        name            = try c.decode(String.self, forKey: .name)
+        baseURL         = try c.decode(String.self, forKey: .baseURL)
+        catalogId       = try c.decodeIfPresent(String.self, forKey: .catalogId)
         providerProtocol = try c.decodeIfPresent(ProviderProtocol.self, forKey: .providerProtocol) ?? .openai
-        keys = try c.decodeIfPresent([APIKey].self, forKey: .keys) ?? []
-        models = try c.decodeIfPresent([AIModel].self, forKey: .models) ?? []
-        let decodedScheme = try c.decodeIfPresent(AuthScheme.self, forKey: .authScheme)
-        authScheme = decodedScheme ?? (providerProtocol == .anthropic ? .xApiKey : .bearer)
-        origin = try c.decodeIfPresent(ProviderOrigin.self, forKey: .origin) ?? .catalog
-        requiresApiKey = try c.decodeIfPresent(Bool.self, forKey: .requiresApiKey) ?? true
-        // Old providers without icon fields get defaults — synced from catalog on next launch
-        iconName = try c.decodeIfPresent(String.self, forKey: .iconName) ?? "cpu"
-        iconColor = try c.decodeIfPresent(String.self, forKey: .iconColor)
+        keys            = try c.decodeIfPresent([APIKey].self, forKey: .keys) ?? []
+        models          = try c.decodeIfPresent([AIModel].self, forKey: .models) ?? []
+        let scheme      = try c.decodeIfPresent(AuthScheme.self, forKey: .authScheme)
+        authScheme      = scheme ?? (providerProtocol == .anthropic ? .xApiKey : .bearer)
+        origin          = try c.decodeIfPresent(ProviderOrigin.self, forKey: .origin) ?? .catalog
+        requiresApiKey  = try c.decodeIfPresent(Bool.self, forKey: .requiresApiKey) ?? true
+        iconName        = try c.decodeIfPresent(String.self, forKey: .iconName) ?? "cpu"
+        iconColor       = try c.decodeIfPresent(String.self, forKey: .iconColor)
+        isDefault       = try c.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
     }
-
-    // MARK: - Hashable
 
     public func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
-// MARK: - AIProviderEntity (SwiftData Storage)
+// MARK: - AIProviderEntity (legacy — kept for DataStoreMigration only, removed in DB-05)
 
 /// SwiftData entity for persisting AI providers.
-///
-/// JSON PATTERN: stores the entire AIProvider as a JSON string.
-/// No graph, no relationships, no migrations needed when AIProvider evolves.
+/// DO NOT USE in new code — use AIProviderStore + ChappieDataStore instead.
+/// Kept alive so DataStoreMigration can read legacy records before DB-05 cleanup.
 @Model
 public final class AIProviderEntity {
-
-    // MARK: - Fields
 
     public var id: UUID
     public var json: String
     public var isDefault: Bool
     public var createdAt: Date
-
-    // MARK: - Init
 
     public init(provider: AIProvider, isDefault: Bool = false) {
         self.id = provider.id
@@ -309,8 +222,6 @@ public final class AIProviderEntity {
         self.isDefault = isDefault
         self.createdAt = Date()
     }
-
-    // MARK: - Deserialization
 
     public func toProvider() -> AIProvider? {
         guard let data = json.data(using: .utf8) else { return nil }

@@ -1,40 +1,23 @@
 // AIProviderStore.swift
 // ChappieCore
 //
-// CRUD service for AI providers — SwiftData backend, Keychain for API keys.
+// CRUD service for AI providers via ChappieDataStore. Keychain for API keys.
+// No SwiftData imports here — all persistence goes through ChappieDataStore.Relation.providers.
 //
-// ARCHITECTURE:
-// - AIProviderEntity in SwiftData stores provider config as JSON (no graph pattern)
-// - API key secrets live exclusively in Keychain, keyed by apiKey.id.uuidString
-// - Each provider can have multiple named APIKey entries (multi-key schema)
-//
-// CATALOG FLOW:
-// addFromCatalog() — creates a provider from a RemoteProvider entry.
-//   Converts RemoteModel → AIModel, preserving endpoint + protocol per model.
-//   Duplicate check: by catalogId. If already exists → mergeFromCatalog() instead.
-//   requiresApiKey is copied from RemoteProvider — false for Ollama.
-//
-// CUSTOM FLOW:
-// addProvider() — creates a provider entered manually (catalogId = nil).
-//   No duplicate check for custom providers (origin = .custom).
-//
-// DELETION POLICY:
-// Deletion is ALWAYS allowed — even the last provider, even if threads depend on it.
-// Orphaned threads show a warning banner. No blocking guards here.
-//
-// THREAD SAFETY:
-// All async methods run in a detached Task with ModelContainer actor isolation.
+// STORAGE LAYOUT:
+// All providers stored as [AIProvider] under Relation.providers.
+// API key secrets live exclusively in Keychain, keyed by apiKey.id.uuidString.
 //
 // CACHING:
 // cachedProviders holds the full list in RAM after first load.
 // All reads return from cache. All writes call refreshCache() after saving.
 //
-// DEFAULT PROVIDER:
-// isDefault lives on AIProviderEntity. cachedDefaultId answers loadDefaultProvider()
-// without iterating JSON or hitting the DB.
+// CODABLE COMPATIBILITY (see DataStore.swift for full rules):
+//   AIProvider already has CodingKeys — safe to evolve without breaking stored records.
+//   Never remove fields — mark optional with a default instead.
+//   New fields must have a default value so old records decode cleanly.
 
 import Foundation
-import SwiftData
 import Security
 
 // MARK: - AIProviderStore
@@ -43,7 +26,7 @@ public actor AIProviderStore {
 
     // MARK: - Dependencies
 
-    private let modelContainer: ModelContainer
+    private let dataStore: ChappieDataStore
 
     // MARK: - In-memory cache
 
@@ -58,26 +41,28 @@ public actor AIProviderStore {
 
     // MARK: - Init
 
-    public init(modelContainer: ModelContainer) {
-        self.modelContainer = modelContainer
+    public init(dataStore: ChappieDataStore) {
+        self.dataStore = dataStore
     }
 
     // MARK: - Cache Management
 
-    private func refreshCache() throws {
-        let context = ModelContext(modelContainer)
-        let descriptor = FetchDescriptor<AIProviderEntity>(
-            sortBy: [SortDescriptor(\.createdAt, order: .forward)]
-        )
-        let entities = try context.fetch(descriptor)
-        cachedProviders = entities.compactMap { $0.toProvider() }
-        cachedDefaultId = entities.first(where: { $0.isDefault })?.id
+    private func refreshCache() async throws {
+        let providers: [AIProvider] = (try await dataStore.load(.providers)) ?? []
+        cachedProviders = providers
+        // Default is the first provider marked isDefault, or the oldest one
+        // WHY: isDefault is a property on AIProvider — we track it in the array itself
+        cachedDefaultId = providers.first(where: { $0.isDefault })?.id ?? providers.first?.id
     }
 
-    private func getProviders() throws -> [AIProvider] {
+    private func getProviders() async throws -> [AIProvider] {
         if let cached = cachedProviders { return cached }
-        try refreshCache()
+        try await refreshCache()
         return cachedProviders ?? []
+    }
+
+    private func saveProviders(_ providers: [AIProvider]) async throws {
+        try await dataStore.save(providers, for: .providers)
     }
 
     // MARK: - Load
@@ -85,28 +70,30 @@ public actor AIProviderStore {
     /// Returns all stored providers, sorted by creation date (oldest first).
     /// Runs single-key migration for providers that predate the multi-key schema.
     public func loadProviders() async throws -> [AIProvider] {
-        var providers = try getProviders()
+        var providers = try await getProviders()
         var needsRefresh = false
 
         for i in providers.indices where providers[i].keys.isEmpty && providers[i].requiresApiKey {
-            // Old schema: secret stored under provider.id.uuidString — migrate it
             if let secret = keychainLoad(key: providers[i].id.uuidString), !secret.isEmpty {
                 let newKey = APIKey(name: "Default")
                 saveApiKey(secret, for: newKey.id)
                 deleteKeychainEntry(key: providers[i].id.uuidString)
                 providers[i].keys = [newKey]
-                try persistProvider(providers[i])
                 needsRefresh = true
                 print("[AIProviderStore] Migrated single key for provider '\(providers[i].displayName)'")
             }
         }
 
-        if needsRefresh { try refreshCache() }
-        return try getProviders()
+        if needsRefresh {
+            try await saveProviders(providers)
+            try await refreshCache()
+        }
+
+        return try await getProviders()
     }
 
     public func loadDefaultProvider() async throws -> AIProvider? {
-        let providers = try getProviders()
+        let providers = try await getProviders()
         if let defaultId = cachedDefaultId,
            let found = providers.first(where: { $0.id == defaultId }) {
             return found
@@ -115,87 +102,75 @@ public actor AIProviderStore {
     }
 
     public func loadProvider(id: UUID) async throws -> AIProvider? {
-        return try getProviders().first(where: { $0.id == id })
+        return try await getProviders().first(where: { $0.id == id })
     }
 
-    // MARK: - Sync requiresApiKey from catalog
+    // MARK: - Sync from catalog
 
-    /// Called at startup after the remote catalog is fetched.
-    /// Updates requiresApiKey for existing catalog providers whose value changed in the JSON.
     public func syncRequiresApiKey(from remoteProviders: [RemoteProvider]) async throws {
-        let existing = try getProviders()
+        var providers = try await getProviders()
         var changed = false
 
         for remote in remoteProviders {
-            guard let idx = existing.firstIndex(where: { $0.catalogId == remote.id }) else { continue }
-            var provider = existing[idx]
-            guard provider.requiresApiKey != remote.requiresApiKey else { continue }
-
-            provider.requiresApiKey = remote.requiresApiKey
-            try persistProvider(provider)
+            guard let idx = providers.firstIndex(where: { $0.catalogId == remote.id }) else { continue }
+            guard providers[idx].requiresApiKey != remote.requiresApiKey else { continue }
+            providers[idx].requiresApiKey = remote.requiresApiKey
             changed = true
-            print("[AIProviderStore] Synced requiresApiKey=\(remote.requiresApiKey) for '\(provider.displayName)'")
+            print("[AIProviderStore] Synced requiresApiKey=\(remote.requiresApiKey) for '\(providers[idx].displayName)'")
         }
 
-        if changed { try refreshCache() }
+        if changed {
+            try await saveProviders(providers)
+            try await refreshCache()
+        }
     }
 
-    // MARK: - Sync icons from catalog
-
-    /// Called at startup after the remote catalog is fetched.
-    /// Updates iconName + iconColor for existing catalog providers.
-    /// Safe to call every launch — only writes when value actually changed.
     public func syncIcons(from remoteProviders: [RemoteProvider]) async throws {
-        let existing = try getProviders()
+        var providers = try await getProviders()
         var changed = false
 
         for remote in remoteProviders {
-            guard let idx = existing.firstIndex(where: { $0.catalogId == remote.id }) else { continue }
-            var provider = existing[idx]
-
-            let iconChanged = provider.iconName != remote.iconName
-            let colorChanged = provider.iconColor != remote.iconColor
+            guard let idx = providers.firstIndex(where: { $0.catalogId == remote.id }) else { continue }
+            let iconChanged = providers[idx].iconName != remote.iconName
+            let colorChanged = providers[idx].iconColor != remote.iconColor
             guard iconChanged || colorChanged else { continue }
-
-            provider.iconName = remote.iconName
-            provider.iconColor = remote.iconColor
-            try persistProvider(provider)
+            providers[idx].iconName = remote.iconName
+            providers[idx].iconColor = remote.iconColor
             changed = true
-            print("[AIProviderStore] Synced icon '\(remote.iconName)' for '\(provider.displayName)'")
+            print("[AIProviderStore] Synced icon '\(remote.iconName)' for '\(providers[idx].displayName)'")
         }
 
-        if changed { try refreshCache() }
+        if changed {
+            try await saveProviders(providers)
+            try await refreshCache()
+        }
     }
 
     // MARK: - Add Provider (Custom / Manual)
 
-    /// Adds a manually-entered provider (origin = .custom).
-    /// No duplicate check — custom providers are always created freely.
     @discardableResult
     public func addProvider(
         _ provider: AIProvider,
         firstKeyName: String,
         firstKeyValue: String
     ) async throws -> UUID {
-        let context = ModelContext(modelContainer)
-
+        var providers = try await getProviders()
         var providerWithKey = provider
 
-        // Only add key if provider requires one
         if provider.requiresApiKey {
             let firstKey = APIKey(name: firstKeyName.isEmpty ? "Default" : firstKeyName)
             saveApiKey(firstKeyValue, for: firstKey.id)
             providerWithKey.keys = [firstKey]
         }
 
-        let entity = AIProviderEntity(provider: providerWithKey, isDefault: false)
+        // First provider becomes default
+        if providers.isEmpty {
+            providerWithKey.isDefault = true
+        }
 
-        let existingCount = (try? context.fetch(FetchDescriptor<AIProviderEntity>()).count) ?? 0
-        if existingCount == 0 { entity.isDefault = true }
-
-        context.insert(entity)
-        try context.save()
-        try refreshCache()
+        providers.append(providerWithKey)
+        try await saveProviders(providers)
+        try await refreshCache()
 
         print("[AIProviderStore] Added provider '\(providerWithKey.displayName)'")
         return providerWithKey.id
@@ -203,22 +178,15 @@ public actor AIProviderStore {
 
     // MARK: - Add Provider from Catalog
 
-    /// Creates a new provider from a RemoteProvider catalog entry.
-    /// Converts all RemoteModel entries to AIModel (preserving endpoint + protocol).
-    /// If a provider with the same catalogId already exists — merges instead.
-    /// requiresApiKey is copied from RemoteProvider (false for Ollama).
-    ///
-    /// Returns the UUID of the created or updated provider.
     @discardableResult
     public func addFromCatalog(
         _ remote: RemoteProvider,
         keyName: String,
         keyValue: String,
-        selectedModelIds: Set<String>? = nil  // nil = all models
+        selectedModelIds: Set<String>? = nil
     ) async throws -> UUID {
-        let existing = try getProviders()
+        let existing = try await getProviders()
 
-        // If provider with same catalogId exists — merge key and models
         if let matched = existing.first(where: { $0.catalogId == remote.id }) {
             return try await mergeIntoCatalogProvider(
                 matched,
@@ -229,10 +197,7 @@ public actor AIProviderStore {
             )
         }
 
-        // Build AIModel list from remote catalog
         let allModels = buildModels(from: remote, selectedIds: selectedModelIds)
-
-        // Create the provider — copy requiresApiKey + icon from catalog entry
         let provider = AIProvider(
             name: remote.name,
             baseURL: remote.baseURL,
@@ -248,7 +213,6 @@ public actor AIProviderStore {
         return try await addProvider(provider, firstKeyName: keyName, firstKeyValue: keyValue)
     }
 
-    /// Merges a new key and models into an existing catalog provider.
     private func mergeIntoCatalogProvider(
         _ existing: AIProvider,
         remote: RemoteProvider,
@@ -258,15 +222,13 @@ public actor AIProviderStore {
     ) async throws -> UUID {
         var updated = existing
 
-        // Merge key — skip if same value already present or provider doesn't need one
         if remote.requiresApiKey {
             let trimmed = keyValue.trimmingCharacters(in: .whitespaces)
             if !trimmed.isEmpty {
                 var valueExists = false
                 for key in updated.keys {
                     if let stored = keychainLoad(key: key.id.uuidString), stored == trimmed {
-                        valueExists = true
-                        break
+                        valueExists = true; break
                     }
                 }
                 if !valueExists {
@@ -278,22 +240,19 @@ public actor AIProviderStore {
             }
         }
 
-        // Merge models — add only those not already present (by id)
         let newModels = buildModels(from: remote, selectedIds: selectedModelIds)
         let existingIds = Set(updated.models.map { $0.id })
-        let toAdd = newModels.filter { !existingIds.contains($0.id) }
-        updated.models.append(contentsOf: toAdd)
+        updated.models.append(contentsOf: newModels.filter { !existingIds.contains($0.id) })
 
-        try persistProvider(updated)
-        try refreshCache()
+        try await persistProvider(updated)
+        try await refreshCache()
 
         print("[AIProviderStore] Merged into catalog provider '\(updated.displayName)'")
         return updated.id
     }
 
-    // MARK: - Merge Provider (Onboarding — legacy host-based)
+    // MARK: - Merge Provider (Onboarding)
 
-    /// Onboarding upsert — matches by baseURL host. Safe to call multiple times.
     @discardableResult
     public func mergeProvider(
         _ incoming: AIProvider,
@@ -301,7 +260,7 @@ public actor AIProviderStore {
         keyValue: String,
         models: [AIModel]
     ) async throws -> UUID {
-        let existing = try getProviders()
+        let existing = try await getProviders()
         let incomingHost = URL(string: incoming.baseURL)?.host ?? incoming.baseURL
 
         if var matched = existing.first(where: { provider in
@@ -319,8 +278,7 @@ public actor AIProviderStore {
                         if let idx = matched.keys.firstIndex(where: { $0.id == existingKey.id }) {
                             matched.keys[idx] = updatedKey
                         }
-                        valueExists = true
-                        break
+                        valueExists = true; break
                     }
                 }
                 if !valueExists {
@@ -332,20 +290,19 @@ public actor AIProviderStore {
             }
 
             let existingModelIds = Set(matched.models.map { $0.id })
-            let newModels = models.filter { !existingModelIds.contains($0.id) }
-            matched.models.append(contentsOf: newModels)
+            matched.models.append(contentsOf: models.filter { !existingModelIds.contains($0.id) })
 
-            try persistProvider(matched)
-            try refreshCache()
-            print("[AIProviderStore] Merged provider '\(matched.displayName)' (host: \(incomingHost))")
+            try await persistProvider(matched)
+            try await refreshCache()
+            print("[AIProviderStore] Merged provider '\(matched.displayName)'")
             return matched.id
 
         } else {
             let id = try await addProvider(incoming, firstKeyName: keyName, firstKeyValue: keyValue)
-            if var newProvider = try getProviders().first(where: { $0.id == id }) {
+            if var newProvider = try await getProviders().first(where: { $0.id == id }) {
                 newProvider.models = models
-                try persistProvider(newProvider)
-                try refreshCache()
+                try await persistProvider(newProvider)
+                try await refreshCache()
             }
             return id
         }
@@ -353,28 +310,23 @@ public actor AIProviderStore {
 
     // MARK: - Duplicate Check Helpers
 
-    /// True if a provider with the same host already exists (for custom add flow).
     public func providerHostExists(_ baseURL: String) async -> Bool {
         let host = URL(string: baseURL)?.host ?? baseURL
-        return (try? getProviders().contains(where: { provider in
+        return (try? await getProviders().contains(where: { provider in
             (URL(string: provider.baseURL)?.host ?? provider.baseURL) == host
         })) ?? false
     }
 
-    /// True if a provider with the given catalogId already exists.
     public func providerCatalogIdExists(_ catalogId: String) async -> Bool {
-        return (try? getProviders().contains(where: { $0.catalogId == catalogId })) ?? false
+        return (try? await getProviders().contains(where: { $0.catalogId == catalogId })) ?? false
     }
 
-    /// True if a key with the same value already exists for the given provider.
     public func keyValueExists(_ value: String, inProviderId providerId: UUID) async -> Bool {
-        guard let provider = (try? getProviders().first(where: { $0.id == providerId })) else {
+        guard let provider = (try? await getProviders().first(where: { $0.id == providerId })) else {
             return false
         }
         for key in provider.keys {
-            if let stored = keychainLoad(key: key.id.uuidString), stored == value {
-                return true
-            }
+            if let stored = keychainLoad(key: key.id.uuidString), stored == value { return true }
         }
         return false
     }
@@ -382,41 +334,31 @@ public actor AIProviderStore {
     // MARK: - Update Provider
 
     public func updateProvider(_ provider: AIProvider) async throws {
-        try persistProvider(provider)
-        try refreshCache()
+        try await persistProvider(provider)
+        try await refreshCache()
         print("[AIProviderStore] Updated provider '\(provider.displayName)'")
     }
 
     // MARK: - Delete Provider
 
     public func deleteProvider(id: UUID) async throws {
-        let context = ModelContext(modelContainer)
-        let descriptor = FetchDescriptor<AIProviderEntity>(
-            predicate: #Predicate { $0.id == id }
-        )
-        guard let entity = try context.fetch(descriptor).first else {
+        var providers = try await getProviders()
+        guard let idx = providers.firstIndex(where: { $0.id == id }) else {
             throw AIProviderStoreError.notFound(id)
         }
 
-        if let provider = entity.toProvider() {
-            for key in provider.keys { deleteKeychainEntry(key: key.id.uuidString) }
+        let wasDefault = providers[idx].isDefault
+        for key in providers[idx].keys { deleteKeychainEntry(key: key.id.uuidString) }
+        providers.remove(at: idx)
+
+        // Reassign default if needed
+        if wasDefault, let first = providers.first {
+            providers[0].isDefault = true
+            _ = first // silence warning
         }
 
-        let wasDefault = entity.isDefault
-        context.delete(entity)
-        try context.save()
-
-        if wasDefault {
-            let remaining = try context.fetch(FetchDescriptor<AIProviderEntity>(
-                sortBy: [SortDescriptor(\.createdAt, order: .forward)]
-            ))
-            if let first = remaining.first {
-                first.isDefault = true
-                try context.save()
-            }
-        }
-
-        try refreshCache()
+        try await saveProviders(providers)
+        try await refreshCache()
         print("[AIProviderStore] Deleted provider id: \(id)")
     }
 
@@ -428,17 +370,18 @@ public actor AIProviderStore {
         value: String,
         toProviderId providerId: UUID
     ) async throws -> APIKey {
-        guard var provider = try getProviders().first(where: { $0.id == providerId }) else {
+        var providers = try await getProviders()
+        guard let idx = providers.firstIndex(where: { $0.id == providerId }) else {
             throw AIProviderStoreError.notFound(providerId)
         }
 
-        let newKey = APIKey(name: name.isEmpty ? "Key \(provider.keys.count + 1)" : name)
+        let newKey = APIKey(name: name.isEmpty ? "Key \(providers[idx].keys.count + 1)" : name)
         saveApiKey(value, for: newKey.id)
-        provider.keys.append(newKey)
+        providers[idx].keys.append(newKey)
 
-        try persistProvider(provider)
-        try refreshCache()
-        print("[AIProviderStore] Added key '\(newKey.name)' to provider '\(provider.displayName)'")
+        try await saveProviders(providers)
+        try await refreshCache()
+        print("[AIProviderStore] Added key '\(newKey.name)' to provider '\(providers[idx].displayName)'")
         return newKey
     }
 
@@ -447,69 +390,72 @@ public actor AIProviderStore {
         newValue: String?,
         forProviderId providerId: UUID
     ) async throws {
-        guard var provider = try getProviders().first(where: { $0.id == providerId }) else {
+        var providers = try await getProviders()
+        guard let pIdx = providers.firstIndex(where: { $0.id == providerId }) else {
             throw AIProviderStoreError.notFound(providerId)
         }
-        guard let idx = provider.keys.firstIndex(where: { $0.id == key.id }) else {
+        guard let kIdx = providers[pIdx].keys.firstIndex(where: { $0.id == key.id }) else {
             throw AIProviderStoreError.keyNotFound(key.id)
         }
 
-        provider.keys[idx] = key
+        providers[pIdx].keys[kIdx] = key
         if let value = newValue, !value.isEmpty { saveApiKey(value, for: key.id) }
 
-        try persistProvider(provider)
-        try refreshCache()
-        print("[AIProviderStore] Updated key '\(key.name)' on provider '\(provider.displayName)'")
+        try await saveProviders(providers)
+        try await refreshCache()
+        print("[AIProviderStore] Updated key '\(key.name)'")
     }
 
     public func deleteKey(id keyId: UUID, fromProviderId providerId: UUID) async throws {
-        guard var provider = try getProviders().first(where: { $0.id == providerId }) else {
+        var providers = try await getProviders()
+        guard let idx = providers.firstIndex(where: { $0.id == providerId }) else {
             throw AIProviderStoreError.notFound(providerId)
         }
 
-        provider.keys.removeAll { $0.id == keyId }
+        providers[idx].keys.removeAll { $0.id == keyId }
         deleteKeychainEntry(key: keyId.uuidString)
 
-        try persistProvider(provider)
-        try refreshCache()
-        print("[AIProviderStore] Deleted key \(keyId) from provider '\(provider.displayName)'")
+        try await saveProviders(providers)
+        try await refreshCache()
+        print("[AIProviderStore] Deleted key \(keyId)")
     }
 
     // MARK: - Model Management
 
     public func addModel(_ model: AIModel, toProviderId providerId: UUID) async throws {
-        guard var provider = try getProviders().first(where: { $0.id == providerId }) else {
+        var providers = try await getProviders()
+        guard let idx = providers.firstIndex(where: { $0.id == providerId }) else {
             throw AIProviderStoreError.notFound(providerId)
         }
 
         guard !model.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !provider.models.contains(where: { $0.id == model.id }) else { return }
+              !providers[idx].models.contains(where: { $0.id == model.id }) else { return }
 
-        provider.models.append(model)
-        try persistProvider(provider)
-        try refreshCache()
-        print("[AIProviderStore] Added model '\(model.id)' to provider '\(provider.displayName)'")
+        providers[idx].models.append(model)
+        try await saveProviders(providers)
+        try await refreshCache()
+        print("[AIProviderStore] Added model '\(model.id)' to provider '\(providers[idx].displayName)'")
     }
 
     public func deleteModel(id modelId: String, fromProviderId providerId: UUID) async throws {
-        guard var provider = try getProviders().first(where: { $0.id == providerId }) else {
+        var providers = try await getProviders()
+        guard let idx = providers.firstIndex(where: { $0.id == providerId }) else {
             throw AIProviderStoreError.notFound(providerId)
         }
 
-        provider.models.removeAll { $0.id == modelId }
-        try persistProvider(provider)
-        try refreshCache()
-        print("[AIProviderStore] Deleted model '\(modelId)' from provider '\(provider.displayName)'")
+        providers[idx].models.removeAll { $0.id == modelId }
+        try await saveProviders(providers)
+        try await refreshCache()
+        print("[AIProviderStore] Deleted model '\(modelId)'")
     }
 
     // MARK: - Default
 
     public func setDefault(id: UUID) async throws {
-        let context = ModelContext(modelContainer)
-        let allEntities = try context.fetch(FetchDescriptor<AIProviderEntity>())
-        for entity in allEntities { entity.isDefault = (entity.id == id) }
-        try context.save()
-        try refreshCache()
+        var providers = try await getProviders()
+        for i in providers.indices { providers[i].isDefault = (providers[i].id == id) }
+        try await saveProviders(providers)
+        try await refreshCache()
         print("[AIProviderStore] Default provider set to id: \(id)")
     }
 
@@ -520,22 +466,18 @@ public actor AIProviderStore {
     }
 
     public func hasProviders() async -> Bool {
-        return (try? getProviders().isEmpty == false) ?? false
+        return (try? await getProviders().isEmpty == false) ?? false
     }
 
     // MARK: - Private Helpers
 
-    private func persistProvider(_ provider: AIProvider) throws {
-        let context = ModelContext(modelContainer)
-        let id = provider.id
-        let descriptor = FetchDescriptor<AIProviderEntity>(
-            predicate: #Predicate { $0.id == id }
-        )
-        guard let entity = try context.fetch(descriptor).first else {
+    private func persistProvider(_ provider: AIProvider) async throws {
+        var providers = try await getProviders()
+        guard let idx = providers.firstIndex(where: { $0.id == provider.id }) else {
             throw AIProviderStoreError.notFound(provider.id)
         }
-        entity.update(from: provider)
-        try context.save()
+        providers[idx] = provider
+        try await saveProviders(providers)
     }
 
     private func resolveKeyName(_ name: String, existingKeys: [APIKey]) -> String {
@@ -550,11 +492,7 @@ public actor AIProviderStore {
         return "\(base) \(suffix)"
     }
 
-    /// Builds AIModel list from a RemoteProvider, optionally filtering by selected IDs.
-    private func buildModels(
-        from remote: RemoteProvider,
-        selectedIds: Set<String>?
-    ) -> [AIModel] {
+    private func buildModels(from remote: RemoteProvider, selectedIds: Set<String>?) -> [AIModel] {
         remote.models
             .filter { selectedIds == nil || selectedIds!.contains($0.id) }
             .map { rm in
@@ -567,7 +505,6 @@ public actor AIProviderStore {
             }
     }
 
-    /// Returns the most common protocol among models — used as the provider-level default.
     private func dominantProtocol(in remote: RemoteProvider) -> ProviderProtocol {
         let anthropicCount = remote.models.filter { $0.protocol == "anthropic" }.count
         return anthropicCount > remote.models.count / 2 ? .anthropic : .openai
