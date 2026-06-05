@@ -7,16 +7,15 @@
 //   "<threadId>"  — current task context, session notes
 //
 // STORAGE:
-// All scopes are stored as a single MemoryStorage record in DataStore (Relation.memory).
-// MemoryEntity (@Model) is kept only for DataStoreMigration (DB-02) and will be removed in DB-05.
+// All scopes are stored as a single MemoryStorage record in ChappieDataStore (Relation.memory).
+// ChappieDataStore is the ONLY place that knows about SwiftData — see DataStore.swift.
 //
-// CODABLE COMPATIBILITY CONTRACT (enforced — see DataStore.swift for full rules):
-//   1. Never rename a stored property without adding CodingKeys.
+// CODABLE COMPATIBILITY CONTRACT (never violate — stored JSON must always decode cleanly):
+//   1. Never rename a stored property without adding/updating CodingKeys.
 //   2. Never remove a stored property — mark optional with a default instead.
 //   3. Always give new properties a default value so old records decode cleanly.
 
 import Foundation
-import SwiftData
 
 // MARK: - ActiveMemoryContext
 
@@ -58,7 +57,7 @@ public struct ActiveMemoryContext: Sendable {
 
 // MARK: - MemoryStorage
 
-/// Root payload stored under DataStore.Relation.memory.
+/// Root payload stored under ChappieDataStore.Relation.memory.
 /// Holds all scopes in one Codable struct — one DataStore round-trip loads everything.
 public struct MemoryStorage: Codable, Sendable {
     /// scope string → array of MemoryEntry
@@ -118,47 +117,5 @@ public struct MemoryEntry: Codable, Sendable, Identifiable, Equatable {
         case metadata
         case createdAt  = "created_at"
         case updatedAt  = "updated_at"
-    }
-}
-
-// MARK: - MemoryEntity (legacy — kept for DataStoreMigration only, removed in DB-05)
-
-/// SwiftData container for one memory scope.
-/// DO NOT USE in new code — use MemoryStore + DataStore instead.
-/// Kept alive so DataStoreMigration can read legacy records before DB-05 cleanup.
-@Model
-public final class MemoryEntity {
-
-    public var id: UUID
-    public var scope: String
-    public var entriesJSON: Data
-    public var updatedAt: Date
-
-    public init(id: UUID = UUID(), scope: String, entries: [MemoryEntry] = []) {
-        self.id = id
-        self.scope = scope
-        self.updatedAt = Date()
-        self.entriesJSON = (try? JSONEncoder().encode(entries)) ?? Data()
-    }
-}
-
-// MARK: - MemoryEntity helpers (migration use only)
-
-extension MemoryEntity {
-
-    /// Decodes entries from JSON. Returns empty array on failure.
-    public var entries: [MemoryEntry] {
-        guard !entriesJSON.isEmpty,
-              let decoded = try? JSONDecoder().decode([MemoryEntry].self, from: entriesJSON)
-        else { return [] }
-        return decoded
-    }
-
-    /// Encodes and persists new entries.
-    public func setEntries(_ newEntries: [MemoryEntry]) {
-        if let data = try? JSONEncoder().encode(newEntries) {
-            entriesJSON = data
-            updatedAt = Date()
-        }
     }
 }

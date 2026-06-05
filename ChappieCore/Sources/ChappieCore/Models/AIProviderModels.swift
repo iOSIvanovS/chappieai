@@ -6,6 +6,7 @@
 // ARCHITECTURE: JSON-SERIALIZATION PATTERN
 // AIProvider is a plain Codable struct stored directly in ChappieDataStore as [AIProvider].
 // No SwiftData @Model needed — schema never changes, no migrations ever.
+// ChappieDataStore is the ONLY place that knows about SwiftData — see DataStore.swift.
 //
 // KEYCHAIN STORAGE:
 // API keys are stored in Keychain, NOT in SwiftData.
@@ -35,13 +36,12 @@
 // Thread stores (activeProviderId, activeKeyId, activeModelName) — picks one key+model.
 // Deleting provider or model is always allowed — orphaned threads show a warning banner.
 //
-// CODABLE COMPATIBILITY CONTRACT:
+// CODABLE COMPATIBILITY CONTRACT (never violate — stored JSON must always decode cleanly):
 //   1. Never rename a stored property without adding/updating CodingKeys.
 //   2. Never remove a stored property — mark optional with a default instead.
 //   3. Always give new properties a default value so old records decode cleanly.
 
 import Foundation
-import SwiftData
 
 // MARK: - ProviderProtocol
 
@@ -132,7 +132,7 @@ public struct AIProvider: Codable, Sendable, Identifiable, Equatable, Hashable {
     public var keys: [APIKey]
     public var models: [AIModel]
 
-    /// Whether this provider is the default. Stored inline — replaces AIProviderEntity.isDefault.
+    /// Whether this provider is the default. Stored inline — no separate entity needed.
     /// Old records without this field default to false via decodeIfPresent.
     public var isDefault: Bool
 
@@ -184,51 +184,21 @@ public struct AIProvider: Codable, Sendable, Identifiable, Equatable, Hashable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        id              = try c.decode(UUID.self, forKey: .id)
-        name            = try c.decode(String.self, forKey: .name)
-        baseURL         = try c.decode(String.self, forKey: .baseURL)
-        catalogId       = try c.decodeIfPresent(String.self, forKey: .catalogId)
+        id               = try c.decode(UUID.self, forKey: .id)
+        name             = try c.decode(String.self, forKey: .name)
+        baseURL          = try c.decode(String.self, forKey: .baseURL)
+        catalogId        = try c.decodeIfPresent(String.self, forKey: .catalogId)
         providerProtocol = try c.decodeIfPresent(ProviderProtocol.self, forKey: .providerProtocol) ?? .openai
-        keys            = try c.decodeIfPresent([APIKey].self, forKey: .keys) ?? []
-        models          = try c.decodeIfPresent([AIModel].self, forKey: .models) ?? []
-        let scheme      = try c.decodeIfPresent(AuthScheme.self, forKey: .authScheme)
-        authScheme      = scheme ?? (providerProtocol == .anthropic ? .xApiKey : .bearer)
-        origin          = try c.decodeIfPresent(ProviderOrigin.self, forKey: .origin) ?? .catalog
-        requiresApiKey  = try c.decodeIfPresent(Bool.self, forKey: .requiresApiKey) ?? true
-        iconName        = try c.decodeIfPresent(String.self, forKey: .iconName) ?? "cpu"
-        iconColor       = try c.decodeIfPresent(String.self, forKey: .iconColor)
-        isDefault       = try c.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
+        keys             = try c.decodeIfPresent([APIKey].self, forKey: .keys) ?? []
+        models           = try c.decodeIfPresent([AIModel].self, forKey: .models) ?? []
+        let scheme       = try c.decodeIfPresent(AuthScheme.self, forKey: .authScheme)
+        authScheme       = scheme ?? (providerProtocol == .anthropic ? .xApiKey : .bearer)
+        origin           = try c.decodeIfPresent(ProviderOrigin.self, forKey: .origin) ?? .catalog
+        requiresApiKey   = try c.decodeIfPresent(Bool.self, forKey: .requiresApiKey) ?? true
+        iconName         = try c.decodeIfPresent(String.self, forKey: .iconName) ?? "cpu"
+        iconColor        = try c.decodeIfPresent(String.self, forKey: .iconColor)
+        isDefault        = try c.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
     }
 
     public func hash(into hasher: inout Hasher) { hasher.combine(id) }
-}
-
-// MARK: - AIProviderEntity (legacy — kept for DataStoreMigration only, removed in DB-05)
-
-/// SwiftData entity for persisting AI providers.
-/// DO NOT USE in new code — use AIProviderStore + ChappieDataStore instead.
-/// Kept alive so DataStoreMigration can read legacy records before DB-05 cleanup.
-@Model
-public final class AIProviderEntity {
-
-    public var id: UUID
-    public var json: String
-    public var isDefault: Bool
-    public var createdAt: Date
-
-    public init(provider: AIProvider, isDefault: Bool = false) {
-        self.id = provider.id
-        self.json = (try? String(data: JSONEncoder().encode(provider), encoding: .utf8)) ?? "{}"
-        self.isDefault = isDefault
-        self.createdAt = Date()
-    }
-
-    public func toProvider() -> AIProvider? {
-        guard let data = json.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(AIProvider.self, from: data)
-    }
-
-    public func update(from provider: AIProvider) {
-        self.json = (try? String(data: JSONEncoder().encode(provider), encoding: .utf8)) ?? self.json
-    }
 }

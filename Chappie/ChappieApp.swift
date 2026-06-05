@@ -18,15 +18,12 @@
 //   and the next bind() on the same socket fails with "address already in use".
 //
 // SWIFTDATA SCHEMA:
-// V3 schema — StoredRecord is the permanent @Model going forward.
-// Legacy @Model classes (ThreadEntity, ProjectEntity, MemoryEntity,
-// AIProviderEntity, AppSettings) remain in V3 for migration compatibility.
-// They will be removed in V4 once all Stores are switched to ChappieDataStore (DB-05).
+// V4 schema — StoredRecord is the only @Model. Legacy classes are gone.
+// Full migration chain: V1 → V2 → V3 → V4 (see AppSettingsMigration.swift).
 //
 // DATA MIGRATION:
 // DataStoreMigration.migrateIfNeeded() runs once at startup (before ViewModel init).
-// It reads legacy @Model rows and writes them into ChappieDataStore as StoredRecord payloads.
-// Migration is idempotent — safe to call on every launch.
+// Idempotent — safe to call on every launch. No-ops if data is already in StoredRecord.
 //
 // WINDOW SIZE:
 // .defaultSize(width:height:) sets the initial window size on first launch (EULA screen).
@@ -69,8 +66,6 @@ struct ChappieApp: App {
     private let updaterController: SPUStandardUpdaterController
 
     init() {
-        // startingUpdater: true — Sparkle starts immediately and auto-checks on launch
-        // (controlled by SUEnableAutomaticChecks in Info.plist).
         updaterController = SPUStandardUpdaterController(
             startingUpdater: true,
             updaterDelegate: nil,
@@ -80,22 +75,13 @@ struct ChappieApp: App {
 
     // MARK: - SwiftData Container
 
-    /// SwiftData container for the entire application.
+    /// V4 schema: StoredRecord is the only @Model.
+    /// AppSettingsMigrationPlan handles the full V1→V2→V3→V4 chain automatically.
     ///
-    /// WHY HERE, NOT IN VIEWMODEL:
-    /// ModelContainer is the application's "database". It must live at the App level,
-    /// not in ViewModel, to guarantee a single instance throughout the app's lifetime.
-    /// Creating multiple ModelContainers for the same schema causes conflicts and data loss.
-    ///
-    /// V3 SCHEMA: includes StoredRecord alongside legacy @Model classes.
-    /// AppSettingsMigrationPlan handles the full V1→V2→V3 chain automatically.
-    ///
-    /// ERROR HANDLING:
-    /// If the container cannot be created — this is a critical error (corrupted DB).
-    /// In this case we try to recreate from scratch. This means data loss,
-    /// but it's better than a full app crash.
+    /// ERROR HANDLING: if the container cannot be created (corrupted DB) — recreate from scratch.
+    /// Data loss is acceptable here; better than a full app crash.
     let modelContainer: ModelContainer = {
-        let schema = Schema(AppSettingsSchemaV3.models)
+        let schema = Schema(AppSettingsSchemaV4.models)
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
         do {
@@ -115,10 +101,7 @@ struct ChappieApp: App {
             )
 
             do {
-                return try ModelContainer(
-                    for: schema,
-                    configurations: [recoveryConfig]
-                )
+                return try ModelContainer(for: schema, configurations: [recoveryConfig])
             } catch {
                 fatalError("[ChappieApp] Critical: cannot create ModelContainer: \(error)")
             }
@@ -131,11 +114,8 @@ struct ChappieApp: App {
         WindowGroup {
             ContentView()
                 .environment(viewModel)
-                // Pass updater into environment so SettingsView can trigger manual checks.
                 .environment(\.sparkleUpdater, updaterController.updater)
                 .onAppear {
-                    // Run data migration before ViewModel initializes its Stores.
-                    // Migration is idempotent — safe on every launch.
                     let container = modelContainer
                     Task {
                         let dataStore = ChappieDataStore(modelContainer: container)
@@ -144,8 +124,6 @@ struct ChappieApp: App {
                             dataStore: dataStore
                         )
                         await migration.migrateIfNeeded()
-
-                        // ViewModel gets the container after migration completes.
                         viewModel.setModelContainer(container)
                     }
                 }
@@ -159,8 +137,6 @@ struct ChappieApp: App {
                 )
         }
         .modelContainer(modelContainer)
-        // 480×600 — compact dialog size for EULA on first launch.
-        // After acceptance the user freely resizes; macOS remembers the last size/position.
         .defaultSize(width: 480, height: 600)
         .defaultPosition(.center)
         .commands {
@@ -175,8 +151,6 @@ struct ChappieApp: App {
 
 // MARK: - Sparkle Environment Key
 
-// Custom EnvironmentKey to pass SPUUpdater down the view hierarchy.
-// WHY: avoids passing updaterController manually through every view init.
 private struct SparkleUpdaterKey: EnvironmentKey {
     static let defaultValue: SPUUpdater? = nil
 }
@@ -190,22 +164,17 @@ extension EnvironmentValues {
 
 // MARK: - App Delegate
 
-/// Application delegate for handling macOS system events.
 final class ChappieAppDelegate: NSObject, NSApplicationDelegate {
 
-    /// Called by the system immediately before the application terminates.
-    /// We kill the ChappieMCP child process here.
-    ///
-    /// WHY IMPORTANT:
-    /// If we don't explicitly terminate the helper — it remains in memory as an orphan process.
-    /// On the next app launch, bind() on the same socket fails with "address already in use".
+    /// Kill the ChappieMCP child process before the app terminates.
+    /// Without this — the helper stays alive as an orphan and the next launch
+    /// fails with "address already in use" on the Unix socket.
     func applicationWillTerminate(_ notification: Notification) {
         Task { @MainActor in
             MCPHelperLauncher.shared.terminateHelper()
         }
     }
 
-    /// Standard macOS behavior: closing the last window terminates the app.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return true
     }

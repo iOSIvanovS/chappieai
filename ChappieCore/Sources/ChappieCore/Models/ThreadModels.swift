@@ -3,65 +3,22 @@
 //
 // Data models for the multi-thread system.
 //
-// JSON SERIALIZATION PRINCIPLE:
-// SwiftData stores only primitives and Data. Complex objects are serialized via JSONEncoder
-// and stored as Data — schema stays stable, only Codable structs evolve.
+// STORAGE:
+// All thread data is stored via ChappieDataStore — the only place that knows about SwiftData.
+// ThreadPayload (defined in ThreadStore.swift) is the persisted Codable struct.
+// ThreadMetadata is the runtime Sendable DTO passed across actor boundaries.
+// Messages are stored separately under Relation.threadMessages(uuid) as raw JSON Data.
 //
-// NO DEPENDENCY ON ChatMessage:
-// ChatMessage lives in the UI target. ChappieCore stores messagesJSON: Data and lets
-// ChappieViewModel handle serialization/deserialization.
+// CODABLE COMPATIBILITY CONTRACT (never violate — stored JSON must always decode cleanly):
+//   1. Never rename a stored property without adding/updating CodingKeys.
+//   2. Never remove a stored property — mark optional with a default instead.
+//   3. Always give new properties a default value so old records decode cleanly.
 
 import Foundation
-import SwiftData
-
-// MARK: - ThreadEntity
-
-/// SwiftData record for a single thread.
-///
-/// WHY ONLY PRIMITIVES AND DATA: SwiftData has limited support for custom Codable types in @Model.
-/// Storing complex structs directly causes migration issues — JSON-in-Data avoids this entirely.
-///
-/// WHY @Model FINAL CLASS: SwiftData requires reference types for change tracking via @Observable.
-@Model
-public final class ThreadEntity {
-
-    public var id: UUID
-    public var title: String
-    public var createdAt: Date
-    /// Used for sorting — most recently active at top.
-    public var updatedAt: Date
-
-    /// [ChatMessage] serialized via JSONEncoder. UI target owns the type.
-    public var messagesJSON: Data
-
-    /// ThreadSettings serialized via JSONEncoder.
-    public var settingsJSON: Data
-
-    /// [UUID] of projects bound to this thread, serialized via JSONEncoder.
-    ///
-    /// WHY UUID LIST, NOT SwiftData RELATIONSHIP:
-    /// Simpler than a typed relationship and avoids cascading delete complexity.
-    public var projectBindingsJSON: Data
-
-    public init(
-        id: UUID = UUID(),
-        title: String,
-        settings: ThreadSettings = ThreadSettings(),
-        projectIds: [UUID] = []
-    ) {
-        self.id = id
-        self.title = title
-        self.createdAt = Date()
-        self.updatedAt = Date()
-        self.messagesJSON = "[]".data(using: .utf8) ?? Data()
-        self.settingsJSON = (try? JSONEncoder().encode(settings)) ?? Data()
-        self.projectBindingsJSON = (try? JSONEncoder().encode(projectIds)) ?? Data()
-    }
-}
 
 // MARK: - ThreadSettings
 
-/// Per-thread configuration — serialized to JSON and stored in ThreadEntity.settingsJSON.
+/// Per-thread configuration — serialized to JSON and stored inside ThreadPayload.settingsJSON.
 ///
 /// WHY STRUCT, NOT @Model: Settings always belong to a thread, never standalone.
 public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
@@ -88,7 +45,7 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
     /// UUID of the active API key for this thread. nil = use first available key from the provider.
     ///
     /// WHY UUID, NOT KEY VALUE: thread stores only the reference — actual secret loaded from Keychain.
-    /// Tread isolation: each thread carries its own key reference, never shared across threads.
+    /// Thread isolation: each thread carries its own key reference, never shared across threads.
     public var activeKeyId: UUID?
 
     /// Model name for this thread. nil = no model selected.
@@ -115,10 +72,10 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
 
 /// Sendable DTO for passing thread data from actor to UI.
 ///
-/// WHY NOT ThreadEntity DIRECTLY:
-/// ThreadEntity is a SwiftData @Model bound to a ModelContext — not Sendable.
-/// Passing it across actor boundaries violates Swift 6 concurrency rules.
-/// ThreadMetadata contains only value types — fully Sendable.
+/// WHY NOT ThreadPayload DIRECTLY:
+/// ThreadPayload stores settings as raw JSON Data — not ergonomic for UI.
+/// ThreadMetadata decodes settings eagerly and exposes typed values.
+/// Keeping them separate makes the persistence/UI boundary explicit.
 public struct ThreadMetadata: Sendable, Identifiable, Hashable {
 
     public let id: UUID
@@ -130,31 +87,7 @@ public struct ThreadMetadata: Sendable, Identifiable, Hashable {
     /// Included so UI can show settings without an extra ThreadStore call.
     public let settings: ThreadSettings
 
-    /// Creates ThreadMetadata from ThreadEntity (inside actor only).
-    init(from entity: ThreadEntity) {
-        self.id = entity.id
-        self.title = entity.title
-        self.createdAt = entity.createdAt
-        self.updatedAt = entity.updatedAt
-
-        if !entity.projectBindingsJSON.isEmpty,
-           let ids = try? JSONDecoder().decode([UUID].self, from: entity.projectBindingsJSON) {
-            self.projectIds = ids
-        } else {
-            self.projectIds = []
-        }
-
-        if !entity.settingsJSON.isEmpty,
-           let settings = try? JSONDecoder().decode(ThreadSettings.self, from: entity.settingsJSON) {
-            self.settings = settings
-        } else {
-            self.settings = ThreadSettings()
-        }
-    }
-
     /// Public memberwise init — for Previews and tests.
-    ///
-    /// WHY EXPLICIT PUBLIC INIT: Swift auto-generates memberwise init as internal.
     public init(
         id: UUID = UUID(),
         title: String,

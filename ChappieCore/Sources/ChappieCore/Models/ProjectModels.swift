@@ -1,39 +1,20 @@
 // ProjectModels.swift
 // ChappieCore
 //
-// SwiftData entity + Codable settings for projects.
-// Security-scoped bookmark persists sandbox access across app restarts.
-// ProjectSettings serialized to JSON in ProjectEntity.settingsJSON.
+// Domain models for projects.
+//
+// STORAGE:
+// All project data is stored via ChappieDataStore — the only place that knows about SwiftData.
+// ProjectPayload (defined in ProjectStore.swift) is the persisted Codable struct.
+// Security-scoped bookmarks are stored separately under Relation.projectBookmark(uuid).
+// ChappieDataStore is the ONLY place that knows about SwiftData — see DataStore.swift.
+//
+// CODABLE COMPATIBILITY CONTRACT (never violate — stored JSON must always decode cleanly):
+//   1. Never rename a stored property without adding/updating CodingKeys.
+//   2. Never remove a stored property — mark optional with a default instead.
+//   3. Always give new properties a default value so old records decode cleanly.
 
 import Foundation
-import SwiftData
-
-// MARK: - ProjectEntity
-
-/// SwiftData record: one project = one workspace folder + settings.
-/// A project can be attached to multiple threads simultaneously.
-@Model
-public final class ProjectEntity {
-
-    public var id: UUID
-    public var displayName: String
-    public var bookmarkData: Data   // security-scoped bookmark, not a raw path
-    public var createdAt: Date
-    public var settingsJSON: Data   // encoded ProjectSettings
-
-    public init(
-        id: UUID = UUID(),
-        displayName: String,
-        bookmarkData: Data,
-        settings: ProjectSettings = ProjectSettings()
-    ) {
-        self.id = id
-        self.displayName = displayName
-        self.bookmarkData = bookmarkData
-        self.createdAt = Date()
-        self.settingsJSON = (try? JSONEncoder().encode(settings)) ?? Data()
-    }
-}
 
 // MARK: - AgentRole
 
@@ -175,48 +156,48 @@ public enum ProjectLanguage: String, Codable, Sendable, CaseIterable {
 /// Controls which env-specific tools are injected into the system prompt.
 /// .unknown means not yet detected or selected.
 public enum DevEnvironment: String, Codable, Sendable, CaseIterable {
-    case unknown        = "unknown"
-    case xcode          = "xcode"
-    case nodejs         = "nodejs"
-    case python         = "python"
-    case go             = "go"
-    case rust           = "rust"
-    case java           = "java"
-    case kotlin         = "kotlin"
-    case flutter        = "flutter"
+    case unknown         = "unknown"
+    case xcode           = "xcode"
+    case nodejs          = "nodejs"
+    case python          = "python"
+    case go              = "go"
+    case rust            = "rust"
+    case java            = "java"
+    case kotlin          = "kotlin"
+    case flutter         = "flutter"
     case reacttypescript = "react_typescript"
-    case dotnet         = "dotnet"
+    case dotnet          = "dotnet"
 
     public var displayName: String {
         switch self {
-        case .unknown:        return "Не определена"
-        case .xcode:          return "Xcode (Swift / Obj-C)"
-        case .nodejs:         return "Node.js"
-        case .python:         return "Python"
-        case .go:             return "Go"
-        case .rust:           return "Rust"
-        case .java:           return "Java"
-        case .kotlin:         return "Kotlin (Android)"
-        case .flutter:        return "Flutter (Dart)"
+        case .unknown:         return "Не определена"
+        case .xcode:           return "Xcode (Swift / Obj-C)"
+        case .nodejs:          return "Node.js"
+        case .python:          return "Python"
+        case .go:              return "Go"
+        case .rust:            return "Rust"
+        case .java:            return "Java"
+        case .kotlin:          return "Kotlin (Android)"
+        case .flutter:         return "Flutter (Dart)"
         case .reacttypescript: return "React / TypeScript"
-        case .dotnet:         return ".NET (C#)"
+        case .dotnet:          return ".NET (C#)"
         }
     }
 
     /// Marker files used by AI to auto-detect the environment from a file list.
     public var detectionHints: [String] {
         switch self {
-        case .unknown:        return []
-        case .xcode:          return [".xcodeproj", ".xcworkspace", ".swift"]
-        case .nodejs:         return ["package.json", "node_modules", ".nvmrc"]
-        case .python:         return ["requirements.txt", "pyproject.toml", "setup.py", ".py"]
-        case .go:             return ["go.mod", "go.sum", ".go"]
-        case .rust:           return ["Cargo.toml", "Cargo.lock", ".rs"]
-        case .java:           return ["pom.xml", "build.gradle", ".java"]
-        case .kotlin:         return ["build.gradle.kts", "AndroidManifest.xml", ".kt"]
-        case .flutter:        return ["pubspec.yaml", "pubspec.lock", ".dart"]
+        case .unknown:         return []
+        case .xcode:           return [".xcodeproj", ".xcworkspace", ".swift"]
+        case .nodejs:          return ["package.json", "node_modules", ".nvmrc"]
+        case .python:          return ["requirements.txt", "pyproject.toml", "setup.py", ".py"]
+        case .go:              return ["go.mod", "go.sum", ".go"]
+        case .rust:            return ["Cargo.toml", "Cargo.lock", ".rs"]
+        case .java:            return ["pom.xml", "build.gradle", ".java"]
+        case .kotlin:          return ["build.gradle.kts", "AndroidManifest.xml", ".kt"]
+        case .flutter:         return ["pubspec.yaml", "pubspec.lock", ".dart"]
         case .reacttypescript: return ["tsconfig.json", "vite.config.ts", "next.config.ts", ".tsx"]
-        case .dotnet:         return [".csproj", ".sln", ".cs"]
+        case .dotnet:          return [".csproj", ".sln", ".cs"]
         }
     }
 
@@ -252,7 +233,7 @@ public enum DevEnvironment: String, Codable, Sendable, CaseIterable {
 
 // MARK: - ProjectSettings
 
-/// Agent rights and configuration for a project. Serialized to JSON in ProjectEntity.
+/// Agent rights and configuration for a project. Serialized to JSON inside ProjectPayload.settingsJSON.
 /// Safe defaults: agentRole = .advisor, everything else = off/none.
 public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
 
@@ -325,7 +306,6 @@ extension ProjectSettings {
         lines.append("- Programming project: \(isProgrammingProject ? "yes" : "no")")
 
         if isProgrammingProject {
-            // Dev environment line
             if devEnvironment != .unknown {
                 lines.append("- Dev environment: \(devEnvironment.displayName)")
             }
@@ -376,47 +356,11 @@ extension ProjectSettings {
     }
 }
 
-// MARK: - ProjectEntity Helpers
-
-extension ProjectEntity {
-
-    /// Decodes settings from JSON. Returns safe defaults on failure.
-    public var settings: ProjectSettings {
-        guard !settingsJSON.isEmpty,
-              let decoded = try? JSONDecoder().decode(ProjectSettings.self, from: settingsJSON)
-        else {
-            return ProjectSettings()
-        }
-        return decoded
-    }
-
-    /// Resolves the security-scoped bookmark to a workspace URL.
-    /// Caller MUST call url.stopAccessingSecurityScopedResource() when done.
-    public func resolveWorkspaceURL() -> URL? {
-        var isStale = false
-        guard let url = try? URL(
-            resolvingBookmarkData: bookmarkData,
-            options: .withSecurityScope,
-            relativeTo: nil,
-            bookmarkDataIsStale: &isStale
-        ) else {
-            print("[ProjectModels] ⚠️ Failed to resolve bookmark for '\(displayName)'")
-            return nil
-        }
-
-        if isStale {
-            print("[ProjectModels] ⚠️ Stale bookmark for '\(displayName)'. Re-authorization needed.")
-        }
-
-        return url
-    }
-}
-
 // MARK: - ProjectMetadata
 
 /// Sendable DTO for passing project data across the actor boundary.
 ///
-/// isUnavailable: runtime-only flag, NOT persisted in SwiftData.
+/// isUnavailable: runtime-only flag, NOT persisted in ChappieDataStore.
 /// Set to true by syncFileSystemForActiveThread() when the folder is missing or in Trash.
 /// Cleared to false when the folder becomes accessible again on next sync.
 /// WHY: ProjectStore is the source of truth for persistent data — transient
@@ -429,17 +373,8 @@ public struct ProjectMetadata: Sendable, Identifiable, Hashable {
     public let settings: ProjectSettings
 
     /// Runtime-only: true when the project folder is missing, in Trash, or otherwise inaccessible.
-    /// Not stored in SwiftData — re-evaluated on every syncFileSystemForActiveThread() call.
+    /// Not stored — re-evaluated on every syncFileSystemForActiveThread() call.
     public var isUnavailable: Bool
-
-    /// Internal init from entity — stays inside the actor.
-    init(from entity: ProjectEntity) {
-        self.id = entity.id
-        self.displayName = entity.displayName
-        self.createdAt = entity.createdAt
-        self.settings = entity.settings
-        self.isUnavailable = false
-    }
 
     /// Public init for Previews, tests, and direct construction.
     public init(
