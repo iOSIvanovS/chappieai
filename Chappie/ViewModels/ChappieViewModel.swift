@@ -146,14 +146,16 @@ final class ChappieViewModel {
     var cachedLastActiveThreadId: UUID?
     var _activeThreadSession: ThreadSession?
 
-    // MARK: - Dev environment
+    // MARK: - Project env map
 
-    /// Active dev environment from the first programming project in the current thread.
-    /// Used to pass the correct environment to MCPHelperLauncher on workspace changes.
-    var activeDevEnvironment: DevEnvironment {
-        activeProjects
-            .first(where: { $0.settings.isProgrammingProject && $0.settings.devEnvironment != .unknown })?
-            .settings.devEnvironment ?? .unknown
+    /// Map of project display name → DevEnvironment rawValue for all programming projects in the thread.
+    /// Passed to MCPHelperLauncher so MCP can route build_project/run_tests per project correctly.
+    var activeProjectEnvMap: [String: String] {
+        Dictionary(
+            uniqueKeysWithValues: activeProjects
+                .filter { $0.settings.isProgrammingProject && $0.settings.devEnvironment != .unknown }
+                .map { ($0.displayName, $0.settings.devEnvironment.rawValue) }
+        )
     }
 
     // MARK: - Init
@@ -300,7 +302,7 @@ final class ChappieViewModel {
         workspaceURL = url
         initializeServices(for: url)
         saveWorkspaceWithSecurityScope(url)
-        MCPHelperLauncher.shared.restartWithWorkspace(url, environment: activeDevEnvironment)
+        MCPHelperLauncher.shared.restartWithWorkspace(url, projectEnvMap: activeProjectEnvMap)
 
         if messages.isEmpty {
             messages.append(.message(isUser: false, text: "Проект подключен. Я готов к работе!"))
@@ -377,13 +379,13 @@ final class ChappieViewModel {
                 self.initializeServices(for: url)
             }
             if isStale { saveWorkspaceWithSecurityScope(url) }
-            MCPHelperLauncher.shared.launch(workspacePath: url.path, environment: activeDevEnvironment)
+            MCPHelperLauncher.shared.launch(workspacePath: url.path, projectEnvMap: activeProjectEnvMap)
         } else if let url = try? URL(resolvingBookmarkData: data, options: [], relativeTo: nil, bookmarkDataIsStale: &isStale) {
             await MainActor.run {
                 self.workspaceURL = url
                 self.initializeServices(for: url)
             }
-            MCPHelperLauncher.shared.launch(workspacePath: url.path, environment: activeDevEnvironment)
+            MCPHelperLauncher.shared.launch(workspacePath: url.path, projectEnvMap: activeProjectEnvMap)
         }
     }
 }

@@ -10,14 +10,18 @@
 //
 // WHY WE PASS ARGUMENTS INSTEAD OF HARDCODING IN HELPER:
 // Parent (Chappie.app) is the single source of truth about workspace path,
-// socket path, and dev environment. Helper should not independently decide — simplifies
-// diagnostics and allows centralized changes.
+// socket path, and project env map. Helper should not independently decide.
 //
 // LIFECYCLE:
-// 1. ChappieApp.onAppear → MCPHelperLauncher.shared.launch(workspacePath:environment:)
-// 2. Launcher starts Process with arguments: [workspacePath, socketPath, envRawValue]
+// 1. ChappieApp.onAppear → MCPHelperLauncher.shared.launch(workspacePath:projectEnvMap:)
+// 2. Launcher starts Process with arguments: [workspacePath, socketPath, projectEnvMapJSON]
 // 3. MCPToolBridge uses the same socketPath to connect
 // 4. On Chappie.app exit → terminateHelper() kills child process
+//
+// PROJECT ENV MAP:
+// JSON string {"ProjectName": "envRawValue", ...} passed as argv[3].
+// MCP uses it to route build_project/run_tests to the correct env per project.
+// Launcher restarts the helper whenever the map changes (project added/removed/env changed).
 //
 // WHY @Observable, NOT ObservableObject:
 // In Swift 6 / macOS 26, @Observable macro is preferred.
@@ -53,7 +57,7 @@ final class MCPHelperLauncher {
 
     private var helperProcess: Process?
     private var currentWorkspacePath: String?
-    private var currentEnvironment: DevEnvironment = .unknown
+    private var currentProjectEnvMap: [String: String] = [:]
 
     // MARK: - Init
 
@@ -63,32 +67,32 @@ final class MCPHelperLauncher {
 
     // MARK: - Public Interface
 
-    /// Launches ChappieMCP helper with the given workspace path and dev environment.
+    /// Launches ChappieMCP helper with the given workspace path and project→env map.
     ///
     /// DOUBLE-LAUNCH SAFETY:
-    /// If helper is already running with the same path AND same environment — do nothing.
+    /// If helper is already running with the same path AND same map — do nothing.
     /// If either changed — restart.
-    func launch(workspacePath: String? = nil, environment: DevEnvironment = .unknown) {
+    func launch(workspacePath: String? = nil, projectEnvMap: [String: String] = [:]) {
         let path = workspacePath ?? FileManager.default.currentDirectoryPath
 
         if let process = helperProcess, process.isRunning,
-           currentWorkspacePath == path, currentEnvironment == environment {
-            print("[MCPHelperLauncher] ℹ️ Helper already running for: \(path) [\(environment.rawValue)]")
+           currentWorkspacePath == path, currentProjectEnvMap == projectEnvMap {
+            print("[MCPHelperLauncher] ℹ️ Helper already running for: \(path) \(projectEnvMap)")
             return
         }
 
         if let process = helperProcess, process.isRunning {
-            print("[MCPHelperLauncher] 🔄 Restarting helper: \(path) [\(environment.rawValue)]")
+            print("[MCPHelperLauncher] 🔄 Restarting helper: \(path) \(projectEnvMap)")
             process.terminate()
             helperProcess = nil
         }
 
-        startHelper(workspacePath: path, environment: environment)
+        startHelper(workspacePath: path, projectEnvMap: projectEnvMap)
     }
 
-    /// Restarts helper with a new workspace path and optional dev environment.
-    func restartWithWorkspace(_ url: URL, environment: DevEnvironment = .unknown) {
-        launch(workspacePath: url.path, environment: environment)
+    /// Restarts helper with a new workspace path and project→env map.
+    func restartWithWorkspace(_ url: URL, projectEnvMap: [String: String] = [:]) {
+        launch(workspacePath: url.path, projectEnvMap: projectEnvMap)
     }
 
     func terminateHelper() {
@@ -102,7 +106,7 @@ final class MCPHelperLauncher {
 
     // MARK: - Private Launch Logic
 
-    private func startHelper(workspacePath: String, environment: DevEnvironment) {
+    private func startHelper(workspacePath: String, projectEnvMap: [String: String]) {
         guard let helperURL = Bundle.main.url(forAuxiliaryExecutable: "ChappieMCP") else {
             let fallbackURL = Bundle.main.bundleURL
                 .appendingPathComponent("Contents")
@@ -110,7 +114,7 @@ final class MCPHelperLauncher {
                 .appendingPathComponent("ChappieMCP")
 
             if FileManager.default.fileExists(atPath: fallbackURL.path) {
-                startProcess(at: fallbackURL, workspacePath: workspacePath, environment: environment)
+                startProcess(at: fallbackURL, workspacePath: workspacePath, projectEnvMap: projectEnvMap)
             } else {
                 print("[MCPHelperLauncher] ❌ ChappieMCP binary not found in bundle!")
                 status = .failed("Binary not found in bundle")
@@ -118,14 +122,23 @@ final class MCPHelperLauncher {
             return
         }
 
-        startProcess(at: helperURL, workspacePath: workspacePath, environment: environment)
+        startProcess(at: helperURL, workspacePath: workspacePath, projectEnvMap: projectEnvMap)
     }
 
-    private func startProcess(at url: URL, workspacePath: String, environment: DevEnvironment) {
+    private func startProcess(at url: URL, workspacePath: String, projectEnvMap: [String: String]) {
+        // Serialize map to JSON for argv[3].
+        let mapJSON: String
+        if let data = try? JSONEncoder().encode(projectEnvMap),
+           let str = String(data: data, encoding: .utf8) {
+            mapJSON = str
+        } else {
+            mapJSON = "{}"
+        }
+
         let process = Process()
         process.executableURL = url
-        // argv[1] = workspacePath, argv[2] = socketPath, argv[3] = devEnvironment rawValue
-        process.arguments = [workspacePath, socketPath, environment.rawValue]
+        // argv[1] = workspacePath, argv[2] = socketPath, argv[3] = projectEnvMap JSON
+        process.arguments = [workspacePath, socketPath, mapJSON]
 
         // Use Pipe instead of FileHandle.standardOutput/standardError.
         // WHY: passing FileHandle.standardOutput directly causes PTY errors on macOS 26.5.
@@ -165,12 +178,12 @@ final class MCPHelperLauncher {
             try process.run()
             helperProcess = process
             currentWorkspacePath = workspacePath
-            currentEnvironment = environment
+            currentProjectEnvMap = projectEnvMap
             status = .running
             print("[MCPHelperLauncher] ✅ ChappieMCP started (PID: \(process.processIdentifier))")
             print("[MCPHelperLauncher] 📁 Workspace: \(workspacePath)")
             print("[MCPHelperLauncher] 🔌 Socket:    \(socketPath)")
-            print("[MCPHelperLauncher] 🛠️  Env:       \(environment.rawValue)")
+            print("[MCPHelperLauncher] 🗺️  Projects:  \(projectEnvMap.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ", "))")
         } catch {
             print("[MCPHelperLauncher] ❌ Failed to start helper: \(error)")
             status = .failed(error.localizedDescription)

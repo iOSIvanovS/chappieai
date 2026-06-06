@@ -2,7 +2,13 @@
 //
 // WHY THIS FILE:
 // Implements build_project, run_tests, read_build_log tools for all supported dev environments.
-// Routes each command to the correct shell tool based on the active DevEnvironment.
+// Routes each command to the correct shell tool based on the DevEnvironment of the target project.
+//
+// MULTI-PROJECT ROUTING:
+// Each tool call carries a "project" argument (project display name).
+// BuildTools looks up the project's devEnvironment from the projectEnvMap passed at init.
+// This makes build_project/run_tests deterministic per project even when multiple projects
+// with different environments are attached to the same thread.
 //
 // XCODE-SPECIFIC NOTES:
 // ChappieCoreTests is an Xcode Unit Test Bundle (target in Chappie.xcodeproj), NOT an SPM testTarget.
@@ -54,90 +60,124 @@ private final class DataBox: @unchecked Sendable {
 // MARK: - BuildTools
 
 /// Build and test tools router. Delegates to env-specific shell commands.
+/// Resolves the target project's DevEnvironment from projectEnvMap at call time.
 final class BuildTools: Sendable {
 
     private let projectPath: String
-    private let environment: DevEnvironment
+
+    /// Map of project display name → DevEnvironment rawValue.
+    /// Populated from CLI argv[3] JSON: {"ProjectA": "xcode", "ProjectB": "python"}.
+    private let projectEnvMap: [String: String]
 
     /// Shared log file path — written by build/test, read by read_build_log.
     private var buildLogPath: String {
         projectPath + "/.build_log.txt"
     }
 
-    init(projectPath: String, environment: DevEnvironment) {
+    init(projectPath: String, projectEnvMap: [String: String]) {
         self.projectPath = projectPath
-        self.environment = environment
+        self.projectEnvMap = projectEnvMap
     }
 
     // MARK: - Public tools
 
-    func build() async -> ToolResult {
-        switch environment {
+    /// Resolves DevEnvironment for the given project name.
+    /// Returns .unknown if the project is not in the map or the rawValue is unrecognized.
+    private func environment(for projectName: String?) -> DevEnvironment {
+        guard let name = projectName, !name.isEmpty,
+              let rawValue = projectEnvMap[name] else {
+            // Single-project fallback: if map has exactly one entry, use it.
+            if projectEnvMap.count == 1, let rawValue = projectEnvMap.values.first {
+                return DevEnvironment(rawValue: rawValue) ?? .unknown
+            }
+            return .unknown
+        }
+        return DevEnvironment(rawValue: rawValue) ?? .unknown
+    }
+
+    func build(projectName: String?) async -> ToolResult {
+        let env = environment(for: projectName)
+        let label = "build_project[\(projectName ?? "?")]"
+
+        switch env {
         case .xcode:
             return await runXcodebuild(
                 args: ["-project", xcodeProjectName(), "-scheme", xcodeAppScheme(),
                        "-configuration", "Debug", "-destination", "platform=macOS", "build"],
-                label: "build_project"
+                label: label,
+                env: env
             )
         case .nodejs:
-            return await runShell("npm run build", label: "build_project")
+            return await runShell("npm run build", label: label, env: env)
         case .go:
-            return await runShell("go build ./...", label: "build_project")
+            return await runShell("go build ./...", label: label, env: env)
         case .rust:
-            return await runShell("cargo build", label: "build_project")
+            return await runShell("cargo build", label: label, env: env)
         case .java:
-            return await runShell(mavenOrGradle(maven: "mvn compile", gradle: "gradle build"), label: "build_project")
+            return await runShell(mavenOrGradle(maven: "mvn compile", gradle: "gradle build"), label: label, env: env)
         case .kotlin:
-            return await runShell(gradleWrapper("build"), label: "build_project")
+            return await runShell(gradleWrapper("build"), label: label, env: env)
         case .flutter:
-            return await runShell("flutter build", label: "build_project")
+            return await runShell("flutter build", label: label, env: env)
         case .dotnet:
-            return await runShell("dotnet build", label: "build_project")
-        case .python, .reacttypescript, .unknown:
-            // Python and React/TS have no compile step — build_project is not in their specificTools.
-            return .failure("build_project is not available for \(environment.rawValue) environment.")
+            return await runShell("dotnet build", label: label, env: env)
+        case .python, .reacttypescript:
+            return .failure("build_project is not available for \(env.rawValue) — no compile step.")
+        case .unknown:
+            let available = projectEnvMap.keys.sorted().joined(separator: ", ")
+            let hint = available.isEmpty
+                ? "No projects are configured."
+                : "Available projects: \(available). Pass 'project' argument with one of these names."
+            return .failure("build_project: cannot resolve dev environment for project '\(projectName ?? "(none)")'. \(hint)")
         }
     }
 
-    func runTests(target: String?) async -> ToolResult {
-        switch environment {
+    func runTests(projectName: String?, target: String?) async -> ToolResult {
+        let env = environment(for: projectName)
+        let label = "run_tests[\(projectName ?? "?")]"
+
+        switch env {
         case .xcode:
             var args = ["-project", xcodeProjectName(), "-scheme", xcodeTestScheme(),
                         "-destination", "platform=macOS", "test"]
             if let target, !target.isEmpty {
                 args.append(contentsOf: ["-only-testing", target])
             }
-            return await runXcodebuild(args: args, label: "run_tests")
+            return await runXcodebuild(args: args, label: label, env: env)
         case .nodejs:
             let pattern = target.map { " -- \($0)" } ?? ""
-            return await runShell("npm test\(pattern)", label: "run_tests")
+            return await runShell("npm test\(pattern)", label: label, env: env)
         case .python:
             let pattern = target ?? ""
             let cmd = pattern.isEmpty ? "python -m pytest" : "python -m pytest \(pattern)"
-            return await runShell(cmd, label: "run_tests")
+            return await runShell(cmd, label: label, env: env)
         case .go:
             let pkg = target ?? "./..."
-            return await runShell("go test \(pkg)", label: "run_tests")
+            return await runShell("go test \(pkg)", label: label, env: env)
         case .rust:
             let filter = target.map { " \($0)" } ?? ""
-            return await runShell("cargo test\(filter)", label: "run_tests")
+            return await runShell("cargo test\(filter)", label: label, env: env)
         case .java:
             let cls = target.map { " -Dtest=\($0)" } ?? ""
-            return await runShell(mavenOrGradle(maven: "mvn test\(cls)", gradle: "gradle test\(cls)"), label: "run_tests")
+            return await runShell(mavenOrGradle(maven: "mvn test\(cls)", gradle: "gradle test\(cls)"), label: label, env: env)
         case .kotlin:
             let cls = target.map { " --tests \($0)" } ?? ""
-            return await runShell(gradleWrapper("test\(cls)"), label: "run_tests")
+            return await runShell(gradleWrapper("test\(cls)"), label: label, env: env)
         case .flutter:
             let file = target.map { " \($0)" } ?? ""
-            return await runShell("flutter test\(file)", label: "run_tests")
+            return await runShell("flutter test\(file)", label: label, env: env)
         case .reacttypescript:
             let pattern = target.map { " \($0)" } ?? ""
-            return await runShell("npm test\(pattern)", label: "run_tests")
+            return await runShell("npm test\(pattern)", label: label, env: env)
         case .dotnet:
             let proj = target.map { " \($0)" } ?? ""
-            return await runShell("dotnet test\(proj)", label: "run_tests")
+            return await runShell("dotnet test\(proj)", label: label, env: env)
         case .unknown:
-            return .failure("run_tests is not available: dev environment is not set.")
+            let available = projectEnvMap.keys.sorted().joined(separator: ", ")
+            let hint = available.isEmpty
+                ? "No projects are configured."
+                : "Available projects: \(available). Pass 'project' argument with one of these names."
+            return .failure("run_tests: cannot resolve dev environment for project '\(projectName ?? "(none)")'. \(hint)")
         }
     }
 
@@ -153,13 +193,11 @@ final class BuildTools: Sendable {
 
     /// Finds the first .xcodeproj in the project directory.
     private func xcodeProjectName() -> String {
-        let url = URL(fileURLWithPath: projectPath)
-        if let items = try? FileManager.default.contentsOfDirectory(atPath: projectPath) {
-            if let proj = items.first(where: { $0.hasSuffix(".xcodeproj") }) {
-                return proj
-            }
+        if let items = try? FileManager.default.contentsOfDirectory(atPath: projectPath),
+           let proj = items.first(where: { $0.hasSuffix(".xcodeproj") }) {
+            return proj
         }
-        return url.lastPathComponent + ".xcodeproj"
+        return URL(fileURLWithPath: projectPath).lastPathComponent + ".xcodeproj"
     }
 
     /// Derives the main app scheme name from the project file name.
@@ -167,20 +205,18 @@ final class BuildTools: Sendable {
         xcodeProjectName().replacingOccurrences(of: ".xcodeproj", with: "")
     }
 
-    /// Derives the test scheme: AppName + "Tests" (e.g. "ChappieCoreTests").
+    /// Derives the test scheme: AppName + "CoreTests" (e.g. "ChappieCoreTests").
     private func xcodeTestScheme() -> String {
         xcodeAppScheme() + "CoreTests"
     }
 
     // MARK: - Java/Kotlin helpers
 
-    /// Returns the right command depending on whether Maven or Gradle is present.
     private func mavenOrGradle(maven: String, gradle: String) -> String {
         let hasPom = FileManager.default.fileExists(atPath: projectPath + "/pom.xml")
         return hasPom ? maven : gradle
     }
 
-    /// Uses gradlew wrapper if available, falls back to system gradle.
     private func gradleWrapper(_ task: String) -> String {
         let wrapper = projectPath + "/gradlew"
         let exe = FileManager.default.fileExists(atPath: wrapper) ? "./gradlew" : "gradle"
@@ -189,8 +225,7 @@ final class BuildTools: Sendable {
 
     // MARK: - Shell runner
 
-    /// Runs a generic shell command, saves log, returns summary.
-    private func runShell(_ command: String, label: String) async -> ToolResult {
+    private func runShell(_ command: String, label: String, env: DevEnvironment) async -> ToolResult {
         print("[ChappieMCP] 🔨 \(label): \(command)")
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
@@ -198,7 +233,8 @@ final class BuildTools: Sendable {
                     executable: "/bin/sh",
                     args: ["-c", command],
                     workingDirectory: self.projectPath,
-                    label: label
+                    label: label,
+                    env: env
                 )
                 continuation.resume(returning: result)
             }
@@ -207,7 +243,7 @@ final class BuildTools: Sendable {
 
     // MARK: - Xcode runner
 
-    private func runXcodebuild(args: [String], label: String) async -> ToolResult {
+    private func runXcodebuild(args: [String], label: String, env: DevEnvironment) async -> ToolResult {
         print("[ChappieMCP] 🔨 \(label): xcodebuild \(args.joined(separator: " "))")
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
@@ -215,7 +251,8 @@ final class BuildTools: Sendable {
                     executable: "/usr/bin/xcodebuild",
                     args: args,
                     workingDirectory: self.projectPath,
-                    label: label
+                    label: label,
+                    env: env
                 )
                 continuation.resume(returning: result)
             }
@@ -234,7 +271,8 @@ final class BuildTools: Sendable {
         executable: String,
         args: [String],
         workingDirectory: String,
-        label: String
+        label: String,
+        env: DevEnvironment
     ) -> ToolResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
@@ -255,7 +293,6 @@ final class BuildTools: Sendable {
 
         let startTime = Date()
 
-        // Timeout guard — kills process if it hangs.
         var timedOut = false
         let killWorkItem = DispatchWorkItem {
             if process.isRunning {
@@ -269,7 +306,6 @@ final class BuildTools: Sendable {
             execute: killWorkItem
         )
 
-        // Parallel pipe reading to prevent deadlock.
         let stdoutBox = DataBox()
         let stderrBox = DataBox()
         let readGroup = DispatchGroup()
@@ -300,8 +336,8 @@ final class BuildTools: Sendable {
         let elapsed = String(format: "%.1f", Date().timeIntervalSince(startTime))
 
         if timedOut {
-            let msg = "⏱️ \(label) timed out after \(Int(kBuildTimeoutSeconds))s and was terminated. Try again or check manually."
-            saveLog(msg, label: label, command: ([executable] + args).joined(separator: " "))
+            let msg = "⏱️ \(label) timed out after \(Int(kBuildTimeoutSeconds))s and was terminated."
+            saveLog(msg, label: label, command: ([executable] + args).joined(separator: " "), env: env)
             return .failure(msg)
         }
 
@@ -309,7 +345,7 @@ final class BuildTools: Sendable {
         let stderr = String(data: stderrBox.get(), encoding: .utf8) ?? ""
         let fullOutput = stdout + (stderr.isEmpty ? "" : "\n--- STDERR ---\n" + stderr)
 
-        saveLog(fullOutput, label: label, command: ([executable] + args).joined(separator: " "))
+        saveLog(fullOutput, label: label, command: ([executable] + args).joined(separator: " "), env: env)
 
         let exitCode = process.terminationStatus
 
@@ -324,11 +360,11 @@ final class BuildTools: Sendable {
 
     // MARK: - Log helpers
 
-    private func saveLog(_ output: String, label: String, command: String) {
+    private func saveLog(_ output: String, label: String, command: String, env: DevEnvironment) {
         let header = """
         === ChappieMCP Build Log ===
         Tool:    \(label)
-        Env:     \(environment.rawValue)
+        Env:     \(env.rawValue)
         Command: \(command)
         Time:    \(Date())
         ============================
@@ -337,7 +373,6 @@ final class BuildTools: Sendable {
         try? (header + output).write(toFile: buildLogPath, atomically: true, encoding: .utf8)
     }
 
-    /// Extracts summary lines (status, warnings, test stats) from build output.
     private func extractSummary(from output: String) -> String {
         let keywords = ["BUILD SUCCEEDED", "BUILD FAILED", "TEST SUCCEEDED", "TEST FAILED",
                         "warning:", "Executed", "PASSED", "FAILED", "passed", "failed"]

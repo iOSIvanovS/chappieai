@@ -21,13 +21,16 @@
 // PROTOCOL (length-prefixed framing):
 // Request:  4 bytes (UInt32 big-endian, JSON length) + MCPRequest JSON body
 // Response: 4 bytes (UInt32 big-endian, JSON length) + MCPResponse JSON body
-// More reliable than HTTP parsing — no issues with headers and chunked encoding.
+//
+// MULTI-PROJECT ROUTING:
+// ToolDispatcher holds a projectEnvMap [projectName → devEnvironment rawValue].
+// build_project and run_tests carry a "project" arg — dispatcher resolves the env from the map.
+// This makes tools deterministic across multiple projects with different environments.
 
 import Foundation
 
 // MARK: - Constants
 
-/// Path to the Unix Domain Socket file.
 let kMCPSocketPath = "/tmp/com.chappie.mcp.sock"
 
 // MARK: - Request/Response Models
@@ -54,10 +57,10 @@ final class MCPUnixServer: @unchecked Sendable {
     private let projectPath: String
     private let toolDispatcher: ToolDispatcher
 
-    init(socketPath: String = kMCPSocketPath, projectPath: String, environment: DevEnvironment = .unknown) {
+    init(socketPath: String = kMCPSocketPath, projectPath: String, projectEnvMap: [String: String] = [:]) {
         self.socketPath = socketPath
         self.projectPath = projectPath
-        self.toolDispatcher = ToolDispatcher(projectPath: projectPath, environment: environment)
+        self.toolDispatcher = ToolDispatcher(projectPath: projectPath, projectEnvMap: projectEnvMap)
     }
 
     func start() throws {
@@ -224,9 +227,9 @@ final class ToolDispatcher: Sendable {
     private let buildTools: BuildTools
     private let locTools: LocalizationTools
 
-    init(projectPath: String, environment: DevEnvironment) {
+    init(projectPath: String, projectEnvMap: [String: String]) {
         self.gitTools = GitTools(projectPath: projectPath)
-        self.buildTools = BuildTools(projectPath: projectPath, environment: environment)
+        self.buildTools = BuildTools(projectPath: projectPath, projectEnvMap: projectEnvMap)
         self.locTools = LocalizationTools(projectPath: projectPath)
     }
 
@@ -270,12 +273,12 @@ final class ToolDispatcher: Sendable {
             }
             return await gitTools.checkout(ref: ref, paths: paths)
 
-        // Build tools
+        // Build tools — "project" arg routes to the correct env
         case "build_project":
-            return await buildTools.build()
+            return await buildTools.build(projectName: args["project"])
 
         case "run_tests":
-            return await buildTools.runTests(target: args["target"])
+            return await buildTools.runTests(projectName: args["project"], target: args["target"])
 
         case "read_build_log":
             return await buildTools.readLastLog()

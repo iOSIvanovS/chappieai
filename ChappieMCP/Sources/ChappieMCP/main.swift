@@ -7,19 +7,17 @@
 // argv[0] = binary path (automatic)
 // argv[1] = workspace path (working directory for git/build commands)
 // argv[2] = Unix Domain Socket file path
-// argv[3] = dev environment rawValue (e.g. "xcode", "python", "nodejs") — optional, defaults to "unknown"
+// argv[3] = JSON map of projectName → devEnvironment rawValue
+//           e.g. {"Chappie":"xcode","PythonBot":"python"}
+//           Defaults to "{}" if omitted.
 //
-// WHY PASS SOCKET PATH VIA ARGUMENT:
-// Parent (Chappie.app) is the single source of truth about the socket path.
-// Helper should not independently decide on file paths.
-//
-// WHY PASS DEV ENVIRONMENT VIA ARGUMENT:
-// MCP helper is a standalone binary — it cannot import ChappieCore.
-// Parent knows the active project's devEnvironment and passes it as a string rawValue.
-// This makes build_project and run_tests deterministic per environment.
+// WHY JSON MAP INSTEAD OF SINGLE ENV:
+// Multiple projects with different environments can be attached to the same thread.
+// build_project/run_tests carry a "project" arg — MCP resolves the env from the map.
+// This guarantees deterministic tool behavior per project regardless of thread composition.
 //
 // MANUAL LAUNCH (for debugging):
-//   .build/debug/ChappieMCP /path/to/project /tmp/com.chappie.mcp.sock xcode
+//   .build/debug/ChappieMCP /path/to/project /tmp/com.chappie.mcp.sock '{"MyApp":"xcode"}'
 
 import Foundation
 
@@ -27,14 +25,23 @@ let args = CommandLine.arguments
 
 let projectPath: String = args.count > 1 ? args[1] : FileManager.default.currentDirectoryPath
 let socketPath: String  = args.count > 2 ? args[2] : "/tmp/com.chappie.mcp.sock"
-let environment: DevEnvironment = args.count > 3 ? (DevEnvironment(rawValue: args[3]) ?? .unknown) : .unknown
+
+// Parse JSON map: {"ProjectName": "envRawValue", ...}
+let projectEnvMap: [String: String] = {
+    guard args.count > 3,
+          let data = args[3].data(using: .utf8),
+          let map = try? JSONDecoder().decode([String: String].self, from: data) else {
+        return [:]
+    }
+    return map
+}()
 
 print("[ChappieMCP] 🚀 Starting server (Unix Domain Socket)")
 print("[ChappieMCP] 📁 Workspace: \(projectPath)")
 print("[ChappieMCP] 🔌 Socket:    \(socketPath)")
-print("[ChappieMCP] 🛠️  Env:       \(environment.rawValue)")
+print("[ChappieMCP] 🗺️  Projects:  \(projectEnvMap.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ", "))")
 
-let server = MCPUnixServer(socketPath: socketPath, projectPath: projectPath, environment: environment)
+let server = MCPUnixServer(socketPath: socketPath, projectPath: projectPath, projectEnvMap: projectEnvMap)
 
 do {
     try server.start()

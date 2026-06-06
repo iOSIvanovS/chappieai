@@ -10,9 +10,12 @@
 // run_terminal is intentionally last — it is the tool of last resort.
 //
 // INJECTION RULES:
-// - Universal tools (file, memory, web, project mgmt, terminal) — always injected.
+// - Universal tools (file, memory, web, project mgmt) — always injected.
 // - Git tools — only if isProgrammingProject = true.
-// - Env-specific tools (build, test, loc) — only if isProgrammingProject = true AND devEnvironment != .unknown.
+// - build_project, run_tests, read_build_log — if isProgrammingProject = true (any env).
+//   Each call carries a "project" arg; MCP routes to the correct env per project.
+// - loc_* — only if at least one Xcode project is attached.
+// - run_terminal — only if isProgrammingProject = true.
 // - git_diff is intentionally OMITTED: it dumps the entire project into AI context (cost + noise).
 
 import Foundation
@@ -20,12 +23,19 @@ import Foundation
 extension ToolExecutionService {
 
     /// Filtered list of tools available to the AI agent based on active project settings.
-    /// Universal tools are always present; git and env-specific tools require programming project + env.
     public var availableTools: [AITool] {
         let settings = activeProjectSettings
         let isProg = settings.isProgrammingProject
-        let env = settings.devEnvironment
-        let envSpecific = Set(env.specificTools)
+
+        // Collect ProjectInfo entries that have programming project settings.
+        // ProjectInfo carries id + name; settings are resolved from projectSettingsCache.
+        let allProjectInfos = activeMemoryContext.projects
+        let progInfos = allProjectInfos.filter {
+            (projectSettingsCache[$0.id] ?? ProjectSettings()).isProgrammingProject
+        }
+        let hasXcodeProject = progInfos.contains {
+            (projectSettingsCache[$0.id] ?? ProjectSettings()).devEnvironment == .xcode
+        }
 
         var tools: [AITool] = []
 
@@ -252,31 +262,50 @@ extension ToolExecutionService {
             )))
         }
 
-        // MARK: - Build & test tools (programming project + known env only)
+        // MARK: - Build & test tools (any programming project)
+        // Tools are injected once; "project" arg routes each call to the correct env in MCP.
+        // If only one project is attached — "project" can be omitted (MCP uses the single entry).
 
-        if isProg && env != .unknown {
-            if envSpecific.contains("build_project") {
+        if isProg {
+            let projectArgDesc = buildProjectArgDescription(for: progInfos)
+
+            // build_project: only if at least one project has a compilable environment.
+            let buildableInfos = progInfos.filter {
+                (projectSettingsCache[$0.id] ?? ProjectSettings()).devEnvironment.specificTools.contains("build_project")
+            }
+            if !buildableInfos.isEmpty {
                 tools.append(AITool(function: AIFunctionDefinition(
                     name: "build_project",
-                    description: buildProjectDescription(for: env),
-                    parameters: AIToolParameters(properties: [:], required: [])
-                )))
-            }
-
-            if envSpecific.contains("run_tests") {
-                tools.append(AITool(function: AIFunctionDefinition(
-                    name: "run_tests",
-                    description: runTestsDescription(for: env),
+                    description: buildProjectDescription(for: buildableInfos),
                     parameters: AIToolParameters(
                         properties: [
-                            "target": AIToolProperty(type: "string", description: "Test target name (e.g. 'ChappieCoreTests'). Empty = all tests.")
+                            "project": AIToolProperty(type: "string", description: projectArgDesc)
                         ],
-                        required: []
+                        required: buildableInfos.count > 1 ? ["project"] : []
                     )
                 )))
             }
 
-            if envSpecific.contains("read_build_log") {
+            // run_tests: all programming projects support tests.
+            if !progInfos.isEmpty {
+                tools.append(AITool(function: AIFunctionDefinition(
+                    name: "run_tests",
+                    description: runTestsDescription(for: progInfos),
+                    parameters: AIToolParameters(
+                        properties: [
+                            "project": AIToolProperty(type: "string", description: projectArgDesc),
+                            "target": AIToolProperty(
+                                type: "string",
+                                description: "Test target name or file/pattern. Empty = all tests."
+                            )
+                        ],
+                        required: progInfos.count > 1 ? ["project"] : []
+                    )
+                )))
+            }
+
+            // read_build_log: always available if any programming project is present.
+            if !progInfos.isEmpty {
                 tools.append(AITool(function: AIFunctionDefinition(
                     name: "read_build_log",
                     description: "Read the full log of the last build or test run.",
@@ -284,8 +313,8 @@ extension ToolExecutionService {
                 )))
             }
 
-            // Xcstrings is an Xcode-specific format — inject only for Xcode projects.
-            if env == .xcode {
+            // xcstrings localization — only for Xcode projects.
+            if hasXcodeProject {
                 tools.append(contentsOf: localizationTools())
             }
         }
@@ -326,9 +355,8 @@ extension ToolExecutionService {
             parameters: AIToolParameters(properties: [:], required: [])
         )))
 
-        // MARK: - Terminal (LAST RESORT, always for programming projects)
+        // MARK: - Terminal (LAST RESORT, programming projects only)
         // WHY LAST: run_terminal is a universal hammer — prefer specialized tools always.
-        // Use ONLY when no dedicated tool exists for the task.
 
         if isProg {
             tools.append(AITool(function: AIFunctionDefinition(
@@ -509,35 +537,75 @@ extension ToolExecutionService {
         ]
     }
 
-    // MARK: - Env-specific tool descriptions
+    // MARK: - Dynamic tool descriptions (built from ProjectInfo + settings cache)
 
-    private func buildProjectDescription(for env: DevEnvironment) -> String {
+    /// "project" parameter description listing all attached projects with their envs.
+    private func buildProjectArgDescription(for infos: [ActiveMemoryContext.ProjectInfo]) -> String {
+        guard !infos.isEmpty else { return "Project display name to target." }
+        if infos.count == 1 {
+            let env = (projectSettingsCache[infos[0].id] ?? ProjectSettings()).devEnvironment
+            return "Project name. Only one project: '\(infos[0].name)' (\(env.displayName)). Can be omitted."
+        }
+        let list = infos.map { info -> String in
+            let env = (projectSettingsCache[info.id] ?? ProjectSettings()).devEnvironment
+            return "'\(info.name)' (\(env.displayName))"
+        }.joined(separator: ", ")
+        return "Project display name — required when multiple projects are attached. Available: \(list)."
+    }
+
+    /// Description for build_project listing each buildable project's build command.
+    private func buildProjectDescription(for infos: [ActiveMemoryContext.ProjectInfo]) -> String {
+        if infos.count == 1 {
+            let env = (projectSettingsCache[infos[0].id] ?? ProjectSettings()).devEnvironment
+            return "Build the project via \(buildCommand(for: env)). Returns success or a list of compilation errors."
+        }
+        let lines = infos.map { info -> String in
+            let env = (projectSettingsCache[info.id] ?? ProjectSettings()).devEnvironment
+            return "  • \(info.name): \(buildCommand(for: env))"
+        }.joined(separator: "\n")
+        return "Build a project. Routes to the correct build tool per project:\n\(lines)\nReturns success or a list of compilation errors."
+    }
+
+    /// Description for run_tests listing each project's test command.
+    private func runTestsDescription(for infos: [ActiveMemoryContext.ProjectInfo]) -> String {
+        if infos.count == 1 {
+            let env = (projectSettingsCache[infos[0].id] ?? ProjectSettings()).devEnvironment
+            return "Run automated tests via \(testCommand(for: env)). Specify target/pattern or leave empty for all tests."
+        }
+        let lines = infos.map { info -> String in
+            let env = (projectSettingsCache[info.id] ?? ProjectSettings()).devEnvironment
+            return "  • \(info.name): \(testCommand(for: env))"
+        }.joined(separator: "\n")
+        return "Run automated tests. Routes to the correct test runner per project:\n\(lines)\nSpecify target/pattern or leave empty for all tests."
+    }
+
+    private func buildCommand(for env: DevEnvironment) -> String {
         switch env {
-        case .xcode:    return "Build the Xcode project via xcodebuild. Returns success or a list of compilation errors."
-        case .nodejs:   return "Build the Node.js project (npm run build). Returns success or a list of build errors."
-        case .go:       return "Build the Go project (go build ./...). Returns success or a list of compilation errors."
-        case .rust:     return "Build the Rust project (cargo build). Returns success or a list of compilation errors."
-        case .java:     return "Build the Java project (mvn compile or gradle build). Returns success or a list of compilation errors."
-        case .kotlin:   return "Build the Kotlin/Android project (gradle build). Returns success or a list of compilation errors."
-        case .flutter:  return "Build the Flutter project (flutter build). Returns success or a list of build errors."
-        case .dotnet:   return "Build the .NET project (dotnet build). Returns success or a list of compilation errors."
-        default:        return "Build the project. Returns success or a list of build errors."
+        case .xcode:   return "xcodebuild"
+        case .nodejs:  return "npm run build"
+        case .go:      return "go build ./..."
+        case .rust:    return "cargo build"
+        case .java:    return "mvn compile / gradle build"
+        case .kotlin:  return "gradle build"
+        case .flutter: return "flutter build"
+        case .dotnet:  return "dotnet build"
+        default:       return "the project's build tool"
         }
     }
 
-    private func runTestsDescription(for env: DevEnvironment) -> String {
+    private func testCommand(for env: DevEnvironment) -> String {
         switch env {
-        case .xcode:            return "Run automated tests via xcodebuild test. Specify target name or leave empty for all tests."
-        case .nodejs:           return "Run automated tests (npm test). Specify test file/pattern or leave empty for all tests."
-        case .python:           return "Run automated tests (pytest or unittest). Specify test file/pattern or leave empty for all tests."
-        case .go:               return "Run automated tests (go test ./...). Specify package path or leave empty for all tests."
-        case .rust:             return "Run automated tests (cargo test). Specify test name filter or leave empty for all tests."
-        case .java:             return "Run automated tests (mvn test or gradle test). Specify test class or leave empty for all tests."
-        case .kotlin:           return "Run automated tests (gradle test). Specify test class or leave empty for all tests."
-        case .flutter:          return "Run automated tests (flutter test). Specify test file or leave empty for all tests."
-        case .reacttypescript:  return "Run automated tests (npm test or vitest). Specify test file/pattern or leave empty for all tests."
-        case .dotnet:           return "Run automated tests (dotnet test). Specify test project or leave empty for all tests."
-        default:                return "Run automated tests. Specify target or leave empty for all tests."
+        case .xcode:           return "xcodebuild test"
+        case .nodejs:          return "npm test"
+        case .python:          return "pytest"
+        case .go:              return "go test"
+        case .rust:            return "cargo test"
+        case .java:            return "mvn test / gradle test"
+        case .kotlin:          return "gradle test"
+        case .flutter:         return "flutter test"
+        case .reacttypescript: return "npm test / vitest"
+        case .dotnet:          return "dotnet test"
+        default:               return "the project's test runner"
         }
     }
 }

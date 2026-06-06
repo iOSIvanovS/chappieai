@@ -4,6 +4,9 @@
 // WHY THIS FILE:
 // Execution of all git_* and build/test tools via MCPToolBridge.
 // git_diff is blocked here as a safety net (primary block is in ToolAccessControl).
+//
+// build_project / run_tests pass the "project" arg through to MCP unchanged.
+// MCP resolves the correct DevEnvironment from its projectEnvMap using that name.
 
 import Foundation
 
@@ -61,9 +64,11 @@ extension ToolExecutionService {
             return await mcpBridge.execute(tool: "git_checkout", args: ["ref": ref, "paths": paths])
 
         // MARK: - Build & test tools
+        // "project" arg is passed through from argsData — MCP resolves env from projectEnvMap.
 
         case "build_project":
-            return await mcpBridge.execute(tool: "build_project")
+            let args = (try? JSONDecoder().decode([String: String].self, from: argsData)) ?? [:]
+            return await mcpBridge.execute(tool: "build_project", args: args)
 
         case "run_tests":
             let args = (try? JSONDecoder().decode([String: String].self, from: argsData)) ?? [:]

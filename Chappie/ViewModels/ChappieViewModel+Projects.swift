@@ -60,6 +60,7 @@ extension ChappieViewModel {
                     buildAndSyncMemoryContext()
                     await syncActiveMemoryContext()
                     await syncFileSystemForActiveThread()
+                    restartMCPIfNeeded()
                 }
                 print("[ChappieViewModel] Project '\(displayName)' added to thread '\(thread.title)'")
             } catch {
@@ -86,6 +87,7 @@ extension ChappieViewModel {
                     buildAndSyncMemoryContext()
                     await syncActiveMemoryContext()
                     await syncFileSystemForActiveThread()
+                    restartMCPIfNeeded()
                 }
                 print("[ChappieViewModel] Project removed from thread '\(thread.title)'")
             } catch {
@@ -106,17 +108,23 @@ extension ChappieViewModel {
                 buildAndSyncMemoryContext()
                 await syncActiveMemoryContext()
 
-                // Restart MCP helper if devEnvironment changed — it needs the new env to route
-                // build_project/run_tests to the correct shell commands.
-                if let workspaceURL {
-                    MCPHelperLauncher.shared.restartWithWorkspace(workspaceURL, environment: activeDevEnvironment)
-                }
+                // Restart MCP helper — devEnvironment or project list may have changed.
+                restartMCPIfNeeded()
 
                 print("[ChappieViewModel] Project settings updated (id: \(projectId))")
             } catch {
                 print("[ChappieViewModel] Error updating project settings: \(error)")
             }
         }
+    }
+
+    // MARK: - MCP Restart
+
+    /// Restarts MCP helper with the current workspace and updated project env map.
+    /// Call after any change that may affect which environments are active.
+    func restartMCPIfNeeded() {
+        guard let workspaceURL else { return }
+        MCPHelperLauncher.shared.restartWithWorkspace(workspaceURL, projectEnvMap: activeProjectEnvMap)
     }
 
     // MARK: - Dev Environment Auto-Detection
@@ -341,6 +349,7 @@ extension ChappieViewModel {
                 buildAndSyncMemoryContext()
                 await syncActiveMemoryContext()
                 await syncFileSystemForActiveThread()
+                restartMCPIfNeeded()
             }
         } catch {
             print("[ChappieViewModel] Error reloading after project change: \(error)")
