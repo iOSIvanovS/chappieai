@@ -59,7 +59,6 @@ extension ChappieViewModel {
                     await loadProjectsForThread(updatedThread)
                     buildAndSyncMemoryContext()
                     await syncActiveMemoryContext()
-                    // M-09: project added via UI — sync FileSystem immediately.
                     await syncFileSystemForActiveThread()
                 }
                 print("[ChappieViewModel] Project '\(displayName)' added to thread '\(thread.title)'")
@@ -86,7 +85,6 @@ extension ChappieViewModel {
                     await loadProjectsForThread(updatedThread)
                     buildAndSyncMemoryContext()
                     await syncActiveMemoryContext()
-                    // M-09: project removed via UI — sync FileSystem immediately.
                     await syncFileSystemForActiveThread()
                 }
                 print("[ChappieViewModel] Project removed from thread '\(thread.title)'")
@@ -107,6 +105,13 @@ extension ChappieViewModel {
                 await loadProjectsForThread(thread)
                 buildAndSyncMemoryContext()
                 await syncActiveMemoryContext()
+
+                // Restart MCP helper if devEnvironment changed — it needs the new env to route
+                // build_project/run_tests to the correct shell commands.
+                if let workspaceURL {
+                    MCPHelperLauncher.shared.restartWithWorkspace(workspaceURL, environment: activeDevEnvironment)
+                }
+
                 print("[ChappieViewModel] Project settings updated (id: \(projectId))")
             } catch {
                 print("[ChappieViewModel] Error updating project settings: \(error)")
@@ -130,8 +135,6 @@ extension ChappieViewModel {
         }
 
         Task {
-            // Collect file list from the project's file system if available,
-            // otherwise fall back to the active workspace file list.
             let fileList: String
             if let fs = fileSystem {
                 let files = (try? await fs.listFiles()) ?? []
@@ -140,7 +143,6 @@ extension ChappieViewModel {
                 fileList = "(file list unavailable)"
             }
 
-            // Build a minimal one-shot prompt — no tools, no history.
             let hints = DevEnvironment.allCases
                 .filter { $0 != .unknown }
                 .map { env in "\(env.rawValue): \(env.detectionHints.joined(separator: ", "))" }
@@ -173,7 +175,6 @@ extension ChappieViewModel {
                     tools: []
                 )
 
-                // contentString extracts plain text from AIMessageContent (.text/.blocks/.multimodal)
                 let raw = (result.message.contentString ?? "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                     .lowercased()
@@ -339,7 +340,6 @@ extension ChappieViewModel {
                 await loadProjectsForThread(updatedThread)
                 buildAndSyncMemoryContext()
                 await syncActiveMemoryContext()
-                // M-09: project changed via AI tool — sync FileSystem immediately.
                 await syncFileSystemForActiveThread()
             }
         } catch {

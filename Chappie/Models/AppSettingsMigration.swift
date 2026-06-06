@@ -8,7 +8,7 @@ import Foundation
 import SwiftData
 import ChappieCore
 
-enum AppSettingsSchemaV1: VersionedSchema {
+enum AppSettingsSchema: VersionedSchema {
     static let versionIdentifier = Schema.Version(1, 0, 0)
 
     static var models: [any PersistentModel.Type] {

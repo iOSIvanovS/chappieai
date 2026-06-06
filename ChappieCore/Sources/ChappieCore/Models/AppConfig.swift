@@ -12,7 +12,7 @@ import Foundation
 /// Centralized application configuration. All tuning parameters live here.
 ///
 /// DYNAMIC (IT-02): Created from ThreadSettings — each thread has its own config.
-/// AppConfig.shared is the default (100 messages).
+/// AppConfig.shared is the default (30 messages).
 public struct AppConfig: Codable, Equatable, Sendable {
 
     // MARK: - Singleton
@@ -54,11 +54,11 @@ public struct AppConfig: Codable, Equatable, Sendable {
 
     // MARK: - Initialization
 
-    /// Default config: 100 messages.
+    /// Default config: 30 messages — matches ThreadSettings default.
     private init() {
         maxOrchestratorSteps     = 100
-        maxMessagesInContext     = 100
-        tokenBudget              = 100 * 500
+        maxMessagesInContext     = 30
+        tokenBudget              = 30 * 500
         isUnlimitedContext       = false
         requestTimeoutSeconds    = 300
         connectionTimeoutSeconds = 30

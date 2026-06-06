@@ -28,19 +28,15 @@ import Foundation
 // MARK: - Constants
 
 /// Path to the Unix Domain Socket file.
-/// Why /tmp: standard directory for process temporary files,
-/// accessible to all users, requires no special permissions.
 let kMCPSocketPath = "/tmp/com.chappie.mcp.sock"
 
 // MARK: - Request/Response Models
 
-/// Request to MCP server.
 struct MCPRequest: Codable, Sendable {
     let tool: String
     let args: [String: String]
 }
 
-/// MCP server response.
 struct MCPResponse: Codable, Sendable {
     let result: String?
     let error: String?
@@ -51,46 +47,32 @@ struct MCPResponse: Codable, Sendable {
 /// Server on Unix Domain Socket for MCP tools.
 ///
 /// Why @unchecked Sendable: contains Int32 file descriptor,
-/// but we guarantee safety — fd is used only inside acceptLoop
-/// on a single DispatchQueue thread.
+/// but we guarantee safety — fd is used only inside acceptLoop on a single DispatchQueue thread.
 final class MCPUnixServer: @unchecked Sendable {
 
     private let socketPath: String
     private let projectPath: String
-
-    /// Tool dispatcher — routes calls to the appropriate classes.
     private let toolDispatcher: ToolDispatcher
 
-    init(socketPath: String = kMCPSocketPath, projectPath: String) {
+    init(socketPath: String = kMCPSocketPath, projectPath: String, environment: DevEnvironment = .unknown) {
         self.socketPath = socketPath
         self.projectPath = projectPath
-        self.toolDispatcher = ToolDispatcher(projectPath: projectPath)
+        self.toolDispatcher = ToolDispatcher(projectPath: projectPath, environment: environment)
     }
 
-    /// Starts the POSIX Unix Domain Socket server.
-    ///
-    /// Removes old socket file (if left from previous run),
-    /// creates a new one, starts accepting connections on a background thread.
     func start() throws {
-        // Remove old socket file — otherwise bind fails with "Address already in use".
-        // This is normal practice for Unix socket servers at startup.
         try? FileManager.default.removeItem(atPath: socketPath)
 
-        // Create Unix Domain Socket
         let serverFD = socket(AF_UNIX, SOCK_STREAM, 0)
         guard serverFD >= 0 else {
             throw MCPServerError.socketCreationFailed(String(cString: strerror(errno)))
         }
 
-        // Allow address reuse — in case of quick restart
         var reuseAddr: Int32 = 1
         setsockopt(serverFD, SOL_SOCKET, SO_REUSEADDR, &reuseAddr, socklen_t(MemoryLayout<Int32>.size))
 
-        // Form Unix socket address
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
-
-        // Copy path into sun_path (104-byte buffer on macOS)
         let pathBytes = socketPath.utf8CString
         withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
             ptr.withMemoryRebound(to: CChar.self, capacity: pathBytes.count) { charPtr in
@@ -101,7 +83,6 @@ final class MCPUnixServer: @unchecked Sendable {
         }
         let addrLen = socklen_t(MemoryLayout<sockaddr_un>.size)
 
-        // Bind socket to path in the file system
         let bindResult = withUnsafePointer(to: addr) { ptr in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
                 bind(serverFD, sockPtr, addrLen)
@@ -111,14 +92,12 @@ final class MCPUnixServer: @unchecked Sendable {
             throw MCPServerError.bindFailed(String(cString: strerror(errno)))
         }
 
-        // Start listening for incoming connections (backlog = 128)
         guard listen(serverFD, 128) == 0 else {
             throw MCPServerError.listenFailed(String(cString: strerror(errno)))
         }
 
         print("[ChappieMCP] 🟢 Unix socket ready: \(socketPath)")
 
-        // Accept connections on a background thread, not blocking main thread
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             self.acceptLoop(serverFD: serverFD)
@@ -127,14 +106,11 @@ final class MCPUnixServer: @unchecked Sendable {
 
     // MARK: - Accept Loop
 
-    /// Main loop for accepting incoming connections.
-    /// Runs indefinitely on a background DispatchQueue thread.
     private func acceptLoop(serverFD: Int32) {
         while true {
             var clientAddr = sockaddr_un()
             var clientAddrLen = socklen_t(MemoryLayout<sockaddr_un>.size)
 
-            // accept() blocks the thread until a new connection arrives
             let clientFD = withUnsafeMutablePointer(to: &clientAddr) { ptr in
                 ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
                     accept(serverFD, sockPtr, &clientAddrLen)
@@ -146,8 +122,6 @@ final class MCPUnixServer: @unchecked Sendable {
                 continue
             }
 
-            // Each connection is handled in a separate Swift Concurrency Task,
-            // to avoid blocking the accept loop during long operations (xcodebuild).
             Task { [weak self] in
                 guard let self else { return }
                 await self.handleClient(fd: clientFD)
@@ -157,17 +131,9 @@ final class MCPUnixServer: @unchecked Sendable {
 
     // MARK: - Client Handler
 
-    /// Handles a single client connection.
-    ///
-    /// Protocol (length-prefixed framing):
-    /// - Read 4 bytes (UInt32 big-endian) = JSON request length
-    /// - Read N bytes of JSON
-    /// - Execute the tool
-    /// - Send 4 bytes length + JSON response
     private func handleClient(fd: Int32) async {
-        defer { close(fd) } // Always close the connection
+        defer { close(fd) }
 
-        // Read 4 bytes of request length
         var lengthBytes = [UInt8](repeating: 0, count: 4)
         let bytesRead = recv(fd, &lengthBytes, 4, MSG_WAITALL)
         guard bytesRead == 4 else {
@@ -175,19 +141,16 @@ final class MCPUnixServer: @unchecked Sendable {
             return
         }
 
-        // Decode length (big-endian UInt32)
         let length = UInt32(lengthBytes[0]) << 24
                    | UInt32(lengthBytes[1]) << 16
                    | UInt32(lengthBytes[2]) << 8
                    | UInt32(lengthBytes[3])
 
-        // Guard against too-large or zero requests
         guard length > 0, length < 10_000_000 else {
             print("[ChappieMCP] ⚠️ Invalid message length: \(length)")
             return
         }
 
-        // Read JSON request body
         var jsonBytes = [UInt8](repeating: 0, count: Int(length))
         let jsonRead = recv(fd, &jsonBytes, Int(length), MSG_WAITALL)
         guard jsonRead == Int(length) else {
@@ -195,11 +158,9 @@ final class MCPUnixServer: @unchecked Sendable {
             return
         }
 
-        // Process request and get response
         let requestData = Data(jsonBytes)
         let responseData = await processRequest(data: requestData)
 
-        // Send response: 4 bytes length (big-endian) + JSON body
         let responseLength = UInt32(responseData.count)
         var responseHeader = [UInt8](repeating: 0, count: 4)
         responseHeader[0] = UInt8((responseLength >> 24) & 0xFF)
@@ -213,7 +174,6 @@ final class MCPUnixServer: @unchecked Sendable {
 
     // MARK: - Request Processing
 
-    /// Decodes JSON request and executes the tool via ToolDispatcher.
     private func processRequest(data: Data) async -> Data {
         guard let request = try? JSONDecoder().decode(MCPRequest.self, from: data) else {
             let response = MCPResponse(result: nil, error: "Invalid JSON request")
@@ -230,7 +190,6 @@ final class MCPUnixServer: @unchecked Sendable {
 
 // MARK: - MCPServerError
 
-/// Errors when starting Unix Domain Socket server.
 enum MCPServerError: Error, CustomStringConvertible {
     case socketCreationFailed(String)
     case bindFailed(String)
@@ -247,36 +206,27 @@ enum MCPServerError: Error, CustomStringConvertible {
 
 // MARK: - ToolResult
 
-/// Tool execution result.
-/// Why a separate struct: cleanly separates success and error
-/// without throws across async boundaries in the dispatcher.
+/// Tool execution result. Separates success/error without throws across async boundaries.
 struct ToolResult: Sendable {
     let value: String?
     let error: String?
 
-    static func success(_ value: String) -> ToolResult {
-        ToolResult(value: value, error: nil)
-    }
-
-    static func failure(_ error: String) -> ToolResult {
-        ToolResult(value: nil, error: error)
-    }
+    static func success(_ value: String) -> ToolResult { ToolResult(value: value, error: nil) }
+    static func failure(_ error: String) -> ToolResult { ToolResult(value: nil, error: error) }
 }
 
 // MARK: - ToolDispatcher
 
-/// Tool dispatcher — routes calls to the appropriate classes.
-///
-/// Why a separate class: isolates routing logic from the server.
+/// Routes tool calls to the appropriate handler classes.
 /// Adding a new tool = one case in the switch.
 final class ToolDispatcher: Sendable {
     private let gitTools: GitTools
     private let buildTools: BuildTools
     private let locTools: LocalizationTools
 
-    init(projectPath: String) {
+    init(projectPath: String, environment: DevEnvironment) {
         self.gitTools = GitTools(projectPath: projectPath)
-        self.buildTools = BuildTools(projectPath: projectPath)
+        self.buildTools = BuildTools(projectPath: projectPath, environment: environment)
         self.locTools = LocalizationTools(projectPath: projectPath)
     }
 
@@ -286,10 +236,6 @@ final class ToolDispatcher: Sendable {
         // Git tools
         case "git_status":
             return await gitTools.status()
-
-        case "git_diff":
-            let staged = args["staged"] == "true"
-            return await gitTools.diff(staged: staged)
 
         case "git_add":
             let paths = args["paths"] ?? "."
@@ -310,17 +256,17 @@ final class ToolDispatcher: Sendable {
 
         case "git_revert":
             guard let hashes = args["hashes"], !hashes.isEmpty else {
-                return .failure("Argument 'hashes' is required for git_revert (space-separated commit hashes)")
+                return .failure("Argument 'hashes' is required (space-separated commit hashes)")
             }
             let message = args["message"] ?? "revert: roll back commits \(args["hashes"] ?? "")"
             return await gitTools.revert(hashes: hashes, message: message)
 
         case "git_checkout":
             guard let ref = args["ref"], !ref.isEmpty else {
-                return .failure("Argument 'ref' is required for git_checkout (e.g. HEAD~1, abc123, main)")
+                return .failure("Argument 'ref' is required (e.g. HEAD~1, abc123, main)")
             }
             guard let paths = args["paths"], !paths.isEmpty else {
-                return .failure("Argument 'paths' is required for git_checkout (space-separated file paths)")
+                return .failure("Argument 'paths' is required (space-separated file paths)")
             }
             return await gitTools.checkout(ref: ref, paths: paths)
 
@@ -329,8 +275,7 @@ final class ToolDispatcher: Sendable {
             return await buildTools.build()
 
         case "run_tests":
-            let testTarget = args["target"]
-            return await buildTools.runTests(target: testTarget)
+            return await buildTools.runTests(target: args["target"])
 
         case "read_build_log":
             return await buildTools.readLastLog()
@@ -343,22 +288,15 @@ final class ToolDispatcher: Sendable {
             guard let path = args["path"], !path.isEmpty else {
                 return .failure("Argument 'path' is required (e.g. 'Chappie/Localizable.xcstrings')")
             }
-            let lang = args["sourceLanguage"] ?? "en"
-            return locTools.create(relativePath: path, sourceLanguage: lang)
+            return locTools.create(relativePath: path, sourceLanguage: args["sourceLanguage"] ?? "en")
 
         case "loc_rename":
-            guard let from = args["from"], !from.isEmpty else {
-                return .failure("Argument 'from' is required")
-            }
-            guard let to = args["to"], !to.isEmpty else {
-                return .failure("Argument 'to' is required")
-            }
+            guard let from = args["from"], !from.isEmpty else { return .failure("Argument 'from' is required") }
+            guard let to = args["to"], !to.isEmpty else { return .failure("Argument 'to' is required") }
             return locTools.rename(fromRelativePath: from, toRelativePath: to)
 
         case "loc_delete":
-            guard let path = args["path"], !path.isEmpty else {
-                return .failure("Argument 'path' is required")
-            }
+            guard let path = args["path"], !path.isEmpty else { return .failure("Argument 'path' is required") }
             return locTools.delete(relativePath: path)
 
         case "loc_add_language":
@@ -374,64 +312,38 @@ final class ToolDispatcher: Sendable {
             return locTools.removeLanguage(language: language, relativePath: args["path"])
 
         case "loc_key_check":
-            guard let key = args["key"], !key.isEmpty else {
-                return .failure("Argument 'key' is required")
-            }
-            guard let path = args["path"], !path.isEmpty else {
-                return .failure("Argument 'path' is required")
-            }
+            guard let key = args["key"], !key.isEmpty else { return .failure("Argument 'key' is required") }
+            guard let path = args["path"], !path.isEmpty else { return .failure("Argument 'path' is required") }
             return locTools.keyCheck(key: key, relativePath: path)
 
         case "loc_next_batch":
-            guard let path = args["path"], !path.isEmpty else {
-                return .failure("Argument 'path' is required")
-            }
+            guard let path = args["path"], !path.isEmpty else { return .failure("Argument 'path' is required") }
             return locTools.nextBatch(relativePath: path)
 
         case "loc_submit_batch":
-            guard let path = args["path"], !path.isEmpty else {
-                return .failure("Argument 'path' is required")
-            }
+            guard let path = args["path"], !path.isEmpty else { return .failure("Argument 'path' is required") }
             guard let translations = args["translations"], !translations.isEmpty else {
                 return .failure("Argument 'translations' is required (JSON: {\"key\": {\"ru\": \"...\", \"de\": \"...\"}})")
             }
             return locTools.submitBatch(relativePath: path, translationsJSON: translations)
 
         case "loc_dead_keys":
-            guard let path = args["path"], !path.isEmpty else {
-                return .failure("Argument 'path' is required")
-            }
+            guard let path = args["path"], !path.isEmpty else { return .failure("Argument 'path' is required") }
             return locTools.deadKeys(relativePath: path)
 
         case "loc_add_key":
-            guard let path = args["path"], !path.isEmpty else {
-                return .failure("Argument 'path' is required")
-            }
-            guard let key = args["key"], !key.isEmpty else {
-                return .failure("Argument 'key' is required")
-            }
-            guard let value = args["value"], !value.isEmpty else {
-                return .failure("Argument 'value' is required (English text)")
-            }
+            guard let path = args["path"], !path.isEmpty else { return .failure("Argument 'path' is required") }
+            guard let key = args["key"], !key.isEmpty else { return .failure("Argument 'key' is required") }
+            guard let value = args["value"], !value.isEmpty else { return .failure("Argument 'value' is required (English text)") }
             return locTools.addKey(relativePath: path, key: key, englishValue: value, comment: args["comment"])
 
         case "loc_remove_key":
-            guard let path = args["path"], !path.isEmpty else {
-                return .failure("Argument 'path' is required")
-            }
-            guard let key = args["key"], !key.isEmpty else {
-                return .failure("Argument 'key' is required")
-            }
+            guard let path = args["path"], !path.isEmpty else { return .failure("Argument 'path' is required") }
+            guard let key = args["key"], !key.isEmpty else { return .failure("Argument 'key' is required") }
             return locTools.removeKey(relativePath: path, key: key)
 
         default:
-            return .failure(
-                "Unknown tool: \(tool). Available: " +
-                "git_status, git_diff, git_add, git_commit, git_log, git_reset, git_revert, git_checkout, " +
-                "build_project, run_tests, read_build_log, " +
-                "loc_info, loc_create, loc_rename, loc_delete, loc_add_language, loc_remove_language, " +
-                "loc_key_check, loc_next_batch, loc_submit_batch, loc_dead_keys, loc_add_key, loc_remove_key"
-            )
+            return .failure("Unknown tool: \(tool).")
         }
     }
 }

@@ -1,17 +1,14 @@
 // ChappieErrorTests.swift
 // ChappieCoreTests
 //
-// Юнит-тесты для ChappieError — централизованного перечисления ошибок приложения.
+// Unit tests for ChappieError — the centralized error enum.
 //
-// ЗАЧЕМ ТЕСТИРОВАТЬ ОШИБКИ:
-// ChappieError — это публичный контракт: сообщения об ошибках видит пользователь.
-// Если кто-то переименует кейс или изменит текст errorDescription,
-// тест сразу покажет что контракт нарушен.
+// WHY TEST ERRORS: ChappieError is a public contract — error descriptions are
+// shown to the user. If someone renames a case or changes errorDescription text,
+// the test immediately signals the contract is broken.
 //
-// ПРИНЦИП: Проверяем что errorDescription не nil и содержит ключевые слова.
-// Не проверяем точный текст — это хрупко. Проверяем смысл.
-//
-// ЭТОТ ФАЙЛ СОЗДАН ДЛЯ ПРОВЕРКИ ПАЙПЛАЙНА build → run_tests (2025-07-11).
+// PRINCIPLE: Verify that errorDescription is non-nil and contains key words.
+// Avoid exact string matching — that is brittle. Test the meaning instead.
 
 import Testing
 import Foundation
@@ -20,91 +17,80 @@ import Foundation
 @Suite("ChappieError Tests")
 struct ChappieErrorTests {
 
-    // MARK: - Тесты errorDescription
+    // MARK: - errorDescription
 
-    /// networkError возвращает описание содержащее переданное сообщение.
-    @Test("networkError содержит переданное сообщение")
+    @Test("networkError description contains the passed message")
     func networkErrorDescription() {
-        let error = ChappieError.networkError("соединение разорвано")
+        let error = ChappieError.networkError("connection lost")
         let description = error.errorDescription ?? ""
 
-        // Описание должно быть непустым и содержать переданный текст
         #expect(!description.isEmpty)
-        #expect(description.contains("соединение разорвано"))
+        #expect(description.contains("connection lost"))
     }
 
-    /// fileSystemError возвращает описание содержащее переданное сообщение.
-    @Test("fileSystemError содержит переданное сообщение")
+    @Test("fileSystemError description contains the passed message")
     func fileSystemErrorDescription() {
-        let error = ChappieError.fileSystemError("файл не найден")
+        let error = ChappieError.fileSystemError("file not found")
         let description = error.errorDescription ?? ""
 
         #expect(!description.isEmpty)
-        #expect(description.contains("файл не найден"))
+        #expect(description.contains("file not found"))
     }
 
-    /// parsingError возвращает описание содержащее переданное сообщение.
-    @Test("parsingError содержит переданное сообщение")
+    @Test("parsingError description contains the passed message")
     func parsingErrorDescription() {
-        let error = ChappieError.parsingError("невалидный JSON")
+        let error = ChappieError.parsingError("invalid JSON")
         let description = error.errorDescription ?? ""
 
         #expect(!description.isEmpty)
-        #expect(description.contains("невалидный JSON"))
+        #expect(description.contains("invalid JSON"))
     }
 
-    /// memoryError возвращает описание содержащее переданное сообщение.
-    @Test("memoryError содержит переданное сообщение")
+    @Test("memoryError description contains the passed message")
     func memoryErrorDescription() {
-        let error = ChappieError.memoryError("база данных недоступна")
+        let error = ChappieError.memoryError("database unavailable")
         let description = error.errorDescription ?? ""
 
         #expect(!description.isEmpty)
-        #expect(description.contains("база данных недоступна"))
+        #expect(description.contains("database unavailable"))
     }
 
-    /// aiContextLimitExceeded возвращает непустое описание.
-    @Test("aiContextLimitExceeded возвращает непустое описание")
+    @Test("aiContextLimitExceeded returns a non-empty description")
     func aiContextLimitExceededDescription() {
         let error = ChappieError.aiContextLimitExceeded
         let description = error.errorDescription ?? ""
 
-        // Этот кейс без ассоциированного значения — просто проверяем что описание есть
+        // No associated value — just verify a description exists
         #expect(!description.isEmpty)
     }
 
-    /// unknown возвращает описание содержащее переданное сообщение.
-    @Test("unknown содержит переданное сообщение")
+    @Test("unknown error description contains the passed message")
     func unknownErrorDescription() {
-        let error = ChappieError.unknown("что-то пошло не так")
+        let error = ChappieError.unknown("something went wrong")
         let description = error.errorDescription ?? ""
 
         #expect(!description.isEmpty)
-        #expect(description.contains("что-то пошло не так"))
+        #expect(description.contains("something went wrong"))
     }
 
-    // MARK: - Тест Sendable
+    // MARK: - Sendable
 
-    /// ChappieError можно безопасно передавать между акторами (Sendable).
-    @Test("ChappieError передаётся между акторами без ошибок (Sendable)")
+    @Test("ChappieError is safely passable across actors (Sendable)")
     func chappieErrorIsSendable() async {
-        // Этот тест компилируется только если ChappieError: Sendable
-        let error = ChappieError.networkError("тест")
+        // Compiles only if ChappieError: Sendable
+        let error = ChappieError.networkError("test")
 
         let result = await Task.detached {
-            // Передаём ошибку в другой actor-контекст
             return error.errorDescription ?? ""
         }.value
 
         #expect(!result.isEmpty)
     }
 
-    // MARK: - Тест LocalizedError
+    // MARK: - LocalizedError conformance
 
-    /// ChappieError соответствует LocalizedError — errorDescription не nil.
-    @Test("Все кейсы ChappieError имеют непустой errorDescription")
+    @Test("All ChappieError cases have a non-empty errorDescription")
     func allCasesHaveDescription() {
-        // Перечисляем все кейсы вручную — enum не Iterable, но это небольшой список
         let errors: [ChappieError] = [
             .networkError("x"),
             .fileSystemError("x"),
@@ -115,9 +101,8 @@ struct ChappieErrorTests {
         ]
 
         for error in errors {
-            // Каждый кейс должен иметь непустое описание для пользователя
             let description = error.errorDescription ?? ""
-            #expect(!description.isEmpty, "Кейс \(error) не имеет errorDescription")
+            #expect(!description.isEmpty, "Case \(error) is missing errorDescription")
         }
     }
 }

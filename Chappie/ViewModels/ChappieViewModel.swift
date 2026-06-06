@@ -146,10 +146,19 @@ final class ChappieViewModel {
     var cachedLastActiveThreadId: UUID?
     var _activeThreadSession: ThreadSession?
 
+    // MARK: - Dev environment
+
+    /// Active dev environment from the first programming project in the current thread.
+    /// Used to pass the correct environment to MCPHelperLauncher on workspace changes.
+    var activeDevEnvironment: DevEnvironment {
+        activeProjects
+            .first(where: { $0.settings.isProgrammingProject && $0.settings.devEnvironment != .unknown })?
+            .settings.devEnvironment ?? .unknown
+    }
+
     // MARK: - Init
 
     public init() {
-        loadWorkspaceWithSecurityScope()
         // Pre-warm catalog cache at startup so CatalogPickerSheet opens instantly.
         Task {
             do {
@@ -237,7 +246,8 @@ final class ChappieViewModel {
         let provStore = AIProviderStore(dataStore: ds)
         self.providerStore = provStore
 
-        self.appSettingsStore = AppSettingsStore(dataStore: ds)
+        let settingsStore = AppSettingsStore(dataStore: ds)
+        self.appSettingsStore = settingsStore
 
         if let mm = memoryManager { Task { await mm.setMemoryStore(store) } }
 
@@ -250,6 +260,9 @@ final class ChappieViewModel {
         Task {
             await preloadLastActiveThreadId()
             await refreshBalanceCacheIfNeeded()
+
+            // Restore workspace from AppSettingsStore (migrating from UserDefaults if needed).
+            await loadWorkspaceFromStore(settingsStore)
 
             if let catalog = try? await providersRemoteService.fetchCatalog() {
                 try? await provStore.syncRequiresApiKey(from: catalog.providers)
@@ -287,7 +300,7 @@ final class ChappieViewModel {
         workspaceURL = url
         initializeServices(for: url)
         saveWorkspaceWithSecurityScope(url)
-        MCPHelperLauncher.shared.restartWithWorkspace(url)
+        MCPHelperLauncher.shared.restartWithWorkspace(url, environment: activeDevEnvironment)
 
         if messages.isEmpty {
             messages.append(.message(isUser: false, text: "Проект подключен. Я готов к работе!"))
@@ -339,20 +352,38 @@ final class ChappieViewModel {
         }
     }
 
-    func loadWorkspaceWithSecurityScope() {
-        guard let data = UserDefaults.standard.data(forKey: "workspaceBookmark") else { return }
-        var isStale = false
+    /// Loads workspace from AppSettingsStore after store is ready.
+    /// Migrates legacy UserDefaults bookmark on first run, then removes it.
+    func loadWorkspaceFromStore(_ store: AppSettingsStore) async {
+        guard workspaceURL == nil else { return }
 
+        var bookmarkData: Data? = try? await store.loadWorkspaceBookmark()
+
+        // One-time migration: if store has no bookmark but UserDefaults does — migrate and clean up.
+        if bookmarkData == nil, let legacyData = UserDefaults.standard.data(forKey: "workspaceBookmark") {
+            bookmarkData = legacyData
+            try? await store.save(workspaceBookmark: legacyData)
+            UserDefaults.standard.removeObject(forKey: "workspaceBookmark")
+            print("[ChappieViewModel] Workspace bookmark migrated from UserDefaults to AppSettingsStore")
+        }
+
+        guard let data = bookmarkData else { return }
+
+        var isStale = false
         if let url = try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale) {
             _ = url.startAccessingSecurityScopedResource()
-            self.workspaceURL = url
-            initializeServices(for: url)
+            await MainActor.run {
+                self.workspaceURL = url
+                self.initializeServices(for: url)
+            }
             if isStale { saveWorkspaceWithSecurityScope(url) }
-            MCPHelperLauncher.shared.launch(workspacePath: url.path)
+            MCPHelperLauncher.shared.launch(workspacePath: url.path, environment: activeDevEnvironment)
         } else if let url = try? URL(resolvingBookmarkData: data, options: [], relativeTo: nil, bookmarkDataIsStale: &isStale) {
-            self.workspaceURL = url
-            initializeServices(for: url)
-            MCPHelperLauncher.shared.launch(workspacePath: url.path)
+            await MainActor.run {
+                self.workspaceURL = url
+                self.initializeServices(for: url)
+            }
+            MCPHelperLauncher.shared.launch(workspacePath: url.path, environment: activeDevEnvironment)
         }
     }
 }

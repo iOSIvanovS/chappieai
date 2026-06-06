@@ -18,7 +18,7 @@
 //   and the next bind() on the same socket fails with "address already in use".
 //
 // SWIFTDATA SCHEMA:
-// AppSettingsSchemaV1 — StoredRecord is the only @Model. Schema is frozen.
+// AppSettingsSchema — StoredRecord is the only @Model. Schema is frozen.
 // No migrations needed — domain structs evolve as Codable, not as @Model.
 //
 // WINDOW SIZE:
@@ -71,11 +71,11 @@ struct ChappieApp: App {
 
     // MARK: - SwiftData Container
 
-    /// StoredRecord is the only @Model. Schema is frozen at V1.
+    /// StoredRecord is the only @Model. Schema is frozen.
     /// ERROR HANDLING: if the container cannot be created (corrupted DB) — recreate from scratch.
     /// Data loss is acceptable here; better than a full app crash.
     let modelContainer: ModelContainer = {
-        let schema = Schema(versionedSchema: AppSettingsSchemaV1.self)
+        let schema = Schema(versionedSchema: AppSettingsSchema.self)
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
         do {

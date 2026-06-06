@@ -9,11 +9,11 @@
 ## 1. Purpose
 
 ChappieMCP is a local helper process launched by `Chappie.app` as a child process.
-It provides the AI agent with tools for git and xcodebuild.
+It provides the AI agent with tools for git, build/test, and localization.
 
 **Why a separate process:**
 - Independence: helper restarts without restarting the app
-- Separation of concerns: UI layer has no direct knowledge of git/xcodebuild
+- Separation of concerns: UI layer has no direct knowledge of git/build tools
 - User downloads one `.app` — everything is inside
 
 **Location inside .app:**
@@ -28,14 +28,15 @@ Chappie.app/Contents/Helpers/ChappieMCP
 ```
 ChappieMCP/
 ├── architecture.md
-├── main.swift                         # Entry point, reads argv, starts MCPUnixServer
+├── main.swift                         # Entry point: reads argv, starts MCPUnixServer
 └── Sources/ChappieMCP/
+    ├── DevEnvironment.swift           # Mirrors ChappieCore.DevEnvironment (rawValues must stay in sync)
     ├── Server/
     │   └── MCPHTTPServer.swift        # Unix Domain Socket server + ToolDispatcher
     └── Tools/
-        ├── GitTools.swift             # git_status, git_add, git_commit, git_log, git_reset
-        ├── BuildTools.swift           # build_project, run_tests, read_build_log
-        └── LocalizationTools.swift    # loc_* tools
+        ├── GitTools.swift             # git_status, git_add, git_commit, git_log, git_reset, git_revert, git_checkout
+        ├── BuildTools.swift           # build_project, run_tests, read_build_log (env-aware routing)
+        └── LocalizationTools.swift    # loc_* tools (Xcode / xcstrings only)
 ```
 
 ---
@@ -51,10 +52,10 @@ graph TD
     end
 
     subgraph MCP["ChappieMCP (child process)"]
-        Main["main.swift"]
+        Main["main.swift\nparses argv[1..3]"]
         Server["MCPHTTPServer\nUnix Domain Socket + ToolDispatcher"]
         Git["GitTools"]
-        Build["BuildTools"]
+        Build["BuildTools\n(env-aware router)"]
         Loc["LocalizationTools"]
     end
 
@@ -64,7 +65,7 @@ graph TD
 
     TES --> Bridge
     Bridge -->|4-byte len + JSON| Socket
-    Launcher -->|Process.run argv[1]=path argv[2]=socket| Main
+    Launcher -->|"argv[1]=path argv[2]=socket argv[3]=env"| Main
     Socket --> Server
     Main --> Server
     Server --> Git
@@ -83,9 +84,13 @@ Request:  [4 bytes UInt32 BE length] [JSON: {"tool": "git_status", "args": {}}]
 Response: [4 bytes UInt32 BE length] [JSON: {"result": "...", "error": null}]
 ```
 
-`argv[1]` = workspace path (working directory for git/xcodebuild)
-`argv[2]` = socket path
+| Argument | Value |
+|---|---|
+| `argv[1]` | Workspace path (working directory for git/build) |
+| `argv[2]` | Socket file path |
+| `argv[3]` | DevEnvironment rawValue (e.g. `"xcode"`, `"python"`) — defaults to `"unknown"` |
 
+**MCPHelperLauncher** restarts the helper when workspace or devEnvironment changes.
 **MCPToolBridge** connects per call (no persistent connection). Timeout: 600s.
 
 ---
@@ -108,17 +113,28 @@ Response: [4 bytes UInt32 BE length] [JSON: {"result": "...", "error": null}]
 
 All git commands run with: `GIT_PAGER=cat`, `GIT_TERMINAL_PROMPT=0`, `GIT_CONFIG_NOSYSTEM=1`, `TERM=dumb`.
 
-### Build (BuildTools.swift)
+### Build (BuildTools.swift) — env-aware routing
 
-| Tool | Command |
-|------|---------|
-| `build_project` | `xcodebuild -project Chappie.xcodeproj -scheme Chappie build` |
-| `run_tests` | `xcodebuild test` or `swift test` |
-| `read_build_log` | Reads `.build_log.txt` |
+`BuildTools` receives `DevEnvironment` at init and routes each tool to the correct shell command.
+
+| Environment | `build_project` | `run_tests` |
+|---|---|---|
+| `xcode` | `xcodebuild -scheme <App> build` | `xcodebuild -scheme <App>CoreTests test` |
+| `nodejs` | `npm run build` | `npm test [pattern]` |
+| `python` | — (not available) | `python -m pytest [pattern]` |
+| `go` | `go build ./...` | `go test [pkg]` |
+| `rust` | `cargo build` | `cargo test [filter]` |
+| `java` | `mvn compile` or `gradle build` | `mvn test` or `gradle test` |
+| `kotlin` | `gradlew build` | `gradlew test` |
+| `flutter` | `flutter build` | `flutter test [file]` |
+| `react_typescript` | — (not available) | `npm test [pattern]` |
+| `dotnet` | `dotnet build` | `dotnet test [proj]` |
 
 Build log saved to `<workspacePath>/.build_log.txt`.
 
 ### Localization (LocalizationTools.swift)
+
+Xcode-specific (`.xcstrings` format). Injected only when `devEnvironment == .xcode`.
 
 | Tool | Purpose |
 |------|---------|

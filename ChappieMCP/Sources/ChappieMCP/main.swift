@@ -1,72 +1,49 @@
-// main.swift — точка входа ChappieMCP
+// main.swift — entry point for ChappieMCP
 //
-// ЗАЧЕМ ЭТОТ ФАЙЛ:
-// Запускает Unix Domain Socket сервер и держит процесс живым.
+// WHY THIS FILE:
+// Starts the Unix Domain Socket server and keeps the process alive.
 //
-// КЛЮЧЕВОЕ АРХИТЕКТУРНОЕ РЕШЕНИЕ — ПУТЬ СОКЕТА:
-// App Sandbox блокирует bind() на /tmp/ для дочерних процессов.
-// Родительский процесс (Chappie.app) вычисляет путь к сокету внутри
-// своего sandbox-контейнера через FileManager.default.temporaryDirectory
-// и передаёт его сюда как argv[2].
+// CLI ARGUMENTS:
+// argv[0] = binary path (automatic)
+// argv[1] = workspace path (working directory for git/build commands)
+// argv[2] = Unix Domain Socket file path
+// argv[3] = dev environment rawValue (e.g. "xcode", "python", "nodejs") — optional, defaults to "unknown"
 //
-// Это единственный надёжный способ: дочерний процесс наследует sandbox
-// родителя, но FileManager в дочернем процессе может вернуть другой путь.
-// Явная передача через аргументы — детерминированное решение.
+// WHY PASS SOCKET PATH VIA ARGUMENT:
+// Parent (Chappie.app) is the single source of truth about the socket path.
+// Helper should not independently decide on file paths.
 //
-// АРГУМЕНТЫ КОМАНДНОЙ СТРОКИ:
-// argv[0] = путь к бинарнику (автоматически)
-// argv[1] = путь к воркспейсу (рабочий каталог для git/build)
-// argv[2] = путь к Unix Domain Socket файлу
+// WHY PASS DEV ENVIRONMENT VIA ARGUMENT:
+// MCP helper is a standalone binary — it cannot import ChappieCore.
+// Parent knows the active project's devEnvironment and passes it as a string rawValue.
+// This makes build_project and run_tests deterministic per environment.
 //
-// ЗАПУСК ВРУЧНУЮ (для отладки):
-//   .build/debug/ChappieMCP /путь/к/проекту /tmp/com.chappie.mcp.sock
+// MANUAL LAUNCH (for debugging):
+//   .build/debug/ChappieMCP /path/to/project /tmp/com.chappie.mcp.sock xcode
 
 import Foundation
 
-// MARK: - Разбор аргументов командной строки
+let args = CommandLine.arguments
 
-/// Путь к проекту — рабочий каталог для git и xcodebuild команд.
-let projectPath: String = {
-    let args = CommandLine.arguments
-    if args.count > 1 {
-        return args[1]
-    }
-    return FileManager.default.currentDirectoryPath
-}()
+let projectPath: String = args.count > 1 ? args[1] : FileManager.default.currentDirectoryPath
+let socketPath: String  = args.count > 2 ? args[2] : "/tmp/com.chappie.mcp.sock"
+let environment: DevEnvironment = args.count > 3 ? (DevEnvironment(rawValue: args[3]) ?? .unknown) : .unknown
 
-/// Путь к Unix Domain Socket файлу.
-///
-/// Зачем читаем из argv[2]:
-/// Родительский процесс (Chappie.app) работает в App Sandbox и знает путь
-/// к своей временной директории. Он передаёт его сюда явно, чтобы
-/// дочерний процесс создал сокет именно там — где sandbox разрешает bind().
-let socketPath: String = {
-    let args = CommandLine.arguments
-    if args.count > 2 {
-        return args[2]
-    }
-    // Fallback для ручного запуска вне sandbox: используем /tmp/
-    return "/tmp/com.chappie.mcp.sock"
-}()
+print("[ChappieMCP] 🚀 Starting server (Unix Domain Socket)")
+print("[ChappieMCP] 📁 Workspace: \(projectPath)")
+print("[ChappieMCP] 🔌 Socket:    \(socketPath)")
+print("[ChappieMCP] 🛠️  Env:       \(environment.rawValue)")
 
-// MARK: - Запуск сервера
-
-print("[ChappieMCP] 🚀 Запуск сервера (Unix Domain Socket)")
-print("[ChappieMCP] 📁 Рабочий каталог: \(projectPath)")
-print("[ChappieMCP] 🔌 Сокет: \(socketPath)")
-
-// Создаём и запускаем Unix socket сервер с путём, полученным от родителя
-let server = MCPUnixServer(socketPath: socketPath, projectPath: projectPath)
+let server = MCPUnixServer(socketPath: socketPath, projectPath: projectPath, environment: environment)
 
 do {
     try server.start()
-    print("[ChappieMCP] ✅ Сервер запущен. Жду запросов...")
+    print("[ChappieMCP] ✅ Server started. Waiting for requests...")
 } catch {
-    print("[ChappieMCP] ❌ Не удалось запустить сервер: \(error)")
+    print("[ChappieMCP] ❌ Failed to start server: \(error)")
     exit(1)
 }
 
-// Держим процесс живым — сервер работает в фоновом потоке через DispatchQueue.
-// RunLoop.main.run() блокирует главный поток навсегда,
-// пока процесс не получит SIGTERM (от MCPHelperLauncher.terminateHelper).
+// Keep process alive — server runs on a background DispatchQueue.
+// RunLoop.main.run() blocks the main thread until SIGTERM from MCPHelperLauncher.terminateHelper().
 RunLoop.main.run()

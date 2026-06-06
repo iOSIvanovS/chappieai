@@ -1,15 +1,14 @@
 // AITunnelModelsTests.swift
 // ChappieCoreTests
 //
-// Юнит-тесты для Codable-моделей AITunnel.
+// Unit tests for AITunnel Codable models.
 //
-// ЗАЧЕМ ТЕСТИРОВАТЬ МОДЕЛИ:
-// Модели — это контракт с внешним API. Если мы сломаем Codable (например, переименуем
-// поле без @CodingKey), запросы к API начнут падать с cryptic ошибками декодирования.
-// Тесты с реальными JSON-строками защищают от таких регрессий.
+// WHY TEST MODELS: Models are the contract with the external API.
+// A broken Codable (e.g. renamed field without @CodingKey) causes cryptic
+// decoding failures in production. Tests with real JSON strings catch regressions early.
 //
-// ОСОБОЕ ВНИМАНИЕ: AIMessageContent — полиморфный enum с кастомным Codable.
-// Это самое хрупкое место в моделях — тестируем оба кейса явно.
+// SPECIAL ATTENTION: AIMessageContent is a polymorphic enum with custom Codable —
+// the most fragile part of the models. Both cases are tested explicitly.
 
 import Testing
 import Foundation
@@ -20,28 +19,24 @@ struct AITunnelModelsTests {
 
     // MARK: - AIMessageContent
 
-    /// Кодирование .text → простая JSON-строка (не объект).
-    @Test("AIMessageContent.text кодируется как строка")
+    @Test("AIMessageContent.text encodes as a plain string")
     func messageContentTextEncodesAsString() throws {
-//        let content = AIMessageContent.text("Hello, world!")
         let message = AIMessage(role: "user", content: "Hello, world!")
 
         let data = try JSONEncoder().encode(message)
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
-        // content должен быть строкой, не объектом
+        // content must be a string, not an object
         #expect(json?["content"] as? String == "Hello, world!")
     }
 
-    /// Кодирование .blocks → массив объектов с полем "type" и "text".
-    @Test("AIMessageContent.blocks кодируется как массив объектов")
+    @Test("AIMessageContent.blocks encodes as an array of objects")
     func messageContentBlocksEncodesAsArray() throws {
         let message = AIMessage(role: "system", contentBlocks: [.cached("System prompt")])
 
         let data = try JSONEncoder().encode(message)
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
-        // content должен быть массивом
         let contentArray = json?["content"] as? [[String: Any]]
         #expect(contentArray != nil)
         #expect(contentArray?.count == 1)
@@ -49,8 +44,7 @@ struct AITunnelModelsTests {
         #expect(contentArray?.first?["type"] as? String == "text")
     }
 
-    /// Декодирование строки → .text
-    @Test("AIMessageContent декодируется из строки как .text")
+    @Test("AIMessageContent decodes from string as .text")
     func messageContentDecodesFromString() throws {
         let json = """
         {"role": "user", "content": "Test message"}
@@ -61,12 +55,11 @@ struct AITunnelModelsTests {
         if case .text(let text) = message.content {
             #expect(text == "Test message")
         } else {
-            Issue.record("Ожидался .text, получен другой кейс")
+            Issue.record("Expected .text case, got a different case")
         }
     }
 
-    /// contentString работает для обоих кейсов.
-    @Test("contentString возвращает текст для обоих кейсов AIMessageContent")
+    @Test("contentString returns text for both AIMessageContent cases")
     func contentStringWorksForBothCases() {
         let textMessage = AIMessage(role: "user", content: "Hello")
         #expect(textMessage.contentString == "Hello")
@@ -80,8 +73,7 @@ struct AITunnelModelsTests {
 
     // MARK: - AICacheControl
 
-    /// AICacheControl кодируется с полем type = "ephemeral".
-    @Test("AICacheControl кодируется правильно")
+    @Test("AICacheControl encodes with type = ephemeral")
     func cacheControlEncodesCorrectly() throws {
         let cacheControl = AICacheControl()
         let data = try JSONEncoder().encode(cacheControl)
@@ -90,8 +82,7 @@ struct AITunnelModelsTests {
         #expect(json?["type"] == "ephemeral")
     }
 
-    /// AIContentBlock.cached() создаёт блок с cache_control.
-    @Test("AIContentBlock.cached() создаёт блок с cache_control")
+    @Test("AIContentBlock.cached() produces a block with cache_control")
     func contentBlockCachedHasCacheControl() throws {
         let block = AIContentBlock.cached("Cached text")
         #expect(block.cache_control != nil)
@@ -100,8 +91,7 @@ struct AITunnelModelsTests {
         #expect(block.type == "text")
     }
 
-    /// AIContentBlock.plain() создаёт блок без cache_control.
-    @Test("AIContentBlock.plain() создаёт блок без cache_control")
+    @Test("AIContentBlock.plain() produces a block without cache_control")
     func contentBlockPlainHasNoCacheControl() {
         let block = AIContentBlock.plain("Plain text")
         #expect(block.cache_control == nil)
@@ -110,8 +100,7 @@ struct AITunnelModelsTests {
 
     // MARK: - AITunnelRequest
 
-    /// stream: false по умолчанию.
-    @Test("AITunnelRequest.stream по умолчанию false")
+    @Test("AITunnelRequest.stream defaults to false")
     func requestStreamDefaultFalse() throws {
         let request = AITunnelRequest(
             model: "claude-sonnet-4.6",
@@ -124,8 +113,7 @@ struct AITunnelModelsTests {
         #expect(json?["stream"] as? Bool == false)
     }
 
-    /// stream: true кодируется правильно.
-    @Test("AITunnelRequest.stream = true кодируется правильно")
+    @Test("AITunnelRequest.stream = true encodes correctly")
     func requestStreamTrue() throws {
         let request = AITunnelRequest(
             model: "claude-sonnet-4.6",
@@ -140,15 +128,14 @@ struct AITunnelModelsTests {
 
     // MARK: - AIStreamChunk
 
-    /// Декодирование реального SSE-чанка.
-    @Test("AIStreamChunk декодируется из реального SSE JSON")
+    @Test("AIStreamChunk decodes from a real SSE JSON payload")
     func streamChunkDecodesFromRealJSON() throws {
         let json = """
         {
             "id": "chatcmpl-abc123",
             "choices": [
                 {
-                    "delta": {"content": "Привет"},
+                    "delta": {"content": "Hello"},
                     "finish_reason": null
                 }
             ]
@@ -159,12 +146,11 @@ struct AITunnelModelsTests {
 
         #expect(chunk.id == "chatcmpl-abc123")
         #expect(chunk.choices.count == 1)
-        #expect(chunk.choices[0].delta.content == "Привет")
+        #expect(chunk.choices[0].delta.content == "Hello")
         #expect(chunk.choices[0].finish_reason == nil)
     }
 
-    /// Декодирование финального чанка с usage.
-    @Test("AIStreamChunk с usage декодируется правильно")
+    @Test("AIStreamChunk with usage decodes correctly")
     func streamChunkWithUsageDecodes() throws {
         let json = """
         {
@@ -189,8 +175,7 @@ struct AITunnelModelsTests {
 
     // MARK: - AIUsage Prompt Caching
 
-    /// AIUsage декодирует поля кэширования.
-    @Test("AIUsage декодирует cache_creation и cache_read токены")
+    @Test("AIUsage decodes cache_creation and cache_read token fields")
     func usageDecodesCacheTokens() throws {
         let json = """
         {
@@ -210,14 +195,13 @@ struct AITunnelModelsTests {
         #expect(usage.cache_read_input_tokens == 0)
     }
 
-    // MARK: - Roundtrip тесты
+    // MARK: - Roundtrip
 
-    /// AIMessage проходит roundtrip encode → decode без потерь.
-    @Test("AIMessage Codable roundtrip")
+    @Test("AIMessage Codable roundtrip preserves all fields")
     func aiMessageRoundtrip() throws {
         let original = AIMessage(
             role: "user",
-            content: "Тестовое сообщение",
+            content: "Test message",
             tool_calls: nil,
             tool_call_id: nil,
             name: nil
