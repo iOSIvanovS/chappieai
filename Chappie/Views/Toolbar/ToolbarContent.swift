@@ -56,7 +56,7 @@ struct ChappieToolbarContent: ToolbarContent {
                 Image(systemName: "list.bullet")
             }
             .shakeOnTap(isLocked: isThinking)
-            .help(isThinking ? "Нельзя открыть сайдбар пока Чаппи думает" : "Показать / скрыть треды")
+            .help(isThinking ? String(localized: "toolbar.sidebar_locked") : String(localized: "toolbar.sidebar_help"))
         }
 
         // Settings button — always visible, orange if no provider configured.
@@ -69,7 +69,7 @@ struct ChappieToolbarContent: ToolbarContent {
                 Image(systemName: "gear")
             }
             .shakeOnTap(isLocked: isThinking)
-            .help(isThinking ? "Нельзя открыть настройки пока Чаппи думает" : "Настройки Чаппи")
+            .help(isThinking ? String(localized: "toolbar.settings_locked") : String(localized: "toolbar.settings_help"))
             // VISUAL SIGNAL: orange gear = no provider configured
             .foregroundStyle(
                 isApiKeyValid

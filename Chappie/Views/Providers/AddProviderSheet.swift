@@ -115,7 +115,7 @@ struct AddProviderSheet: View {
         return true
     }
 
-    private var title: String { isEditing ? "Редактировать провайдера" : "Добавить провайдера" }
+    private var title: String { isEditing ? String(localized: "provider.edit_title") : String(localized: "provider.add_title") }
 
     /// Effective protocol for validation and client creation.
     private var effectiveProtocol: ProviderProtocol {
@@ -196,7 +196,7 @@ struct AddProviderSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .font(.title2.bold())
-                    Text(step == .provider ? "Шаг 1 из 2 — Провайдер" : "Шаг 2 из 2 — Модели")
+                    Text(step == .provider ? String(localized: "provider.step1") : String(localized: "provider.step2"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -226,20 +226,20 @@ struct AddProviderSheet: View {
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
         .onAppear { prefill() }
-        .alert("Провайдер уже существует", isPresented: $duplicateHostAlert) {
+        .alert("provider.duplicate_host_title", isPresented: $duplicateHostAlert) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("Провайдер с таким адресом уже добавлен в справочник.")
+            Text("provider.duplicate_host_message")
         }
-        .alert("Ключ уже существует", isPresented: $duplicateKeyValueAlert) {
+        .alert("provider.duplicate_key_value_title", isPresented: $duplicateKeyValueAlert) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("Ключ с таким значением уже добавлен у этого провайдера.")
+            Text("provider.duplicate_key_value_message")
         }
-        .alert("Название занято", isPresented: $duplicateKeyNameAlert) {
+        .alert("provider.duplicate_key_name_title", isPresented: $duplicateKeyNameAlert) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("Ключ с таким названием уже существует у этого провайдера. Выберите другое имя.")
+            Text("provider.duplicate_key_name_message")
         }
     }
 
@@ -253,12 +253,12 @@ struct AddProviderSheet: View {
                     catalogBadge(remote)
                 }
 
-                fieldSection(label: "Название провайдера", icon: "tag", hint: "Необязательно. Например: «Work OpenAI» или «Personal Groq»") {
-                    TextField("Мой провайдер", text: $providerName)
+                fieldSection(label: String(localized: "provider.name_label"), icon: "tag", hint: String(localized: "provider.name_hint")) {
+                    TextField("provider.name_placeholder", text: $providerName)
                         .textFieldStyle(.roundedBorder)
                 }
 
-                fieldSection(label: "Базовый URL", icon: "link", hint: "Без пути, например: https://api.openai.com") {
+                fieldSection(label: String(localized: "provider.base_url_label"), icon: "link", hint: String(localized: "provider.base_url_hint")) {
                     TextField("https://...", text: $baseURL)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.body, design: .monospaced))
@@ -285,8 +285,8 @@ struct AddProviderSheet: View {
                         Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
                         Text(
                             customAuthScheme == .none
-                                ? "Авторизация отключена — ключ не нужен."
-                                : "Этот провайдер работает локально и не требует API-ключа."
+                                ? String(localized: "provider.auth_none_subtitle")
+                                : String(localized: "provider.no_auth_local_hint")
                         )
                         .font(.subheadline).foregroundStyle(.secondary)
                     }
@@ -306,25 +306,25 @@ struct AddProviderSheet: View {
 
     private var protocolPickerSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Протокол API", systemImage: "network")
+            Label("provider.protocol_label", systemImage: "network")
                 .font(.headline)
 
             HStack(spacing: 12) {
                 protocolOption(
                     protocol: .openai,
-                    title: "OpenAI-совместимый",
-                    subtitle: "Большинство провайдеров: OpenAI, Groq, Mistral, AITunnel и др.",
+                    title: String(localized: "provider.protocol_openai_title"),
+                    subtitle: String(localized: "provider.protocol_openai_subtitle"),
                     icon: "bolt.circle"
                 )
                 protocolOption(
                     protocol: .anthropic,
                     title: "Anthropic",
-                    subtitle: "Нативный формат /v1/messages. Тело запроса по стандарту Anthropic.",
+                    subtitle: String(localized: "provider.protocol_anthropic_subtitle"),
                     icon: "atom"
                 )
             }
 
-            Text("Выберите Anthropic только если используете нативный Anthropic API или совместимый прокси-роут.")
+            Text("provider.protocol_hint")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -381,7 +381,7 @@ struct AddProviderSheet: View {
 
     private var authSchemePickerSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Авторизация", systemImage: "key.horizontal")
+            Label("provider.auth_label", systemImage: "key.horizontal")
                 .font(.headline)
 
             // Three options in a row — Bearer, x-api-key, None.
@@ -400,19 +400,19 @@ struct AddProviderSheet: View {
                 )
                 authSchemeOption(
                     scheme: .none,
-                    title: "Без ключа",
-                    subtitle: "Без заголовка авторизации",
+                    title: String(localized: "provider.auth_none_title"),
+                    subtitle: String(localized: "provider.auth_none_subtitle"),
                     icon: "lock.open"
                 )
             }
 
             // Contextual hints for unusual combinations.
             if customProtocol == .anthropic && customAuthScheme == .bearer {
-                infoHint("Bearer — нестандартный выбор для Anthropic. Используйте для прокси-сервисов (например, AITunnel с нативным Claude роутом).")
+                infoHint(String(localized: "provider.auth_bearer_nonstandard_hint"))
             } else if customProtocol == .openai && customAuthScheme == .xApiKey {
-                infoHint("x-api-key — нестандартный выбор для OpenAI-совместимого протокола. Используйте только если провайдер требует именно этот заголовок.")
+                infoHint(String(localized: "provider.auth_xapikey_nonstandard_hint"))
             } else if customAuthScheme == .none {
-                infoHint("Заголовок авторизации не будет отправлен. Используйте для локальных серверов (Ollama, LM Studio) и открытых API.")
+                infoHint(String(localized: "provider.no_auth_none_hint"))
             }
         }
     }
@@ -476,10 +476,10 @@ struct AddProviderSheet: View {
         HStack(spacing: 10) {
             Image(systemName: "checkmark.seal.fill").foregroundStyle(Color.accentColor)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Из каталога: \(remote.name)")
+                Text(String(format: String(localized: "provider.catalog_badge"), remote.name))
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Color.accentColor)
-                Text("\(remote.models.count) моделей в каталоге")
+                Text(String(format: String(localized: "provider.catalog_models_count"), remote.models.count))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -493,25 +493,25 @@ struct AddProviderSheet: View {
     private var singleKeySection: some View {
         Group {
             fieldSection(
-                label: "Название ключа",
+                label: String(localized: "provider.key_name_label"),
                 icon: "tag.fill",
-                hint: "Понятное имя для этого ключа. Например: «Рабочий», «Личный», «Клиент X»"
+                hint: String(localized: "provider.key_name_hint")
             ) {
-                TextField(isEditing ? "Новое название ключа" : "Рабочий ключ", text: $apiKeyName)
+                TextField(isEditing ? String(localized: "edit_key.value_placeholder_edit") : String(localized: "provider.key_name_label"), text: $apiKeyName)
                     .textFieldStyle(.roundedBorder)
             }
 
             fieldSection(
-                label: "API-ключ",
+                label: String(localized: "provider.api_key_label"),
                 icon: "key.fill",
-                hint: isEditing ? "Оставьте пустым чтобы сохранить текущий ключ" : "Ключ будет сохранён в системном Keychain"
+                hint: isEditing ? String(localized: "provider.key_value_hint_edit") : String(localized: "provider.key_value_hint_add")
             ) {
                 HStack(spacing: 8) {
                     Group {
                         if isKeyVisible {
-                            TextField(isEditing ? "Новый ключ (необязательно)" : "sk-...", text: $apiKeyValue)
+                            TextField(isEditing ? String(localized: "edit_key.value_placeholder_edit") : "sk-...", text: $apiKeyValue)
                         } else {
-                            SecureField(isEditing ? "Новый ключ (необязательно)" : "sk-...", text: $apiKeyValue)
+                            SecureField(isEditing ? String(localized: "edit_key.value_placeholder_edit") : "sk-...", text: $apiKeyValue)
                         }
                     }
                     .textFieldStyle(.roundedBorder)
@@ -530,9 +530,9 @@ struct AddProviderSheet: View {
 
     private var multiKeySection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("API-ключи", systemImage: "key.fill").font(.headline)
+            Label("provider.api_keys_label", systemImage: "key.fill").font(.headline)
 
-            Text("Добавьте один или несколько ключей для этого провайдера.")
+            Text("provider.need_key")
                 .font(.caption).foregroundStyle(.secondary)
 
             ForEach($pendingKeys) { $key in
@@ -542,7 +542,7 @@ struct AddProviderSheet: View {
             }
 
             Button { pendingKeys.append(PendingKey()) } label: {
-                Label("Добавить ещё ключ", systemImage: "plus.circle").font(.subheadline)
+                Label("provider.add_key", systemImage: "plus.circle").font(.subheadline)
             }
             .buttonStyle(.plain)
             .foregroundStyle(Color.accentColor)
@@ -561,19 +561,20 @@ struct AddProviderSheet: View {
                         HStack(spacing: 6) {
                             if isFetchingModels { ProgressView().controlSize(.small) }
                             else { Image(systemName: "arrow.clockwise") }
-                            Text(isFetchingModels ? "Загружаем..." : "Загрузить список")
+                            Text(isFetchingModels ? String(localized: "provider.models_fetching") : String(localized: "provider.models_fetch"))
                         }
                     }
                     .buttonStyle(.bordered)
                     .disabled(isFetchingModels)
 
                     if !fetchedModels.isEmpty {
-                        Text("\(allModels.count) моделей").font(.caption).foregroundStyle(.secondary)
+                        Text(String(format: String(localized: "provider.models_fetched_count"), allModels.count))
+                            .font(.caption).foregroundStyle(.secondary)
                     }
 
                     Spacer()
 
-                    Text("Выбрано: \(selectedModelIds.count)")
+                    Text(String(format: String(localized: "provider.models_selected_count"), selectedModelIds.count))
                         .font(.caption)
                         .foregroundStyle(selectedModelIds.isEmpty ? .orange : .secondary)
                 }
@@ -582,10 +583,10 @@ struct AddProviderSheet: View {
                 .padding(.bottom, 8)
             } else {
                 HStack {
-                    Text("\(allModels.count) моделей из каталога")
+                    Text(String(format: String(localized: "provider.catalog_models_header"), allModels.count))
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
-                    Text("Выбрано: \(selectedModelIds.count)")
+                    Text(String(format: String(localized: "provider.models_selected_count"), selectedModelIds.count))
                         .font(.caption)
                         .foregroundStyle(selectedModelIds.isEmpty ? .orange : .secondary)
                 }
@@ -608,7 +609,7 @@ struct AddProviderSheet: View {
             if !allModels.isEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary).font(.system(size: 13))
-                    TextField("Поиск по названию…", text: $modelSearchText)
+                    TextField("provider.models_search_placeholder", text: $modelSearchText)
                         .textFieldStyle(.plain).font(.system(size: 13))
                     if !modelSearchText.isEmpty {
                         Button { modelSearchText = "" } label: {
@@ -625,10 +626,10 @@ struct AddProviderSheet: View {
                         Image(systemName: allFilteredSelected ? "checkmark.square.fill" : "square")
                             .font(.system(size: 14))
                             .foregroundStyle(allFilteredSelected ? Color.accentColor : Color.secondary.opacity(0.5))
-                        Text(allFilteredSelected ? "Снять выделение" : "Выбрать все")
+                        Text(allFilteredSelected ? String(localized: "provider.models_deselect_all") : String(localized: "provider.models_select_all"))
                             .font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
                         if !modelSearchText.isEmpty {
-                            Text("(\(filteredModels.count) из \(allModels.count))")
+                            Text(String(format: String(localized: "provider.filter_count"), filteredModels.count, allModels.count))
                                 .font(.system(size: 11)).foregroundStyle(.secondary.opacity(0.7))
                         }
                         Spacer()
@@ -644,15 +645,15 @@ struct AddProviderSheet: View {
             if allModels.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "cpu").font(.system(size: 32)).foregroundStyle(.secondary.opacity(0.4))
-                    Text("Нет загруженных моделей").font(.subheadline).foregroundStyle(.secondary)
-                    Text("Загрузите список выше или добавьте модель вручную")
+                    Text("provider.models_empty").font(.subheadline).foregroundStyle(.secondary)
+                    Text("provider.models_empty_hint")
                         .font(.caption).foregroundStyle(.secondary.opacity(0.7)).multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity).padding(.vertical, 32)
             } else if filteredModels.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "magnifyingglass").font(.system(size: 28)).foregroundStyle(.secondary.opacity(0.4))
-                    Text("Ничего не найдено").font(.subheadline).foregroundStyle(.secondary)
+                    Text("provider.models_nothing_found").font(.subheadline).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity).padding(.vertical, 24)
             } else {
@@ -678,11 +679,11 @@ struct AddProviderSheet: View {
 
             HStack(spacing: 8) {
                 Image(systemName: "keyboard").foregroundStyle(.secondary)
-                TextField("Добавить модель вручную…", text: $manualModelInput)
+                TextField("provider.models_manual_placeholder", text: $manualModelInput)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.body, design: .monospaced))
                     .onSubmit { addManualModel() }
-                Button("Добавить") { addManualModel() }
+                Button("common.add") { addManualModel() }
                     .buttonStyle(.bordered)
                     .disabled(manualModelInput.trimmingCharacters(in: .whitespaces).isEmpty)
             }
@@ -698,7 +699,7 @@ struct AddProviderSheet: View {
 
     private var footerButtons: some View {
         HStack {
-            Button(step == .provider ? "Отмена" : "Назад") {
+            Button(step == .provider ? String(localized: "provider.cancel") : String(localized: "provider.back")) {
                 if step == .provider { onCancel() }
                 else { withAnimation { step = .provider } }
             }
@@ -709,8 +710,8 @@ struct AddProviderSheet: View {
             if step == .provider {
                 Button { validateAndProceed() } label: {
                     HStack(spacing: 6) {
-                        if isValidating { ProgressView().controlSize(.small); Text("Проверяем...") }
-                        else { Text("Далее"); Image(systemName: "arrow.right") }
+                        if isValidating { ProgressView().controlSize(.small); Text("provider.checking") }
+                        else { Text("provider.next"); Image(systemName: "arrow.right") }
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -719,8 +720,8 @@ struct AddProviderSheet: View {
             } else {
                 Button { saveProvider() } label: {
                     HStack(spacing: 6) {
-                        if isSaving { ProgressView().controlSize(.small); Text("Сохраняем...") }
-                        else { Text(isEditing ? "Сохранить" : "Добавить провайдера") }
+                        if isSaving { ProgressView().controlSize(.small); Text("provider.saving") }
+                        else { Text(isEditing ? String(localized: "provider.save") : String(localized: "provider.add_title")) }
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -791,7 +792,7 @@ struct AddProviderSheet: View {
 
     private func validateAndProceed() {
         let trimmedURL = baseURL.trimmingCharacters(in: .whitespaces)
-        guard !trimmedURL.isEmpty else { validationError = "Введите базовый URL."; return }
+        guard !trimmedURL.isEmpty else { validationError = String(localized: "provider.url_label"); return }
 
         isValidating = true
         validationError = nil
@@ -818,7 +819,7 @@ struct AddProviderSheet: View {
             }
 
             if showKeyField && keyToUse.isEmpty {
-                await MainActor.run { isValidating = false; validationError = "Введите API-ключ." }
+                await MainActor.run { isValidating = false; validationError = String(localized: "provider.key_value_label") }
                 return
             }
 
@@ -858,7 +859,7 @@ struct AddProviderSheet: View {
             } catch {
                 await MainActor.run {
                     isValidating = false
-                    validationError = "Ошибка подключения: \(error.localizedDescription)"
+                    validationError = String(format: String(localized: "provider.connection_error"), error.localizedDescription)
                 }
             }
         }
@@ -904,7 +905,7 @@ struct AddProviderSheet: View {
                 isFetchingModels = false
                 if modelIds.isEmpty {
                     if fetchedModels.isEmpty {
-                        fetchError = "Не удалось загрузить список моделей. Добавьте модели вручную."
+                        fetchError = String(localized: "add_models.fetch_error")
                     }
                 } else {
                     let existingModels = fetchedModels
@@ -988,7 +989,7 @@ struct AddProviderSheet: View {
                 } else if isOnboarding {
                     let validKeys = pendingKeys.filter { !$0.value.trimmingCharacters(in: .whitespaces).isEmpty }
                     guard let firstKey = validKeys.first else {
-                        await MainActor.run { isSaving = false; saveError = "Нужен хотя бы один ключ." }
+                        await MainActor.run { isSaving = false; saveError = String(localized: "provider.need_key") }
                         return
                     }
                     let providerId = try await store.mergeProvider(
@@ -1021,7 +1022,7 @@ struct AddProviderSheet: View {
 
                 await MainActor.run { isSaving = false; onSaved() }
             } catch {
-                await MainActor.run { isSaving = false; saveError = "Ошибка сохранения: \(error.localizedDescription)" }
+                await MainActor.run { isSaving = false; saveError = String(format: String(localized: "provider.save_error"), error.localizedDescription) }
             }
         }
     }
@@ -1037,7 +1038,7 @@ private struct PendingKeyRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                TextField("Название ключа (напр. «Рабочий»)", text: $key.name)
+                TextField("provider.key_name_label", text: $key.name)
                     .textFieldStyle(.roundedBorder).frame(maxWidth: 180)
                 Group {
                     if key.isVisible { TextField("sk-...", text: $key.value) }

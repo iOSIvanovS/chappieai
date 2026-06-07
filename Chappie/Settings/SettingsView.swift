@@ -13,7 +13,7 @@
 //   - Security: Keychain info.
 //
 // NOTE: There is no "active provider" concept at the global level.
-// Provider + key + model selection happens per-thread via the "Модель" chip in the toolbar.
+// Provider + key + model selection happens per-thread via the "Model" chip in the toolbar.
 // ProvidersSettingsView is purely a directory — add/edit/delete, no selection.
 //
 // SPARKLE:
@@ -55,7 +55,7 @@ struct SettingsView: View {
                 Image(systemName: "gear")
                     .font(.title2)
                     .foregroundStyle(.secondary)
-                Text("Настройки")
+                Text("settings.title")
                     .font(.title2.bold())
                 Spacer()
                 Button { dismiss() } label: {
@@ -76,15 +76,15 @@ struct SettingsView: View {
 
                     // MARK: User Name
                     VStack(alignment: .leading, spacing: 12) {
-                        Label("Ваше имя", systemImage: "person.fill")
+                        Label("settings.name_section", systemImage: "person.fill")
                             .font(.headline)
 
-                        Text("Чаппи будет обращаться к вам по имени в системном промпте.")
+                        Text("settings.name_hint")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
 
                         HStack(spacing: 10) {
-                            TextField("Имя", text: $userName)
+                            TextField("settings.name_placeholder", text: $userName)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(maxWidth: 260)
                                 .onSubmit { saveName() }
@@ -95,9 +95,9 @@ struct SettingsView: View {
                                 HStack(spacing: 4) {
                                     if nameSaved {
                                         Image(systemName: "checkmark")
-                                        Text("Сохранено")
+                                        Text("settings.name_saved")
                                     } else {
-                                        Text("Сохранить")
+                                        Text("settings.name_save")
                                     }
                                 }
                             }
@@ -110,10 +110,10 @@ struct SettingsView: View {
 
                     // MARK: AI Providers
                     VStack(alignment: .leading, spacing: 12) {
-                        Label("AI-провайдеры", systemImage: "cpu")
+                        Label("settings.providers_section", systemImage: "cpu")
                             .font(.headline)
 
-                        Text("Справочник провайдеров: ключи и модели для каждого из них. Выбор провайдера и модели происходит в чипсе «Модель» в тулбаре чата.")
+                        Text("settings.providers_hint")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
 
@@ -133,7 +133,7 @@ struct SettingsView: View {
                                 HStack(spacing: 8) {
                                     Image(systemName: "exclamationmark.circle.fill")
                                         .foregroundStyle(.orange)
-                                    Text("Нет настроенных провайдеров")
+                                    Text("settings.providers_none")
                                         .font(.system(size: 13))
                                         .foregroundStyle(.orange)
                                 }
@@ -147,7 +147,7 @@ struct SettingsView: View {
                             Button {
                                 showProviders = true
                             } label: {
-                                Label("Управлять", systemImage: "slider.horizontal.3")
+                                Label("settings.providers_manage", systemImage: "slider.horizontal.3")
                             }
                             .buttonStyle(.bordered)
                         }
@@ -157,10 +157,10 @@ struct SettingsView: View {
 
                     // MARK: Memory Management
                     VStack(alignment: .leading, spacing: 12) {
-                        Label("Память", systemImage: "internaldrive")
+                        Label("settings.memory_section", systemImage: "internaldrive")
                             .font(.headline)
 
-                        Text("История сообщений хранится полностью. Здесь можно посмотреть объём каждого треда и удалить старые сообщения.")
+                        Text("settings.memory_hint")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
 
@@ -181,7 +181,7 @@ struct SettingsView: View {
                             Button {
                                 showMemory = true
                             } label: {
-                                Label("Управлять", systemImage: "trash.slash")
+                                Label("settings.memory_manage", systemImage: "trash.slash")
                             }
                             .buttonStyle(.bordered)
                         }
@@ -191,7 +191,7 @@ struct SettingsView: View {
 
                     // MARK: Updates
                     VStack(alignment: .leading, spacing: 12) {
-                        Label("Обновления", systemImage: "arrow.down.circle")
+                        Label("settings.updates_section", systemImage: "arrow.down.circle")
                             .font(.headline)
 
                         HStack(spacing: 12) {
@@ -199,7 +199,7 @@ struct SettingsView: View {
                             HStack(spacing: 6) {
                                 Image(systemName: "app.badge.checkmark")
                                     .foregroundStyle(.secondary)
-                                Text("Версия \(appVersion)")
+                                Text(String(format: String(localized: "settings.version"), appVersion))
                                     .font(.system(size: 13, weight: .medium))
                                     .foregroundStyle(.secondary)
                             }
@@ -212,7 +212,7 @@ struct SettingsView: View {
                             Button {
                                 sparkleUpdater?.checkForUpdates()
                             } label: {
-                                Label("Проверить обновления", systemImage: "arrow.clockwise")
+                                Label("settings.check_updates", systemImage: "arrow.clockwise")
                             }
                             .buttonStyle(.bordered)
                             .disabled(sparkleUpdater?.canCheckForUpdates == false)
@@ -223,10 +223,10 @@ struct SettingsView: View {
 
                     // MARK: Onboarding
                     VStack(alignment: .leading, spacing: 12) {
-                        Label("Онбординг", systemImage: "wand.and.stars")
+                        Label("settings.onboarding_section", systemImage: "wand.and.stars")
                             .font(.headline)
 
-                        Text("Повторно запустить мастер первоначальной настройки. Существующие данные не удаляются — провайдеры, ключи и модели только дополняются.")
+                        Text("settings.onboarding_hint")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
 
@@ -234,14 +234,14 @@ struct SettingsView: View {
                             Button {
                                 showOnboardingConfirm = true
                             } label: {
-                                Label("Запустить онбординг", systemImage: "arrow.clockwise")
+                                Label("settings.run_onboarding", systemImage: "arrow.clockwise")
                             }
                             .buttonStyle(.bordered)
 
                             Button {
                                 showEULAConfirm = true
                             } label: {
-                                Label("Показать соглашение", systemImage: "doc.text")
+                                Label("settings.show_eula", systemImage: "doc.text")
                             }
                             .buttonStyle(.bordered)
                         }
@@ -251,16 +251,16 @@ struct SettingsView: View {
 
                     // MARK: Security info
                     VStack(alignment: .leading, spacing: 8) {
-                        Label("Безопасность", systemImage: "lock.shield.fill")
+                        Label("settings.security_section", systemImage: "lock.shield.fill")
                             .font(.headline)
 
                         HStack(spacing: 8) {
                             Image(systemName: "checkmark.seal.fill")
                                 .foregroundStyle(.green)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("API-ключи хранятся в системном Keychain")
+                                Text("settings.keychain_title")
                                     .font(.subheadline.weight(.medium))
-                                Text("Keychain — зашифрованное хранилище macOS, защищённое вашим паролем. Ключи недоступны другим приложениям.")
+                                Text("settings.keychain_hint")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -276,7 +276,7 @@ struct SettingsView: View {
 
             HStack {
                 Spacer()
-                Button("Закрыть") { dismiss() }
+                Button("settings.close") { dismiss() }
                     .keyboardShortcut(.escape)
             }
             .padding(.horizontal, 24)
@@ -289,27 +289,27 @@ struct SettingsView: View {
         .sheet(isPresented: $showMemory) {
             MemoryManagementView(viewModel: viewModel)
         }
-        .alert("Запустить онбординг?", isPresented: $showOnboardingConfirm) {
-            Button("Запустить") {
+        .alert("settings.onboarding_confirm_title", isPresented: $showOnboardingConfirm) {
+            Button("settings.onboarding_confirm_run") {
                 dismiss()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     AppState.shared.resetOnboarding()
                 }
             }
-            Button("Отмена", role: .cancel) {}
+            Button("settings.onboarding_confirm_cancel", role: .cancel) {}
         } message: {
-            Text("Мастер настройки откроется снова. Ваши данные, треды и провайдеры сохранятся.")
+            Text("settings.onboarding_confirm_message")
         }
-        .alert("Показать соглашение?", isPresented: $showEULAConfirm) {
-            Button("Показать") {
+        .alert("settings.eula_confirm_title", isPresented: $showEULAConfirm) {
+            Button("settings.eula_confirm_show") {
                 dismiss()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     AppState.shared.resetEULA()
                 }
             }
-            Button("Отмена", role: .cancel) {}
+            Button("settings.eula_confirm_cancel", role: .cancel) {}
         } message: {
-            Text("Лицензионное соглашение откроется снова. Ваши данные не затронуты.")
+            Text("settings.eula_confirm_message")
         }
         .onAppear { loadCurrentName() }
     }
@@ -320,19 +320,21 @@ struct SettingsView: View {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
     }
 
+    // WHY: Russian pluralization has 3 forms (1/2-4/5+), English has 2 (1/other).
+    // Using localized keys so each language can provide its own plural forms.
     private func providersLabel(_ count: Int) -> String {
         switch count {
-        case 1: return "провайдер"
-        case 2...4: return "провайдера"
-        default: return "провайдеров"
+        case 1: return String(localized: "settings.providers_one")
+        case 2...4: return String(localized: "settings.providers_few")
+        default: return String(localized: "settings.providers_many")
         }
     }
 
     private func threadsLabel(_ count: Int) -> String {
         switch count {
-        case 1: return "тред"
-        case 2...4: return "треда"
-        default: return "тредов"
+        case 1: return String(localized: "settings.threads_one")
+        case 2...4: return String(localized: "settings.threads_few")
+        default: return String(localized: "settings.threads_many")
         }
     }
 

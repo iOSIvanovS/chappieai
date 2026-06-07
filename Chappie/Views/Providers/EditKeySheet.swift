@@ -40,7 +40,7 @@ struct EditKeySheet: View {
     // MARK: - Computed
 
     private var isEditing: Bool { editingKey != nil }
-    private var title: String { isEditing ? "Редактировать ключ" : "Добавить ключ" }
+    private var title: String { isEditing ? String(localized: "edit_key.edit_title") : String(localized: "edit_key.add_title") }
 
     private var canSave: Bool {
         let nameTrimmed = keyName.trimmingCharacters(in: .whitespaces)
@@ -82,30 +82,30 @@ struct EditKeySheet: View {
 
                     // Key name field
                     VStack(alignment: .leading, spacing: 8) {
-                        Label("Название ключа", systemImage: "tag.fill")
+                        Label("edit_key.name_label", systemImage: "tag.fill")
                             .font(.headline)
-                        TextField("Например: Рабочий, Личный, Клиент X", text: $keyName)
+                        TextField("edit_key.name_placeholder", text: $keyName)
                             .textFieldStyle(.roundedBorder)
                             .onSubmit { if canSave { save() } }
-                        Text("Понятное имя — вы будете выбирать ключ по нему в треде.")
+                        Text("edit_key.name_hint")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
 
                     // Key value field
                     VStack(alignment: .leading, spacing: 8) {
-                        Label("API-ключ", systemImage: "key.fill")
+                        Label("edit_key.value_label", systemImage: "key.fill")
                             .font(.headline)
                         HStack(spacing: 8) {
                             Group {
                                 if isKeyVisible {
                                     TextField(
-                                        isEditing ? "Новое значение (необязательно)" : "sk-...",
+                                        isEditing ? String(localized: "edit_key.value_placeholder_edit") : "sk-...",
                                         text: $keyValue
                                     )
                                 } else {
                                     SecureField(
-                                        isEditing ? "Новое значение (необязательно)" : "sk-...",
+                                        isEditing ? String(localized: "edit_key.value_placeholder_edit") : "sk-...",
                                         text: $keyValue
                                     )
                                 }
@@ -120,8 +120,8 @@ struct EditKeySheet: View {
                             .buttonStyle(.plain)
                         }
                         Text(isEditing
-                             ? "Оставьте пустым чтобы сохранить текущий ключ. Ключ хранится в Keychain."
-                             : "Ключ будет сохранён в системном Keychain macOS.")
+                             ? String(localized: "edit_key.value_hint_edit")
+                             : String(localized: "edit_key.value_hint_add"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -142,7 +142,7 @@ struct EditKeySheet: View {
 
             // Footer
             HStack {
-                Button("Отмена") { onCancel() }
+                Button("edit_key.cancel") { onCancel() }
                     .keyboardShortcut(.escape)
                 Spacer()
                 Button {
@@ -151,9 +151,9 @@ struct EditKeySheet: View {
                     HStack(spacing: 6) {
                         if isSaving {
                             ProgressView().controlSize(.small)
-                            Text("Сохраняем...")
+                            Text("edit_key.saving")
                         } else {
-                            Text(isEditing ? "Сохранить" : "Добавить ключ")
+                            Text(isEditing ? String(localized: "edit_key.save") : String(localized: "edit_key.add_action"))
                         }
                     }
                 }
@@ -186,7 +186,7 @@ struct EditKeySheet: View {
         // Validate name uniqueness within provider
         let otherKeys = provider.keys.filter { $0.id != editingKey?.id }
         if otherKeys.contains(where: { $0.name.lowercased() == nameTrimmed.lowercased() }) {
-            errorMessage = "Ключ с таким именем уже существует у этого провайдера."
+            errorMessage = String(localized: "provider.duplicate_key_name_message")
             return
         }
 
@@ -213,7 +213,7 @@ struct EditKeySheet: View {
                         if isDuplicate {
                             await MainActor.run {
                                 isSaving = false
-                                errorMessage = "Ключ с таким значением уже добавлен у этого провайдера."
+                                errorMessage = String(localized: "provider.duplicate_key_value_message")
                             }
                             return
                         }
@@ -235,7 +235,7 @@ struct EditKeySheet: View {
                     if isDuplicate {
                         await MainActor.run {
                             isSaving = false
-                            errorMessage = "Ключ с таким значением уже добавлен у этого провайдера."
+                            errorMessage = String(localized: "provider.duplicate_key_value_message")
                         }
                         return
                     }

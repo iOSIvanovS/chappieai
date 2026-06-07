@@ -16,7 +16,7 @@ extension ChappieViewModel {
             self.threads = loaded
 
             if loaded.isEmpty {
-                let newId = try await store.createThread(title: "Новый тред")
+                let newId = try await store.createThread(title: String(localized: "new_thread.name_placeholder"))
                 let refreshed = try await store.loadThreads()
                 self.threads = refreshed
                 if let newThread = refreshed.first(where: { $0.id == newId }) {
@@ -200,7 +200,7 @@ extension ChappieViewModel {
 
         Task {
             do {
-                let newId = try await store.createThread(title: "Новый тред")
+                let newId = try await store.createThread(title: String(localized: "new_thread.name_placeholder"))
                 let refreshed = try await store.loadThreads()
                 self.threads = refreshed
 
@@ -245,7 +245,7 @@ extension ChappieViewModel {
         }
 
         let finalTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedTitle = finalTitle.isEmpty ? "Новый тред" : finalTitle
+        let resolvedTitle = finalTitle.isEmpty ? String(localized: "new_thread.name_placeholder") : finalTitle
         try? await store.renameThread(id: thread.id, title: resolvedTitle)
 
         var updatedSettings = settings
@@ -321,7 +321,7 @@ extension ChappieViewModel {
                     if let first = refreshed.first {
                         await selectThread(first)
                     } else {
-                        let newId = try await store.createThread(title: "Новый тред")
+                        let newId = try await store.createThread(title: String(localized: "new_thread.name_placeholder"))
                         let withNew = try await store.loadThreads()
                         self.threads = withNew
                         if let newThread = withNew.first(where: { $0.id == newId }) {

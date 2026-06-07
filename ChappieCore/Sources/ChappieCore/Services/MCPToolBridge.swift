@@ -40,10 +40,10 @@ public actor MCPToolBridge {
         // Socket file absence means the MCP server is not running.
         guard FileManager.default.fileExists(atPath: socketPath) else {
             return """
-            ❌ ChappieMCP сервер недоступен (сокет не найден: \(socketPath)).
+            ❌ ChappieMCP server unavailable (socket not found: \(socketPath)).
             
-            Хелпер должен запускаться автоматически при старте Chappie.app.
-            Если этого не произошло — перезапусти приложение.
+            The helper should start automatically when Chappie.app launches.
+            If it didn't — restart the app.
             """
         }
         return await sendRequest(tool: tool, args: args)
@@ -55,7 +55,7 @@ public actor MCPToolBridge {
     private func sendRequest(tool: String, args: [String: String]) async -> String {
         let request = MCPRequestBody(tool: tool, args: args)
         guard let requestData = try? JSONEncoder().encode(request) else {
-            return "❌ Ошибка: не удалось сериализовать запрос для инструмента \(tool)"
+            return "❌ Error: failed to serialize request for tool \(tool)"
         }
 
         return await withCheckedContinuation { continuation in
@@ -81,7 +81,7 @@ public actor MCPToolBridge {
     ) -> String {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else {
-            return "❌ Не удалось создать сокет: \(String(cString: strerror(errno)))"
+            return "❌ Failed to create socket: \(String(cString: strerror(errno)))"
         }
         defer { close(fd) }
 
@@ -110,7 +110,7 @@ public actor MCPToolBridge {
             }
         }
         guard connectResult == 0 else {
-            return "❌ Не удалось подключиться к ChappieMCP (\(socketPath)): \(String(cString: strerror(errno)))"
+            return "❌ Failed to connect to ChappieMCP (\(socketPath)): \(String(cString: strerror(errno)))"
         }
 
         // Send: 4-byte big-endian length header + JSON body
@@ -123,12 +123,12 @@ public actor MCPToolBridge {
 
         let headerSent = header.withUnsafeBytes { send(fd, $0.baseAddress!, 4, 0) }
         guard headerSent == 4 else {
-            return "❌ Ошибка отправки заголовка: \(String(cString: strerror(errno)))"
+            return "❌ Header send error: \(String(cString: strerror(errno)))"
         }
 
         let bodySent = requestData.withUnsafeBytes { send(fd, $0.baseAddress!, requestData.count, 0) }
         guard bodySent == requestData.count else {
-            return "❌ Ошибка отправки тела запроса: \(String(cString: strerror(errno)))"
+            return "❌ Request body send error: \(String(cString: strerror(errno)))"
         }
 
         // Read response: 4-byte length header first
@@ -136,9 +136,9 @@ public actor MCPToolBridge {
         let headerRead = recv(fd, &responseHeader, 4, MSG_WAITALL)
         guard headerRead == 4 else {
             if errno == EAGAIN || errno == EWOULDBLOCK {
-                return "⏱️ Таймаут: инструмент \(tool) выполнялся слишком долго (>\(Int(timeoutSeconds)) сек)"
+                return "⏱️ Timeout: tool \(tool) took too long (>\(Int(timeoutSeconds)) sec)"
             }
-            return "❌ Ошибка чтения заголовка ответа: \(String(cString: strerror(errno)))"
+            return "❌ Response header read error: \(String(cString: strerror(errno)))"
         }
 
         let responseLength = UInt32(responseHeader[0]) << 24
@@ -147,25 +147,25 @@ public actor MCPToolBridge {
                            | UInt32(responseHeader[3])
 
         guard responseLength > 0, responseLength < 10_000_000 else {
-            return "❌ Неверная длина ответа от сервера: \(responseLength)"
+            return "❌ Invalid response length from server: \(responseLength)"
         }
 
         var responseBytes = [UInt8](repeating: 0, count: Int(responseLength))
         let bodyRead = recv(fd, &responseBytes, Int(responseLength), MSG_WAITALL)
         guard bodyRead == Int(responseLength) else {
-            return "❌ Неполный ответ от сервера (ожидалось \(responseLength), получено \(bodyRead))"
+            return "❌ Incomplete response from server (expected \(responseLength), got \(bodyRead))"
         }
 
         let responseData = Data(responseBytes)
         guard let response = try? JSONDecoder().decode(MCPResponseBody.self, from: responseData) else {
-            let raw = String(data: responseData, encoding: .utf8) ?? "нечитаемый ответ"
-            return "❌ Не удалось декодировать ответ MCP-сервера: \(raw)"
+            let raw = String(data: responseData, encoding: .utf8) ?? "unreadable response"
+            return "❌ Failed to decode MCP server response: \(raw)"
         }
 
         if let error = response.error {
-            return "❌ Ошибка инструмента \(tool): \(error)"
+            return "❌ Tool \(tool) error: \(error)"
         }
-        return response.result ?? "(пустой результат)"
+        return response.result ?? "(empty result)"
     }
 }
 

@@ -11,7 +11,7 @@
 // 3. Role .executor + isProgrammingProject = true — show all advanced settings.
 //
 // ENV DETECTION:
-// "Определить" button calls onDetectEnvironment — async AI call in ViewModel.
+// "Detect" button calls onDetectEnvironment — async AI call in ViewModel.
 // isDetecting=true shows spinner inside the button while waiting.
 // The callback from ViewModel arrives on any thread; we hop to MainActor before
 // mutating @State (draft.devEnvironment, isDetecting).
@@ -26,7 +26,7 @@ struct ProjectSettingsSheet: View {
     let project: ProjectMetadata
     let onSave: (ProjectSettings) -> Void
     let onDismiss: () -> Void
-    /// Called when user taps "Определить". Receives a @Sendable callback to invoke with the result.
+    /// Called when user taps "Detect". Receives a @Sendable callback to invoke with the result.
     let onDetectEnvironment: (@Sendable @escaping (DevEnvironment) -> Void) -> Void
 
     @State private var draft: ProjectSettings
@@ -82,16 +82,16 @@ struct ProjectSettingsSheet: View {
         }
         .frame(width: 460)
         .frame(minHeight: 400)
-        .alert("Смена роли", isPresented: $showingDowngradeAlert) {
-            Button("Отмена", role: .cancel) {
+        .alert("project.settings.downgrade_alert_title", isPresented: $showingDowngradeAlert) {
+            Button("project.settings.downgrade_cancel", role: .cancel) {
                 pendingRoleChange = nil
             }
-            Button("Сменить на советника", role: .destructive) {
+            Button("project.settings.downgrade_confirm", role: .destructive) {
                 draft.downgradeToAdvisor()
                 pendingRoleChange = nil
             }
         } message: {
-            Text("При смене роли на «Советник» все права доступа (git, тесты, архитектура, комментарии, терминал) будут сброшены. Продолжить?")
+            Text("project.settings.downgrade_alert_message")
         }
     }
 
@@ -104,7 +104,7 @@ struct ProjectSettingsSheet: View {
                 .foregroundStyle(Color.accentColor)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Настройки проекта")
+                Text("project.settings.title")
                     .font(.headline)
                 Text(project.displayName)
                     .font(.subheadline)
@@ -129,9 +129,9 @@ struct ProjectSettingsSheet: View {
 
     private var roleSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Роль агента", systemImage: "person.badge.key.fill")
+            sectionHeader("project.settings.role_section", systemImage: "person.badge.key.fill")
 
-            Picker("Роль", selection: Binding(
+            Picker("project.settings.role_picker", selection: Binding(
                 get: { draft.agentRole },
                 set: { newRole in
                     if draft.agentRole == .executor && newRole == .advisor {
@@ -167,7 +167,7 @@ struct ProjectSettingsSheet: View {
                 .foregroundStyle(.blue)
                 .padding(.top, 1)
 
-            Text("В роли советника доступны только **read_file** и **list_files**. Все инструменты записи, git, тесты и терминал заблокированы.")
+            Text("project.settings.advisor_limits")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -181,13 +181,13 @@ struct ProjectSettingsSheet: View {
 
     private var projectTypeSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Тип проекта", systemImage: "hammer.fill")
+            sectionHeader("project.settings.type_section", systemImage: "hammer.fill")
 
             Toggle(isOn: $draft.isProgrammingProject) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Программистский проект")
+                    Text("project.settings.programming_project")
                         .font(.callout)
-                    Text("Разблокирует настройки git, тестов, архитектуры, комментариев и терминала")
+                    Text("project.settings.programming_project_hint")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -200,10 +200,10 @@ struct ProjectSettingsSheet: View {
 
     private var devEnvironmentSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Среда разработки", systemImage: "laptopcomputer")
+            sectionHeader("project.settings.dev_env_section", systemImage: "laptopcomputer")
 
             HStack(spacing: 8) {
-                Picker("Среда", selection: $draft.devEnvironment) {
+                Picker("project.settings.env_picker", selection: $draft.devEnvironment) {
                     ForEach(DevEnvironment.allCases, id: \.self) { env in
                         Text(env.displayName).tag(env)
                     }
@@ -232,24 +232,24 @@ struct ProjectSettingsSheet: View {
                         } else {
                             Image(systemName: "wand.and.stars")
                         }
-                        Text(isDetecting ? "Определяю…" : "Определить")
+                        Text(isDetecting ? String(localized: "project.settings.detecting") : String(localized: "project.settings.detect"))
                             .font(.callout)
                     }
                 }
                 .buttonStyle(.bordered)
                 .disabled(isDetecting)
-                .help("Чаппи определит среду разработки по файлам проекта")
+                .help("project.settings.detect_help")
             }
 
             if draft.devEnvironment != .unknown {
                 let tools = draft.devEnvironment.specificTools
                 if !tools.isEmpty {
-                    Text("Дополнительные инструменты: \(tools.joined(separator: ", "))")
+                    Text(String(format: String(localized: "project.settings.env_tools_hint"), tools.joined(separator: ", ")))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             } else {
-                Text("Выберите среду или нажмите «Определить» — Чаппи проанализирует файлы проекта")
+                Text("project.settings.env_unknown_hint")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -261,9 +261,9 @@ struct ProjectSettingsSheet: View {
 
     private var gitSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Git", systemImage: "arrow.triangle.branch")
+            sectionHeader("project.settings.git_section", systemImage: "arrow.triangle.branch")
 
-            Picker("Доступ к git", selection: $draft.gitAccess) {
+            Picker("project.settings.git_picker", selection: $draft.gitAccess) {
                 ForEach(GitAccessLevel.allCases, id: \.self) { level in
                     Text(level.displayName).tag(level)
                 }
@@ -272,7 +272,7 @@ struct ProjectSettingsSheet: View {
 
             if draft.gitAccess != .none {
                 let tools = draft.gitAccess.allowedTools.sorted().joined(separator: ", ")
-                Text("Доступные инструменты: \(tools)")
+                Text(String(format: String(localized: "project.settings.git_tools_hint"), tools))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -281,7 +281,7 @@ struct ProjectSettingsSheet: View {
                 Image(systemName: "xmark.shield.fill")
                     .font(.system(size: 11))
                     .foregroundStyle(.red)
-                Text("git_diff всегда заблокирован — загружает весь проект в контекст")
+                Text("project.settings.git_diff_blocked")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -292,9 +292,9 @@ struct ProjectSettingsSheet: View {
 
     private var testsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Автотесты", systemImage: "checkmark.shield.fill")
+            sectionHeader("project.settings.tests_section", systemImage: "checkmark.shield.fill")
 
-            Picker("Доступ к тестам", selection: $draft.testsAccess) {
+            Picker("project.settings.tests_picker", selection: $draft.testsAccess) {
                 ForEach(TestsAccessLevel.allCases, id: \.self) { level in
                     Text(level.displayName).tag(level)
                 }
@@ -307,7 +307,7 @@ struct ProjectSettingsSheet: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.orange)
                         .padding(.top, 1)
-                    Text("Агент может читать логи и сигнализировать о проблемах, но не запускать тесты")
+                    Text("project.settings.tests_readonly_hint")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -319,13 +319,13 @@ struct ProjectSettingsSheet: View {
 
     private var architectureSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Архитектурные файлы", systemImage: "doc.text.fill")
+            sectionHeader("project.settings.arch_section", systemImage: "doc.text.fill")
 
             Toggle(isOn: $draft.architectureEnabled) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Разрешить создание и редактирование")
+                    Text("project.settings.arch_allow")
                         .font(.callout)
-                    Text("Агент сможет создавать architecture.md файлы. Пути обсуждаются с вами.")
+                    Text("project.settings.arch_allow_hint")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -334,10 +334,10 @@ struct ProjectSettingsSheet: View {
 
             if draft.architectureEnabled {
                 HStack {
-                    Text("Язык файлов:")
+                    Text("project.settings.arch_language")
                         .font(.callout)
                     Spacer()
-                    Picker("Язык архитектуры", selection: $draft.architectureLanguage) {
+                    Picker("project.settings.arch_language_picker", selection: $draft.architectureLanguage) {
                         ForEach(ProjectLanguage.allCases, id: \.self) { lang in
                             Text(lang.displayName).tag(lang)
                         }
@@ -353,13 +353,13 @@ struct ProjectSettingsSheet: View {
 
     private var commentsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Комментарии в коде", systemImage: "text.bubble.fill")
+            sectionHeader("project.settings.comments_section", systemImage: "text.bubble.fill")
 
             Toggle(isOn: $draft.commentsEnabled) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Добавлять комментарии в код")
+                    Text("project.settings.comments_allow")
                         .font(.callout)
-                    Text("Агент будет комментировать написанный код")
+                    Text("project.settings.comments_allow_hint")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -368,10 +368,10 @@ struct ProjectSettingsSheet: View {
 
             if draft.commentsEnabled {
                 HStack {
-                    Text("Язык комментариев:")
+                    Text("project.settings.comments_language")
                         .font(.callout)
                     Spacer()
-                    Picker("Язык комментариев", selection: $draft.commentsLanguage) {
+                    Picker("project.settings.comments_language_picker", selection: $draft.commentsLanguage) {
                         ForEach(ProjectLanguage.allCases, id: \.self) { lang in
                             Text(lang.displayName).tag(lang)
                         }
@@ -387,9 +387,9 @@ struct ProjectSettingsSheet: View {
 
     private var terminalSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Терминал", systemImage: "terminal.fill")
+            sectionHeader("project.settings.terminal_section", systemImage: "terminal.fill")
 
-            Picker("Доступ к терминалу", selection: $draft.terminalAccess) {
+            Picker("project.settings.terminal_picker", selection: $draft.terminalAccess) {
                 ForEach(TerminalAccessLevel.allCases, id: \.self) { level in
                     Text(level.displayName).tag(level)
                 }
@@ -412,7 +412,7 @@ struct ProjectSettingsSheet: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.green)
                         .padding(.top, 1)
-                    Text("Деструктивные команды (rm -rf /, sudo rm, mkfs и др.) заблокированы безусловно.")
+                    Text("project.settings.terminal_safe_hint")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -428,7 +428,7 @@ struct ProjectSettingsSheet: View {
                 .foregroundStyle(.orange)
                 .padding(.top, 1)
 
-            Text("Агент будет выполнять команды **без подтверждения**. Убедись, что доверяешь текущей модели и провайдеру.")
+            Text("project.settings.terminal_auto_warning")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -442,7 +442,7 @@ struct ProjectSettingsSheet: View {
 
     private var footerView: some View {
         HStack {
-            Button("Отмена") {
+            Button("project.settings.cancel") {
                 onDismiss()
             }
             .buttonStyle(.plain)
@@ -450,7 +450,7 @@ struct ProjectSettingsSheet: View {
 
             Spacer()
 
-            Button("Сохранить") {
+            Button("project.settings.save") {
                 onSave(draft)
             }
             .buttonStyle(.borderedProminent)
@@ -462,7 +462,7 @@ struct ProjectSettingsSheet: View {
 
     // MARK: - Helpers
 
-    private func sectionHeader(_ title: String, systemImage: String) -> some View {
+    private func sectionHeader(_ title: LocalizedStringKey, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(.primary)
@@ -471,19 +471,19 @@ struct ProjectSettingsSheet: View {
 
 // MARK: - Preview
 
-#Preview("Советник") {
+#Preview("Advisor") {
     ProjectSettingsSheet(
         project: ProjectMetadata(
             id: UUID(),
             displayName: "Chappie",
             settings: ProjectSettings(agentRole: .advisor)
         ),
-        onSave: { settings in print("Сохранено: \(settings)") },
+        onSave: { settings in print("Saved: \(settings)") },
         onDismiss: {}
     )
 }
 
-#Preview("Исполнитель — программистский") {
+#Preview("Executor — programming") {
     ProjectSettingsSheet(
         project: ProjectMetadata(
             id: UUID(),
@@ -501,12 +501,12 @@ struct ProjectSettingsSheet: View {
                 terminalAccess: .confirm
             )
         ),
-        onSave: { settings in print("Сохранено: \(settings)") },
+        onSave: { settings in print("Saved: \(settings)") },
         onDismiss: {}
     )
 }
 
-#Preview("Терминал — авто") {
+#Preview("Terminal — auto") {
     ProjectSettingsSheet(
         project: ProjectMetadata(
             id: UUID(),
@@ -517,7 +517,7 @@ struct ProjectSettingsSheet: View {
                 terminalAccess: .auto
             )
         ),
-        onSave: { settings in print("Сохранено: \(settings)") },
+        onSave: { settings in print("Saved: \(settings)") },
         onDismiss: {}
     )
 }

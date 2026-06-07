@@ -32,7 +32,7 @@ extension ToolExecutionService {
         case "git_commit":
             guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                   let message = args["message"] else {
-                return "Ошибка: Аргумент 'message' обязателен для git_commit"
+                return "Error: Argument 'message' is required for git_commit"
             }
             return await mcpBridge.execute(tool: "git_commit", args: ["message": message])
 
@@ -46,20 +46,20 @@ extension ToolExecutionService {
         case "git_revert":
             guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                   let hashes = args["hashes"], !hashes.isEmpty else {
-                return "Ошибка: Аргумент 'hashes' обязателен для git_revert (хэши через пробел)"
+                return "Error: Argument 'hashes' is required for git_revert (space-separated hashes)"
             }
             guard let message = args["message"], !message.isEmpty else {
-                return "Ошибка: Аргумент 'message' обязателен для git_revert"
+                return "Error: Argument 'message' is required for git_revert"
             }
             return await mcpBridge.execute(tool: "git_revert", args: ["hashes": hashes, "message": message])
 
         case "git_checkout":
             guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                   let ref = args["ref"], !ref.isEmpty else {
-                return "Ошибка: Аргумент 'ref' обязателен для git_checkout (например: HEAD~1, abc123, main)"
+                return "Error: Argument 'ref' is required for git_checkout (e.g.: HEAD~1, abc123, main)"
             }
             guard let paths = args["paths"], !paths.isEmpty else {
-                return "Ошибка: Аргумент 'paths' обязателен для git_checkout (пути через пробел)"
+                return "Error: Argument 'paths' is required for git_checkout (space-separated paths)"
             }
             return await mcpBridge.execute(tool: "git_checkout", args: ["ref": ref, "paths": paths])
 
@@ -78,7 +78,7 @@ extension ToolExecutionService {
             return await mcpBridge.execute(tool: "read_build_log")
 
         default:
-            return "Ошибка: Неизвестный git/build tool '\(name)'"
+            return "Error: Unknown git/build tool '\(name)'"
         }
     }
 }

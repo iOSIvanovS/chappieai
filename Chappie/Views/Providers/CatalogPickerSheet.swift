@@ -88,9 +88,9 @@ struct CatalogPickerSheet: View {
                 .font(.title2)
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Добавить провайдера")
+                Text("catalog.title")
                     .font(.title2.bold())
-                Text("Выберите из каталога или настройте вручную")
+                Text("catalog.subtitle")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -123,7 +123,7 @@ struct CatalogPickerSheet: View {
     private var loadingState: some View {
         HStack(spacing: 10) {
             ProgressView().controlSize(.small)
-            Text("Загружаем каталог…")
+            Text("catalog.loading")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
@@ -136,13 +136,13 @@ struct CatalogPickerSheet: View {
             Image(systemName: "wifi.exclamationmark")
                 .font(.system(size: 32))
                 .foregroundStyle(.orange)
-            Text("Не удалось загрузить каталог")
+            Text("catalog.error_title")
                 .font(.subheadline.bold())
             Text(message)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button("Попробовать снова") { loadCatalog() }
+            Button("catalog.retry") { loadCatalog() }
                 .buttonStyle(.bordered)
         }
         .frame(maxWidth: .infinity)
@@ -182,7 +182,7 @@ struct CatalogPickerSheet: View {
 
     private var footer: some View {
         HStack {
-            Button("Отмена") { onCancel() }
+            Button("catalog.cancel") { onCancel() }
                 .keyboardShortcut(.escape)
             Spacer()
         }
@@ -243,7 +243,7 @@ private struct CatalogProviderRow: View {
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
 
-                        Text("·")
+                        Text("common.separator_dot")
                             .foregroundStyle(.secondary.opacity(0.4))
 
                         Text("\(remote.models.count) \(modelsLabel(remote.models.count))")
@@ -271,9 +271,9 @@ private struct CatalogProviderRow: View {
 
     private func modelsLabel(_ count: Int) -> String {
         switch count % 10 {
-        case 1 where count % 100 != 11: return "модель"
-        case 2...4 where !(11...14).contains(count % 100): return "модели"
-        default: return "моделей"
+        case 1 where count % 100 != 11: return String(localized: "format.model_singular")
+        case 2...4 where !(11...14).contains(count % 100): return String(localized: "format.model_few")
+        default: return String(localized: "format.model_many")
         }
     }
 }
@@ -299,11 +299,11 @@ private struct CustomProviderRow: View {
                 }
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Ручная настройка")
+                    Text("catalog.custom_title")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.primary)
 
-                    Text("Введите URL, ключ и модели самостоятельно")
+                    Text("catalog.custom_subtitle")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }

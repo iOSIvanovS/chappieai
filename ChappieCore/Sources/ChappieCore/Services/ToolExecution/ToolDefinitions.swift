@@ -628,7 +628,7 @@ extension ToolExecutionService {
                 Rename multiple localization keys in a single operation, preserving all translations.
                 PREFER THIS over calling loc_rename_key repeatedly — the file is loaded once and saved once.
                 Use to batch-fix raw string keys (Russian literals etc.) to proper dot-notation keys.
-                renames format: JSON array [{"old_key": "Треды", "new_key": "sidebar.title"}, ...]
+                renames format: JSON array [{"old_key": "...", "new_key": "sidebar.title"}, ...]
                 Up to 100 renames per call.
                 """,
                 parameters: AIToolParameters(

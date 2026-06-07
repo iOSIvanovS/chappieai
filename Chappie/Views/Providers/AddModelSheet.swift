@@ -11,7 +11,7 @@
 //
 // FLOW (custom provider):
 //   1. Sheet opens — shows empty list.
-//   2. User taps "Загрузить список" to fetch from provider endpoint, or adds manually.
+//   2. User taps "Load list" to fetch from provider endpoint, or adds manually.
 //
 // DEDUPLICATION:
 //   existingModels are shown as already-added (greyed out, not selectable).
@@ -88,7 +88,7 @@ struct AddModelSheet: View {
                     .font(.title2)
                     .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Добавить модели")
+                    Text("add_models.title")
                         .font(.title2.bold())
                     Text(provider.displayName)
                         .font(.caption)
@@ -118,21 +118,21 @@ struct AddModelSheet: View {
                             } else {
                                 Image(systemName: "arrow.clockwise")
                             }
-                            Text(isLoading ? "Загружаем..." : "Загрузить список")
+                            Text(isLoading ? String(localized: "add_models.fetching") : String(localized: "add_models.fetch"))
                         }
                     }
                     .buttonStyle(.bordered)
                     .disabled(isLoading)
 
                     if !allModels.isEmpty {
-                        Text("\(allModels.count) моделей")
+                        Text(String(format: String(localized: "provider.models_count"), allModels.count))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
 
                     Spacer()
 
-                    Text("Выбрано: \(selectedModelIds.count)")
+                    Text(String(format: String(localized: "add_models.selected"), selectedModelIds.count))
                         .font(.caption)
                         .foregroundStyle(selectedModelIds.isEmpty ? .orange : .secondary)
                 }
@@ -143,16 +143,16 @@ struct AddModelSheet: View {
                 HStack {
                     if isLoading {
                         ProgressView().controlSize(.small)
-                        Text("Загружаем из каталога...")
+                        Text("catalog.loading")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else {
-                        Text("\(allModels.count) моделей в каталоге")
+                        Text(String(format: String(localized: "add_models.from_catalog"), allModels.count))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Text("Выбрано: \(selectedModelIds.count)")
+                    Text(String(format: String(localized: "add_models.selected"), selectedModelIds.count))
                         .font(.caption)
                         .foregroundStyle(selectedModelIds.isEmpty ? .orange : .secondary)
                 }
@@ -178,7 +178,7 @@ struct AddModelSheet: View {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
                         .font(.system(size: 13))
-                    TextField("Поиск по названию…", text: $searchText)
+                    TextField("provider.models_search_placeholder", text: $searchText)
                         .textFieldStyle(.plain)
                         .font(.system(size: 13))
                     if !searchText.isEmpty {
@@ -199,11 +199,11 @@ struct AddModelSheet: View {
                         Image(systemName: allFilteredSelected ? "checkmark.square.fill" : "square")
                             .font(.system(size: 14))
                             .foregroundStyle(allFilteredSelected ? Color.accentColor : Color.secondary.opacity(0.5))
-                        Text(allFilteredSelected ? "Снять выделение" : "Выбрать все")
+                        Text(allFilteredSelected ? String(localized: "provider.models_deselect_all") : String(localized: "provider.models_select_all"))
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(.secondary)
                         if !searchText.isEmpty {
-                            Text("(\(filteredModels.filter { !existingIds.contains($0.id) }.count) доступных)")
+                            Text(String(format: String(localized: "format.available_count"), filteredModels.filter { !existingIds.contains($0.id) }.count))
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary.opacity(0.7))
                         }
@@ -224,12 +224,12 @@ struct AddModelSheet: View {
                     Image(systemName: "cpu")
                         .font(.system(size: 32))
                         .foregroundStyle(.secondary.opacity(0.4))
-                    Text("Нет моделей")
+                    Text("new_thread.no_models")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     Text(isCatalog
-                         ? "Модели не найдены в каталоге. Добавьте вручную."
-                         : "Загрузите список выше или добавьте модель вручную")
+                         ? String(localized: "add_models.empty_catalog")
+                         : String(localized: "add_models.empty_custom"))
                         .font(.caption)
                         .foregroundStyle(.secondary.opacity(0.7))
                         .multilineTextAlignment(.center)
@@ -241,7 +241,7 @@ struct AddModelSheet: View {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 28))
                         .foregroundStyle(.secondary.opacity(0.4))
-                    Text("Ничего не найдено")
+                    Text("provider.models_nothing_found")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -281,11 +281,11 @@ struct AddModelSheet: View {
             HStack(spacing: 8) {
                 Image(systemName: "keyboard")
                     .foregroundStyle(.secondary)
-                TextField("Добавить модель вручную…", text: $manualInput)
+                TextField("provider.models_manual_placeholder", text: $manualInput)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.body, design: .monospaced))
                     .onSubmit { addManual() }
-                Button("Добавить") { addManual() }
+                Button("common.add") { addManual() }
                     .buttonStyle(.bordered)
                     .disabled(manualInput.trimmingCharacters(in: .whitespaces).isEmpty)
             }
@@ -307,7 +307,7 @@ struct AddModelSheet: View {
 
             // Footer
             HStack {
-                Button("Отмена") { onCancel() }
+                Button("add_models.cancel") { onCancel() }
                     .keyboardShortcut(.escape)
                 Spacer()
                 Button {
@@ -316,9 +316,9 @@ struct AddModelSheet: View {
                     HStack(spacing: 6) {
                         if isSaving {
                             ProgressView().controlSize(.small)
-                            Text("Добавляем...")
+                            Text("add_models.adding")
                         } else {
-                            Text("Добавить (\(selectedModelIds.count))")
+                            Text(String(format: String(localized: "add_models.add_count"), selectedModelIds.count))
                         }
                     }
                 }
@@ -393,13 +393,13 @@ struct AddModelSheet: View {
                     } else {
                         await MainActor.run {
                             isLoading = false
-                            loadError = "Провайдер не найден в каталоге. Добавьте модели вручную."
+                            loadError = String(localized: "add_models.catalog_error")
                         }
                     }
                 } catch {
                     await MainActor.run {
                         isLoading = false
-                        loadError = "Не удалось загрузить каталог: \(error.localizedDescription)"
+                        loadError = String(format: String(localized: "add_models.catalog_fetch_error"), error.localizedDescription)
                     }
                 }
             }
@@ -423,7 +423,7 @@ struct AddModelSheet: View {
             guard !keySecret.isEmpty else {
                 await MainActor.run {
                     isLoading = false
-                    loadError = "Нет ключей для этого провайдера."
+                    loadError = String(localized: "add_models.no_keys_error")
                 }
                 return
             }
@@ -439,7 +439,7 @@ struct AddModelSheet: View {
             await MainActor.run {
                 isLoading = false
                 if modelIds.isEmpty {
-                    loadError = "Не удалось загрузить список. Добавьте модели вручную."
+                    loadError = String(localized: "add_models.fetch_error")
                 } else {
                     fetchedModels = modelIds.map { modelId in
                         if let existing = provider.models.first(where: { $0.id == modelId }) {
@@ -533,7 +533,7 @@ private struct ModelSelectRow: View {
                     .lineLimit(1)
 
                 if isExisting {
-                    Text("добавлена")
+                    Text("provider.models_added_badge")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary.opacity(0.6))
                         .padding(.horizontal, 5)

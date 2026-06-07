@@ -100,25 +100,25 @@ struct OnboardingView: View {
                     .clipShape(Circle())
                     .overlay(Circle().stroke(Color.accentColor.opacity(0.3), lineWidth: 2))
 
-                Text("Привет! Я Чаппи.")
+                Text("onboarding.greeting")
                     .font(.largeTitle.bold())
 
-                Text("Универсальный AI-агент. Давайте познакомимся.")
+                Text("onboarding.subtitle")
                     .font(.title3)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                Label("Как вас называть?", systemImage: "person.fill")
+                Label("onboarding.name_label", systemImage: "person.fill")
                     .font(.headline)
 
-                TextField("Имя (необязательно)", text: $userName)
+                TextField("onboarding.name_placeholder", text: $userName)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 16))
                     .frame(maxWidth: 320)
 
-                Text("Нейронка будет обращаться к вам по имени")
+                Text("onboarding.name_hint")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -130,7 +130,7 @@ struct OnboardingView: View {
                 }
             } label: {
                 HStack(spacing: 8) {
-                    Text("Продолжить")
+                    Text("onboarding.continue")
                         .font(.system(size: 16, weight: .semibold))
                     Image(systemName: "arrow.right")
                 }
@@ -155,10 +155,10 @@ struct OnboardingView: View {
                     .font(.system(size: 56))
                     .foregroundStyle(Color.accentColor)
 
-                Text("Настройте AI-провайдера")
+                Text("onboarding.provider_title")
                     .font(.largeTitle.bold())
 
-                Text("Выберите провайдера из каталога или настройте подключение вручную.\nДобавьте ключ и выберите нужные модели.")
+                Text("onboarding.provider_subtitle")
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -169,7 +169,7 @@ struct OnboardingView: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "plus.circle.fill")
-                    Text("Добавить провайдера")
+                    Text("onboarding.add_provider")
                         .font(.system(size: 16, weight: .semibold))
                 }
                 .padding(.horizontal, 32)
@@ -183,7 +183,7 @@ struct OnboardingView: View {
                 Button {
                     AppState.shared.completeOnboarding()
                 } label: {
-                    Text("Пропустить — провайдер уже настроен")
+                    Text("onboarding.skip")
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -196,7 +196,7 @@ struct OnboardingView: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.left")
-                    Text("Назад")
+                    Text("onboarding.back")
                 }
                 .foregroundStyle(.secondary)
             }

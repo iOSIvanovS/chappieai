@@ -7,7 +7,7 @@
 //
 // LEVEL 1 — Provider list:
 //   Shows all configured providers. Tap → drill into provider detail.
-//   "Добавить провайдера" → opens CatalogPickerSheet (catalog list + custom option).
+//   "Add Provider" → opens CatalogPickerSheet (catalog list + custom option).
 //
 // LEVEL 2 — Provider detail (ProviderDetailView):
 //   Keys section: list of named API keys with add/edit/delete.
@@ -75,17 +75,17 @@ struct ProvidersSettingsView: View {
                 onCancel: { showAddProvider = false }
             )
         }
-        .alert("Удалить провайдера?", isPresented: Binding(
+        .alert("providers.delete_title", isPresented: Binding(
             get: { deleteConfirmId != nil },
             set: { if !$0 { deleteConfirmId = nil } }
         )) {
-            Button("Удалить", role: .destructive) {
+            Button("providers.delete_confirm", role: .destructive) {
                 if let id = deleteConfirmId { deleteProvider(id: id) }
                 deleteConfirmId = nil
             }
-            Button("Отмена", role: .cancel) { deleteConfirmId = nil }
+            Button("providers.delete_cancel", role: .cancel) { deleteConfirmId = nil }
         } message: {
-            Text("Провайдер и все его ключи будут удалены. Треды, использующие этого провайдера, покажут предупреждение.")
+            Text("providers.delete_message")
         }
     }
 
@@ -98,7 +98,7 @@ struct ProvidersSettingsView: View {
                 Image(systemName: "cpu")
                     .font(.title2)
                     .foregroundStyle(.secondary)
-                Text("AI-провайдеры")
+                Text("providers.title")
                     .font(.title2.bold())
                 Spacer()
                 Button { dismiss() } label: {
@@ -126,7 +126,7 @@ struct ProvidersSettingsView: View {
                 Button {
                     showAddProvider = true
                 } label: {
-                    Label("Добавить провайдера", systemImage: "plus.circle.fill")
+                    Label("providers.add", systemImage: "plus.circle.fill")
                 }
                 .buttonStyle(.borderedProminent)
 
@@ -139,7 +139,7 @@ struct ProvidersSettingsView: View {
                         .lineLimit(1)
                 }
 
-                Button("Закрыть") { dismiss() }
+                Button("providers.close") { dismiss() }
                     .keyboardShortcut(.escape)
             }
             .padding(.horizontal, 24)
@@ -170,10 +170,10 @@ struct ProvidersSettingsView: View {
             Image(systemName: "cpu.fill")
                 .font(.system(size: 48))
                 .foregroundStyle(.secondary.opacity(0.4))
-            Text("Нет настроенных провайдеров")
+            Text("providers.empty_title")
                 .font(.title3.bold())
                 .foregroundStyle(.secondary)
-            Text("Добавьте AI-провайдера чтобы начать работу")
+            Text("providers.empty_hint")
                 .font(.subheadline)
                 .foregroundStyle(.secondary.opacity(0.7))
             Spacer()
@@ -240,14 +240,14 @@ private struct ProviderListRow: View {
 
                     // Only show key count for providers that use keys
                     if provider.requiresApiKey {
-                        Text("·")
+                        Text("common.separator_dot")
                             .foregroundStyle(.secondary.opacity(0.5))
                         Text("\(provider.keys.count) \(keysLabel(provider.keys.count))")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }
 
-                    Text("·")
+                    Text("common.separator_dot")
                         .foregroundStyle(.secondary.opacity(0.5))
 
                     Text("\(provider.models.count) \(modelsLabel(provider.models.count))")
@@ -264,7 +264,7 @@ private struct ProviderListRow: View {
                     .foregroundStyle(.red.opacity(0.7))
             }
             .buttonStyle(.plain)
-            .help("Удалить провайдера")
+            .help("providers.delete_help")
             .opacity(isHovered ? 1 : 0)
 
             Image(systemName: "chevron.right")
@@ -279,17 +279,13 @@ private struct ProviderListRow: View {
 
     private func keysLabel(_ count: Int) -> String {
         switch count {
-        case 1: return "ключ"
-        case 2...4: return "ключа"
-        default: return "ключей"
+        default: return String(localized: "format.key_count")
         }
     }
 
     private func modelsLabel(_ count: Int) -> String {
         switch count {
-        case 1: return "модель"
-        case 2...4: return "модели"
-        default: return "моделей"
+        default: return String(localized: "format.model_many")
         }
     }
 }
@@ -330,7 +326,7 @@ struct ProviderDetailView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 13, weight: .semibold))
-                        Text("Провайдеры")
+                        Text("providers.back")
                     }
                     .foregroundStyle(Color.accentColor)
                 }
@@ -341,7 +337,7 @@ struct ProviderDetailView: View {
                 Button {
                     showEditProvider = true
                 } label: {
-                    Label("Редактировать", systemImage: "pencil")
+                    Label("providers.edit", systemImage: "pencil")
                         .font(.subheadline)
                 }
                 .buttonStyle(.bordered)
@@ -431,29 +427,29 @@ struct ProviderDetailView: View {
                 onCancel: { showAddModel = false }
             )
         }
-        .alert("Удалить ключ?", isPresented: Binding(
+        .alert("providers.key_delete_title", isPresented: Binding(
             get: { deleteKeyId != nil },
             set: { if !$0 { deleteKeyId = nil } }
         )) {
-            Button("Удалить", role: .destructive) {
+            Button("providers.key_delete_confirm", role: .destructive) {
                 if let id = deleteKeyId { deleteKey(id: id) }
                 deleteKeyId = nil
             }
-            Button("Отмена", role: .cancel) { deleteKeyId = nil }
+            Button("providers.key_delete_cancel", role: .cancel) { deleteKeyId = nil }
         } message: {
-            Text("Ключ будет удалён из Keychain. Треды, использующие этот ключ, покажут предупреждение.")
+            Text("providers.key_delete_message")
         }
-        .alert("Удалить модель?", isPresented: Binding(
+        .alert("providers.model_delete_title", isPresented: Binding(
             get: { deleteModelId != nil },
             set: { if !$0 { deleteModelId = nil } }
         )) {
-            Button("Удалить", role: .destructive) {
+            Button("providers.model_delete_confirm", role: .destructive) {
                 if let id = deleteModelId { deleteModel(id) }
                 deleteModelId = nil
             }
-            Button("Отмена", role: .cancel) { deleteModelId = nil }
+            Button("providers.model_delete_cancel", role: .cancel) { deleteModelId = nil }
         } message: {
-            Text("Треды, использующие эту модель, покажут предупреждение.")
+            Text("providers.model_delete_message")
         }
     }
 
@@ -477,7 +473,7 @@ struct ProviderDetailView: View {
                         Image(systemName: "checkmark.seal.fill")
                             .font(.system(size: 11))
                             .foregroundStyle(Color.accentColor.opacity(0.7))
-                            .help("Из каталога провайдеров")
+                            .help("providers.catalog_from")
                     }
 
                     if currentProvider.origin == .custom {
@@ -509,14 +505,14 @@ struct ProviderDetailView: View {
     private var keysSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Ключи")
+                Text("providers.keys_section")
                     .font(.headline)
                 Text("(\(currentProvider.keys.count))")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button { showAddKey = true } label: {
-                    Label("Добавить", systemImage: "plus")
+                    Label("providers.keys_add", systemImage: "plus")
                         .font(.subheadline)
                 }
                 .buttonStyle(.bordered)
@@ -526,7 +522,7 @@ struct ProviderDetailView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
-                    Text("Нет ключей — провайдер недоступен для использования в тредах.")
+                    Text("providers.keys_empty")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
@@ -553,14 +549,14 @@ struct ProviderDetailView: View {
     private var modelsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Модели")
+                Text("providers.models_section")
                     .font(.headline)
                 Text("(\(currentProvider.models.count))")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button { showAddModel = true } label: {
-                    Label("Добавить", systemImage: "plus")
+                    Label("providers.models_add", systemImage: "plus")
                         .font(.subheadline)
                 }
                 .buttonStyle(.bordered)
@@ -571,7 +567,7 @@ struct ProviderDetailView: View {
                     Image(systemName: "square.stack.3d.up.slash")
                         .font(.system(size: 28))
                         .foregroundStyle(.secondary.opacity(0.4))
-                    Text("Нет сохранённых моделей")
+                    Text("providers.models_empty")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -667,7 +663,7 @@ private struct KeyRow: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Редактировать ключ")
+                .help("providers.key_edit_help")
 
                 Button(action: onDelete) {
                     Image(systemName: "trash")
@@ -675,7 +671,7 @@ private struct KeyRow: View {
                         .foregroundStyle(.red.opacity(0.7))
                 }
                 .buttonStyle(.plain)
-                .help("Удалить ключ")
+                .help("providers.key_delete_help")
             }
             .opacity(isHovered ? 1 : 0)
         }
@@ -724,7 +720,7 @@ private struct ModelRow: View {
                     .foregroundStyle(.red.opacity(0.7))
             }
             .buttonStyle(.plain)
-            .help("Удалить модель")
+            .help("providers.model_delete_help")
             .opacity(isHovered ? 1 : 0)
         }
         .padding(.horizontal, 10)

@@ -12,7 +12,7 @@
 // On hover — only the trash (delete) button appears.
 // Gear settings button was removed from hover — it was too small to hit reliably.
 // Thread settings are accessible via:
-//   1. Context menu (right-click) → "Настройки треда"
+//   1. Context menu (right-click) → "Thread Settings"
 //   2. Thread name + gear chip in ProjectChipsView (always visible in chat)
 //
 // RENAME:
@@ -59,7 +59,7 @@ struct ThreadRowView: View {
             VStack(alignment: .leading, spacing: 2) {
 
                 if isEditing {
-                    TextField("Название треда", text: $editingTitle)
+                    TextField("thread.row.name_placeholder", text: $editingTitle)
                         .textFieldStyle(.plain)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(isSelected ? Color.white : Color.primary)
@@ -83,7 +83,7 @@ struct ThreadRowView: View {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .font(.system(size: 9))
                                 .foregroundStyle(isSelected ? Color.white.opacity(0.8) : Color.orange)
-                                .help("Провайдер или модель этого треда были удалены")
+                                .help("thread.row.orphaned_help")
                         }
                     }
                 }
@@ -99,7 +99,7 @@ struct ThreadRowView: View {
                         .foregroundStyle(isSelected ? Color.white.opacity(0.8) : Color.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Удалить тред")
+                .help("thread.row.delete_help")
                 .transition(.opacity.combined(with: .scale(scale: 0.8)))
             }
         }
@@ -129,7 +129,7 @@ struct ThreadRowView: View {
                 guard !isThinking else { return }
                 onStartRename()
             } label: {
-                Label("Переименовать", systemImage: "pencil")
+                Label("thread.row.rename", systemImage: "pencil")
             }
             .disabled(isThinking)
 
@@ -137,7 +137,7 @@ struct ThreadRowView: View {
                 guard !isThinking else { return }
                 onOpenSettings()
             } label: {
-                Label("Настройки треда", systemImage: "gear")
+                Label("thread.row.settings", systemImage: "gear")
             }
             .disabled(isThinking)
 
@@ -147,7 +147,7 @@ struct ThreadRowView: View {
                 guard !isThinking else { return }
                 onDelete()
             } label: {
-                Label("Удалить", systemImage: "trash")
+                Label("thread.row.delete", systemImage: "trash")
             }
             .disabled(isThinking)
         }

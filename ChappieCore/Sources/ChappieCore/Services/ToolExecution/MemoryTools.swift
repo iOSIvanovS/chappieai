@@ -126,7 +126,7 @@ extension ToolExecutionService {
         case "recall":
             guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                   let key = args["key"] else {
-                return "Ошибка: Неверные аргументы для recall (обязателен: key)"
+                return "Error: Invalid arguments for recall (required: key)"
             }
             switch resolveScope(scopeParam: args["scope"], targetName: args["targetName"]) {
             case .failed(let msg):
@@ -142,7 +142,7 @@ extension ToolExecutionService {
         case "search_memory":
             guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                   let type = args["type"] else {
-                return "Ошибка: Неверные аргументы для search_memory (обязателен: type)"
+                return "Error: Invalid arguments for search_memory (required: type)"
             }
             switch resolveScope(scopeParam: args["scope"], targetName: args["targetName"]) {
             case .failed(let msg):
@@ -158,7 +158,7 @@ extension ToolExecutionService {
         case "delete_memory":
             guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                   let key = args["key"] else {
-                return "Ошибка: Неверные аргументы для delete_memory (обязателен: key)"
+                return "Error: Invalid arguments for delete_memory (required: key)"
             }
             switch resolveScope(scopeParam: args["scope"], targetName: args["targetName"]) {
             case .failed(let msg):
@@ -173,7 +173,7 @@ extension ToolExecutionService {
             }
 
         default:
-            return "Ошибка: Неизвестный memory tool '\(name)'"
+            return "Error: Unknown memory tool '\(name)'"
         }
     }
 

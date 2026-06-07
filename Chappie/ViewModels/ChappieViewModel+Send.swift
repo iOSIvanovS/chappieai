@@ -148,7 +148,10 @@ extension ChappieViewModel {
                         self.streamingText = ""
                         self.currentToolCall = nil
                         self.isThinking = false
-                        let errMessage = ChatMessage.message(isUser: false, text: "Упс, ошибка: \(error.localizedDescription)")
+                        let errMessage = ChatMessage.message(
+                            isUser: false,
+                            text: String(format: String(localized: "error.generic"), error.localizedDescription)
+                        )
                         self.messages.append(errMessage)
                         self.appendToDisplayed(errMessage)
                     }
@@ -259,12 +262,13 @@ extension ChappieViewModel {
         return sourceMessages.compactMap { msg -> AIMessage? in
             guard case .message(_, let isUser, let text, _, let attachments) = msg else { return nil }
 
-            let isSystemMessage = text.contains("Проект подключен")
-                || text.contains("Память очищена")
-                || text.contains("API-ключ обновлён")
+            // Filter out transient system messages that should not be sent to the AI.
+            let isSystemMessage = text.contains("Project connected")
+                || text.contains("Memory cleared")
+                || text.contains("API key updated")
                 || text.hasPrefix("⚠️")
-                || text.hasPrefix("Ошибка:")
-                || text.hasPrefix("Упс, ошибка:")
+                || text.hasPrefix("Error:")
+                || text.hasPrefix("Oops, error:")
             if isSystemMessage { return nil }
 
             let role = isUser ? "user" : "assistant"

@@ -284,7 +284,7 @@ struct ChatScrollView: View {
             HStack(spacing: 6) {
                 Image(systemName: "arrow.up.circle")
                     .font(.system(size: 13, weight: .medium))
-                Text("Загрузить предыдущие сообщения")
+                Text("chat.load_earlier")
                     .font(.system(size: 13, weight: .medium))
             }
             .foregroundStyle(.secondary)
@@ -468,7 +468,7 @@ private struct BlinkingCursor: View {
     return ChatScrollView(
         scrollToBottomTrigger: 0,
         messages: [
-            .message(isUser: true, text: "Думай...")
+            .message(isUser: true, text: "Think...")
         ],
         hasMoreMessages: false,
         onLoadMore: {},

@@ -58,10 +58,10 @@ struct EULAView: View {
                     .font(.system(size: 48))
                     .foregroundStyle(Color.accentColor)
 
-                Text("Лицензионное соглашение")
+                Text("eula.title")
                     .font(.largeTitle.bold())
 
-                Text("Пожалуйста, прочитайте перед использованием")
+                Text("eula.subtitle")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -72,32 +72,32 @@ struct EULAView: View {
 
                     eulaSection(
                         icon: "wrench.and.screwdriver.fill",
-                        title: "Chappie — инструмент разработчика",
-                        body: "ChappieAI — это программный инструмент, предназначенный для помощи в разработке, анализе и автоматизации задач. Chappie не является автономным агентом и не принимает решений за пользователя."
+                        title: String(localized: "eula.section1_title"),
+                        body: String(localized: "eula.section1_body")
                     )
 
                     eulaSection(
                         icon: "person.fill.checkmark",
-                        title: "Ответственность пользователя",
-                        body: "Все действия, выполняемые с помощью Chappie, совершаются пользователем осознанно и добровольно. Пользователь несёт полную ответственность за последствия использования инструмента: изменения в коде, файлах, репозиториях и любых других системах."
+                        title: String(localized: "eula.section2_title"),
+                        body: String(localized: "eula.section2_body")
                     )
 
                     eulaSection(
                         icon: "exclamationmark.shield.fill",
-                        title: "Ограничение ответственности разработчика",
-                        body: "Разработчик ChappieAI не несёт ответственности за прямой или косвенный ущерб, возникший в результате использования данного инструмента, включая, но не ограничиваясь: потерю данных, повреждение проектов, финансовые потери или иные последствия."
+                        title: String(localized: "eula.section3_title"),
+                        body: String(localized: "eula.section3_body")
                     )
 
                     eulaSection(
                         icon: "brain.head.profile",
-                        title: "Природа AI-ответов",
-                        body: "Ответы, генерируемые AI-моделями через Chappie, могут содержать ошибки, неточности или устаревшую информацию. Пользователь самостоятельно проверяет и принимает решение о применении любых рекомендаций."
+                        title: String(localized: "eula.section4_title"),
+                        body: String(localized: "eula.section4_body")
                     )
 
                     eulaSection(
                         icon: "checkmark.seal.fill",
-                        title: "Принятие условий",
-                        body: "Нажимая «Принимаю», вы подтверждаете, что ознакомились с настоящим соглашением, понимаете его содержание и принимаете на себя ответственность за использование ChappieAI."
+                        title: String(localized: "eula.section5_title"),
+                        body: String(localized: "eula.section5_body")
                     )
                 }
                 .padding(.horizontal, 4)
@@ -110,7 +110,7 @@ struct EULAView: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "checkmark.circle.fill")
-                    Text("Принимаю")
+                    Text("eula.accept")
                         .font(.system(size: 16, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity)

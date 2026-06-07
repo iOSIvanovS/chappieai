@@ -10,16 +10,16 @@ import SwiftUI
 
 struct EmojiCategory {
     let icon: String
-    let name: String
+    let nameKey: LocalizedStringKey
     let emojis: [String]
 }
 
 let emojiCategories: [EmojiCategory] = [
-    EmojiCategory(icon: "⭐️", name: "Частые", emojis: [
+    EmojiCategory(icon: "⭐️", nameKey: "emoji.category.frequent", emojis: [
         "😀","😂","🥹","😍","🤔","😎","🥳","😅","🙏","👍",
         "❤️","🔥","✅","🚀","💡","🎉","👀","💪","🤝","✨"
     ]),
-    EmojiCategory(icon: "😀", name: "Смайлики", emojis: [
+    EmojiCategory(icon: "😀", nameKey: "emoji.category.smileys", emojis: [
         "😀","😃","😄","😁","😆","😅","🤣","😂","🙂","🙃",
         "😉","😊","😇","🥰","😍","🤩","😘","😗","😚","😙",
         "🥲","😋","😛","😜","🤪","😝","🤑","🤗","🤭","🤫",
@@ -30,30 +30,30 @@ let emojiCategories: [EmojiCategory] = [
         "😥","😢","😭","😱","😖","😣","😞","😓","😩","😫",
         "🥱","😤","😡","😠","🤬","😈","👿","💀","☠️","🤡"
     ]),
-    EmojiCategory(icon: "👍", name: "Жесты", emojis: [
+    EmojiCategory(icon: "👍", nameKey: "emoji.category.gestures", emojis: [
         "👍","👎","👌","🤌","🤏","✌️","🤞","🤟","🤘","🤙",
         "👈","👉","👆","🖕","👇","☝️","✋","🤚","🖐","🖖",
         "👋","💪","🦾","✍️","🤝","🙌","👏","🫶","🤲","🙏",
         "✊","👊","🤛","🤜","👐","🫴","🫳","🫵","🤙","🫱"
     ]),
-    EmojiCategory(icon: "❤️", name: "Сердечки", emojis: [
+    EmojiCategory(icon: "❤️", nameKey: "emoji.category.hearts", emojis: [
         "❤️","🧡","💛","💚","💙","💜","🖤","🤍","🤎","💔",
         "❤️‍🔥","❤️‍🩹","❣️","💕","💞","💓","💗","💖","💘","💝",
         "💟","☮️","✝️","☯️","🫀","💌","💋","🫦","😻","💑"
     ]),
-    EmojiCategory(icon: "🐶", name: "Животные", emojis: [
+    EmojiCategory(icon: "🐶", nameKey: "emoji.category.animals", emojis: [
         "🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐨","🐯",
         "🦁","🐮","🐷","🐸","🐵","🙈","🙉","🙊","🐔","🐧",
         "🐦","🦆","🦅","🦉","🦇","🐺","🐗","🐴","🦄","🐝",
         "🐛","🦋","🐌","🐞","🐜","🦟","🦗","🐢","🐍","🦎"
     ]),
-    EmojiCategory(icon: "🍕", name: "Еда", emojis: [
+    EmojiCategory(icon: "🍕", nameKey: "emoji.category.food", emojis: [
         "🍕","🍔","🌮","🌯","🥙","🧆","🥚","🍳","🥘","🍲",
         "🍜","🍝","🍛","🍣","🍱","🥟","🦪","🍤","🍙","🍚",
         "🍘","🍥","🥮","🍡","🧁","🍰","🎂","🍮","🍭","🍬",
         "🍫","🍿","🍩","🍪","🌰","🥜","🍯","🧃","🥤","🧋"
     ]),
-    EmojiCategory(icon: "🚀", name: "Символы", emojis: [
+    EmojiCategory(icon: "🚀", nameKey: "emoji.category.symbols", emojis: [
         "✅","❌","⭕️","🔴","🟠","🟡","🟢","🔵","🟣","⚫️",
         "⚪️","🟤","🔶","🔷","🔸","🔹","🔺","🔻","💠","🔘",
         "🔲","🔳","▪️","▫️","◾","◽","◼️","◻️","🟥","🟧",

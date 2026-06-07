@@ -34,7 +34,7 @@ struct MemoryManagementView: View {
                 Image(systemName: "internaldrive")
                     .font(.title2)
                     .foregroundStyle(.secondary)
-                Text("Управление памятью")
+                Text("settings.memory_manage")
                     .font(.title2.bold())
                 Spacer()
                 Button { dismiss() } label: {
@@ -62,7 +62,7 @@ struct MemoryManagementView: View {
                         Image(systemName: "tray")
                             .font(.system(size: 36))
                             .foregroundStyle(.secondary.opacity(0.4))
-                        Text("Нет тредов")
+                        Text("sidebar.no_threads")
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -77,11 +77,11 @@ struct MemoryManagementView: View {
             HStack {
                 let totalMessages = memoryInfos.reduce(0) { $0 + $1.messageCount }
                 let totalMB = memoryInfos.reduce(0.0) { $0 + $1.sizeMB }
-                Text("Итого: \(totalMessages) сообщений · \(String(format: "%.2f", totalMB)) МБ")
+                Text(String(format: String(localized: "memory.total_size"), totalMessages, String(format: "%.2f", totalMB)))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("Закрыть") { dismiss() }
+                Button("settings.close") { dismiss() }
                     .keyboardShortcut(.escape)
             }
             .padding(.horizontal, 24)
@@ -120,10 +120,10 @@ struct MemoryManagementView: View {
                     .font(.system(size: 13, weight: .medium))
                     .lineLimit(1)
                 HStack(spacing: 8) {
-                    Label("\(info.messageCount) сообщений", systemImage: "bubble.left.and.bubble.right")
+                    Label(String(format: String(localized: "format.messages_count"), info.messageCount), systemImage: "bubble.left.and.bubble.right")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text("·")
+                    Text("common.separator_dot")
                         .foregroundStyle(.secondary)
                         .font(.caption)
                     Text(String(format: "%.2f МБ", info.sizeMB))
@@ -138,7 +138,7 @@ struct MemoryManagementView: View {
                 selectedThread = info
             } label: {
                 HStack(spacing: 4) {
-                    Text("Подробнее")
+                    Text("memory.details")
                         .font(.system(size: 12, weight: .medium))
                     Image(systemName: "chevron.right")
                         .font(.system(size: 11, weight: .medium))
@@ -208,7 +208,7 @@ private struct DeleteMessagesSheet: View {
             // Header
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Очистить историю")
+                    Text("memory.clear_history")
                         .font(.headline)
                     Text(threadInfo.title)
                         .font(.subheadline)
@@ -231,17 +231,17 @@ private struct DeleteMessagesSheet: View {
 
                 // Stats
                 HStack(spacing: 24) {
-                    statBox(value: "\(threadInfo.messageCount)", label: "сообщений всего")
-                    statBox(value: String(format: "%.2f МБ", threadInfo.sizeMB), label: "занято")
+                    statBox(value: "\(threadInfo.messageCount)", label: String(localized: "memory.stat_total"))
+                    statBox(value: String(format: "%.2f МБ", threadInfo.sizeMB), label: String(localized: "memory.stat_size"))
                 }
 
                 // Slider
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
-                        Text("Удалить старых сообщений:")
+                        Text("memory.delete_label")
                             .font(.callout)
                         Spacer()
-                        Text(deleteCount == 0 ? "не удалять" : "\(deleteCount)")
+                        Text(deleteCount == 0 ? String(localized: "memory.keep_all") : "\(deleteCount)")
                             .font(.system(size: 15, weight: .semibold, design: .monospaced))
                             .foregroundStyle(deleteCount > 0 ? .red : .secondary)
                             .frame(minWidth: 80, alignment: .trailing)
@@ -272,10 +272,10 @@ private struct DeleteMessagesSheet: View {
                             .foregroundStyle(.orange)
                             .font(.system(size: 13))
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Это действие необратимо")
+                            Text("memory.irreversible_warning")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.orange)
-                            Text("Будут удалены \(deleteCount) самых старых сообщений треда «\(threadInfo.title)». Восстановить их невозможно.")
+                            Text(String(format: String(localized: "memory.delete_warning"), deleteCount, threadInfo.title))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -290,13 +290,13 @@ private struct DeleteMessagesSheet: View {
             Divider()
 
             HStack {
-                Button("Отмена") { dismiss() }
+                Button("common.cancel") { dismiss() }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
 
                 Spacer()
 
-                Button("Удалить \(deleteCount) сообщений") {
+                Button(String(format: String(localized: "memory.delete_count"), deleteCount)) {
                     showConfirm = true
                 }
                 .buttonStyle(.borderedProminent)
@@ -306,14 +306,14 @@ private struct DeleteMessagesSheet: View {
             .padding(20)
         }
         .frame(width: 460)
-        .alert("Удалить \(deleteCount) сообщений?", isPresented: $showConfirm) {
-            Button("Удалить", role: .destructive) {
+        .alert(String(format: String(localized: "memory.delete_confirm_title"), deleteCount), isPresented: $showConfirm) {
+            Button("common.delete", role: .destructive) {
                 onDelete(deleteCount)
                 dismiss()
             }
-            Button("Отмена", role: .cancel) {}
+            Button("common.cancel", role: .cancel) {}
         } message: {
-            Text("Будут удалены \(deleteCount) самых старых сообщений треда «\(threadInfo.title)». Это действие необратимо.")
+            Text(String(format: String(localized: "memory.delete_confirm_message"), deleteCount, threadInfo.title))
         }
     }
 

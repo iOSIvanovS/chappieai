@@ -37,7 +37,7 @@ struct CodeBlockView: View {
                 Button(action: copyCode) {
                     HStack(spacing: 4) {
                         Image(systemName: copied ? "checkmark" : "doc.on.doc").font(.system(size: 11))
-                        Text(copied ? "Скопировано" : "Копировать").font(.system(size: 11))
+                        Text(copied ? String(localized: "common.copy_done") : String(localized: "common.copy")).font(.system(size: 11))
                     }
                     .foregroundStyle(copied ? Color(red: 0.3, green: 0.75, blue: 0.3) : theme.labelColor)
                     .padding(.horizontal, 10).padding(.vertical, 6)

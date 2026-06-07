@@ -14,7 +14,7 @@
 // - Context depth: slider 10...1000, step 10, default 30
 // - Unlimited context toggle
 //
-// NOTE: Provider + model selection happens ONLY via the "Модель" chip in the chat toolbar.
+// NOTE: Provider + model selection happens ONLY via the "Model" chip in the chat toolbar.
 // Adding/editing/deleting providers happens ONLY in the provider directory (SettingsView).
 
 import SwiftUI
@@ -99,9 +99,9 @@ struct ThreadSettingsSheet: View {
                 .foregroundStyle(Color.accentColor)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Настройки треда")
+                Text("thread.settings.title")
                     .font(.headline)
-                Text(draftTitle.isEmpty ? "Без названия" : draftTitle)
+                Text(draftTitle.isEmpty ? String(localized: "thread.settings.untitled") : draftTitle)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -126,9 +126,9 @@ struct ThreadSettingsSheet: View {
 
     private var nameSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionLabel("Название треда", systemImage: "pencil")
+            sectionLabel("thread.settings.name_section", systemImage: "pencil")
 
-            TextField("Название треда", text: $draftTitle)
+            TextField("thread.settings.name_placeholder", text: $draftTitle)
                 .textFieldStyle(.roundedBorder)
                 .font(.callout)
         }
@@ -138,13 +138,13 @@ struct ThreadSettingsSheet: View {
 
     private func keySection(provider: AIProvider) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionLabel("API-ключ", systemImage: "key")
+            sectionLabel("thread.settings.api_key", systemImage: "key")
 
             if provider.keys.isEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "key.slash")
                         .foregroundStyle(.secondary)
-                    Text("Нет ключей — добавьте в справочнике провайдеров")
+                    Text("thread.settings.no_keys")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -169,13 +169,13 @@ struct ThreadSettingsSheet: View {
 
     private var contextSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            sectionLabel("Глубина контекста", systemImage: "clock.arrow.circlepath")
+            sectionLabel("thread.settings.context_depth", systemImage: "clock.arrow.circlepath")
 
             Toggle(isOn: $draftSettings.isUnlimitedContext) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Без ограничений")
+                    Text("thread.settings.unlimited")
                         .font(.callout)
-                    Text("Все сообщения треда передаются в запросе. Может сильно увеличить стоимость.")
+                    Text("thread.settings.unlimited_hint")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -196,7 +196,7 @@ struct ThreadSettingsSheet: View {
     private var limitedContextControls: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Сообщений в контексте:")
+                Text("thread.settings.messages_in_context")
                     .font(.callout)
                 Spacer()
                 Text("\(draftSettings.maxMessagesInContext)")
@@ -240,19 +240,19 @@ struct ThreadSettingsSheet: View {
                 infoRow(
                     icon: "infinity",
                     color: .orange,
-                    text: "Контекст не ограничен — все сообщения передаются в запросе"
+                    text: String(localized: "thread.settings.unlimited_info")
                 )
                 infoRow(
                     icon: "bubble.left.and.bubble.right",
                     color: .secondary,
-                    text: "В чате отображаются все сообщения"
+                    text: String(localized: "thread.settings.all_messages_shown")
                 )
             } else {
                 let tokenBudget = draftSettings.maxMessagesInContext * 500
                 infoRow(
                     icon: "arrow.up.doc",
                     color: .accentColor,
-                    text: "Токен-бюджет запроса: ~\(formatNumber(tokenBudget)) токенов"
+                    text: String(format: String(localized: "thread.settings.token_budget"), formatNumber(tokenBudget))
                 )
             }
         }
@@ -265,7 +265,7 @@ struct ThreadSettingsSheet: View {
 
     private var footerView: some View {
         HStack {
-            Button("Отмена") {
+            Button("thread.settings.cancel") {
                 onDismiss()
             }
             .buttonStyle(.plain)
@@ -273,7 +273,7 @@ struct ThreadSettingsSheet: View {
 
             Spacer()
 
-            Button("Сохранить") {
+            Button("thread.settings.save") {
                 let trimmedTitle = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
                 let finalTitle = trimmedTitle.isEmpty ? thread.title : trimmedTitle
                 var updatedSettings = draftSettings
@@ -301,7 +301,7 @@ struct ThreadSettingsSheet: View {
 
     // MARK: - Helpers
 
-    private func sectionLabel(_ title: String, systemImage: String) -> some View {
+    private func sectionLabel(_ title: LocalizedStringKey, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(.primary)
@@ -391,7 +391,7 @@ private struct KeySelectRow: View {
     ThreadSettingsSheet(
         thread: ThreadMetadata(
             id: UUID(),
-            title: "Разработка Chappie",
+            title: "Chappie Development",
             settings: ThreadSettings(),
             projectIds: [],
             createdAt: Date(),

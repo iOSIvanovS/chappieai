@@ -6,7 +6,7 @@
 // No NavigationSplitView dependency — full control over appearance and behavior.
 //
 // LAYOUT (top to bottom):
-// 1. Header: "Треды" title + "Новый" button (right side) — pinned to top.
+// 1. Header: "Threads" title + "New" button (right side) — pinned to top.
 // 2. Thread list — scrollable, fills remaining space.
 // 3. API key warning section — shown only when no providers configured.
 //
@@ -17,7 +17,7 @@
 //
 // SOFT LOCK:
 // isThinking is forwarded to ThreadListView.
-// "Новый" button is also disabled while AI is responding.
+// "New" button is also disabled while AI is responding.
 
 import SwiftUI
 import ChappieCore
@@ -67,7 +67,7 @@ struct SidebarView: View {
             List {
                 Section {
                     if threads.isEmpty {
-                        Text("Нет тредов")
+                        Text("sidebar.no_threads")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .center)
@@ -110,12 +110,12 @@ struct SidebarView: View {
 
     // MARK: - Header
 
-    /// Top bar with "Треды" label and "Новый" button for creating a new thread.
+    /// Top bar with "Threads" label and "New" button for creating a new thread.
     /// Placed above the list so it's always accessible without scrolling.
-    /// "Новый" is disabled while AI is thinking — prevents creating thread mid-response.
+    /// "New" is disabled while AI is thinking — prevents creating thread mid-response.
     private var sidebarHeader: some View {
         HStack {
-            Text("Треды")
+            Text("sidebar.title")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.primary)
 
@@ -130,7 +130,7 @@ struct SidebarView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "square.and.pencil")
                         .font(.system(size: 12, weight: .medium))
-                    Text("Новый")
+                    Text("sidebar.new_thread")
                         .font(.system(size: 12, weight: .medium))
                 }
                 .foregroundStyle(isThinking ? Color.secondary : Color.accentColor)
@@ -145,7 +145,7 @@ struct SidebarView: View {
             }
             .buttonStyle(.plain)
             .disabled(isThinking)
-            .help(isThinking ? "Подождите — Чаппи думает..." : "Новый тред")
+            .help(isThinking ? String(localized: "sidebar.thinking_lock") : String(localized: "sidebar.new_thread_help"))
             .animation(.easeInOut(duration: 0.2), value: isThinking)
         }
         .padding(.horizontal, 16)
@@ -155,18 +155,20 @@ struct SidebarView: View {
     // MARK: - API Key Warning
 
     private var apiKeyWarningSection: some View {
-        Section("⚠️ Внимание") {
+        Section("sidebar.warning_section") {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Нет настроенных провайдеров")
+                Text("sidebar.no_providers")
                     .font(.subheadline.bold())
                     .foregroundStyle(.orange)
 
-                Text("Без AI-провайдера Чаппи не сможет отвечать.")
+                Text("sidebar.no_providers_hint")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                Button("Открыть настройки") {
+                Button {
                     onOpenSettings()
+                } label: {
+                    Text("sidebar.open_settings")
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)

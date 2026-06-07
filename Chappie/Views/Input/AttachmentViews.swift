@@ -44,7 +44,7 @@ struct AttachmentChipView: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .help("Убрать вложение")
+            .help("input.remove_attachment")
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 3)

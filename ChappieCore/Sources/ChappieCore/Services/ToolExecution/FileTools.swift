@@ -45,7 +45,7 @@ extension ToolExecutionService {
         case "read_file":
             guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                   let path = args["path"] else {
-                return "Ошибка: Неверные аргументы для read_file"
+                return "Error: Invalid arguments for read_file"
             }
             do {
                 return try await fileSystem.readFile(at: path)
@@ -58,11 +58,11 @@ extension ToolExecutionService {
             guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                   let path = args["path"],
                   let content = args["content"] else {
-                return "Ошибка: Неверные аргументы для write_file"
+                return "Error: Invalid arguments for write_file"
             }
             do {
                 try await fileSystem.writeFile(at: path, content: content)
-                return "Успешно: Файл \(path) записан."
+                return "Success: File \(path) written."
             } catch {
                 await reportUnavailable(projectName(from: path))
                 throw error
@@ -71,11 +71,11 @@ extension ToolExecutionService {
         case "delete_file":
             guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                   let path = args["path"] else {
-                return "Ошибка: Неверные аргументы для delete_file"
+                return "Error: Invalid arguments for delete_file"
             }
             do {
                 try await fileSystem.deleteFile(at: path)
-                return "Успешно: Файл \(path) удален."
+                return "Success: File \(path) deleted."
             } catch {
                 await reportUnavailable(projectName(from: path))
                 throw error
@@ -85,7 +85,7 @@ extension ToolExecutionService {
         case "read_document":
             guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                   let path = args["path"], !path.isEmpty else {
-                return "Ошибка: Аргумент 'path' обязателен для read_document"
+                return "Error: Argument 'path' is required for read_document"
             }
             return await mcpBridge.execute(tool: "read_document", args: ["path": path])
 
@@ -93,7 +93,7 @@ extension ToolExecutionService {
             guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                   let path = args["path"], !path.isEmpty,
                   let content = args["content"], !content.isEmpty else {
-                return "Ошибка: Аргументы 'path' и 'content' обязательны для write_document"
+                return "Error: Arguments 'path' and 'content' are required for write_document"
             }
             var mcpArgs: [String: String] = ["path": path, "content": content]
             if let outputPath = args["output_path"] { mcpArgs["output_path"] = outputPath }
@@ -106,10 +106,10 @@ extension ToolExecutionService {
         case "attach_file":
             guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                   let path = args["path"], !path.isEmpty else {
-                return "Ошибка: Аргумент 'path' обязателен для attach_file"
+                return "Error: Argument 'path' is required for attach_file"
             }
             guard FileManager.default.fileExists(atPath: path) else {
-                return "Ошибка: Файл не найден по пути: \(path)"
+                return "Error: File not found at path: \(path)"
             }
             let url = URL(fileURLWithPath: path)
             let filename = url.lastPathComponent
@@ -125,7 +125,7 @@ extension ToolExecutionService {
                 print("[FileTools] attach_file: \(path)")
                 return json
             }
-            return "Ошибка: Не удалось сформировать ответ для attach_file"
+            return "Error: Failed to build response for attach_file"
 
         case "web_fetch":
             guard let service = webFetch else {
@@ -138,7 +138,7 @@ extension ToolExecutionService {
             return await service.fetch(urlString: url, selector: args["selector"])
 
         default:
-            return "Ошибка: Неизвестный file tool '\(name)'"
+            return "Error: Unknown file tool '\(name)'"
         }
     }
 

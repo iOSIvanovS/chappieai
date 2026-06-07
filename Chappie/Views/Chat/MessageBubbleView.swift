@@ -326,8 +326,8 @@ private struct AttachmentRowView: View {
 
     return ScrollView {
         VStack(spacing: 16) {
-            MessageBubbleView(msg: .message(isUser: true, text: "Переведи этот документ на английский", attachments: [samplePDF]), availableWidth: 618)
-            MessageBubbleView(msg: .message(isUser: false, text: "Готово! Вот переведённый документ:", cost: 12.5, attachments: [sampleDocx]), availableWidth: 618)
+            MessageBubbleView(msg: .message(isUser: true, text: "Translate this document to English", attachments: [samplePDF]), availableWidth: 618)
+            MessageBubbleView(msg: .message(isUser: false, text: "Done! Here is the translated document:", cost: 12.5, attachments: [sampleDocx]), availableWidth: 618)
             MessageBubbleView(msg: .message(isUser: true, text: "Here's the screenshot", attachments: [sampleImage]), availableWidth: 618)
             MessageBubbleView(msg: .terminalConfirmation(command: "swift test --filter ToolExecutionServiceTests", threadId: UUID()), availableWidth: 618)
         }

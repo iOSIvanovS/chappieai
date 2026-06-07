@@ -114,10 +114,10 @@ struct ProjectChipsView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
-    // MARK: - "Проекты" label
+    // MARK: - "Projects" label
 
     private var projectsLabel: some View {
-        Text("Проекты")
+        Text("project.chips.label")
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 8)
@@ -227,13 +227,13 @@ struct ProjectChipsView: View {
 
     private func helpText(for project: ProjectMetadata) -> String {
         if project.isUnavailable {
-            return "Папка «\(project.displayName)» не найдена.\nВерните папку на место или удалите проект из треда (×)."
+            return String(format: String(localized: "project.chips.unavailable_hint"), project.displayName)
         }
         if !isFileSystemReady {
-            return "Загружаю проекты…"
+            return String(localized: "project.chips.add_locked_loading")
         }
-        let removeHint = isThinking ? "" : ", × — убрать из треда"
-        return "Проект: \(project.displayName) (\(project.settings.agentRole.displayName))\nТап — настройки\(removeHint)"
+        let removeHint = isThinking ? "" : String(localized: "project.chips.chip_hint_remove")
+        return String(format: String(localized: "project.chips.chip_hint"), project.displayName, project.settings.agentRole.displayName, removeHint)
     }
 
     @ViewBuilder
@@ -279,8 +279,8 @@ struct ProjectChipsView: View {
         .shakeOnTap(isLocked: isThinking)
         .help(
             isThinking
-                ? "Нельзя добавить проект пока Чаппи думает"
-                : (!isFileSystemReady ? "Подожди, проекты загружаются…" : "Добавить папку проекта к этому треду")
+                ? String(localized: "project.chips.add_locked_thinking")
+                : (!isFileSystemReady ? String(localized: "project.chips.add_locked_loading") : String(localized: "project.chips.add_help"))
         )
     }
 
@@ -291,8 +291,8 @@ struct ProjectChipsView: View {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.message = "Выберите папку проекта для добавления в тред"
-        panel.prompt = "Добавить"
+        panel.message = String(localized: "project.chips.folder_picker_message")
+        panel.prompt = String(localized: "project.chips.folder_picker_button")
         if panel.runModal() == .OK, let url = panel.url {
             onAddProject(url)
         }
@@ -301,7 +301,7 @@ struct ProjectChipsView: View {
 
 // MARK: - Preview
 
-#Preview("С проектами") {
+#Preview("With projects") {
     ProjectChipsView(
         projects: [
             ProjectMetadata(id: UUID(), displayName: "Chappie",
@@ -311,7 +311,7 @@ struct ProjectChipsView: View {
             ProjectMetadata(id: UUID(), displayName: "Backend API",
                             settings: ProjectSettings(agentRole: .executor, isProgrammingProject: true))
         ],
-        threadName: "Разработка Chappie",
+        threadName: "Chappie Development",
         isThinking: false,
         isFileSystemReady: true,
         balance: 2120.09,
@@ -324,13 +324,13 @@ struct ProjectChipsView: View {
     .background(Color(NSColor.windowBackgroundColor))
 }
 
-#Preview("Без баланса") {
+#Preview("No balance") {
     ProjectChipsView(
         projects: [
             ProjectMetadata(id: UUID(), displayName: "Chappie",
                             settings: ProjectSettings(agentRole: .executor, isProgrammingProject: true))
         ],
-        threadName: "Разработка Chappie",
+        threadName: "Chappie Development",
         isThinking: false,
         isFileSystemReady: true,
         balance: nil,
@@ -343,17 +343,17 @@ struct ProjectChipsView: View {
     .background(Color(NSColor.windowBackgroundColor))
 }
 
-#Preview("Недоступный проект") {
+#Preview("Unavailable project") {
     ProjectChipsView(
         projects: [
             ProjectMetadata(id: UUID(), displayName: "Chappie",
                             settings: ProjectSettings(agentRole: .executor, isProgrammingProject: true),
                             isUnavailable: false),
-            ProjectMetadata(id: UUID(), displayName: "проба",
+            ProjectMetadata(id: UUID(), displayName: "test",
                             settings: ProjectSettings(agentRole: .executor, isProgrammingProject: true),
                             isUnavailable: true)
         ],
-        threadName: "Тест",
+        threadName: "Test",
         isThinking: false,
         isFileSystemReady: true,
         balance: nil,
@@ -366,13 +366,13 @@ struct ProjectChipsView: View {
     .background(Color(NSColor.windowBackgroundColor))
 }
 
-#Preview("Заблокировано") {
+#Preview("Locked") {
     ProjectChipsView(
         projects: [
             ProjectMetadata(id: UUID(), displayName: "Chappie",
                             settings: ProjectSettings(agentRole: .executor, isProgrammingProject: true))
         ],
-        threadName: "Разработка Chappie",
+        threadName: "Chappie Development",
         isThinking: true,
         isFileSystemReady: true,
         balance: 82.69,

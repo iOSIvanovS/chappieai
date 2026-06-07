@@ -172,18 +172,18 @@ public actor ToolExecutionService {
 
         if projectRequiredTools.contains(name) && !isFileSystemReady {
             return """
-            ⏳ Проекты ещё загружаются — файловые инструменты временно недоступны.
-            Подожди секунду и повтори запрос. Это займёт не более нескольких секунд.
+            ⏳ Projects are still loading — file tools are temporarily unavailable.
+            Wait a moment and try again. This will take no more than a few seconds.
             """
         }
 
         if projectRequiredTools.contains(name) && !hasActiveProjects {
             return """
-            ❌ Инструмент '\(name)' недоступен: к текущему треду не привязан ни один проект.
+            ❌ Tool '\(name)' is unavailable: no project is attached to the current thread.
 
-            Чтобы использовать файловые инструменты и git-команды, нужно сначала добавить проект к треду:
-            • Нажми кнопку '+' в строке проектов над чатом, или
-            • Скажи мне: "Добавь проект [имя папки]" — я вызову add_project_to_thread.
+            To use file tools and git commands, add a project to the thread first:
+            • Click the '+' button in the projects bar above the chat, or
+            • Tell me: "Add project [folder name]" — I'll call add_project_to_thread.
             """
         }
 
@@ -215,26 +215,26 @@ public actor ToolExecutionService {
             case "add_project_to_thread":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let displayName = args["display_name"], !displayName.isEmpty else {
-                    return "Ошибка: Аргумент 'display_name' обязателен для add_project_to_thread"
+                    return "Error: Argument 'display_name' is required for add_project_to_thread"
                 }
                 guard let handler = addProjectHandler else {
-                    return "Ошибка: Инструменты управления проектами недоступны. Проверьте что ModelContainer подключён."
+                    return "Error: Project management tools unavailable. Check that ModelContainer is connected."
                 }
                 return await handler(displayName)
 
             case "remove_project_from_thread":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                       let displayName = args["display_name"], !displayName.isEmpty else {
-                    return "Ошибка: Аргумент 'display_name' обязателен для remove_project_from_thread"
+                    return "Error: Argument 'display_name' is required for remove_project_from_thread"
                 }
                 guard let handler = removeProjectHandler else {
-                    return "Ошибка: Инструменты управления проектами недоступны. Проверьте что ModelContainer подключён."
+                    return "Error: Project management tools unavailable. Check that ModelContainer is connected."
                 }
                 return await handler(displayName)
 
             case "list_thread_projects":
                 guard let handler = listProjectsHandler else {
-                    return "Ошибка: Инструменты управления проектами недоступны. Проверьте что ModelContainer подключён."
+                    return "Error: Project management tools unavailable. Check that ModelContainer is connected."
                 }
                 return await handler()
 
@@ -244,14 +244,14 @@ public actor ToolExecutionService {
                 // checks in case patterns; a default + guard is the cleanest alternative.
                 if Self.locToolNames.contains(name) {
                     guard let args = try? JSONDecoder().decode([String: String].self, from: argsData) else {
-                        return "Ошибка: не удалось разобрать аргументы для \(name)"
+                        return "Error: Failed to parse arguments for \(name)"
                     }
                     return await mcpBridge.execute(tool: name, args: args)
                 }
-                return "Ошибка: Неизвестный инструмент \(name)"
+                return "Error: Unknown tool \(name)"
             }
         } catch {
-            return "Ошибка при выполнении \(name): \(error.localizedDescription)"
+            return "Error executing \(name): \(error.localizedDescription)"
         }
     }
 }

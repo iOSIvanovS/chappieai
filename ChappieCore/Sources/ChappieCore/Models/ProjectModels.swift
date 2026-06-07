@@ -26,17 +26,17 @@ public enum AgentRole: String, Codable, Sendable, CaseIterable {
 
     public var displayName: String {
         switch self {
-        case .advisor:  return "Советник"
-        case .executor: return "Исполнитель"
+        case .advisor:  return NSLocalizedString("role.advisor", bundle: .main, comment: "")
+        case .executor: return NSLocalizedString("role.executor", bundle: .main, comment: "")
         }
     }
 
     public var description: String {
         switch self {
         case .advisor:
-            return "Читает файлы, даёт советы и сниппеты. Изменения вносит пользователь."
+            return NSLocalizedString("role.advisor.description", bundle: .main, comment: "")
         case .executor:
-            return "Самостоятельно работает с файлами, git и инструментами."
+            return NSLocalizedString("role.executor.description", bundle: .main, comment: "")
         }
     }
 }
@@ -51,10 +51,10 @@ public enum GitAccessLevel: String, Codable, Sendable, CaseIterable {
 
     public var displayName: String {
         switch self {
-        case .none:       return "Нет доступа"
-        case .statusOnly: return "Только чтение (status, log)"
-        case .write:      return "Запись (add, commit)"
-        case .full:       return "Полный доступ"
+        case .none:       return NSLocalizedString("git.access.none", bundle: .main, comment: "")
+        case .statusOnly: return NSLocalizedString("git.access.status_only", bundle: .main, comment: "")
+        case .write:      return NSLocalizedString("git.access.write", bundle: .main, comment: "")
+        case .full:       return NSLocalizedString("git.access.full", bundle: .main, comment: "")
         }
     }
 
@@ -84,10 +84,10 @@ public enum TestsAccessLevel: String, Codable, Sendable, CaseIterable {
 
     public var displayName: String {
         switch self {
-        case .none:     return "Нет доступа"
-        case .readOnly: return "Только чтение логов"
-        case .run:      return "Запуск тестов"
-        case .write:    return "Запуск + создание тестов"
+        case .none:     return NSLocalizedString("tests.access.none", bundle: .main, comment: "")
+        case .readOnly: return NSLocalizedString("tests.access.read_only", bundle: .main, comment: "")
+        case .run:      return NSLocalizedString("tests.access.run", bundle: .main, comment: "")
+        case .write:    return NSLocalizedString("tests.access.write", bundle: .main, comment: "")
         }
     }
 
@@ -115,20 +115,20 @@ public enum TerminalAccessLevel: String, Codable, Sendable, CaseIterable {
 
     public var displayName: String {
         switch self {
-        case .none:    return "Нет доступа"
-        case .confirm: return "С подтверждением"
-        case .auto:    return "Автоматически"
+        case .none:    return NSLocalizedString("terminal.access.none", bundle: .main, comment: "")
+        case .confirm: return NSLocalizedString("terminal.access.confirm", bundle: .main, comment: "")
+        case .auto:    return NSLocalizedString("terminal.access.auto", bundle: .main, comment: "")
         }
     }
 
     public var description: String {
         switch self {
         case .none:
-            return "Терминал недоступен агенту."
+            return NSLocalizedString("terminal.access.none.description", bundle: .main, comment: "")
         case .confirm:
-            return "Каждая команда требует подтверждения в чате перед выполнением."
+            return NSLocalizedString("terminal.access.confirm.description", bundle: .main, comment: "")
         case .auto:
-            return "Агент выполняет команды без подтверждения. Используй только если доверяешь агенту полностью."
+            return NSLocalizedString("terminal.access.auto.description", bundle: .main, comment: "")
         }
     }
 
@@ -144,8 +144,8 @@ public enum ProjectLanguage: String, Codable, Sendable, CaseIterable {
 
     public var displayName: String {
         switch self {
-        case .english: return "Английский"
-        case .native:  return "Родной язык пользователя"
+        case .english: return NSLocalizedString("project.language.english", bundle: .main, comment: "")
+        case .native:  return NSLocalizedString("project.language.native", bundle: .main, comment: "")
         }
     }
 }
@@ -170,7 +170,7 @@ public enum DevEnvironment: String, Codable, Sendable, CaseIterable {
 
     public var displayName: String {
         switch self {
-        case .unknown:         return "Не определена"
+        case .unknown:         return NSLocalizedString("dev.env.unknown", bundle: .main, comment: "")
         case .xcode:           return "Xcode (Swift / Obj-C)"
         case .nodejs:          return "Node.js"
         case .python:          return "Python"

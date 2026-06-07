@@ -287,7 +287,10 @@ final class ChappieViewModel {
 
     func clearHistory() {
         messages.removeAll()
-        let systemMessage = ChatMessage.message(isUser: false, text: "Память очищена. Я забыл всё, что мы обсуждали до этого момента. Готов начать с чистого листа!")
+        let systemMessage = ChatMessage.message(
+            isUser: false,
+            text: String(localized: "system.memory_cleared")
+        )
         messages.append(systemMessage)
         resetPagination(fireScrollTrigger: false)
 
@@ -305,7 +308,7 @@ final class ChappieViewModel {
         MCPHelperLauncher.shared.restartWithWorkspace(url, projectEnvMap: activeProjectEnvMap)
 
         if messages.isEmpty {
-            messages.append(.message(isUser: false, text: "Проект подключен. Я готов к работе!"))
+            messages.append(.message(isUser: false, text: String(localized: "system.project_connected")))
         }
     }
 

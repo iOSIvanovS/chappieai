@@ -194,7 +194,7 @@ struct InputMorphView: View {
                 )
                 .overlay(alignment: .topLeading) {
                     if prompt.isEmpty {
-                        Text("Напиши сообщение… (⇧+Enter — перенос строки)")
+                        Text("input.placeholder")
                             .font(.system(size: 13))
                             .foregroundStyle(Color(NSColor.placeholderTextColor))
                             .padding(.horizontal, 9)
@@ -220,7 +220,7 @@ struct InputMorphView: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .help("Прикрепить файл")
+                .help("input.attach_file")
                 .padding(.bottom, 2)
 
                 Button(action: { showEmojiPicker.toggle() }) {
@@ -229,7 +229,7 @@ struct InputMorphView: View {
                         .frame(width: 28, height: 28)
                 }
                 .buttonStyle(.plain)
-                .help("Вставить эмодзи")
+                .help("input.emoji")
                 .popover(isPresented: $showEmojiPicker, arrowEdge: .top) {
                     EmojiPickerView { emoji in
                         // Insert at cursor position via NSTextView, not string append.
@@ -264,7 +264,7 @@ struct InputMorphView: View {
             // CPU-23: currentToolCall throttled to 200ms in StreamingState — at most 5 redraws/sec.
             // CPU-29: NO .animation here — cross-fade runs two render passes simultaneously.
             // At 200ms cadence, instant text swap is imperceptible and costs nothing.
-            Text(streaming.currentToolCall ?? "Думаю…")
+            Text(streaming.currentToolCall ?? String(localized: "input.thinking"))
                 .font(.system(size: 12, weight: .regular, design: .monospaced))
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -272,11 +272,11 @@ struct InputMorphView: View {
             Spacer()
 
             Button(action: onCancel) {
-                Label("Отмена", systemImage: "xmark.circle.fill")
+                Label("input.cancel", systemImage: "xmark.circle.fill")
                     .font(.system(size: 12, weight: .medium))
             }
             .buttonStyle(.plain)
-            .help("Прервать текущий запрос")
+            .help("input.cancel_help")
         }
         .frame(height: InputLayout.collapsedHeight)
     }
@@ -296,8 +296,8 @@ struct InputMorphView: View {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
-        panel.message = "Выбери файлы для прикрепления"
-        panel.prompt = "Прикрепить"
+        panel.message = String(localized: "input.file_picker_message")
+        panel.prompt = String(localized: "input.file_picker_button")
 
         guard panel.runModal() == .OK else { return }
 
@@ -333,7 +333,7 @@ struct InputMorphView: View {
     return VStack {
         Spacer()
         InputMorphView(
-            prompt: .constant("Строка 1\nСтрока 2\nСтрока 3\nСтрока 4\nСтрока 5"),
+            prompt: .constant("Line 1\nLine 2\nLine 3\nLine 4\nLine 5"),
             attachments: .constant([]),
             isWorkspaceSelected: true,
             streaming: streaming,

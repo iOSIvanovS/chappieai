@@ -63,7 +63,7 @@ struct ContentView: View {
     var body: some View {
         Group {
             if !viewModel.isAppReady {
-                ProgressView("Загрузка...")
+                ProgressView(String(localized: "content.loading"))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if appState.shouldShowEULA {
                 // Step 1: EULA — must be accepted before anything else
@@ -159,11 +159,11 @@ struct ContentView: View {
                     onCancel: { viewModel.cancelNewThread() }
                 )
             }
-            .alert("Нет активной модели", isPresented: $viewModel.showNoProviderAlert) {
-                Button("Открыть настройки") { showSettings = true }
-                Button("Отмена", role: .cancel) { }
+            .alert("content.no_model_title", isPresented: $viewModel.showNoProviderAlert) {
+                Button("content.no_model_open_settings") { showSettings = true }
+                Button("content.no_model_cancel", role: .cancel) { }
             } message: {
-                Text("Выбранная модель была удалена. Откройте настройки и подключите провайдера или выберите другую модель.")
+                Text("content.no_model_message")
             }
     }
 

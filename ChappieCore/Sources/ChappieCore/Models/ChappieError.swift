@@ -19,13 +19,13 @@ public enum ChappieError: LocalizedError, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .networkError(let msg):       return "Сетевая ошибка: \(msg)"
-        case .fileSystemError(let msg):    return "Ошибка файловой системы: \(msg)"
-        case .parsingError(let msg):       return "Ошибка парсинга данных: \(msg)"
-        case .memoryError(let msg):        return "Ошибка базы данных памяти: \(msg)"
-        case .aiContextLimitExceeded:      return "Превышен лимит контекста ИИ. Пожалуйста, очистите историю или уменьшите размер файлов."
-        case .cancelled:                   return "Запрос отменён."
-        case .unknown(let msg):            return "Неизвестная ошибка: \(msg)"
+        case .networkError(let msg):       return "Network error: \(msg)"
+        case .fileSystemError(let msg):    return "File system error: \(msg)"
+        case .parsingError(let msg):       return "Data parsing error: \(msg)"
+        case .memoryError(let msg):        return "Database memory error: \(msg)"
+        case .aiContextLimitExceeded:      return "AI context limit exceeded. Please clear history or reduce file sizes."
+        case .cancelled:                   return "Request cancelled."
+        case .unknown(let msg):            return "Unknown error: \(msg)"
         }
     }
 }

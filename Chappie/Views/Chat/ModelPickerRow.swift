@@ -45,7 +45,7 @@ struct ModelPickerRow: View {
 
     private var modelPill: some View {
         HStack(spacing: 6) {
-            Text("Модель")
+            Text("toolbar.model_label")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -72,7 +72,7 @@ struct ModelPickerRow: View {
                         }
 
                         if provider.models.isEmpty {
-                            Text("Нет моделей")
+                            Text("new_thread.no_models")
                                 .foregroundStyle(.secondary)
                         }
                     } label: {
@@ -120,7 +120,7 @@ struct ModelPickerRow: View {
             )
             .fixedSize()
             .shakeOnTap(isLocked: streaming.isThinking)
-            .help(streaming.isThinking ? "Нельзя менять модель пока Чаппи думает" : "")
+            .help(streaming.isThinking ? String(localized: "toolbar.model_locked") : "")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -156,7 +156,7 @@ struct ModelPickerRow: View {
         }
         .buttonStyle(.plain)
         .shakeOnTap(isLocked: streaming.isThinking)
-        .help(streaming.isThinking ? "Нельзя менять настройки пока Чаппи думает" : "Настройки треда")
+        .help(streaming.isThinking ? String(localized: "toolbar.settings_locked") : String(localized: "thread.row.settings"))
     }
 
     // MARK: - Chip Label
@@ -164,7 +164,7 @@ struct ModelPickerRow: View {
     @ViewBuilder
     private var chipLabel: some View {
         if isOrphaned {
-            Text("Модель недоступна — выберите другую")
+            Text("thread.model_unavailable")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.orange)
                 .lineLimit(1)
@@ -176,12 +176,12 @@ struct ModelPickerRow: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
         } else if activeProvider != nil {
-            Text("Выберите модель")
+            Text("new_thread.select_model_hint")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.orange)
                 .lineLimit(1)
         } else {
-            Text("Не выбрана")
+            Text("thread.no_model_selected")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)

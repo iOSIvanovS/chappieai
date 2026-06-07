@@ -434,7 +434,7 @@ final class LocalizationTools: Sendable {
     // MARK: - loc_submit_batch
 
     /// Accepts translations and writes them to the xcstrings file without duplicates.
-    /// translations format: JSON string like {"key": {"ru": "Привет", "de": "Hallo"}}
+    /// translations format: JSON string like {"key": {"ru": "Hello", "de": "Hallo"}}
     func submitBatch(relativePath: String, translationsJSON: String) -> ToolResult {
         let fullPath = projectPath + "/" + relativePath
 
@@ -449,8 +449,8 @@ final class LocalizationTools: Sendable {
             Failed to parse translations JSON.
             Expected format:
             {
-              "key1": {"ru": "Перевод", "de": "Übersetzung"},
-              "key2": {"ru": "Другой", "de": "Anderer"}
+              "key1": {"ru": "Translation", "de": "Übersetzung"},
+              "key2": {"ru": "Another", "de": "Anderer"}
             }
             """)
         }
@@ -611,7 +611,7 @@ final class LocalizationTools: Sendable {
     // MARK: - loc_rename_key
 
     /// Renames a single key, preserving all existing translations.
-    /// WHY: allows fixing Russian/wrong keys to proper dot-notation without losing translations.
+    /// WHY: allows fixing raw/wrong keys to proper dot-notation without losing translations.
     func renameKey(relativePath: String, oldKey: String, newKey: String) -> ToolResult {
         let fullPath = projectPath + "/" + relativePath
 
@@ -658,8 +658,8 @@ final class LocalizationTools: Sendable {
             Failed to parse renames JSON.
             Expected format:
             [
-              {"old_key": "Треды", "new_key": "sidebar.title"},
-              {"old_key": "Отмена", "new_key": "common.cancel"}
+              {"old_key": "sidebar.old_title", "new_key": "sidebar.title"},
+              {"old_key": "common.old_cancel", "new_key": "common.cancel"}
             ]
             """)
         }
@@ -728,7 +728,7 @@ final class LocalizationTools: Sendable {
 
         for key in keys {
             let enValue = xcstrings.strings[key]?.localizations?[sourceLanguage]?.stringUnit?.value ?? ""
-            // Mark non-ASCII keys (raw strings like Russian literals) with ⚠️
+            // Mark non-ASCII keys (raw strings like non-Latin literals) with ⚠️
             let isDotKey = key.unicodeScalars.allSatisfy { $0.isASCII }
             let marker = isDotKey ? "  " : "⚠️"
             report += "\(marker) \"\(key)\"\n"

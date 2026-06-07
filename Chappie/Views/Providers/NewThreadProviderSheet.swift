@@ -68,9 +68,9 @@ struct NewThreadProviderSheet: View {
                     .font(.title2)
                     .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Новый тред")
+                    Text("new_thread.title")
                         .font(.title2.bold())
-                    Text("Выберите провайдера, модель и настройте тред")
+                    Text("new_thread.subtitle")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -87,7 +87,7 @@ struct NewThreadProviderSheet: View {
 
                 // Left column: providers
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("Провайдер")
+                    Text("new_thread.provider_column")
                         .font(.caption.bold())
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 16)
@@ -121,7 +121,7 @@ struct NewThreadProviderSheet: View {
 
                 // Right column: models
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("Модель")
+                    Text("new_thread.model_column")
                         .font(.caption.bold())
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 16)
@@ -149,7 +149,7 @@ struct NewThreadProviderSheet: View {
 
                         Divider()
                         HStack(spacing: 6) {
-                            TextField("Ввести вручную…", text: $manualModelInput)
+                            TextField("new_thread.manual_placeholder", text: $manualModelInput)
                                 .textFieldStyle(.roundedBorder)
                                 .font(.system(.body, design: .monospaced))
                                 .onSubmit { applyManualModel() }
@@ -187,7 +187,7 @@ struct NewThreadProviderSheet: View {
 
             // Footer
             HStack {
-                Button("Отмена", action: onCancel)
+                Button("new_thread.cancel", action: onCancel)
                     .keyboardShortcut(.escape)
 
                 Spacer()
@@ -200,7 +200,7 @@ struct NewThreadProviderSheet: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     } else {
-                        Text("Выберите модель")
+                        Text("new_thread.select_model_hint")
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }
@@ -209,10 +209,10 @@ struct NewThreadProviderSheet: View {
                 Button {
                     guard let id = selectedProviderId, !selectedModelName.isEmpty else { return }
                     let title = threadTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let finalTitle = title.isEmpty ? "Новый тред" : title
+                    let finalTitle = title.isEmpty ? String(localized: "new_thread.name_placeholder") : title
                     onConfirm(id, selectedKeyId, selectedModelName, finalTitle, draftSettings)
                 } label: {
-                    Text("Начать")
+                    Text("new_thread.start")
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!canConfirm)
@@ -242,10 +242,10 @@ struct NewThreadProviderSheet: View {
 
     private var threadNameSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Название треда", systemImage: "pencil")
+            Label("new_thread.name_section", systemImage: "pencil")
                 .font(.system(size: 13, weight: .semibold))
 
-            TextField("Новый тред", text: $threadTitle)
+            TextField("new_thread.name_placeholder", text: $threadTitle)
                 .textFieldStyle(.roundedBorder)
                 .font(.callout)
         }
@@ -255,14 +255,14 @@ struct NewThreadProviderSheet: View {
 
     private var contextSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label("Глубина контекста", systemImage: "clock.arrow.circlepath")
+            Label("new_thread.context_section", systemImage: "clock.arrow.circlepath")
                 .font(.system(size: 13, weight: .semibold))
 
             Toggle(isOn: $draftSettings.isUnlimitedContext) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Без ограничений")
+                    Text("thread.settings.unlimited")
                         .font(.callout)
-                    Text("Все сообщения треда передаются в запросе. Может сильно увеличить стоимость.")
+                    Text("thread.settings.unlimited_hint")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -283,7 +283,7 @@ struct NewThreadProviderSheet: View {
     private var limitedContextControls: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Сообщений в контексте:")
+                Text("thread.settings.messages_in_context")
                     .font(.callout)
                 Spacer()
                 Text("\(draftSettings.maxMessagesInContext)")
@@ -316,11 +316,11 @@ struct NewThreadProviderSheet: View {
     private var contextInfoBox: some View {
         VStack(alignment: .leading, spacing: 6) {
             if draftSettings.isUnlimitedContext {
-                infoRow(icon: "infinity", color: .orange, text: "Контекст не ограничен — все сообщения передаются в запросе")
-                infoRow(icon: "bubble.left.and.bubble.right", color: .secondary, text: "В чате отображаются все сообщения")
+                infoRow(icon: "infinity", color: .orange, text: String(localized: "thread.settings.unlimited_info"))
+                infoRow(icon: "bubble.left.and.bubble.right", color: .secondary, text: String(localized: "thread.settings.all_messages_shown"))
             } else {
                 let tokenBudget = draftSettings.maxMessagesInContext * 500
-                infoRow(icon: "arrow.up.doc", color: .accentColor, text: "Токен-бюджет запроса: ~\(formatNumber(tokenBudget)) токенов")
+                infoRow(icon: "arrow.up.doc", color: .accentColor, text: String(format: String(localized: "thread.settings.token_budget"), formatNumber(tokenBudget)))
             }
         }
         .padding(10)
@@ -336,10 +336,10 @@ struct NewThreadProviderSheet: View {
             Image(systemName: "square.stack.3d.up.slash")
                 .font(.system(size: 24))
                 .foregroundStyle(.secondary.opacity(0.4))
-            Text("Нет моделей")
+            Text("new_thread.no_models")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text("Введите вручную")
+            Text("new_thread.enter_manually")
                 .font(.caption2)
                 .foregroundStyle(.secondary.opacity(0.7))
             Spacer()
@@ -350,7 +350,7 @@ struct NewThreadProviderSheet: View {
     private var noProviderHint: some View {
         VStack {
             Spacer()
-            Text("← Выберите провайдера")
+            Text("new_thread.select_provider_hint")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             Spacer()
@@ -392,7 +392,7 @@ struct NewThreadProviderSheet: View {
                 id: UUID(),
                 name: "AITunnel",
                 baseURL: "https://api.aitunnel.ru/v1",
-                keys: [APIKey(name: "Рабочий"), APIKey(name: "Личный")],
+                keys: [APIKey(name: "Work"), APIKey(name: "Personal")],
                 models: [
                     AIModel(id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5"),
                     AIModel(id: "gpt-4o", name: "GPT-4o")
