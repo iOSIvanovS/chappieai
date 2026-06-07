@@ -6,7 +6,7 @@
 //   ToolDefinitions.swift   — availableTools array
 //   ToolAccessControl.swift — IT-09 access check (role, git, tests, terminal)
 //   MemoryTools.swift       — IT-08 scope resolution + memory execution cases
-//   FileTools.swift         — file system + web_fetch execution
+//   FileTools.swift         — file system + document tools + web_fetch
 //   GitBuildTools.swift     — git + build/test execution
 //   TerminalTools.swift     — persistent bash session + run_terminal execution
 
@@ -146,6 +146,10 @@ public actor ToolExecutionService {
         let name = call.function.name
         let argsData = call.function.arguments.data(using: .utf8) ?? Data()
 
+        // Tools that require an active workspace project.
+        // read_document / write_document are intentionally excluded: they operate on
+        // arbitrary absolute paths (e.g. temp files from user attachments) and don't
+        // need a workspace project to be active.
         let projectRequiredTools: Set<String> = [
             "list_files", "read_file", "write_file", "delete_file",
             "git_status", "git_diff", "git_add", "git_commit",
@@ -181,7 +185,8 @@ public actor ToolExecutionService {
 
         do {
             switch name {
-            case "list_files", "read_file", "write_file", "delete_file", "web_fetch":
+            case "list_files", "read_file", "write_file", "delete_file",
+                 "read_document", "write_document", "web_fetch":
                 return try await executeFileTool(name: name, argsData: argsData)
 
             case "memorize", "recall", "search_memory", "delete_memory":

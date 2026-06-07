@@ -11,6 +11,7 @@
 //
 // INJECTION RULES:
 // - Universal tools (file, memory, web, project mgmt) — always injected.
+// - read_document / write_document — always injected (work for any project type).
 // - Git tools — only if isProgrammingProject = true.
 // - build_project, run_tests, read_build_log — if isProgrammingProject = true (any env).
 //   Each call carries a "project" arg; MCP routes to the correct env per project.
@@ -78,6 +79,47 @@ extension ToolExecutionService {
                     "path": AIToolProperty(type: "string", description: "Relative path to the file to delete")
                 ],
                 required: ["path"]
+            )
+        )))
+
+        // MARK: - Office document tools (always — work for any project type)
+
+        tools.append(AITool(function: AIFunctionDefinition(
+            name: "read_document",
+            description: """
+            Read an Office document (Word, Excel, PowerPoint, PDF, etc.) and return its full content as XML or text.
+            Use exactly like read_file — get complete content, understand the structure, then decide what to change.
+            Supported formats: .docx, .xlsx, .pptx, .odt (XML-based ZIP), .rtf, .csv (plain text), .pdf (text extraction).
+            For .docx/.xlsx/.pptx — returns the primary XML entry (word/document.xml, sheet1.xml, slide*.xml).
+            XML preserves all formatting and structure. You can read, analyze, and prepare edits based on it.
+            """,
+            parameters: AIToolParameters(
+                properties: [
+                    "path": AIToolProperty(type: "string", description: "Relative path to the document file (e.g. 'contract.docx', 'report.xlsx')")
+                ],
+                required: ["path"]
+            )
+        )))
+
+        tools.append(AITool(function: AIFunctionDefinition(
+            name: "write_document",
+            description: """
+            Save modified content back to an Office document.
+            Use exactly like write_file — provide the full modified XML or text content.
+            For ZIP-based formats (.docx, .xlsx, .pptx, .odt): replaces only the primary XML entry,
+            all other ZIP entries (styles, images, relationships) are preserved untouched.
+            For text formats (.rtf, .csv): overwrites the file directly.
+            If output_path is provided — saves as a new file, original is untouched.
+            If output_path is omitted — overwrites the original document.
+            """,
+            parameters: AIToolParameters(
+                properties: [
+                    "path": AIToolProperty(type: "string", description: "Relative path to the original document"),
+                    "content": AIToolProperty(type: "string", description: "Full modified XML (for docx/xlsx/pptx/odt) or text (for rtf/csv)"),
+                    "output_path": AIToolProperty(type: "string", description: "Optional: save as a new file at this path, keeping the original untouched"),
+                    "entry_name": AIToolProperty(type: "string", description: "Optional: override which ZIP entry to replace (e.g. 'ppt/slides/slide2.xml'). Defaults to the primary entry for each format.")
+                ],
+                required: ["path", "content"]
             )
         )))
 

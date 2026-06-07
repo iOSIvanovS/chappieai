@@ -8,10 +8,12 @@
 //   b) serialize to disk (base64 in ChatMessage JSON)
 //   c) build the API content block (base64 data URI for images, raw data for PDFs)
 //
-// DESIGN DECISION — Data stored inline:
-// Attachments are small enough (images are resized before attaching) to store
-// the raw bytes directly in the ChatMessage JSON. This keeps the persistence
-// model simple — no separate file references that can go stale.
+// DESIGN DECISION — localURL for Office documents:
+// Images are stored inline as base64 (small, self-contained).
+// Office documents get a localURL pointing to Application Support/Chappie/Attachments/.
+// localURL enables: re-reading without re-extraction, write_document knowing where to save,
+// and opening the file directly from the AI bubble without a temp-file dance.
+// localURL is optional — nil for images and legacy attachments (backward compat).
 //
 // DESIGN DECISION — MimeType enum:
 // Using a typed enum instead of a raw string prevents typos and makes
@@ -33,6 +35,11 @@ public enum AttachmentMimeType: String, Codable, Sendable, Hashable {
     case imageWebp  = "image/webp"
     case pdf        = "application/pdf"
     case plainText  = "text/plain"
+    // Office document formats — extracted via read_document (ZIP+XML pipeline)
+    case docx       = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    case xlsx       = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    case pptx       = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    case rtf        = "application/rtf"
     case other
 
     // MARK: Convenience
@@ -45,12 +52,23 @@ public enum AttachmentMimeType: String, Codable, Sendable, Hashable {
         }
     }
 
+    /// True for Office document formats that require read_document extraction.
+    public var isOfficeDocument: Bool {
+        switch self {
+        case .docx, .xlsx, .pptx, .rtf: return true
+        default: return false
+        }
+    }
+
     /// SF Symbol name for non-image file chips.
     public var systemIcon: String {
         switch self {
-        case .pdf: return "doc.fill"
+        case .pdf:       return "doc.fill"
         case .plainText: return "doc.text.fill"
-        default: return "paperclip"
+        case .docx, .rtf: return "doc.richtext.fill"
+        case .xlsx:      return "tablecells.fill"
+        case .pptx:      return "rectangle.on.rectangle.fill"
+        default:         return "paperclip"
         }
     }
 
@@ -63,6 +81,10 @@ public enum AttachmentMimeType: String, Codable, Sendable, Hashable {
         case "webp":        return .imageWebp
         case "pdf":         return .pdf
         case "txt", "md":   return .plainText
+        case "docx":        return .docx
+        case "xlsx":        return .xlsx
+        case "pptx":        return .pptx
+        case "rtf":         return .rtf
         default:            return .other
         }
     }
@@ -87,16 +109,27 @@ public struct AttachedFile: Identifiable, Codable, Hashable, Sendable {
     /// MIME type — drives rendering and API encoding.
     public let mimeType: AttachmentMimeType
     /// Raw file bytes. For images: original data (NSImage handles all formats).
+    /// For Office docs: kept for Codable round-trip; localURL is preferred for disk access.
     /// Stored as base64 in JSON via custom Codable.
     public let data: Data
+    /// Permanent path in Application Support/Chappie/Attachments/{messageID}/.
+    /// Set after the message is sent and the file is copied to permanent storage.
+    /// nil for images (stored inline) and legacy attachments.
+    public let localURL: URL?
 
     // MARK: - Init
 
-    public init(id: UUID = UUID(), filename: String, mimeType: AttachmentMimeType, data: Data) {
+    public init(id: UUID = UUID(), filename: String, mimeType: AttachmentMimeType, data: Data, localURL: URL? = nil) {
         self.id = id
         self.filename = filename
         self.mimeType = mimeType
         self.data = data
+        self.localURL = localURL
+    }
+
+    /// Returns a copy of this attachment with localURL set.
+    public func withLocalURL(_ url: URL) -> AttachedFile {
+        AttachedFile(id: id, filename: filename, mimeType: mimeType, data: data, localURL: url)
     }
 
     // MARK: - Factory
@@ -109,6 +142,14 @@ public struct AttachedFile: Identifiable, Codable, Hashable, Sendable {
         guard let data = try? Data(contentsOf: url) else { return nil }
         let mime = AttachmentMimeType.from(url: url)
         return AttachedFile(filename: url.lastPathComponent, mimeType: mime, data: data)
+    }
+
+    /// Creates an AttachedFile for an AI-generated output file that already exists on disk.
+    /// data is read from the file; localURL points to its permanent location.
+    public static func fromOutputFile(at url: URL) -> AttachedFile? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let mime = AttachmentMimeType.from(url: url)
+        return AttachedFile(filename: url.lastPathComponent, mimeType: mime, data: data, localURL: url)
     }
 
     // MARK: - Convenience
@@ -131,7 +172,7 @@ public struct AttachedFile: Identifiable, Codable, Hashable, Sendable {
     // but we want explicit control over the key names for forward compatibility.
 
     private enum CodingKeys: String, CodingKey {
-        case id, filename, mimeType, dataBase64
+        case id, filename, mimeType, dataBase64, localURL
     }
 
     public init(from decoder: Decoder) throws {
@@ -141,6 +182,12 @@ public struct AttachedFile: Identifiable, Codable, Hashable, Sendable {
         mimeType = try c.decodeIfPresent(AttachmentMimeType.self, forKey: .mimeType) ?? .other
         let b64  = try c.decode(String.self, forKey: .dataBase64)
         data     = Data(base64Encoded: b64) ?? Data()
+        // localURL stored as absolute path string for portability
+        if let path = try c.decodeIfPresent(String.self, forKey: .localURL) {
+            localURL = URL(fileURLWithPath: path)
+        } else {
+            localURL = nil
+        }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -149,5 +196,6 @@ public struct AttachedFile: Identifiable, Codable, Hashable, Sendable {
         try c.encode(filename,                    forKey: .filename)
         try c.encode(mimeType,                    forKey: .mimeType)
         try c.encode(data.base64EncodedString(),  forKey: .dataBase64)
+        try c.encodeIfPresent(localURL?.path,     forKey: .localURL)
     }
 }

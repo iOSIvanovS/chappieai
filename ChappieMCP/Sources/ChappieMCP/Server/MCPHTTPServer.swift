@@ -226,11 +226,13 @@ final class ToolDispatcher: Sendable {
     private let gitTools: GitTools
     private let buildTools: BuildTools
     private let locTools: LocalizationTools
+    private let docTools: DocumentTools
 
     init(projectPath: String, projectEnvMap: [String: String]) {
-        self.gitTools = GitTools(projectPath: projectPath)
+        self.gitTools   = GitTools(projectPath: projectPath)
         self.buildTools = BuildTools(projectPath: projectPath, projectEnvMap: projectEnvMap)
-        self.locTools = LocalizationTools(projectPath: projectPath)
+        self.locTools   = LocalizationTools(projectPath: projectPath)
+        self.docTools   = DocumentTools(projectPath: projectPath)
     }
 
     func execute(tool: String, args: [String: String]) async -> ToolResult {
@@ -282,6 +284,27 @@ final class ToolDispatcher: Sendable {
 
         case "read_build_log":
             return await buildTools.readLastLog()
+
+        // Document tools (Office formats: docx, xlsx, pptx, odt, rtf, csv, pdf)
+        case "read_document":
+            guard let path = args["path"], !path.isEmpty else {
+                return .failure("Argument 'path' is required (e.g. 'contract.docx')")
+            }
+            return docTools.readDocument(relativePath: path)
+
+        case "write_document":
+            guard let path = args["path"], !path.isEmpty else {
+                return .failure("Argument 'path' is required")
+            }
+            guard let content = args["content"], !content.isEmpty else {
+                return .failure("Argument 'content' is required (full XML or text content)")
+            }
+            return docTools.writeDocument(
+                relativePath: path,
+                xmlContent: content,
+                outputPath: args["output_path"],
+                entryName: args["entry_name"]
+            )
 
         // Localization tools (Xcode / xcstrings)
         case "loc_info":

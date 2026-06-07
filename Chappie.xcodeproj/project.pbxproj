@@ -10,6 +10,7 @@
 		874866102FC305DF00F5E876 /* ChappieCore in Frameworks */ = {isa = PBXBuildFile; productRef = 8748660F2FC305DF00F5E876 /* ChappieCore */; };
 		874866472FC363FC00F5E876 /* ChappieMCP in CopyFiles */ = {isa = PBXBuildFile; fileRef = 874866232FC35DF000F5E876 /* ChappieMCP */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		87CDA09D2FD2319B00D7021E /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 87CDA09C2FD2319B00D7021E /* Sparkle */; };
+		87E0F6E72FD4277F00E35E93 /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = 87E0F6E62FD4277F00E35E93 /* ZIPFoundation */; };
 		87F3739B2FBF768A0091E2C0 /* ChappieCore in Frameworks */ = {isa = PBXBuildFile; productRef = 87F3739A2FBF768A0091E2C0 /* ChappieCore */; };
 /* End PBXBuildFile section */
 
@@ -100,6 +101,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				87E0F6E72FD4277F00E35E93 /* ZIPFoundation in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -200,6 +202,7 @@
 			);
 			name = ChappieMCP;
 			packageProductDependencies = (
+				87E0F6E62FD4277F00E35E93 /* ZIPFoundation */,
 			);
 			productName = ChappieMCP;
 			productReference = 874866232FC35DF000F5E876 /* ChappieMCP */;
@@ -265,6 +268,7 @@
 			packageReferences = (
 				87F373992FBF768A0091E2C0 /* XCLocalSwiftPackageReference "ChappieCore" */,
 				87CDA0982FD22CD400D7021E /* XCRemoteSwiftPackageReference "Sparkle" */,
+				87E0F6E52FD4275C00E35E93 /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 87BAA4792FBEED3A001DDBED /* Products */;
@@ -684,6 +688,14 @@
 				minimumVersion = 2.9.2;
 			};
 		};
+		87E0F6E52FD4275C00E35E93 /* XCRemoteSwiftPackageReference "ZIPFoundation" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/weichsel/ZIPFoundation";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.9.20;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -701,6 +713,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 87CDA0982FD22CD400D7021E /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
+		};
+		87E0F6E62FD4277F00E35E93 /* ZIPFoundation */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 87E0F6E52FD4275C00E35E93 /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
+			productName = ZIPFoundation;
 		};
 		87F3739A2FBF768A0091E2C0 /* ChappieCore */ = {
 			isa = XCSwiftPackageProductDependency;

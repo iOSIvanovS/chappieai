@@ -25,7 +25,14 @@ extension ChappieViewModel {
             return
         }
 
-        let userMessage = ChatMessage.message(isUser: true, text: prompt, attachments: attachments)
+        // Assign a stable ID for the user message — needed by AttachmentStore for folder naming
+        let userMessageId = UUID()
+
+        // Persist Office attachments to Application Support before appending to history.
+        // This gives them a stable localURL that survives beyond the send() call.
+        let persistedAttachments = persistAttachments(attachments, forMessageId: userMessageId)
+
+        let userMessage = ChatMessage.message(id: userMessageId, isUser: true, text: prompt, attachments: persistedAttachments)
         messages.append(userMessage)
         appendToDisplayed(userMessage)
 
@@ -35,7 +42,6 @@ extension ChappieViewModel {
         runningCost = 0.0
 
         let networkHistory = buildRawNetworkHistory(excludingLast: 1)
-        let currentAIMessage = buildCurrentAIMessage(text: prompt, attachments: attachments)
 
         let config = activeConfig
         let memoryContext = activeMemoryContext
@@ -43,6 +49,9 @@ extension ChappieViewModel {
         let activeProviderId = activeProvider?.id
 
         currentRequestTask = Task {
+            // Build current message async — Office attachments need read_document extraction
+            let currentAIMessage = await buildCurrentAIMessage(text: prompt, attachments: persistedAttachments)
+
             let systemPromptOverride = await v2SystemPrompt()
             let toolPermissionsOverride = await v2ToolPermissions()
 
@@ -153,6 +162,21 @@ extension ChappieViewModel {
         task.cancel()
     }
 
+    // MARK: - Persist Attachments
+
+    /// Copies Office documents to permanent storage in Application Support.
+    /// Images are left as-is (stored inline as base64).
+    /// Returns updated attachments with localURL set where applicable.
+    private func persistAttachments(_ attachments: [AttachedFile], forMessageId messageId: UUID) -> [AttachedFile] {
+        attachments.map { file in
+            guard file.mimeType.isOfficeDocument, file.localURL == nil else { return file }
+            if let url = AttachmentStore.shared.save(data: file.data, filename: file.filename, forMessageId: messageId) {
+                return file.withLocalURL(url)
+            }
+            return file
+        }
+    }
+
     // MARK: - Private: Cancellation Handler
 
     /// Preserves partial stream text as a cancelled message so the AI knows the
@@ -228,9 +252,11 @@ extension ChappieViewModel {
             }
 
             if !attachments.isEmpty {
+                // History already sent — use lightweight text representation for Office docs.
+                // Full XML extraction was done at send time; we don't re-extract from stored data.
                 var parts: [AIMultimodalPart] = []
                 if !text.isEmpty { parts.append(.text(text)) }
-                for attachment in attachments { parts.append(multimodalPart(for: attachment)) }
+                for attachment in attachments { parts.append(multimodalPartSync(for: attachment)) }
                 return AIMessage(role: role, multimodalParts: parts)
             }
 
@@ -238,19 +264,24 @@ extension ChappieViewModel {
         }
     }
 
-    /// Builds the AIMessage for the current user turn (possibly multimodal).
-    func buildCurrentAIMessage(text: String, attachments: [AttachedFile]) -> AIMessage {
+    /// Builds the AIMessage for the current user turn — async to support Office extraction.
+    func buildCurrentAIMessage(text: String, attachments: [AttachedFile]) async -> AIMessage {
         guard !attachments.isEmpty else { return AIMessage(role: "user", content: text) }
 
         var parts: [AIMultimodalPart] = []
         if !text.isEmpty { parts.append(.text(text)) }
-        for attachment in attachments { parts.append(multimodalPart(for: attachment)) }
+        for attachment in attachments {
+            let part = await multimodalPart(for: attachment)
+            parts.append(part)
+        }
         return AIMessage(role: "user", multimodalParts: parts)
     }
 
-    /// Converts an AttachedFile to the appropriate AIMultimodalPart.
-    /// Images → base64 data URI; text/PDF → inline text; unknown → filename + size note.
-    func multimodalPart(for attachment: AttachedFile) -> AIMultimodalPart {
+    /// Converts an AttachedFile to AIMultimodalPart — async for Office document extraction.
+    ///
+    /// Office files use localURL if available (permanent storage), otherwise fall back to temp.
+    /// This means repeat extractions are free — no re-writing to disk.
+    func multimodalPart(for attachment: AttachedFile) async -> AIMultimodalPart {
         switch attachment.mimeType {
         case .imageJpeg, .imagePng, .imageGif, .imageWebp:
             return .imageURL(attachment.dataURI)
@@ -267,9 +298,73 @@ extension ChappieViewModel {
             }
             return .text("File: \(attachment.filename) (PDF, \(attachment.data.count / 1024)KB) — binary content, cannot extract text inline.")
 
+        case .docx, .xlsx, .pptx, .rtf:
+            return await extractOfficeDocument(attachment)
+
         case .other:
             return .text("File: \(attachment.filename) (\(attachment.mimeType.rawValue), \(attachment.data.count / 1024)KB)")
         }
+    }
+
+    /// Sync fallback for history reconstruction — no MCP call, just a note.
+    /// Full extraction already happened when the message was originally sent.
+    private func multimodalPartSync(for attachment: AttachedFile) -> AIMultimodalPart {
+        switch attachment.mimeType {
+        case .imageJpeg, .imagePng, .imageGif, .imageWebp:
+            return .imageURL(attachment.dataURI)
+        case .plainText:
+            let content = String(data: attachment.data, encoding: .utf8)
+                ?? "[Could not decode text content]"
+            return .text("File: \(attachment.filename)\n\n\(content)")
+        case .pdf:
+            return .text("File: \(attachment.filename) (PDF, \(attachment.data.count / 1024)KB)")
+        case .docx, .xlsx, .pptx, .rtf:
+            // History entry — content was extracted at send time, not re-extracted here
+            return .text("File: \(attachment.filename) [\(attachment.mimeType.rawValue), previously extracted]")
+        case .other:
+            return .text("File: \(attachment.filename) (\(attachment.mimeType.rawValue), \(attachment.data.count / 1024)KB)")
+        }
+    }
+
+    /// Extracts Office document content via read_document (ZIP+XML pipeline in ChappieMCP).
+    ///
+    /// Uses localURL if available (permanent storage) — no temp file needed.
+    /// Falls back to writing a temp file if localURL is absent (e.g. legacy attachments).
+    private func extractOfficeDocument(_ attachment: AttachedFile) async -> AIMultimodalPart {
+        guard let toolService else {
+            return .text("File: \(attachment.filename) — tool service unavailable")
+        }
+
+        // Use permanent localURL if already persisted — no temp write needed
+        if let localURL = attachment.localURL {
+            return await callReadDocument(path: localURL.path, filename: attachment.filename, toolService: toolService)
+        }
+
+        // Fallback: write temp file (legacy path, should rarely be hit)
+        let ext = attachment.filename.split(separator: ".").last.map(String.init) ?? "docx"
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ChappieDoc-\(UUID().uuidString).\(ext)")
+
+        do {
+            try attachment.data.write(to: tempURL)
+        } catch {
+            return .text("File: \(attachment.filename) — could not write temp file: \(error.localizedDescription)")
+        }
+
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        return await callReadDocument(path: tempURL.path, filename: attachment.filename, toolService: toolService)
+    }
+
+    /// Calls read_document tool for the given path and returns the result as a multimodal text part.
+    private func callReadDocument(path: String, filename: String, toolService: ToolExecutionService) async -> AIMultimodalPart {
+        let args = "{\"path\":\"\(path)\"}"
+        let fakeCall = AIToolCall(
+            id: "attachment-\(UUID().uuidString)",
+            type: "function",
+            function: AIToolCallFunction(name: "read_document", arguments: args)
+        )
+        let result = await toolService.execute(call: fakeCall)
+        return .text("File: \(filename)\n\n\(result)")
     }
 
     // MARK: - Response Cleanup

@@ -9,7 +9,7 @@
 ## 1. Purpose
 
 ChappieMCP is a local helper process launched by `Chappie.app` as a child process.
-It provides the AI agent with tools for git, build/test, and localization.
+It provides the AI agent with tools for git, build/test, localization, and Office document editing.
 
 **Why a separate process:**
 - Independence: helper restarts without restarting the app
@@ -36,7 +36,8 @@ ChappieMCP/
     └── Tools/
         ├── GitTools.swift             # git_status, git_add, git_commit, git_log, git_reset, git_revert, git_checkout
         ├── BuildTools.swift           # build_project, run_tests, read_build_log (env-aware routing)
-        └── LocalizationTools.swift    # loc_* tools (Xcode / xcstrings only)
+        ├── LocalizationTools.swift    # loc_* tools (Xcode / xcstrings only)
+        └── DocumentTools.swift        # read_document, write_document (Office formats via ZIPFoundation)
 ```
 
 ---
@@ -57,6 +58,7 @@ graph TD
         Git["GitTools"]
         Build["BuildTools\n(env-aware router)"]
         Loc["LocalizationTools"]
+        Doc["DocumentTools\n(ZIPFoundation)"]
     end
 
     subgraph Transport["Transport"]
@@ -65,12 +67,13 @@ graph TD
 
     TES --> Bridge
     Bridge -->|4-byte len + JSON| Socket
-    Launcher -->|"argv[1]=path argv[2]=socket argv[3]=env"| Main
+    Launcher -->|"argv[1]=path argv[2]=socket argv[3]=envMap"| Main
     Socket --> Server
     Main --> Server
     Server --> Git
     Server --> Build
     Server --> Loc
+    Server --> Doc
 ```
 
 ---
@@ -88,7 +91,7 @@ Response: [4 bytes UInt32 BE length] [JSON: {"result": "...", "error": null}]
 |---|---|
 | `argv[1]` | Workspace path (working directory for git/build) |
 | `argv[2]` | Socket file path |
-| `argv[3]` | DevEnvironment rawValue (e.g. `"xcode"`, `"python"`) — defaults to `"unknown"` |
+| `argv[3]` | JSON map `{"ProjectName": "xcode", ...}` — project→env routing |
 
 **MCPHelperLauncher** restarts the helper when workspace or devEnvironment changes.
 **MCPToolBridge** connects per call (no persistent connection). Timeout: 600s.
@@ -115,7 +118,7 @@ All git commands run with: `GIT_PAGER=cat`, `GIT_TERMINAL_PROMPT=0`, `GIT_CONFIG
 
 ### Build (BuildTools.swift) — env-aware routing
 
-`BuildTools` receives `DevEnvironment` at init and routes each tool to the correct shell command.
+`BuildTools` receives `projectEnvMap` at init and routes each tool to the correct shell command.
 
 | Environment | `build_project` | `run_tests` |
 |---|---|---|
@@ -146,6 +149,31 @@ Xcode-specific (`.xcstrings` format). Injected only when `devEnvironment == .xco
 | `loc_submit_batch` | Submit translations |
 | `loc_key_check` | Check key status across languages |
 | `loc_dead_keys` | Find unused keys |
+
+### Documents (DocumentTools.swift)
+
+Office document read/write via ZIP+XML. Uses **ZIPFoundation** (SPM, no external installs).
+
+| Tool | Purpose |
+|------|---------|
+| `read_document` | Extract primary XML/text from Office document |
+| `write_document` | Replace primary XML entry and save (or save as new file) |
+
+**Supported formats:**
+
+| Format | Read | Write | Primary entry |
+|---|---|---|---|
+| `.docx` | ✅ | ✅ | `word/document.xml` |
+| `.xlsx` | ✅ | ✅ | `xl/worksheets/sheet1.xml` |
+| `.pptx` | ✅ | ✅ | `ppt/slides/slide*.xml` |
+| `.odt` | ✅ | ✅ | `content.xml` |
+| `.rtf` | ✅ | ✅ | plain text (no ZIP) |
+| `.csv` | ✅ | ✅ | plain text (no ZIP) |
+| `.pdf` | ✅ | ❌ | text extraction only |
+
+**XML normalization (Word):** removes `rsid*` attributes, `w:proofErr`, `w:bookmarkStart/End` — noise added by Word for spell-check / revision tracking.
+
+**Write strategy:** copy original ZIP → replace only primary entry → save. All styles, images, relationships preserved.
 
 ---
 

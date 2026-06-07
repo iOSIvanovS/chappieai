@@ -2,11 +2,15 @@
 // ChappieCore
 //
 // WHY THIS FILE:
-// Execution of file system tools (list_files, read_file, write_file, delete_file)
-// and web_fetch. All delegate to FileSystemManager or WebFetchService.
+// Execution of file system tools (list_files, read_file, write_file, delete_file),
+// document tools (read_document, write_document), and web_fetch.
+// All file ops delegate to FileSystemManager; document ops delegate to MCPToolBridge.
 //
 // web_fetch is here (not in a separate file) because it's a single case
 // with the same "read external resource" semantics as file reads.
+//
+// read_document / write_document route through MCP (DocumentTools in ChappieMCP)
+// because ZIPFoundation is only available in the ChappieMCP target.
 //
 // LIVE UNAVAILABILITY (B-05):
 // When a FS tool throws — we extract the project name from the path prefix
@@ -28,7 +32,6 @@ extension ToolExecutionService {
                 let data = try encoder.encode(files)
                 return String(data: data, encoding: .utf8) ?? "[]"
             } catch {
-                // list_files has no path argument — report all workspace names as affected.
                 let names = await fileSystem.workspaceNames
                 for projectName in names {
                     await reportUnavailable(projectName)
@@ -75,6 +78,25 @@ extension ToolExecutionService {
                 throw error
             }
 
+        // Document tools — routed through MCP (ZIPFoundation lives in ChappieMCP target).
+        case "read_document":
+            guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
+                  let path = args["path"], !path.isEmpty else {
+                return "Ошибка: Аргумент 'path' обязателен для read_document"
+            }
+            return await mcpBridge.execute(tool: "read_document", args: ["path": path])
+
+        case "write_document":
+            guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
+                  let path = args["path"], !path.isEmpty,
+                  let content = args["content"], !content.isEmpty else {
+                return "Ошибка: Аргументы 'path' и 'content' обязательны для write_document"
+            }
+            var mcpArgs: [String: String] = ["path": path, "content": content]
+            if let outputPath = args["output_path"] { mcpArgs["output_path"] = outputPath }
+            if let entryName = args["entry_name"]   { mcpArgs["entry_name"] = entryName }
+            return await mcpBridge.execute(tool: "write_document", args: mcpArgs)
+
         case "web_fetch":
             guard let service = webFetch else {
                 return "❌ web_fetch: service not available. WebFetchService was not injected into ToolExecutionService."
@@ -98,7 +120,6 @@ extension ToolExecutionService {
         let parts = path.split(separator: "/", maxSplits: 1)
         guard parts.count == 2 else { return nil }
         let candidate = String(parts[0])
-        // Verify it's actually a known workspace name, not just a top-level folder.
         let known = fileSystem.workspaceNames
         return known.contains(candidate) ? candidate : nil
     }
