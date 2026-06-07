@@ -138,11 +138,13 @@ public actor ToolExecutionService {
     // MARK: - loc_* tool names
 
     /// All localization tool names — routed through MCP bridge.
+    /// WHY explicit set: Swift switch doesn't support Set membership in case patterns,
+    /// so we check containment in the default branch instead.
     private static let locToolNames: Set<String> = [
         "loc_info", "loc_create", "loc_rename", "loc_delete",
         "loc_add_language", "loc_remove_language", "loc_key_check",
         "loc_next_batch", "loc_submit_batch", "loc_dead_keys",
-        "loc_add_key", "loc_remove_key"
+        "loc_add_key", "loc_remove_key", "loc_rename_key", "loc_rename_keys", "loc_list_keys"
     ]
 
     // MARK: - Tool execution dispatcher

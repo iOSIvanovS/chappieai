@@ -75,6 +75,12 @@ extension ChappieViewModel {
             guard !Task.isCancelled else { return }
             await self.loadProjectsForThread(thread)
 
+            // Restart MCP with the now-populated project env map.
+            // WHY HERE: at app launch, MCP starts before projects are loaded (activeProjectEnvMap = {}).
+            // After loadProjectsForThread() the map is populated — MCP needs to restart to pick it up.
+            guard !Task.isCancelled else { return }
+            self.restartMCPIfNeeded()
+
             guard !Task.isCancelled else { return }
             self.buildAndSyncMemoryContext()
             await self.syncActiveMemoryContext()

@@ -56,7 +56,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
 
     /// Default config: 30 messages — matches ThreadSettings default.
     private init() {
-        maxOrchestratorSteps     = 100
+        maxOrchestratorSteps     = 500
         maxMessagesInContext     = 30
         tokenBudget              = 30 * 500
         isUnlimitedContext       = false
@@ -68,7 +68,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
 
     /// Creates config from thread settings. tokenBudget = maxMessagesInContext × 500.
     public init(settings: ThreadSettings) {
-        maxOrchestratorSteps     = 100
+        maxOrchestratorSteps     = 500
         isUnlimitedContext       = settings.isUnlimitedContext
         requestTimeoutSeconds    = 300
         connectionTimeoutSeconds = 30
@@ -89,7 +89,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
     /// Convenience init from raw message count — for tests and legacy code.
     public init(maxMessagesInContext: Int) {
         let clamped              = max(10, min(1000, maxMessagesInContext))
-        maxOrchestratorSteps     = 100
+        maxOrchestratorSteps     = 500
         self.maxMessagesInContext = clamped
         tokenBudget              = clamped * 500
         isUnlimitedContext       = false

@@ -623,6 +623,27 @@ extension ToolExecutionService {
             )),
 
             AITool(function: AIFunctionDefinition(
+                name: "loc_rename_keys",
+                description: """
+                Rename multiple localization keys in a single operation, preserving all translations.
+                PREFER THIS over calling loc_rename_key repeatedly — the file is loaded once and saved once.
+                Use to batch-fix raw string keys (Russian literals etc.) to proper dot-notation keys.
+                renames format: JSON array [{"old_key": "Треды", "new_key": "sidebar.title"}, ...]
+                Up to 100 renames per call.
+                """,
+                parameters: AIToolParameters(
+                    properties: [
+                        "path": pathArg,
+                        "renames": AIToolProperty(
+                            type: "string",
+                            description: "JSON array: [{\"old_key\": \"...\", \"new_key\": \"...\"}, ...]"
+                        )
+                    ],
+                    required: ["path", "renames"]
+                )
+            )),
+
+            AITool(function: AIFunctionDefinition(
                 name: "loc_list_keys",
                 description: """
                 List all keys in a .xcstrings file with their English values.

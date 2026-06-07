@@ -374,6 +374,13 @@ final class ToolDispatcher: Sendable {
             guard let newKey = args["new_key"], !newKey.isEmpty else { return .failure("Argument 'new_key' is required") }
             return locTools.renameKey(relativePath: path, oldKey: oldKey, newKey: newKey)
 
+        case "loc_rename_keys":
+            guard let path = args["path"], !path.isEmpty else { return .failure("Argument 'path' is required") }
+            guard let renames = args["renames"], !renames.isEmpty else {
+                return .failure("Argument 'renames' is required (JSON array: [{\"old_key\": \"...\", \"new_key\": \"...\"}])")
+            }
+            return locTools.renameKeys(relativePath: path, renamesJSON: renames)
+
         case "loc_list_keys":
             guard let path = args["path"], !path.isEmpty else { return .failure("Argument 'path' is required") }
             return locTools.listKeys(relativePath: path, filter: args["filter"])

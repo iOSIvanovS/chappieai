@@ -31,6 +31,11 @@
 // Passing FileHandle.standardOutput directly to the child process
 // causes PTY errors (ErrorCode: 7, Errno: 6 "Device not configured") on macOS 26.5.
 // Using Pipe isolates the child's output from the parent's PTY entirely.
+//
+// PIPE LEAK PREVENTION:
+// readabilityHandler must be explicitly set to nil on both pipes before the process
+// is terminated — otherwise the GCD read sources are never cancelled and the Pipe
+// file descriptors remain open, leaking one FD pair per restart.
 
 import Foundation
 import AppKit
@@ -56,6 +61,8 @@ final class MCPHelperLauncher {
     private(set) var socketPath: String = ""
 
     private var helperProcess: Process?
+    private var stdoutPipe: Pipe?
+    private var stderrPipe: Pipe?
     private var currentWorkspacePath: String?
     private var currentProjectEnvMap: [String: String] = [:]
 
@@ -81,10 +88,9 @@ final class MCPHelperLauncher {
             return
         }
 
-        if let process = helperProcess, process.isRunning {
+        if helperProcess != nil {
             print("[MCPHelperLauncher] 🔄 Restarting helper: \(path) \(projectEnvMap)")
-            process.terminate()
-            helperProcess = nil
+            teardownCurrentProcess()
         }
 
         startHelper(workspacePath: path, projectEnvMap: projectEnvMap)
@@ -96,12 +102,27 @@ final class MCPHelperLauncher {
     }
 
     func terminateHelper() {
-        guard let process = helperProcess, process.isRunning else { return }
+        guard helperProcess != nil else { return }
         print("[MCPHelperLauncher] 🛑 Terminating ChappieMCP helper")
-        process.terminate()
-        helperProcess = nil
+        teardownCurrentProcess()
         status = .stopped
         try? FileManager.default.removeItem(atPath: socketPath)
+    }
+
+    // MARK: - Private Teardown
+
+    /// Cleanly tears down the current process: cancels pipe handlers FIRST, then terminates.
+    /// WHY pipes first: if we terminate before clearing readabilityHandler, the GCD read
+    /// source fires one last time on the closed FD and then leaks — never getting deallocated.
+    private func teardownCurrentProcess() {
+        // Cancel GCD read sources before terminating — prevents FD leaks.
+        stdoutPipe?.fileHandleForReading.readabilityHandler = nil
+        stderrPipe?.fileHandleForReading.readabilityHandler = nil
+        stdoutPipe = nil
+        stderrPipe = nil
+
+        helperProcess?.terminate()
+        helperProcess = nil
     }
 
     // MARK: - Private Launch Logic
@@ -142,19 +163,19 @@ final class MCPHelperLauncher {
 
         // Use Pipe instead of FileHandle.standardOutput/standardError.
         // WHY: passing FileHandle.standardOutput directly causes PTY errors on macOS 26.5.
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        process.standardOutput = outPipe
+        process.standardError = errPipe
 
-        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+        outPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
             let trimmed = text.trimmingCharacters(in: .newlines)
             if !trimmed.isEmpty { print("[ChappieMCP] \(trimmed)") }
         }
 
-        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+        errPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
             let trimmed = text.trimmingCharacters(in: .newlines)
@@ -166,10 +187,17 @@ final class MCPHelperLauncher {
                 guard let self else { return }
                 let code = terminatedProcess.terminationStatus
                 print("[MCPHelperLauncher] ⚠️ Helper exited with code: \(code)")
-                // Code 15 = SIGTERM — intentional termination, that's normal.
+
+                // Always clear helperProcess if it's the same process that just exited.
+                // WHY: previously we skipped nil-ing on code==15 (SIGTERM), which meant
+                // restarted processes were never released from memory.
+                if self.helperProcess === terminatedProcess {
+                    self.helperProcess = nil
+                }
+
+                // Code 15 = SIGTERM — intentional termination (restart or quit), not a crash.
                 if code != 15 {
                     self.status = .crashed(code: Int(code))
-                    self.helperProcess = nil
                 }
             }
         }
@@ -177,6 +205,8 @@ final class MCPHelperLauncher {
         do {
             try process.run()
             helperProcess = process
+            stdoutPipe = outPipe
+            stderrPipe = errPipe
             currentWorkspacePath = workspacePath
             currentProjectEnvMap = projectEnvMap
             status = .running

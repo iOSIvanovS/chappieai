@@ -610,7 +610,7 @@ final class LocalizationTools: Sendable {
 
     // MARK: - loc_rename_key
 
-    /// Renames a key, preserving all existing translations.
+    /// Renames a single key, preserving all existing translations.
     /// WHY: allows fixing Russian/wrong keys to proper dot-notation without losing translations.
     func renameKey(relativePath: String, oldKey: String, newKey: String) -> ToolResult {
         let fullPath = projectPath + "/" + relativePath
@@ -627,7 +627,6 @@ final class LocalizationTools: Sendable {
             return .failure("Key '\(newKey)' already exists. Remove it first or choose a different name.")
         }
 
-        // Copy entry under new key, remove old key
         xcstrings.strings[newKey] = entry
         xcstrings.strings.removeValue(forKey: oldKey)
 
@@ -637,6 +636,67 @@ final class LocalizationTools: Sendable {
 
         let langCount = (entry.localizations ?? [:]).count
         return .success("✅ Key renamed: \"\(oldKey)\" → \"\(newKey)\" (\(langCount) translations preserved)")
+    }
+
+    // MARK: - loc_rename_keys (batch)
+
+    /// Renames multiple keys in a single file write. All translations are preserved.
+    /// WHY: batch rename is 100x cheaper than calling loc_rename_key N times —
+    /// the file is loaded once, all renames applied in memory, then saved once.
+    /// renames format: JSON array [{"old_key": "...", "new_key": "..."}]
+    func renameKeys(relativePath: String, renamesJSON: String) -> ToolResult {
+        let fullPath = projectPath + "/" + relativePath
+
+        guard var xcstrings = loadXCStrings(at: fullPath) else {
+            return .failure("Failed to load: \(relativePath)")
+        }
+
+        // Parse renames JSON
+        guard let data = renamesJSON.data(using: .utf8),
+              let renames = try? JSONDecoder().decode([[String: String]].self, from: data) else {
+            return .failure("""
+            Failed to parse renames JSON.
+            Expected format:
+            [
+              {"old_key": "Треды", "new_key": "sidebar.title"},
+              {"old_key": "Отмена", "new_key": "common.cancel"}
+            ]
+            """)
+        }
+
+        var renamed = 0
+        var errors: [String] = []
+
+        for item in renames {
+            guard let oldKey = item["old_key"], let newKey = item["new_key"] else {
+                errors.append("⚠️ Missing old_key or new_key in item: \(item)")
+                continue
+            }
+
+            guard let entry = xcstrings.strings[oldKey] else {
+                errors.append("⚠️ Key not found: \"\(oldKey)\"")
+                continue
+            }
+
+            if xcstrings.strings[newKey] != nil {
+                errors.append("⚠️ Target key already exists: \"\(newKey)\" (skipped \"\(oldKey)\")")
+                continue
+            }
+
+            xcstrings.strings[newKey] = entry
+            xcstrings.strings.removeValue(forKey: oldKey)
+            renamed += 1
+        }
+
+        guard saveXCStrings(xcstrings, to: fullPath) else {
+            return .failure("Failed to save \(relativePath)")
+        }
+
+        var report = "✅ Batch rename complete: \(renamed)/\(renames.count) keys renamed in \(relativePath)"
+        if !errors.isEmpty {
+            report += "\n\nIssues:\n" + errors.joined(separator: "\n")
+        }
+        return .success(report)
     }
 
     // MARK: - loc_list_keys
@@ -653,7 +713,6 @@ final class LocalizationTools: Sendable {
         let sourceLanguage = xcstrings.sourceLanguage
         var keys = xcstrings.strings.keys.sorted()
 
-        // Apply filter if provided
         if let filter, !filter.isEmpty {
             keys = keys.filter { $0.localizedCaseInsensitiveContains(filter) }
         }
@@ -669,8 +728,8 @@ final class LocalizationTools: Sendable {
 
         for key in keys {
             let enValue = xcstrings.strings[key]?.localizations?[sourceLanguage]?.stringUnit?.value ?? ""
-            // Mark keys that look like raw strings (non dot-notation) for easy identification
-            let isDotKey = key.contains(".") || key.allSatisfy({ $0.isASCII })
+            // Mark non-ASCII keys (raw strings like Russian literals) with ⚠️
+            let isDotKey = key.unicodeScalars.allSatisfy { $0.isASCII }
             let marker = isDotKey ? "  " : "⚠️"
             report += "\(marker) \"\(key)\"\n"
             if !enValue.isEmpty && enValue != key {

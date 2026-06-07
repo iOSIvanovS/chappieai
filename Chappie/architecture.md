@@ -24,7 +24,7 @@ Chappie/
 ├── ChappieApp.swift                    # @main, ModelContainer (AppSettingsSchema), AppDelegate
 ├── ContentView.swift                   # Conductor: assembles components, manages sheets
 ├── DropHandler.swift                   # Drag-and-drop file handling
-├── MCPHelperLauncher.swift             # Launches ChappieMCP child process
+├── MCPHelperLauncher.swift             # Launches ChappieMCP child processУпс, ошибка: Неизвестная ошибка: Orchestrator step limit exceeded (maxOrchestratorSteps = 100). Loop artificially stopped. Increase AppConfig.maxOrchestratorSteps if needed.
 ├── Models/
 │   ├── AppState.swift                  # @Observable singleton: onboarding state
 │   ├── ChatMessage.swift               # UI message model (enum: .message / .toolCall / .terminalConfirmation)
