@@ -284,9 +284,10 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // .data catches screenshot thumbnails (NSFilesPromisePboardType) — without it
-        // SwiftUI silently rejects them before reaching validateDrop/performDrop.
-        .onDrop(of: [.fileURL, .folder, .data], delegate: dropDelegate)
+        // .data catches screenshot thumbnails (NSFilesPromisePboardType).
+        // officeUTTypes: Finder registers .docx/.xlsx/.pptx under their own UTTypes —
+        // SwiftUI rejects the drop before validateDrop fires if these aren't listed here.
+        .onDrop(of: [.fileURL, .folder, .data] + officeUTTypes, delegate: dropDelegate)
     }
 
     // MARK: - Top Floating Panel

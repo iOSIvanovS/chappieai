@@ -175,6 +175,7 @@ extension ChappieViewModel {
                   !bookmarkData.isEmpty else {
                 print("[ChappieViewModel] M-09: No bookmark for '\(project.displayName)' — marked unavailable")
                 activeProjects[i].isUnavailable = true
+                activeProjects[i].absolutePath = nil
                 continue
             }
 
@@ -201,6 +202,7 @@ extension ChappieViewModel {
             guard let url = resolvedURL else {
                 print("[ChappieViewModel] M-09: ❌ Could not resolve bookmark for '\(project.displayName)' — marked unavailable")
                 activeProjects[i].isUnavailable = true
+                activeProjects[i].absolutePath = nil
                 continue
             }
 
@@ -208,16 +210,20 @@ extension ChappieViewModel {
             if isStale {
                 print("[ChappieViewModel] M-09: ⚠️ Stale bookmark for '\(project.displayName)' — macOS re-routed to '\(url.path)', rejecting")
                 activeProjects[i].isUnavailable = true
+                activeProjects[i].absolutePath = nil
                 continue
             }
 
             if isURLStale(url) {
                 print("[ChappieViewModel] M-09: ⚠️ Stale path for '\(project.displayName)' — marked unavailable (\(url.path))")
                 activeProjects[i].isUnavailable = true
+                activeProjects[i].absolutePath = nil
                 continue
             }
 
             activeProjects[i].isUnavailable = false
+            // Store the resolved absolute path — injected into system prompt so AI always knows location.
+            activeProjects[i].absolutePath = url.path
             workspaces.append((name: project.displayName, url: url))
             print("[ChappieViewModel] M-09: ✅ '\(project.displayName)' → \(url.path)")
         }
@@ -242,6 +248,11 @@ extension ChappieViewModel {
 
         self.isFileSystemReady = true
         await ts.setFileSystemReady(true)
+
+        // Rebuild ThreadSession with updated absolutePath values so the system prompt reflects them.
+        if let thread = activeThread {
+            await rebuildThreadSessionOnly(for: thread)
+        }
 
         let names = workspaces.map(\.name).joined(separator: ", ")
         print("[ChappieViewModel] M-09: FileSystem → [\(names)] (\(workspaces.count) workspaces)")

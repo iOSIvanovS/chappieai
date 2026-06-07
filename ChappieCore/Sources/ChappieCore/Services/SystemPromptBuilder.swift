@@ -33,11 +33,15 @@ public struct PromptContext: Sendable {
         public let name: String
         public let settings: ProjectSettings
         public let memory: [MemoryEntry]
+        /// Absolute path on disk — resolved from security-scoped bookmark at runtime.
+        /// Nil until syncFileSystemForActiveThread() completes successfully.
+        public let absolutePath: String?
 
-        public init(name: String, settings: ProjectSettings, memory: [MemoryEntry]) {
+        public init(name: String, settings: ProjectSettings, memory: [MemoryEntry], absolutePath: String? = nil) {
             self.name = name
             self.settings = settings
             self.memory = memory
+            self.absolutePath = absolutePath
         }
     }
 
@@ -149,7 +153,11 @@ public struct SystemPromptBuilder {
         for project in context.projects {
             var projectSections: [String] = []
 
-            projectSections.append(project.settings.formatForSystemPrompt(projectName: project.name))
+            // Pass absolutePath so AI sees it in the project settings block.
+            projectSections.append(project.settings.formatForSystemPrompt(
+                projectName: project.name,
+                absolutePath: project.absolutePath
+            ))
 
             if let memBlock = memoryBlock(
                 title: "Project Memory: \(project.name)",

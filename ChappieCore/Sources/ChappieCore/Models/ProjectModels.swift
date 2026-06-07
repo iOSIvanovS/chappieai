@@ -292,8 +292,15 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
 
 extension ProjectSettings {
 
-    public func formatForSystemPrompt(projectName: String) -> String {
+    /// absolutePath is passed separately — it's runtime-only, not stored in ProjectSettings.
+    public func formatForSystemPrompt(projectName: String, absolutePath: String? = nil) -> String {
         var lines: [String] = ["## Project Settings: \(projectName)"]
+
+        // Inject absolute path so AI always knows where the project lives on disk.
+        // This prevents the AI from losing the working directory after context resets.
+        if let path = absolutePath, !path.isEmpty {
+            lines.append("- Absolute path: \(path)")
+        }
 
         lines.append("- Role: \(agentRole.rawValue.uppercased())")
 
@@ -376,18 +383,25 @@ public struct ProjectMetadata: Sendable, Identifiable, Hashable {
     /// Not stored — re-evaluated on every syncFileSystemForActiveThread() call.
     public var isUnavailable: Bool
 
+    /// Runtime-only: absolute path resolved from security-scoped bookmark.
+    /// Set by syncFileSystemForActiveThread() after successful bookmark resolution.
+    /// Not stored — re-evaluated on every sync. Nil until first successful resolution.
+    public var absolutePath: String?
+
     /// Public init for Previews, tests, and direct construction.
     public init(
         id: UUID = UUID(),
         displayName: String,
         createdAt: Date = Date(),
         settings: ProjectSettings = ProjectSettings(),
-        isUnavailable: Bool = false
+        isUnavailable: Bool = false,
+        absolutePath: String? = nil
     ) {
         self.id = id
         self.displayName = displayName
         self.createdAt = createdAt
         self.settings = settings
         self.isUnavailable = isUnavailable
+        self.absolutePath = absolutePath
     }
 }

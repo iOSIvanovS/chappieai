@@ -98,12 +98,14 @@ public actor ThreadSession {
         let threadMemory = entriesByScope[thread.id.uuidString] ?? []
 
         // Build one ProjectContext per attached project using Sendable metadata.
+        // absolutePath is runtime-only — resolved by syncFileSystemForActiveThread().
         let projectContexts: [PromptContext.ProjectContext] = projectMetas.map { meta in
             let projectMemory = entriesByScope[meta.id.uuidString] ?? []
             return PromptContext.ProjectContext(
                 name: meta.displayName,
                 settings: meta.settings,
-                memory: projectMemory
+                memory: projectMemory,
+                absolutePath: meta.absolutePath
             )
         }
 

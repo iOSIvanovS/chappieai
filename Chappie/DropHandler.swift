@@ -6,11 +6,30 @@
 //   2. Folders from Finder (.folder) → added as projects
 //   3. macOS screenshot thumbnails (Cmd+Shift+4) — detected by image typeId + no file-url
 //      → loadFileRepresentation writes PNG to temp, we copy it and load as AttachedFile
+//
+// WHY officeUTTypes: Finder registers Office files with their own UTTypes
+// (e.g. org.openxmlformats.wordprocessingml.document) in addition to .fileURL.
+// SwiftUI's onDrop(of:) rejects the drop before validateDrop fires if the registered
+// types don't match the accepted list — so Office UTTypes must be included explicitly.
 
 import SwiftUI
 import UniformTypeIdentifiers
 import AppKit
 import ChappieCore
+
+// MARK: - Office UTTypes
+
+/// Known Office format UTTypes that Finder registers alongside .fileURL.
+/// Required in onDrop(of:) so SwiftUI doesn't reject the drag before validateDrop fires.
+let officeUTTypes: [UTType] = [
+    UTType("org.openxmlformats.wordprocessingml.document"),
+    UTType("org.openxmlformats.spreadsheetml.sheet"),
+    UTType("org.openxmlformats.presentationml.presentation"),
+    UTType("public.rtf"),
+    UTType("com.microsoft.word.doc"),
+    UTType("com.microsoft.excel.xls"),
+    UTType("com.microsoft.powerpoint.ppt"),
+].compactMap { $0 }
 
 // MARK: - SilentDropDelegate
 
@@ -27,12 +46,19 @@ final class SilentDropDelegate: DropDelegate {
         info.hasItemsConforming(to: [.fileURL])
             || info.hasItemsConforming(to: [.folder])
             || info.hasItemsConforming(to: [.data])
+            || info.hasItemsConforming(to: officeUTTypes)
     }
 
     func performDrop(info: DropInfo) -> Bool {
         guard !isThinkingGetter() else { return false }
 
-        let allProviders = info.itemProviders(for: [.fileURL, .folder, .data])
+        // Collect providers matching fileURL, folder, data, OR any Office UTType
+        var allProviders = info.itemProviders(for: [.fileURL, .folder, .data])
+        // Also grab Office-typed providers that may not be covered by .fileURL
+        let officeProviders = info.itemProviders(for: officeUTTypes)
+        for p in officeProviders where !allProviders.contains(where: { $0 === p }) {
+            allProviders.append(p)
+        }
         guard !allProviders.isEmpty else { return false }
 
         var imageProviders: [NSItemProvider] = []
@@ -44,10 +70,12 @@ final class SilentDropDelegate: DropDelegate {
             let hasFolder  = provider.hasItemConformingToTypeIdentifier(UTType.folder.identifier)
             // Screenshot thumbnail: has image type but no file URL backing
             let hasImage   = typeIds.contains { UTType($0)?.conforms(to: .image) == true }
+            // Office file: has one of our known Office UTTypes
+            let hasOffice  = typeIds.contains { id in officeUTTypes.contains { $0.identifier == id } }
 
             if hasImage && !hasFileURL && !hasFolder {
                 imageProviders.append(provider)
-            } else if hasFileURL || hasFolder {
+            } else if hasFileURL || hasFolder || hasOffice {
                 fileOrDirProviders.append(provider)
             }
         }
@@ -65,9 +93,20 @@ final class SilentDropDelegate: DropDelegate {
                 var folderProviders: [NSItemProvider] = []
 
                 for provider in fileOrDirProviders {
-                    let typeId = provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
-                        ? UTType.fileURL.identifier
-                        : UTType.folder.identifier
+                    // Prefer .fileURL; fall back to Office UTType for files Finder registers
+                    // only under their own UTType without .fileURL.
+                    let typeId: String
+                    if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                        typeId = UTType.fileURL.identifier
+                    } else if provider.hasItemConformingToTypeIdentifier(UTType.folder.identifier) {
+                        typeId = UTType.folder.identifier
+                    } else if let officeId = provider.registeredTypeIdentifiers.first(where: { id in
+                        officeUTTypes.contains { $0.identifier == id }
+                    }) {
+                        typeId = officeId
+                    } else {
+                        continue
+                    }
 
                     let url: URL? = await withCheckedContinuation { continuation in
                         provider.loadItem(forTypeIdentifier: typeId, options: nil) { item, _ in
@@ -133,9 +172,20 @@ func resolveDroppedFiles(_ providers: [NSItemProvider], attachments: Binding<[At
     Task {
         var urls: [URL] = []
         for provider in providers {
-            guard provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) else { continue }
+            // Prefer .fileURL; fall back to Office UTType if needed
+            let typeId: String
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                typeId = UTType.fileURL.identifier
+            } else if let officeId = provider.registeredTypeIdentifiers.first(where: { id in
+                officeUTTypes.contains { $0.identifier == id }
+            }) {
+                typeId = officeId
+            } else {
+                continue
+            }
+
             let url: URL? = await withCheckedContinuation { continuation in
-                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, error in
+                provider.loadItem(forTypeIdentifier: typeId, options: nil) { item, error in
                     guard error == nil else { continuation.resume(returning: nil); return }
                     if let data = item as? Data,
                        let resolved = URL(dataRepresentation: data, relativeTo: nil) {
