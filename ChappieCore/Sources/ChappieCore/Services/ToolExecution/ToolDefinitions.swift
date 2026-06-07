@@ -16,7 +16,7 @@
 // - Git tools — only if isProgrammingProject = true.
 // - build_project, run_tests, read_build_log — if isProgrammingProject = true (any env).
 //   Each call carries a "project" arg; MCP routes to the correct env per project.
-// - loc_* — only if at least one Xcode project is attached.
+// - loc_* — only if at least one Xcode project is attached (independent of isProg on first project).
 // - run_terminal — only if isProgrammingProject = true.
 // - git_diff is intentionally OMITTED: it dumps the entire project into AI context (cost + noise).
 
@@ -35,8 +35,13 @@ extension ToolExecutionService {
         let progInfos = allProjectInfos.filter {
             (projectSettingsCache[$0.id] ?? ProjectSettings()).isProgrammingProject
         }
-        let hasXcodeProject = progInfos.contains {
-            (projectSettingsCache[$0.id] ?? ProjectSettings()).devEnvironment == .xcode
+
+        // WHY independent of isProg: loc_* depend on devEnvironment == .xcode across ALL
+        // attached projects, not just the first one. A thread may have a non-prog first project
+        // but still have an Xcode project attached — loc_* must appear in that case too.
+        let hasXcodeProject = allProjectInfos.contains {
+            let s = projectSettingsCache[$0.id] ?? ProjectSettings()
+            return s.isProgrammingProject && s.devEnvironment == .xcode
         }
 
         var tools: [AITool] = []
@@ -374,11 +379,14 @@ extension ToolExecutionService {
                     parameters: AIToolParameters(properties: [:], required: [])
                 )))
             }
+        }
 
-            // xcstrings localization — only for Xcode projects.
-            if hasXcodeProject {
-                tools.append(contentsOf: localizationTools())
-            }
+        // MARK: - Localization tools (Xcode projects only, independent of isProg on first project)
+        // WHY outside isProg block: hasXcodeProject checks ALL attached projects,
+        // not just the first one. loc_* must appear whenever any Xcode project is in the thread.
+
+        if hasXcodeProject {
+            tools.append(contentsOf: localizationTools())
         }
 
         // MARK: - Project management (IT-07, always)

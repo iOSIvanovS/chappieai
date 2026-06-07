@@ -135,6 +135,16 @@ public actor ToolExecutionService {
         print("[ToolExecutionService] ✅ Project handlers registered")
     }
 
+    // MARK: - loc_* tool names
+
+    /// All localization tool names — routed through MCP bridge.
+    private static let locToolNames: Set<String> = [
+        "loc_info", "loc_create", "loc_rename", "loc_delete",
+        "loc_add_language", "loc_remove_language", "loc_key_check",
+        "loc_next_batch", "loc_submit_batch", "loc_dead_keys",
+        "loc_add_key", "loc_remove_key"
+    ]
+
     // MARK: - Tool execution dispatcher
 
     /// CHECK ORDER:
@@ -227,6 +237,15 @@ public actor ToolExecutionService {
                 return await handler()
 
             default:
+                // Route loc_* tools through MCP bridge.
+                // WHY here and not in a dedicated case: Swift doesn't allow Set membership
+                // checks in case patterns; a default + guard is the cleanest alternative.
+                if Self.locToolNames.contains(name) {
+                    guard let args = try? JSONDecoder().decode([String: String].self, from: argsData) else {
+                        return "Ошибка: не удалось разобрать аргументы для \(name)"
+                    }
+                    return await mcpBridge.execute(tool: name, args: args)
+                }
                 return "Ошибка: Неизвестный инструмент \(name)"
             }
         } catch {
