@@ -333,18 +333,14 @@ struct ProjectSettingsSheet: View {
             .toggleStyle(.switch)
 
             if draft.architectureEnabled {
-                HStack {
-                    Text("project.settings.arch_language")
-                        .font(.callout)
-                    Spacer()
-                    Picker("project.settings.arch_language_picker", selection: $draft.architectureLanguage) {
-                        ForEach(ProjectLanguage.allCases, id: \.self) { lang in
-                            Text(lang.displayName).tag(lang)
-                        }
+                // No left label — picker title is self-explanatory
+                Picker("project.settings.arch_language_picker", selection: $draft.architectureLanguage) {
+                    ForEach(ProjectLanguage.allCases, id: \.self) { lang in
+                        Text(lang.displayName).tag(lang)
                     }
-                    .pickerStyle(.menu)
-                    .frame(width: 200)
                 }
+                .pickerStyle(.menu)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -367,18 +363,14 @@ struct ProjectSettingsSheet: View {
             .toggleStyle(.switch)
 
             if draft.commentsEnabled {
-                HStack {
-                    Text("project.settings.comments_language")
-                        .font(.callout)
-                    Spacer()
-                    Picker("project.settings.comments_language_picker", selection: $draft.commentsLanguage) {
-                        ForEach(ProjectLanguage.allCases, id: \.self) { lang in
-                            Text(lang.displayName).tag(lang)
-                        }
+                // No left label — picker title is self-explanatory
+                Picker("project.settings.comments_language_picker", selection: $draft.commentsLanguage) {
+                    ForEach(ProjectLanguage.allCases, id: \.self) { lang in
+                        Text(lang.displayName).tag(lang)
                     }
-                    .pickerStyle(.menu)
-                    .frame(width: 200)
                 }
+                .pickerStyle(.menu)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }

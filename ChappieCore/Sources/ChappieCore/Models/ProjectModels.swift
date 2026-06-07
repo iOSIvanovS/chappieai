@@ -138,14 +138,60 @@ public enum TerminalAccessLevel: String, Codable, Sendable, CaseIterable {
 
 // MARK: - ProjectLanguage
 
+/// Language for architecture files and code comments.
+/// rawValue is stored in JSON — never rename cases without a migration.
+/// "english" and "native" are legacy rawValues kept for Codable compatibility with old records.
+/// All new cases use language-code rawValues (e.g. "ru", "de") that AI reads directly in the prompt.
 public enum ProjectLanguage: String, Codable, Sendable, CaseIterable {
-    case english
-    case native
+    // Legacy cases — kept for backward Codable compatibility.
+    // "english" maps to English, "native" was "user's native language" (now deprecated).
+    case english = "english"
+    case russian = "ru"
+    case german  = "de"
+    case spanish = "es"
+    case french  = "fr"
+    case hindi   = "hi"
+    case japanese = "ja"
+    case portuguese = "pt-BR"
+    case arabic  = "ar"
+    case chinese = "zh-Hans"
 
+    // "native" stored in old records decodes to nil → falls back to default (.english) via migration.
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        // Map legacy "native" to .english (closest safe default).
+        self = ProjectLanguage(rawValue: raw) ?? .english
+    }
+
+    /// Human-readable name shown in the picker — always in the target language itself.
     public var displayName: String {
         switch self {
-        case .english: return NSLocalizedString("project.language.english", bundle: .main, comment: "")
-        case .native:  return NSLocalizedString("project.language.native", bundle: .main, comment: "")
+        case .english:    return "English"
+        case .russian:    return "Русский"
+        case .german:     return "Deutsch"
+        case .spanish:    return "Español"
+        case .french:     return "Français"
+        case .hindi:      return "हिन्दी"
+        case .japanese:   return "日本語"
+        case .portuguese: return "Português (BR)"
+        case .arabic:     return "العربية"
+        case .chinese:    return "中文（简体）"
+        }
+    }
+
+    /// Value injected into the system prompt — AI reads this directly.
+    public var promptValue: String {
+        switch self {
+        case .english:    return "english"
+        case .russian:    return "Russian"
+        case .german:     return "German"
+        case .spanish:    return "Spanish"
+        case .french:     return "French"
+        case .hindi:      return "Hindi"
+        case .japanese:   return "Japanese"
+        case .portuguese: return "Portuguese (Brazilian)"
+        case .arabic:     return "Arabic"
+        case .chinese:    return "Chinese (Simplified)"
         }
     }
 }
@@ -336,13 +382,15 @@ extension ProjectSettings {
             }
 
             if architectureEnabled {
-                lines.append("- Architecture files: enabled (\(architectureLanguage.rawValue)). Discuss file paths with user before creating. If architecture files are found, save their paths to project memory and use them as a reference during development when relevant. You are required to keep architecture files up to date after code changes that affect the described structure. Keep architecture files concise: describe structure and decisions, not implementation details. Remove sections that are no longer relevant — dead history belongs in git, not in architecture files.")
+                // Use promptValue so AI gets a clear language name, not a raw code.
+                lines.append("- Architecture files: enabled (\(architectureLanguage.promptValue)). Discuss file paths with user before creating. If architecture files are found, save their paths to project memory and use them as a reference during development when relevant. You are required to keep architecture files up to date after code changes that affect the described structure. Keep architecture files concise: describe structure and decisions, not implementation details. Remove sections that are no longer relevant — dead history belongs in git, not in architecture files.")
             } else {
                 lines.append("- Architecture files: read-only (enable write in project settings)")
             }
 
             if commentsEnabled {
-                lines.append("- Code comments: enabled (\(commentsLanguage.rawValue)). Be concise — explain WHY, not WHAT. Write only when the code is non-obvious. Delete comments that are outdated or describe obvious operations. Never let comments outnumber or outsize the code they describe.")
+                // Use promptValue so AI gets a clear language name, not a raw code.
+                lines.append("- Code comments: enabled (\(commentsLanguage.promptValue)). Be concise — explain WHY, not WHAT. Write only when the code is non-obvious. Delete comments that are outdated or describe obvious operations. Never let comments outnumber or outsize the code they describe.")
             } else {
                 lines.append("- Code comments: DISABLED (enable in project settings)")
             }
