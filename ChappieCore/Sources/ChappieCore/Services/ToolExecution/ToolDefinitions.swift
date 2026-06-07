@@ -12,6 +12,7 @@
 // INJECTION RULES:
 // - Universal tools (file, memory, web, project mgmt) — always injected.
 // - read_document / write_document — always injected (work for any project type).
+// - attach_file — always injected. Attaches any file by absolute path to the AI message.
 // - Git tools — only if isProgrammingProject = true.
 // - build_project, run_tests, read_build_log — if isProgrammingProject = true (any env).
 //   Each call carries a "project" arg; MCP routes to the correct env per project.
@@ -111,6 +112,7 @@ extension ToolExecutionService {
             For text formats (.rtf, .csv): overwrites the file directly.
             If output_path is provided — saves as a new file, original is untouched.
             If output_path is omitted — overwrites the original document.
+            After saving — call attach_file with the saved path to deliver the file to the user.
             """,
             parameters: AIToolParameters(
                 properties: [
@@ -120,6 +122,24 @@ extension ToolExecutionService {
                     "entry_name": AIToolProperty(type: "string", description: "Optional: override which ZIP entry to replace (e.g. 'ppt/slides/slide2.xml'). Defaults to the primary entry for each format.")
                 ],
                 required: ["path", "content"]
+            )
+        )))
+
+        // MARK: - attach_file (always — deliver any file to the user as a bubble attachment)
+
+        tools.append(AITool(function: AIFunctionDefinition(
+            name: "attach_file",
+            description: """
+            Attach a file to the current AI message so the user receives it as a downloadable bubble.
+            Use after write_document (or any file creation) to deliver the result to the user.
+            The file must already exist on disk at the given absolute path.
+            The user will see a chip with the filename and can save it anywhere via Save As.
+            """,
+            parameters: AIToolParameters(
+                properties: [
+                    "path": AIToolProperty(type: "string", description: "Absolute path to the file on disk (e.g. '/Users/me/Downloads/plan.docx')")
+                ],
+                required: ["path"]
             )
         )))
 

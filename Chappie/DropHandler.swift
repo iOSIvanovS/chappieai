@@ -52,13 +52,26 @@ final class SilentDropDelegate: DropDelegate {
     func performDrop(info: DropInfo) -> Bool {
         guard !isThinkingGetter() else { return false }
 
-        // Collect providers matching fileURL, folder, data, OR any Office UTType
-        var allProviders = info.itemProviders(for: [.fileURL, .folder, .data])
-        // Also grab Office-typed providers that may not be covered by .fileURL
-        let officeProviders = info.itemProviders(for: officeUTTypes)
-        for p in officeProviders where !allProviders.contains(where: { $0 === p }) {
-            allProviders.append(p)
+        // Collect all providers without duplicates.
+        // WHY ObjectIdentifier: NSItemProvider identity via === is unreliable — macOS may
+        // vend different wrapper objects for the same underlying drag item when queried
+        // with different UTType lists. ObjectIdentifier on the same object instance is stable.
+        // We deduplicate by combining both identity AND registered type fingerprint to catch
+        // cases where the system returns distinct objects for the same drag item.
+        var seen = Set<String>()
+        var allProviders: [NSItemProvider] = []
+
+        func addIfNew(_ provider: NSItemProvider) {
+            // Fingerprint = sorted registered type identifiers joined — unique per drag item
+            let fingerprint = provider.registeredTypeIdentifiers.sorted().joined(separator: "|")
+            if seen.insert(fingerprint).inserted {
+                allProviders.append(provider)
+            }
         }
+
+        for p in info.itemProviders(for: [.fileURL, .folder, .data]) { addIfNew(p) }
+        for p in info.itemProviders(for: officeUTTypes) { addIfNew(p) }
+
         guard !allProviders.isEmpty else { return false }
 
         var imageProviders: [NSItemProvider] = []

@@ -16,7 +16,7 @@
 //   .pptx  — ppt/slides/slide*.xml
 //   .pdf   — read-only via pdftotext (system tool) or text extraction fallback
 //   .rtf   — plain text extraction (RTF is text-based, we strip control words)
-//   .odt   — content.xml (OpenDocument Text, same ZIP approach)
+//   .odt   — content.xml (OpenDocument ZIP, same approach)
 //   .csv   — plain text, no conversion needed
 //
 // OFFICE XML NORMALIZATION:
@@ -30,6 +30,11 @@
 // We open the original ZIP, replace only the primary entry, repack → output file.
 // All other ZIP entries (styles, images, relationships) are preserved untouched.
 // If output_path is provided — write there. Otherwise overwrite the original.
+//
+// WRITE RESPONSE FORMAT (structured JSON):
+// write_document returns JSON so ViewModel can reliably detect the output file:
+//   {"status":"ok","saved_path":"/absolute/path/plan.docx","filename":"plan.docx"}
+// This is more robust than parsing a human-readable success string.
 //
 // ZIPFoundation is used for ZIP operations (SPM dependency, no system installs needed).
 
@@ -77,6 +82,7 @@ final class DocumentTools: Sendable {
     // MARK: - write_document
 
     /// Replaces the primary XML entry in the Office document ZIP and saves the result.
+    /// Returns structured JSON so the caller can detect the output file path.
     /// - Parameters:
     ///   - relativePath: path to the original document
     ///   - xmlContent: full modified XML string for the primary entry
@@ -86,7 +92,6 @@ final class DocumentTools: Sendable {
         let fullPath = resolvePath(relativePath)
         let ext = URL(fileURLWithPath: fullPath).pathExtension.lowercased()
 
-        // Determine which ZIP entry is the primary editable XML.
         let primaryEntry: String
         switch ext {
         case "docx":      primaryEntry = entryName ?? "word/document.xml"
@@ -94,7 +99,6 @@ final class DocumentTools: Sendable {
         case "pptx":      primaryEntry = entryName ?? "ppt/slides/slide1.xml"
         case "odt":       primaryEntry = entryName ?? "content.xml"
         case "rtf", "csv":
-            // Text-based formats: write directly without ZIP.
             return writePlainText(content: xmlContent, originalPath: fullPath, outputPath: outputPath.map { resolvePath($0) })
         default:
             return .failure("write_document: unsupported format '.\(ext)'. Supported: docx, xlsx, pptx, odt, rtf, csv.")
@@ -153,7 +157,6 @@ final class DocumentTools: Sendable {
             return .failure("read_document: cannot open '\(path)' as a ZIP archive.")
         }
 
-        // Collect all entries matching the prefix, sorted by name.
         var matchingEntries: [String] = []
         for entry in archive {
             if entry.path.hasPrefix(prefix) && entry.path.hasSuffix(".xml") {
@@ -172,6 +175,7 @@ final class DocumentTools: Sendable {
     // MARK: - ZIP entry replacement
 
     /// Creates a copy of the ZIP with one entry replaced, saves to outputPath.
+    /// Returns structured JSON on success: {"status":"ok","saved_path":"...","filename":"..."}
     private func replaceZipEntry(sourcePath: String, entryName: String, newContent: String, outputPath: String) -> ToolResult {
         guard FileManager.default.fileExists(atPath: sourcePath) else {
             return .failure("write_document: source file not found at '\(sourcePath)'")
@@ -197,11 +201,9 @@ final class DocumentTools: Sendable {
                 return .failure("write_document: failed to create temp copy: \(error.localizedDescription)")
             }
         } else {
-            // Writing to a different path — copy original there first, then modify.
             workURL = outputURL
             needsMove = false
             do {
-                // Ensure parent directory exists.
                 let parentDir = outputURL.deletingLastPathComponent()
                 try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
                 if FileManager.default.fileExists(atPath: outputURL.path) {
@@ -213,18 +215,15 @@ final class DocumentTools: Sendable {
             }
         }
 
-        // Open the work copy for update and replace the target entry.
         guard let archive = try? Archive(url: workURL, accessMode: .update, pathEncoding: nil) else {
             try? FileManager.default.removeItem(at: workURL)
             return .failure("write_document: cannot open archive for update.")
         }
 
         do {
-            // Remove the old entry if it exists.
             if let existing = archive[entryName] {
                 try archive.remove(existing)
             }
-            // Add the new entry.
             try archive.addEntry(
                 with: entryName,
                 type: .file,
@@ -238,7 +237,6 @@ final class DocumentTools: Sendable {
             return .failure("write_document: failed to update ZIP entry '\(entryName)': \(error.localizedDescription)")
         }
 
-        // Move temp file to final destination if needed.
         if needsMove {
             do {
                 _ = try FileManager.default.replaceItemAt(sourceURL, withItemAt: workURL)
@@ -248,15 +246,16 @@ final class DocumentTools: Sendable {
             }
         }
 
-        let savedTo = outputURL.lastPathComponent
-        return .success("✅ Document saved: \(savedTo)\nModified entry: \(entryName)")
+        // Return structured JSON so ViewModel can detect and present the output file.
+        let filename = outputURL.lastPathComponent
+        let json = "{\"status\":\"ok\",\"saved_path\":\"\(outputURL.path)\",\"filename\":\"\(filename)\",\"entry\":\"\(entryName)\"}"
+        return .success(json)
     }
 
     // MARK: - Plain text formats
 
     private func readPlainText(at path: String, format: String) -> ToolResult {
         guard let content = try? String(contentsOfFile: path, encoding: .utf8) else {
-            // Try latin1 fallback for legacy CSVs.
             guard let content = try? String(contentsOfFile: path, encoding: .isoLatin1) else {
                 return .failure("read_document: cannot read \(format) file at '\(path)'.")
             }
@@ -265,11 +264,15 @@ final class DocumentTools: Sendable {
         return .success(content)
     }
 
+    /// Returns structured JSON on success (same format as replaceZipEntry).
     private func writePlainText(content: String, originalPath: String, outputPath: String?) -> ToolResult {
         let target = outputPath ?? originalPath
+        let targetURL = URL(fileURLWithPath: target)
         do {
             try content.write(toFile: target, atomically: true, encoding: .utf8)
-            return .success("✅ Document saved: \(URL(fileURLWithPath: target).lastPathComponent)")
+            let filename = targetURL.lastPathComponent
+            let json = "{\"status\":\"ok\",\"saved_path\":\"\(target)\",\"filename\":\"\(filename)\",\"entry\":\"\"}"
+            return .success(json)
         } catch {
             return .failure("write_document: failed to write file: \(error.localizedDescription)")
         }
@@ -277,13 +280,11 @@ final class DocumentTools: Sendable {
 
     // MARK: - PDF (read-only)
 
-    /// Attempts to extract text from PDF using system pdftotext (poppler), falls back to raw text scan.
     private func readPDF(at path: String) -> ToolResult {
         guard FileManager.default.fileExists(atPath: path) else {
             return .failure("read_document: file not found at '\(path)'")
         }
 
-        // Try pdftotext (available on macOS via Homebrew / system).
         let pdftotextPath = "/opt/homebrew/bin/pdftotext"
         if FileManager.default.fileExists(atPath: pdftotextPath) {
             let process = Process()
@@ -302,7 +303,6 @@ final class DocumentTools: Sendable {
             } catch { /* fall through to raw scan */ }
         }
 
-        // Fallback: scan PDF bytes for readable ASCII text sequences.
         guard let data = FileManager.default.contents(atPath: path) else {
             return .failure("read_document: cannot read PDF file.")
         }
@@ -313,7 +313,6 @@ final class DocumentTools: Sendable {
         return .success("<!-- PDF document (raw extraction): \(URL(fileURLWithPath: path).lastPathComponent) -->\n\(text)")
     }
 
-    /// Naive PDF text extractor: finds parenthesized string literals in PDF streams.
     private func extractTextFromPDFData(_ data: Data) -> String {
         guard let raw = String(data: data, encoding: .isoLatin1) else { return "" }
         var result: [String] = []
@@ -330,7 +329,6 @@ final class DocumentTools: Sendable {
                 }
                 if depth == 0 {
                     let token = String(raw[start..<j])
-                    // Keep only tokens with printable ASCII, skip binary garbage.
                     let cleaned = token.filter { $0.isLetter || $0.isNumber || $0.isWhitespace || ".,;:!?-–—\"'()".contains($0) }
                     if cleaned.count > 3 { result.append(cleaned) }
                     i = raw.index(after: j)
@@ -344,7 +342,6 @@ final class DocumentTools: Sendable {
 
     // MARK: - RTF
 
-    /// Strips RTF control words and returns plain text.
     private func readRTF(at path: String) -> ToolResult {
         guard let content = try? String(contentsOfFile: path, encoding: .isoLatin1) else {
             return .failure("read_document: cannot read RTF file at '\(path)'.")
@@ -353,7 +350,6 @@ final class DocumentTools: Sendable {
         return .success("<!-- RTF document: \(URL(fileURLWithPath: path).lastPathComponent) -->\n\(plain)")
     }
 
-    /// Removes RTF control sequences, leaving readable text.
     private func stripRTFControlWords(_ rtf: String) -> String {
         var result = ""
         var i = rtf.startIndex
@@ -364,11 +360,9 @@ final class DocumentTools: Sendable {
                 guard next < rtf.endIndex else { break }
                 let n = rtf[next]
                 if n == "\\" || n == "{" || n == "}" {
-                    // Escaped literal character.
                     result.append(n)
                     i = rtf.index(after: next)
                 } else if n == "'" {
-                    // Hex-encoded character: \'XX
                     let h1 = rtf.index(after: next)
                     let h2 = h1 < rtf.endIndex ? rtf.index(after: h1) : h1
                     if h2 < rtf.endIndex {
@@ -381,12 +375,10 @@ final class DocumentTools: Sendable {
                         i = rtf.index(after: next)
                     }
                 } else {
-                    // Skip control word (letters + optional number).
                     i = rtf.index(after: next)
                     while i < rtf.endIndex && (rtf[i].isLetter || rtf[i].isNumber || rtf[i] == "-") {
                         i = rtf.index(after: i)
                     }
-                    // Skip optional trailing space delimiter.
                     if i < rtf.endIndex && rtf[i] == " " {
                         i = rtf.index(after: i)
                     }
@@ -398,7 +390,6 @@ final class DocumentTools: Sendable {
                 i = rtf.index(after: i)
             }
         }
-        // Collapse excessive whitespace.
         return result
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -409,53 +400,28 @@ final class DocumentTools: Sendable {
     // MARK: - Office XML normalization
 
     /// Normalizes Office XML to make it readable and editable by AI.
-    ///
-    /// WHY: Word splits text runs at arbitrary points for spell-check / revision tracking.
-    /// "Hello" might be stored as 3 separate <w:r> elements. We merge adjacent runs
-    /// with identical formatting so the AI sees coherent text, not fragmented tokens.
+    /// Removes revision noise (rsid* attrs, proofErr tags) without touching content.
     private func normalizeOfficeXML(_ xml: String, entryName: String) -> String {
         guard entryName.hasSuffix(".xml") else { return xml }
-
-        // Only normalize Word documents — Excel/PPT runs are already readable.
         guard entryName.hasPrefix("word/") else { return xml }
-
         return mergeAdjacentWordRuns(xml)
     }
 
-    /// Merges adjacent <w:r> elements that have identical <w:rPr> (run properties).
-    ///
-    /// Pattern: <w:r>[<w:rPr>...</w:rPr>]<w:t>text1</w:t></w:r><w:r>[same rPr]<w:t>text2</w:t></w:r>
-    /// Result:  <w:r>[<w:rPr>...</w:rPr>]<w:t>text1text2</w:t></w:r>
-    ///
-    /// This is a regex-free implementation to avoid Foundation regex API version differences.
     private func mergeAdjacentWordRuns(_ xml: String) -> String {
-        // Simple heuristic: find </w:t></w:r><w:r> sequences and try to merge.
-        // Full OOXML-aware merging would require a DOM parser — overkill here.
-        // The AI receives the XML and can handle minor fragmentation; we just reduce noise.
         var result = xml
-
-        // Remove rsid* attributes (revision session IDs — pure noise for AI).
-        // Pattern: w:rsidR="XXXXXXXX" and similar.
         result = removeXMLAttributes(result, matching: ["w:rsidR", "w:rsidRPr", "w:rsidDel", "w:rsidRDefault"])
-
-        // Remove proofErr tags (spell-check markers — irrelevant for content editing).
         result = removeXMLElements(result, tags: ["w:proofErr", "w:bookmarkStart", "w:bookmarkEnd"])
-
         return result
     }
 
-    /// Removes XML attributes by name from the string (simple scan, no full parse).
     private func removeXMLAttributes(_ xml: String, matching attrNames: [String]) -> String {
         var result = xml
         for attr in attrNames {
-            // Match: attr="value" with optional spaces around =
             var output = ""
             var i = result.startIndex
             while i < result.endIndex {
-                // Look for attr name followed by ="..."
                 if result[i...].hasPrefix(attr) {
                     let afterAttr = result.index(i, offsetBy: attr.count, limitedBy: result.endIndex) ?? result.endIndex
-                    // Skip optional whitespace.
                     var j = afterAttr
                     while j < result.endIndex && result[j] == " " { j = result.index(after: j) }
                     if j < result.endIndex && result[j] == "=" {
@@ -464,7 +430,6 @@ final class DocumentTools: Sendable {
                             j = result.index(after: j)
                             while j < result.endIndex && result[j] != "\"" { j = result.index(after: j) }
                             if j < result.endIndex { j = result.index(after: j) }
-                            // Skip leading space before attribute if present.
                             if let prev = output.indices.last, output[prev] == " " {
                                 output.removeLast()
                             }
@@ -481,22 +446,18 @@ final class DocumentTools: Sendable {
         return result
     }
 
-    /// Removes self-closing XML elements by tag name.
     private func removeXMLElements(_ xml: String, tags: [String]) -> String {
         var result = xml
         for tag in tags {
-            // Match <tag .../> or <tag/>
             var output = ""
             var i = result.startIndex
             while i < result.endIndex {
                 if result[i] == "<" {
                     let afterBracket = result.index(after: i)
                     if result[afterBracket...].hasPrefix(tag) {
-                        // Find end of this element.
                         var j = afterBracket
                         while j < result.endIndex && result[j] != ">" { j = result.index(after: j) }
                         if j < result.endIndex {
-                            // Skip the closing >.
                             j = result.index(after: j)
                             i = j
                             continue

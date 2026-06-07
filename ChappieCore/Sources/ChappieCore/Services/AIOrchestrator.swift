@@ -36,11 +36,16 @@ public struct AIOrchestratorResult: Sendable {
     public let finalResponse: String
     public let totalCost: Double?
     public let newBalance: Double?
+    /// Absolute paths to files the AI wants to deliver to the user.
+    /// Collected from write_document JSON responses and explicit attach_file calls.
+    /// ViewModel uses these to attach output files as bubbles in the AI message.
+    public let outputFiles: [String]
 
-    public init(finalResponse: String, totalCost: Double?, newBalance: Double?) {
+    public init(finalResponse: String, totalCost: Double?, newBalance: Double?, outputFiles: [String] = []) {
         self.finalResponse = finalResponse
         self.totalCost = totalCost
         self.newBalance = newBalance
+        self.outputFiles = outputFiles
     }
 }
 
@@ -108,8 +113,6 @@ public actor AIOrchestrator {
             throw CancellationError()
         }
 
-        // System prompt must always be provided by the caller (built by SystemPromptBuilder).
-        // Falling back to an empty string is intentional — it surfaces misconfiguration fast.
         let systemPrompt = overrideSystemPrompt ?? {
             assertionFailure("[AIOrchestrator] overrideSystemPrompt is nil — caller must always provide a system prompt")
             return ""
@@ -126,6 +129,8 @@ public actor AIOrchestrator {
         var latestBalance: Double? = nil
         var stepCount = 0
         var lastToolSignature: String? = nil
+        // Accumulates absolute paths from write_document and attach_file responses.
+        var collectedOutputFiles: [String] = []
 
         let maxSteps = config.maxOrchestratorSteps
 
@@ -169,6 +174,7 @@ public actor AIOrchestrator {
                     toolCalls,
                     sessionHistory: &sessionHistory,
                     lastToolSignature: &lastToolSignature,
+                    collectedOutputFiles: &collectedOutputFiles,
                     overrideToolPermissions: overrideToolPermissions,
                     onToolCall: onToolCall
                 )
@@ -178,7 +184,8 @@ public actor AIOrchestrator {
                 return AIOrchestratorResult(
                     finalResponse: finalResponse,
                     totalCost: totalCost > 0 ? totalCost : nil,
-                    newBalance: latestBalance
+                    newBalance: latestBalance,
+                    outputFiles: collectedOutputFiles
                 )
             }
         }
@@ -349,8 +356,6 @@ public actor AIOrchestrator {
 
     // MARK: - Private: Context Window
 
-    /// Builds the message window to send to the model.
-    /// Full history is stored in SwiftData — here we only cap by maxMessagesInContext.
     private func buildContextWindow(
         from history: [AIMessage],
         currentPrompt: String,
@@ -361,7 +366,6 @@ public actor AIOrchestrator {
 
         print("[AIOrchestrator] History: \(history.count) msgs | Limit: \(maxMessages == Int.max ? "∞" : "\(maxMessages)")")
 
-        // Remove duplicate last message if it matches the current prompt
         let deduplicatedHistory: [AIMessage]
         if let lastMessage = history.last,
            lastMessage.role == "user",
@@ -398,6 +402,7 @@ public actor AIOrchestrator {
         _ toolCalls: [AIToolCall],
         sessionHistory: inout [AIMessage],
         lastToolSignature: inout String?,
+        collectedOutputFiles: inout [String],
         overrideToolPermissions: ToolPermissions?,
         onToolCall: @Sendable (String, String) -> Void
     ) async throws {
@@ -430,6 +435,18 @@ public actor AIOrchestrator {
                 resultString = await toolService.execute(call: toolCall)
             }
 
+            // Both write_document and attach_file return the same JSON structure with saved_path.
+            // Collect the path so ViewModel can attach the file as a bubble in the AI message.
+            if toolName == "write_document" || toolName == "attach_file" {
+                if let path = parseOutputFilePath(from: resultString) {
+                    // Deduplicate: don't add the same path twice (e.g. write_document + attach_file).
+                    if !collectedOutputFiles.contains(path) {
+                        collectedOutputFiles.append(path)
+                        print("[AIOrchestrator] Output file collected via \(toolName): \(path)")
+                    }
+                }
+            }
+
             sessionHistory.append(AIMessage(
                 role: "tool",
                 content: resultString,
@@ -437,6 +454,18 @@ public actor AIOrchestrator {
                 name: toolName
             ))
         }
+    }
+
+    /// Parses the structured JSON response from write_document or attach_file to extract saved_path.
+    /// Expected format: {"status":"ok","saved_path":"/absolute/path/file.docx","filename":"..."}
+    private func parseOutputFilePath(from result: String) -> String? {
+        guard let data = result.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let status = json["status"] as? String, status == "ok",
+              let path = json["saved_path"] as? String, !path.isEmpty else {
+            return nil
+        }
+        return path
     }
 
     private func extractTargetPath(from arguments: String) -> String {

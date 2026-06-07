@@ -8,13 +8,15 @@
 // Replaced FlowLayout thumbnails with a plain vertical list (AttachmentRowView).
 // Each attachment is one row: icon + filename + file size.
 // Images open via QuickLook on click. Other files open via NSWorkspace.
-// Benefits: no layout complexity, no GeometryReader, window can resize freely.
+//
+// OUTPUT FILES (AI-generated):
+// When the AI creates a file via write_document, it appears as an attachment bubble
+// in the AI message — same chip UI as user attachments.
+// Clicking an AI-generated file (has localURL) shows a Save As panel so the user
+// can save it wherever they want. Clicking user-attached files opens them directly.
 //
 // TERMINAL CONFIRMATION (TERMINAL-CONFIRM):
 // .terminalConfirmation case renders an inline Run/Cancel prompt.
-// The bubble shows the command in a monospaced code block and two action buttons.
-// Buttons call viewModel.approveTerminalCommand / rejectTerminalCommand.
-// The bubble is replaced with the result after the user decides.
 
 import SwiftUI
 import QuickLook
@@ -186,6 +188,7 @@ struct MessageBubbleView: View {
         HStack {
             ZStack(alignment: .bottomTrailing) {
                 VStack(alignment: .leading, spacing: 6) {
+                    // Output file attachments shown above the text — they're the main result.
                     if !attachments.isEmpty {
                         AttachmentListView(attachments: attachments, isUser: false)
                     }
@@ -194,7 +197,7 @@ struct MessageBubbleView: View {
                             .padding(.bottom, cost != nil ? 18 : 0)
                     }
                 }
-                
+
                 if let cost = cost {
                     Text(String(format: "🪙 %.2f ₽", cost))
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -221,7 +224,7 @@ struct MessageBubbleView: View {
                 )
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
             )
-            
+
             Spacer()
         }
     }
@@ -240,17 +243,54 @@ private struct AttachmentListView: View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: 4) {
             ForEach(attachments) { file in
                 AttachmentRowView(file: file, isUser: isUser) {
-                    if file.mimeType.isImage {
-                        previewURL = writeTempFile(file)
-                    } else {
-                        if let url = writeTempFile(file) {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
+                    handleTap(file: file)
                 }
             }
         }
         .quickLookPreview($previewURL)
+    }
+
+    private func handleTap(file: AttachedFile) {
+        if file.mimeType.isImage {
+            // Images: QuickLook preview
+            previewURL = resolveURL(for: file)
+        } else if let localURL = file.localURL, FileManager.default.fileExists(atPath: localURL.path) {
+            // AI-generated files with a known permanent path: Save As panel
+            showSavePanel(for: file, sourceURL: localURL)
+        } else {
+            // User-attached files: open with default app via temp file
+            if let url = writeTempFile(file) {
+                NSWorkspace.shared.open(url)
+            }
+        }
+    }
+
+    /// Shows NSSavePanel so the user can save an AI-generated file to their chosen location.
+    private func showSavePanel(for file: AttachedFile, sourceURL: URL) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = file.filename
+        panel.allowedContentTypes = []
+        panel.canCreateDirectories = true
+        panel.begin { response in
+            guard response == .OK, let dest = panel.url else { return }
+            do {
+                if FileManager.default.fileExists(atPath: dest.path) {
+                    try FileManager.default.removeItem(at: dest)
+                }
+                try FileManager.default.copyItem(at: sourceURL, to: dest)
+                // Open the saved file so the user sees it immediately.
+                NSWorkspace.shared.open(dest)
+            } catch {
+                print("[AttachmentListView] Save failed: \(error)")
+            }
+        }
+    }
+
+    private func resolveURL(for file: AttachedFile) -> URL? {
+        if let localURL = file.localURL, FileManager.default.fileExists(atPath: localURL.path) {
+            return localURL
+        }
+        return writeTempFile(file)
     }
 
     private func writeTempFile(_ file: AttachedFile) -> URL? {
@@ -284,6 +324,13 @@ private struct AttachmentRowView: View {
                 Text(fileSizeString(file.data.count))
                     .font(.system(size: 11))
                     .opacity(0.65)
+
+                // Download arrow hint for AI-generated files
+                if !isUser && file.localURL != nil {
+                    Image(systemName: "arrow.down.circle")
+                        .font(.system(size: 11))
+                        .opacity(0.5)
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
@@ -296,7 +343,7 @@ private struct AttachmentRowView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
-        .help("Open \(file.filename)")
+        .help(isUser ? "Open \(file.filename)" : "Save \(file.filename)")
     }
 
     private func fileSizeString(_ bytes: Int) -> String {
@@ -319,18 +366,17 @@ private struct AttachmentRowView: View {
         data: Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwADhQGAWjR9awAAAABJRU5ErkJggg==")!
     )
     let samplePDF  = AttachedFile(filename: "requirements.pdf", mimeType: .pdf, data: Data(count: 204800))
-    let sampleTxt  = AttachedFile(filename: "very_long_filename_that_should_truncate_in_the_middle.txt", mimeType: .plainText, data: Data(count: 1536))
+    let sampleDocx = AttachedFile(filename: "plan.docx", mimeType: .docx, data: Data(count: 21300), localURL: URL(fileURLWithPath: "/tmp/plan.docx"))
 
     return ScrollView {
         VStack(spacing: 16) {
-            MessageBubbleView(msg: .message(isUser: true, text: "Here's the screenshot and the spec", attachments: [sampleImage, samplePDF]), availableWidth: 618)
-            MessageBubbleView(msg: .message(isUser: false, text: "Got it! I'll analyze both files.", cost: 0.45), availableWidth: 618)
+            MessageBubbleView(msg: .message(isUser: true, text: "Переведи этот документ на английский", attachments: [samplePDF]), availableWidth: 618)
+            MessageBubbleView(msg: .message(isUser: false, text: "Готово! Вот переведённый документ:", cost: 12.5, attachments: [sampleDocx]), availableWidth: 618)
+            MessageBubbleView(msg: .message(isUser: true, text: "Here's the screenshot", attachments: [sampleImage]), availableWidth: 618)
             MessageBubbleView(msg: .terminalConfirmation(command: "swift test --filter ToolExecutionServiceTests", threadId: UUID()), availableWidth: 618)
-            MessageBubbleView(msg: .message(isUser: true, text: "Check these notes", attachments: [sampleTxt]), availableWidth: 618)
-            MessageBubbleView(msg: .message(isUser: false, text: "## Analysis\n\nThe spec looks **solid**.\n\n```swift\nlet x = 42\n```", cost: 1.23), availableWidth: 618)
         }
         .padding()
     }
-    .frame(width: 650, height: 800)
+    .frame(width: 650, height: 600)
     .background(Color(NSColor.windowBackgroundColor))
 }
