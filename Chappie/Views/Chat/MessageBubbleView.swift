@@ -7,13 +7,8 @@
 // ATTACHMENTS STRATEGY (simplified, IT-14 rev2):
 // Replaced FlowLayout thumbnails with a plain vertical list (AttachmentRowView).
 // Each attachment is one row: icon + filename + file size.
-// Images open via QuickLook on click. Other files open via NSWorkspace.
-//
-// OUTPUT FILES (AI-generated):
-// When the AI creates a file via write_document, it appears as an attachment bubble
-// in the AI message — same chip UI as user attachments.
-// Clicking an AI-generated file (has localURL) shows a Save As panel so the user
-// can save it wherever they want. Clicking user-attached files opens them directly.
+// All files (images, docs, AI-generated) open via QuickLook on click.
+// QuickLook provides native preview + built-in Share button for saving anywhere.
 //
 // TERMINAL CONFIRMATION (TERMINAL-CONFIRM):
 // .terminalConfirmation case renders an inline Run/Cancel prompt.
@@ -251,46 +246,14 @@ private struct AttachmentListView: View {
     }
 
     private func handleTap(file: AttachedFile) {
-        if file.mimeType.isImage {
-            // Images: QuickLook preview
-            previewURL = resolveURL(for: file)
-        } else if let localURL = file.localURL, FileManager.default.fileExists(atPath: localURL.path) {
-            // AI-generated files with a known permanent path: Save As panel
-            showSavePanel(for: file, sourceURL: localURL)
-        } else {
-            // User-attached files: open with default app via temp file
-            if let url = writeTempFile(file) {
-                NSWorkspace.shared.open(url)
-            }
-        }
-    }
-
-    /// Shows NSSavePanel so the user can save an AI-generated file to their chosen location.
-    private func showSavePanel(for file: AttachedFile, sourceURL: URL) {
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = file.filename
-        panel.allowedContentTypes = []
-        panel.canCreateDirectories = true
-        panel.begin { response in
-            guard response == .OK, let dest = panel.url else { return }
-            do {
-                if FileManager.default.fileExists(atPath: dest.path) {
-                    try FileManager.default.removeItem(at: dest)
-                }
-                try FileManager.default.copyItem(at: sourceURL, to: dest)
-                // Open the saved file so the user sees it immediately.
-                NSWorkspace.shared.open(dest)
-            } catch {
-                print("[AttachmentListView] Save failed: \(error)")
-            }
-        }
-    }
-
-    private func resolveURL(for file: AttachedFile) -> URL? {
+        // All files go through QuickLook — native preview + built-in Share button.
+        // For AI-generated files with a permanent localURL, use it directly.
+        // For user-attached files, write to temp first.
         if let localURL = file.localURL, FileManager.default.fileExists(atPath: localURL.path) {
-            return localURL
+            previewURL = localURL
+        } else {
+            previewURL = writeTempFile(file)
         }
-        return writeTempFile(file)
     }
 
     private func writeTempFile(_ file: AttachedFile) -> URL? {
@@ -324,13 +287,6 @@ private struct AttachmentRowView: View {
                 Text(fileSizeString(file.data.count))
                     .font(.system(size: 11))
                     .opacity(0.65)
-
-                // Download arrow hint for AI-generated files
-                if !isUser && file.localURL != nil {
-                    Image(systemName: "arrow.down.circle")
-                        .font(.system(size: 11))
-                        .opacity(0.5)
-                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
@@ -343,7 +299,7 @@ private struct AttachmentRowView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
-        .help(isUser ? "Open \(file.filename)" : "Save \(file.filename)")
+        .help("Preview \(file.filename)")
     }
 
     private func fileSizeString(_ bytes: Int) -> String {
