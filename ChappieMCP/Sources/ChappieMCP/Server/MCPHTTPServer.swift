@@ -368,6 +368,16 @@ final class ToolDispatcher: Sendable {
             guard let key = args["key"], !key.isEmpty else { return .failure("Argument 'key' is required") }
             return locTools.removeKey(relativePath: path, key: key)
 
+        case "loc_rename_key":
+            guard let path = args["path"], !path.isEmpty else { return .failure("Argument 'path' is required") }
+            guard let oldKey = args["old_key"], !oldKey.isEmpty else { return .failure("Argument 'old_key' is required") }
+            guard let newKey = args["new_key"], !newKey.isEmpty else { return .failure("Argument 'new_key' is required") }
+            return locTools.renameKey(relativePath: path, oldKey: oldKey, newKey: newKey)
+
+        case "loc_list_keys":
+            guard let path = args["path"], !path.isEmpty else { return .failure("Argument 'path' is required") }
+            return locTools.listKeys(relativePath: path, filter: args["filter"])
+
         default:
             return .failure("Unknown tool: \(tool).")
         }

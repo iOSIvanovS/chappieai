@@ -603,6 +603,40 @@ extension ToolExecutionService {
                     ],
                     required: ["path", "key"]
                 )
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "loc_rename_key",
+                description: """
+                Rename a localization key, preserving all existing translations.
+                Use to fix raw string keys (e.g. Russian literals) to proper dot-notation keys
+                without losing any translations already submitted for that key.
+                """,
+                parameters: AIToolParameters(
+                    properties: [
+                        "path": pathArg,
+                        "old_key": AIToolProperty(type: "string", description: "Current key name to rename"),
+                        "new_key": AIToolProperty(type: "string", description: "New dot-notation key name (e.g. 'sidebar.title')")
+                    ],
+                    required: ["path", "old_key", "new_key"]
+                )
+            )),
+
+            AITool(function: AIFunctionDefinition(
+                name: "loc_list_keys",
+                description: """
+                List all keys in a .xcstrings file with their English values.
+                Keys that look like raw strings (non dot-notation) are marked with ⚠️.
+                Use filter to narrow results by substring (e.g. filter: 'sidebar').
+                Essential for auditing before batch rename operations.
+                """,
+                parameters: AIToolParameters(
+                    properties: [
+                        "path": pathArg,
+                        "filter": AIToolProperty(type: "string", description: "Optional substring filter — only keys containing this string are returned")
+                    ],
+                    required: ["path"]
+                )
             ))
         ]
     }

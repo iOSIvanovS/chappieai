@@ -608,6 +608,79 @@ final class LocalizationTools: Sendable {
         return .success("✅ Key removed: \"\(key)\" from \(relativePath)")
     }
 
+    // MARK: - loc_rename_key
+
+    /// Renames a key, preserving all existing translations.
+    /// WHY: allows fixing Russian/wrong keys to proper dot-notation without losing translations.
+    func renameKey(relativePath: String, oldKey: String, newKey: String) -> ToolResult {
+        let fullPath = projectPath + "/" + relativePath
+
+        guard var xcstrings = loadXCStrings(at: fullPath) else {
+            return .failure("Failed to load: \(relativePath)")
+        }
+
+        guard let entry = xcstrings.strings[oldKey] else {
+            return .failure("Key '\(oldKey)' not found in \(relativePath)")
+        }
+
+        if xcstrings.strings[newKey] != nil {
+            return .failure("Key '\(newKey)' already exists. Remove it first or choose a different name.")
+        }
+
+        // Copy entry under new key, remove old key
+        xcstrings.strings[newKey] = entry
+        xcstrings.strings.removeValue(forKey: oldKey)
+
+        guard saveXCStrings(xcstrings, to: fullPath) else {
+            return .failure("Failed to save \(relativePath)")
+        }
+
+        let langCount = (entry.localizations ?? [:]).count
+        return .success("✅ Key renamed: \"\(oldKey)\" → \"\(newKey)\" (\(langCount) translations preserved)")
+    }
+
+    // MARK: - loc_list_keys
+
+    /// Returns all keys in the file, with optional filter by prefix or pattern.
+    /// WHY: needed to audit the file and plan batch rename operations.
+    func listKeys(relativePath: String, filter: String?) -> ToolResult {
+        let fullPath = projectPath + "/" + relativePath
+
+        guard let xcstrings = loadXCStrings(at: fullPath) else {
+            return .failure("Failed to load: \(relativePath)")
+        }
+
+        let sourceLanguage = xcstrings.sourceLanguage
+        var keys = xcstrings.strings.keys.sorted()
+
+        // Apply filter if provided
+        if let filter, !filter.isEmpty {
+            keys = keys.filter { $0.localizedCaseInsensitiveContains(filter) }
+        }
+
+        if keys.isEmpty {
+            let filterNote = filter != nil ? " matching '\(filter!)'" : ""
+            return .success("No keys found\(filterNote) in \(relativePath).")
+        }
+
+        var report = "🔑 Keys in \(relativePath): \(keys.count)"
+        if let filter { report += " (filter: '\(filter)')" }
+        report += "\n\n"
+
+        for key in keys {
+            let enValue = xcstrings.strings[key]?.localizations?[sourceLanguage]?.stringUnit?.value ?? ""
+            // Mark keys that look like raw strings (non dot-notation) for easy identification
+            let isDotKey = key.contains(".") || key.allSatisfy({ $0.isASCII })
+            let marker = isDotKey ? "  " : "⚠️"
+            report += "\(marker) \"\(key)\"\n"
+            if !enValue.isEmpty && enValue != key {
+                report += "     en: \"\(enValue)\"\n"
+            }
+        }
+
+        return .success(report)
+    }
+
     // MARK: - Private Helpers
 
     /// Recursively finds all .xcstrings files in the project directory.
