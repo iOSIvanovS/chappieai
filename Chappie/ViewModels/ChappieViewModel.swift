@@ -3,7 +3,7 @@
 //
 // Core @Observable class: state, init, service wiring, pagination, drafts, balance.
 // Business logic is split into extensions:
-//   +Threads, +Providers, +Projects, +Send, +Memory, +AppSettings, +ThreadSession
+//   +Threads, +Providers, +Projects, +Send, +Memory, +AppSettings, +ThreadSession, +License
 
 import SwiftUI
 import ChappieCore
@@ -78,6 +78,14 @@ final class ChappieViewModel {
     var showNoProviderAlert: Bool = false
     var _syncTask: Task<Void, Never>? = nil
     var isFileSystemReady: Bool = true
+
+    // MARK: - License
+
+    /// Actor-based license service — offline JWT verification + online activation.
+    let licenseService = LicenseService()
+
+    /// Published license state — SwiftUI views observe this directly.
+    var licenseState: LicenseState = .loading
 
     // MARK: - Threads
 
@@ -272,6 +280,9 @@ final class ChappieViewModel {
         if let ts = toolService {
             registerProjectToolHandlers(toolService: ts, projectStore: pStore, threadStore: tStore)
         }
+
+        // License check runs in parallel with other startup tasks — no blocking.
+        initializeLicense()
 
         Task {
             await preloadLastActiveThreadId()

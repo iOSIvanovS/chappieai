@@ -402,7 +402,7 @@ private struct BlinkingCursor: View {
     var body: some View {
         TimelineView(.periodic(from: Self.epoch, by: 0.5)) { timeline in
             let slot = Int(timeline.date.timeIntervalSinceReferenceDate / 0.5)
-            Text("▍")
+            Text(verbatim: "▍")
                 .font(.system(size: 14))
                 .foregroundStyle(Color.accentColor)
                 .opacity(slot.isMultiple(of: 2) ? 1 : 0)

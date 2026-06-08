@@ -195,7 +195,7 @@ struct NewThreadProviderSheet: View {
                 // Selection summary
                 if let provider = selectedProvider {
                     if !selectedModelName.isEmpty {
-                        Text("\(provider.displayName) · \(selectedModelName)")
+                        Text(verbatim: "\(provider.displayName) · \(selectedModelName)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -286,7 +286,7 @@ struct NewThreadProviderSheet: View {
                 Text("thread.settings.messages_in_context")
                     .font(.callout)
                 Spacer()
-                Text("\(draftSettings.maxMessagesInContext)")
+                Text(verbatim: "\(draftSettings.maxMessagesInContext)")
                     .font(.system(size: 15, weight: .semibold, design: .monospaced))
                     .foregroundStyle(Color.accentColor)
                     .frame(minWidth: 44, alignment: .trailing)

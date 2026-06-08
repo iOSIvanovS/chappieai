@@ -210,7 +210,7 @@ struct InputMorphView: View {
                             .frame(width: 28, height: 28)
 
                         if !attachments.isEmpty {
-                            Text("\(attachments.count)")
+                            Text(verbatim: "\(attachments.count)")
                                 .font(.system(size: 9, weight: .bold))
                                 .foregroundStyle(.white)
                                 .padding(2)
@@ -224,7 +224,7 @@ struct InputMorphView: View {
                 .padding(.bottom, 2)
 
                 Button(action: { showEmojiPicker.toggle() }) {
-                    Text("😊")
+                    Text(verbatim: "😊")
                         .font(.system(size: 18))
                         .frame(width: 28, height: 28)
                 }

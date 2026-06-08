@@ -199,7 +199,7 @@ struct ThreadSettingsSheet: View {
                 Text("thread.settings.messages_in_context")
                     .font(.callout)
                 Spacer()
-                Text("\(draftSettings.maxMessagesInContext)")
+                Text(verbatim: "\(draftSettings.maxMessagesInContext)")
                     .font(.system(size: 15, weight: .semibold, design: .monospaced))
                     .foregroundStyle(Color.accentColor)
                     .frame(minWidth: 44, alignment: .trailing)

@@ -259,7 +259,7 @@ private struct DeleteMessagesSheet: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                         Spacer()
-                        Text("\(threadInfo.messageCount)")
+                        Text(verbatim: "\(threadInfo.messageCount)")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }

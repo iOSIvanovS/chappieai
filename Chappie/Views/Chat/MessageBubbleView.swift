@@ -77,7 +77,7 @@ struct MessageBubbleView: View {
                     Image(systemName: "terminal.fill")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.orange)
-                    Text("Terminal — confirmation required")
+                    Text("terminal.confirmation_required")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.primary)
                 }

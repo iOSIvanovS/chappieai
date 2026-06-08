@@ -11,6 +11,7 @@
 //   - Onboarding: manual re-run trigger (calls AppState.resetOnboarding).
 //   - EULA: manual re-show trigger (calls AppState.resetEULA) — for debug/review.
 //   - Security: Keychain info.
+//   - License: activate owner JWT or view current license state.
 //
 // NOTE: There is no "active provider" concept at the global level.
 // Provider + key + model selection happens per-thread via the "Model" chip in the toolbar.
@@ -40,6 +41,7 @@ struct SettingsView: View {
     @State private var nameSaved: Bool = false
     @State private var showOnboardingConfirm: Bool = false
     @State private var showEULAConfirm: Bool = false
+    @State private var showLicenseActivation: Bool = false
 
     // Sparkle updater passed via environment from ChappieApp.
     @Environment(\.sparkleUpdater) private var sparkleUpdater
@@ -123,7 +125,7 @@ struct SettingsView: View {
                                 HStack(spacing: 6) {
                                     Image(systemName: "checkmark.circle.fill")
                                         .foregroundStyle(.green)
-                                    Text("\(count) \(providersLabel(count))")
+                                    Text(verbatim: "\(count) \(providersLabel(count))")
                                         .font(.system(size: 13, weight: .medium))
                                 }
                                 .padding(.horizontal, 12)
@@ -169,7 +171,7 @@ struct SettingsView: View {
                             HStack(spacing: 6) {
                                 Image(systemName: "bubble.left.and.bubble.right")
                                     .foregroundStyle(.blue)
-                                Text("\(totalThreads) \(threadsLabel(totalThreads))")
+                                Text(verbatim: "\(totalThreads) \(threadsLabel(totalThreads))")
                                     .font(.system(size: 13, weight: .medium))
                             }
                             .padding(.horizontal, 12)
@@ -268,6 +270,40 @@ struct SettingsView: View {
                         .padding(12)
                         .background(.green.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
                     }
+
+                    Divider()
+
+                    // MARK: License
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("license.section_title", systemImage: "key.fill")
+                            .font(.headline)
+
+                        HStack(spacing: 12) {
+                            // Current license state badge
+                            HStack(spacing: 6) {
+                                Image(systemName: licenseIcon)
+                                    .foregroundStyle(licenseColor)
+                                Text(licenseLabel)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(licenseColor)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(licenseColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+
+                            Spacer()
+
+                            // Only show Activate button when not yet licensed
+                            if !viewModel.isOwner {
+                                Button {
+                                    showLicenseActivation = true
+                                } label: {
+                                    Label("license.activate_button", systemImage: "key.badge.plus")
+                                }
+                                .buttonStyle(.borderedProminent)
+                            }
+                        }
+                    }
                 }
                 .padding(24)
             }
@@ -282,12 +318,15 @@ struct SettingsView: View {
             .padding(.horizontal, 24)
             .padding(.vertical, 16)
         }
-        .frame(width: 500, height: 600)
+        .frame(width: 500, height: 640)
         .sheet(isPresented: $showProviders) {
             ProvidersSettingsView(viewModel: viewModel)
         }
         .sheet(isPresented: $showMemory) {
             MemoryManagementView(viewModel: viewModel)
+        }
+        .sheet(isPresented: $showLicenseActivation) {
+            LicenseActivationView(viewModel: viewModel)
         }
         .alert("settings.onboarding_confirm_title", isPresented: $showOnboardingConfirm) {
             Button("settings.onboarding_confirm_run") {
@@ -312,6 +351,42 @@ struct SettingsView: View {
             Text("settings.eula_confirm_message")
         }
         .onAppear { loadCurrentName() }
+    }
+
+    // MARK: - License helpers
+
+    private var licenseLabel: String {
+        switch viewModel.licenseState {
+        case .loading:     return String(localized: "license.state_checking")
+        case .owner:       return String(localized: "license.state_owner")
+        case .active:      return String(localized: "license.state_active")
+        case .trial:       return String(localized: "license.state_trial")
+        case .gracePeriod: return String(localized: "license.state_grace_period")
+        case .expired:     return String(localized: "license.state_expired")
+        case .noLicense:   return String(localized: "license.state_no_license")
+        }
+    }
+
+    private var licenseIcon: String {
+        switch viewModel.licenseState {
+        case .owner:       return "crown.fill"
+        case .active:      return "checkmark.seal.fill"
+        case .trial:       return "clock.fill"
+        case .gracePeriod: return "exclamationmark.triangle.fill"
+        case .expired:     return "xmark.seal.fill"
+        default:           return "key.slash.fill"
+        }
+    }
+
+    private var licenseColor: Color {
+        switch viewModel.licenseState {
+        case .owner:       return .yellow
+        case .active:      return .green
+        case .trial:       return .blue
+        case .gracePeriod: return .orange
+        case .expired:     return .red
+        default:           return .secondary
+        }
     }
 
     // MARK: - Helpers

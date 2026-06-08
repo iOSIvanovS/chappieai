@@ -246,7 +246,7 @@ private struct CatalogProviderRow: View {
                         Text("common.separator_dot")
                             .foregroundStyle(.secondary.opacity(0.4))
 
-                        Text("\(remote.models.count) \(modelsLabel(remote.models.count))")
+                        Text(verbatim: "\(remote.models.count) \(modelsLabel(remote.models.count))")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }

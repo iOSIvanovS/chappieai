@@ -242,7 +242,7 @@ private struct ProviderListRow: View {
                     if provider.requiresApiKey {
                         Text("common.separator_dot")
                             .foregroundStyle(.secondary.opacity(0.5))
-                        Text("\(provider.keys.count) \(keysLabel(provider.keys.count))")
+                        Text(verbatim: "\(provider.keys.count) \(keysLabel(provider.keys.count))")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }
@@ -250,7 +250,7 @@ private struct ProviderListRow: View {
                     Text("common.separator_dot")
                         .foregroundStyle(.secondary.opacity(0.5))
 
-                    Text("\(provider.models.count) \(modelsLabel(provider.models.count))")
+                    Text(verbatim: "\(provider.models.count) \(modelsLabel(provider.models.count))")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
@@ -507,7 +507,7 @@ struct ProviderDetailView: View {
             HStack {
                 Text("providers.keys_section")
                     .font(.headline)
-                Text("(\(currentProvider.keys.count))")
+                Text(verbatim: "(\(currentProvider.keys.count))")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -551,7 +551,7 @@ struct ProviderDetailView: View {
             HStack {
                 Text("providers.models_section")
                     .font(.headline)
-                Text("(\(currentProvider.models.count))")
+                Text(verbatim: "(\(currentProvider.models.count))")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -650,7 +650,7 @@ private struct KeyRow: View {
             Text(key.name)
                 .font(.system(size: 13, weight: .medium))
 
-            Text("••••••••")
+            Text(verbatim: "••••••••")
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.secondary.opacity(0.5))
 
