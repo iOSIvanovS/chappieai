@@ -114,7 +114,26 @@ public actor FileSystemManager {
 
     // MARK: - Public API
 
+    /// List files across all attached workspaces.
     public func listFiles() throws -> [String] {
+        try listFilesIn(workspaces: workspaces)
+    }
+
+    /// List files for a specific project only.
+    /// WHY: AI passes project= to scope the listing — avoids mixing all projects in one dump.
+    /// Returns the same prefixed format as listFiles() for consistency.
+    public func listFiles(project: String) throws -> [String] {
+        guard let workspace = workspaces.first(where: { $0.name == project }) else {
+            throw ChappieError.fileSystemError(
+                "Project '\(project)' not found. Available: \(workspaces.map(\.name).joined(separator: ", "))"
+            )
+        }
+        return try listFilesIn(workspaces: [workspace])
+    }
+
+    // MARK: - Private listing
+
+    private func listFilesIn(workspaces: [(name: String, url: URL)]) throws -> [String] {
         var allPaths: [String] = []
 
         for (name, url) in workspaces {
@@ -138,7 +157,6 @@ public actor FileSystemManager {
                     relativePath = fileURL.path.replacingOccurrences(of: url.path + "/", with: "")
                 }
 
-                // Prefix with project name in multi-workspace mode.
                 if name.isEmpty {
                     allPaths.append(relativePath)
                 } else {

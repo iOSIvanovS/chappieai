@@ -13,6 +13,12 @@ extension ChappieViewModel {
     func send(prompt: String, attachments: [AttachedFile] = []) {
         guard !prompt.isEmpty || !attachments.isEmpty else { return }
 
+        // License gate: block sending if no valid license.
+        guard canSendMessages else {
+            print("[License] send() blocked — state: \(licenseState)")
+            return
+        }
+
         print("[B-04] send() entry — activeProvider: \(activeProvider?.displayName ?? "nil"), orchestrator: \(orchestrator != nil ? "set" : "nil")")
 
         guard let orchestrator = orchestrator else {
@@ -97,7 +103,6 @@ extension ChappieViewModel {
                 }
 
                 // Build output file attachments from write_document results.
-                // Each file gets its own AttachedFile bubble in the AI message.
                 let aiMessageId = UUID()
                 let outputAttachments = buildOutputAttachments(from: result.outputFiles, forMessageId: aiMessageId)
 
@@ -172,8 +177,6 @@ extension ChappieViewModel {
 
     // MARK: - Persist Attachments
 
-    /// Copies Office documents to permanent storage in Application Support.
-    /// Images are left as-is (stored inline as base64).
     private func persistAttachments(_ attachments: [AttachedFile], forMessageId messageId: UUID) -> [AttachedFile] {
         attachments.map { file in
             guard file.mimeType.isOfficeDocument, file.localURL == nil else { return file }
@@ -186,8 +189,6 @@ extension ChappieViewModel {
 
     // MARK: - Output File Attachments
 
-    /// Converts write_document output paths into AttachedFile instances for bubble display.
-    /// Files are already on disk — we just read their data and wrap them.
     private func buildOutputAttachments(from paths: [String], forMessageId messageId: UUID) -> [AttachedFile] {
         paths.compactMap { path in
             let url = URL(fileURLWithPath: path)
@@ -253,7 +254,6 @@ extension ChappieViewModel {
 
     // MARK: - Build Network History
 
-    /// Returns AIMessage history excluding the last N messages.
     func buildRawNetworkHistory(excludingLast: Int = 0) -> [AIMessage] {
         let sourceMessages = excludingLast > 0 && messages.count > excludingLast
             ? Array(messages.dropLast(excludingLast))
@@ -262,7 +262,6 @@ extension ChappieViewModel {
         return sourceMessages.compactMap { msg -> AIMessage? in
             guard case .message(_, let isUser, let text, _, let attachments) = msg else { return nil }
 
-            // Filter out transient system messages that should not be sent to the AI.
             let isSystemMessage = text.contains("Project connected")
                 || text.contains("Memory cleared")
                 || text.contains("API key updated")
@@ -288,7 +287,6 @@ extension ChappieViewModel {
         }
     }
 
-    /// Builds the AIMessage for the current user turn — async to support Office extraction.
     func buildCurrentAIMessage(text: String, attachments: [AttachedFile]) async -> AIMessage {
         guard !attachments.isEmpty else { return AIMessage(role: "user", content: text) }
 
@@ -301,7 +299,6 @@ extension ChappieViewModel {
         return AIMessage(role: "user", multimodalParts: parts)
     }
 
-    /// Converts an AttachedFile to AIMultimodalPart — async for Office document extraction.
     func multimodalPart(for attachment: AttachedFile) async -> AIMultimodalPart {
         switch attachment.mimeType {
         case .imageJpeg, .imagePng, .imageGif, .imageWebp:
@@ -327,7 +324,6 @@ extension ChappieViewModel {
         }
     }
 
-    /// Sync fallback for history reconstruction — no MCP call, just a note.
     private func multimodalPartSync(for attachment: AttachedFile) -> AIMultimodalPart {
         switch attachment.mimeType {
         case .imageJpeg, .imagePng, .imageGif, .imageWebp:
@@ -345,7 +341,6 @@ extension ChappieViewModel {
         }
     }
 
-    /// Extracts Office document content via read_document (ZIP+XML pipeline in ChappieMCP).
     private func extractOfficeDocument(_ attachment: AttachedFile) async -> AIMultimodalPart {
         guard let toolService else {
             return .text("File: \(attachment.filename) — tool service unavailable")

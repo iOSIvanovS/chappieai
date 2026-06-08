@@ -4,7 +4,7 @@
 // Core actor: init, dependency injection, context setters, and main execute() dispatcher.
 // Tool implementations are split by domain:
 //   ToolDefinitions.swift   — availableTools array
-//   ToolAccessControl.swift — IT-09 access check (role, git, tests, terminal)
+//   ToolAccessControl.swift — IT-09 access check (role, git, tests, terminal, license plan)
 //   MemoryTools.swift       — IT-08 scope resolution + memory execution cases
 //   FileTools.swift         — file system + document tools + attach_file + web_fetch
 //   GitBuildTools.swift     — git + build/test execution
@@ -42,6 +42,10 @@ public actor ToolExecutionService {
     }
 
     var isFileSystemReady: Bool = true
+
+    // Current license state — injected from ViewModel on every state change.
+    // Used by ToolAccessControl to enforce plan-based restrictions (e.g. Starter = read-only).
+    var licenseState: LicenseState = .loading
 
     var addProjectHandler: (@Sendable (String) async -> String)?
     var removeProjectHandler: (@Sendable (String) async -> String)?
@@ -93,6 +97,12 @@ public actor ToolExecutionService {
     public func setProjectSettings(_ settings: [UUID: ProjectSettings]) {
         self.projectSettingsCache = settings
         print("[ToolExecutionService] ⚙️ Project settings updated (\(settings.count) projects)")
+    }
+
+    /// Updates the license state used for plan-based tool access control.
+    public func setLicenseState(_ state: LicenseState) {
+        self.licenseState = state
+        print("[ToolExecutionService] 🔑 License state updated: \(state)")
     }
 
     public func setOnProjectUnavailable(_ callback: @escaping @MainActor (String) -> Void) {

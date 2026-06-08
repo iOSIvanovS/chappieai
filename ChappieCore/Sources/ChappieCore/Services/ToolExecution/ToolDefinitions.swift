@@ -51,10 +51,20 @@ extension ToolExecutionService {
 
         // MARK: - File system (always)
 
+        // "project" arg scopes listing to one project — avoids mixing all projects in one dump.
+        // Required when multiple projects are attached; optional for single-project threads.
         tools.append(AITool(function: AIFunctionDefinition(
             name: "list_files",
             description: "Get the list of all files in the project (relative paths).",
-            parameters: AIToolParameters(properties: [:], required: [])
+            parameters: AIToolParameters(
+                properties: [
+                    "project": AIToolProperty(
+                        type: "string",
+                        description: listFilesProjectArgDescription(for: allProjectInfos)
+                    )
+                ],
+                required: allProjectInfos.count > 1 ? ["project"] : []
+            )
         )))
 
         tools.append(AITool(function: AIFunctionDefinition(
@@ -720,6 +730,18 @@ extension ToolExecutionService {
     }
 
     // MARK: - Dynamic tool descriptions
+
+    /// Describes the "project" arg for list_files based on how many projects are attached.
+    private func listFilesProjectArgDescription(for infos: [ActiveMemoryContext.ProjectInfo]) -> String {
+        guard !infos.isEmpty else {
+            return "Project display name to scope the file listing."
+        }
+        if infos.count == 1 {
+            return "Project name. Only one project: '\(infos[0].name)'. Can be omitted."
+        }
+        let list = infos.map { "'\($0.name)'" }.joined(separator: ", ")
+        return "Project display name — required when multiple projects are attached. Available: \(list)."
+    }
 
     private func gitProjectArgDescription(for infos: [ActiveMemoryContext.ProjectInfo]) -> String {
         guard !infos.isEmpty else { return "Project display name to target." }

@@ -11,8 +11,7 @@ extension ChappieViewModel {
 
     // MARK: - Bootstrap
 
-    /// Called once from ChappieApp.onAppear after ModelContainer is connected.
-    /// Runs LicenseService.initialize() and publishes the result to licenseState.
+    /// Called once from setModelContainer() after stores are connected.
     func initializeLicense() {
         Task {
             await licenseService.initialize()
@@ -21,35 +20,35 @@ extension ChappieViewModel {
     }
 
     /// Sync actor state → @Observable property so SwiftUI re-renders.
+    /// Also pushes the new state to ToolExecutionService for plan-based access control.
     func syncLicenseState() async {
         let newState = await licenseService.state
         licenseState = newState
         print("[License] State: \(newState)")
+
+        // Propagate to ToolExecutionService so Starter plan blocks execution tools.
+        if let ts = toolService {
+            await ts.setLicenseState(newState)
+        }
     }
 
     // MARK: - Owner JWT Activation
 
-    /// Verifies and stores the owner JWT. Returns true on success.
-    /// UI calls this when user pastes their JWT token.
     @discardableResult
     func activateOwnerLicense(jwt: String) async -> Bool {
         let success = await licenseService.activateOwnerLicense(jwt: jwt)
-        if success {
-            await syncLicenseState()
-        }
+        if success { await syncLicenseState() }
         return success
     }
 
     // MARK: - Paid License Activation
 
-    /// Activates a paid license key against the backend.
-    /// Throws LicenseError on failure.
     func activateLicense(key: String) async throws {
         _ = try await licenseService.activate(key: key)
         await syncLicenseState()
     }
 
-    // MARK: - Convenience
+    // MARK: - Access Checks
 
     var isOwner: Bool {
         if case .owner = licenseState { return true }
@@ -59,6 +58,35 @@ extension ChappieViewModel {
     var isLicensed: Bool {
         switch licenseState {
         case .owner, .active, .gracePeriod, .trial: return true
+        default: return false
+        }
+    }
+
+    /// True if the current plan allows full Executor tools (not Starter).
+    var canExecuteTools: Bool {
+        switch licenseState {
+        case .owner: return true
+        case .trial: return true
+        case .gracePeriod: return true
+        case .active(let plan, _): return plan != .starter
+        default: return false
+        }
+    }
+
+    /// True if sending messages is allowed at all.
+    var canSendMessages: Bool {
+        switch licenseState {
+        case .loading: return false
+        case .noLicense: return false
+        case .expired: return false
+        default: return true
+        }
+    }
+
+    /// True if the paywall sheet should be shown instead of the main UI.
+    var shouldShowPaywall: Bool {
+        switch licenseState {
+        case .noLicense, .expired: return true
         default: return false
         }
     }

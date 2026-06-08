@@ -18,7 +18,8 @@
 //   1. Loading spinner — while viewModel.isAppReady == false
 //   2. EULAView — if AppState.shouldShowEULA (first launch only)
 //   3. OnboardingView — if AppState.shouldShowOnboarding (no provider configured)
-//   4. Main app
+//   4. Paywall — if licenseState is .noLicense or .expired
+//   5. Main app
 //
 // CPU-08: onGeometryChange instead of GeometryReader — pure side-effect, no layout loop.
 // CPU-13: streaming state isolated to ChatScrollView + InputMorphView — not read in body.
@@ -37,6 +38,7 @@ struct ContentView: View {
     @State private var prompt: String = ""
     @State private var showSettings: Bool = false
     @State private var isSidebarVisible: Bool = false
+    @State private var showLicenseActivation: Bool = false
 
     @State private var attachments: [AttachedFile] = []
     @State private var dropDelegate = SilentDropDelegate()
@@ -71,8 +73,11 @@ struct ContentView: View {
             } else if appState.shouldShowOnboarding {
                 // Step 2: Onboarding — configure first provider
                 OnboardingView(viewModel: viewModel)
+            } else if viewModel.shouldShowPaywall {
+                // Step 3: Paywall — license expired or not present
+                paywallContent
             } else {
-                // Step 3: Main app
+                // Step 4: Main app
                 mainContent
             }
         }
@@ -86,10 +91,39 @@ struct ContentView: View {
         .onChange(of: viewModel.providers.count) { _, _ in }
     }
 
+    // MARK: - Paywall
+
+    /// Shown when licenseState is .noLicense or .expired.
+    /// User must activate a license to proceed — no way to dismiss.
+    private var paywallContent: some View {
+        VStack(spacing: 24) {
+            Spacer()
+            Image(systemName: "lock.shield.fill")
+                .font(.system(size: 52))
+                .foregroundStyle(.secondary)
+            Text("license.paywall_title")
+                .font(.title2.bold())
+            Text("license.paywall_subtitle")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+            Button("license.paywall_activate_button") {
+                showLicenseActivation = true
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sheet(isPresented: $showLicenseActivation) {
+            LicenseActivationView(viewModel: viewModel)
+        }
+    }
+
     // MARK: - Thread for Settings
 
     /// Builds ThreadMetadata with CURRENT activeThreadSettings — not stale thread.settings.
-    /// self.threads is NOT updated after switchProvider() — only activeThreadSettings is always current.
     private func buildThreadForSettings(_ thread: ThreadMetadata) -> ThreadMetadata {
         ThreadMetadata(
             id: thread.id,
@@ -108,6 +142,9 @@ struct ContentView: View {
             .sheet(isPresented: $showSettings) {
                 SettingsView(viewModel: viewModel)
             }
+            .sheet(isPresented: $showLicenseActivation) {
+                LicenseActivationView(viewModel: viewModel)
+            }
             .sheet(item: $selectedProjectForSettings) { project in
                 ProjectSettingsSheet(
                     project: project,
@@ -117,7 +154,6 @@ struct ContentView: View {
                     },
                     onDismiss: { selectedProjectForSettings = nil },
                     onDetectEnvironment: { completion in
-                        // AI detection — runs in ViewModel, calls back with result on MainActor
                         viewModel.detectDevEnvironment(for: project, completion: completion)
                     }
                 )
@@ -284,9 +320,6 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // .data catches screenshot thumbnails (NSFilesPromisePboardType).
-        // officeUTTypes: Finder registers .docx/.xlsx/.pptx under their own UTTypes —
-        // SwiftUI rejects the drop before validateDrop fires if these aren't listed here.
         .onDrop(of: [.fileURL, .folder, .data] + officeUTTypes, delegate: dropDelegate)
     }
 
@@ -340,6 +373,15 @@ struct ContentView: View {
                         }
                     }
                 )
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            // Trial banner — shown only during active trial period
+            if case .trial(let days) = viewModel.licenseState {
+                TrialBannerView(daysRemaining: days) {
+                    showLicenseActivation = true
+                }
+                .padding(.horizontal, 0)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }

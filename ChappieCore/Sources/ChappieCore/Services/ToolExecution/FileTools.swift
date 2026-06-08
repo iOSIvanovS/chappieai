@@ -19,6 +19,11 @@
 // When a FS tool throws — we extract the project name from the path prefix
 // and call onProjectUnavailable(projectName). ViewModel marks the chip orange
 // without requiring a thread re-entry or a background timer.
+//
+// list_files project= scoping (B-XX):
+// list_files now accepts an optional "project" arg. When provided — only that
+// project's files are returned and only that project is marked orange on error.
+// Without "project" — falls back to all workspaces, no chip is marked (can't tell which failed).
 
 import Foundation
 
@@ -28,17 +33,23 @@ extension ToolExecutionService {
         switch name {
 
         case "list_files":
+            let args = (try? JSONDecoder().decode([String: String].self, from: argsData)) ?? [:]
+            let projectArg = args["project"]
             do {
-                let files = try await fileSystem.listFiles()
+                let files: [String]
+                if let project = projectArg, !project.isEmpty {
+                    files = try await fileSystem.listFiles(project: project)
+                } else {
+                    files = try await fileSystem.listFiles()
+                }
                 let encoder = JSONEncoder()
                 encoder.outputFormatting = .prettyPrinted
                 let data = try encoder.encode(files)
                 return String(data: data, encoding: .utf8) ?? "[]"
             } catch {
-                let names = await fileSystem.workspaceNames
-                for projectName in names {
-                    await reportUnavailable(projectName)
-                }
+                // Only mark the specific project orange — or nothing if project is unknown.
+                // WHY: marking all projects on list_files failure is a false positive cascade.
+                await reportUnavailable(projectArg)
                 throw error
             }
 

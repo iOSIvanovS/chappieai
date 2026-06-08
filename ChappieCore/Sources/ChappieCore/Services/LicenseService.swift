@@ -48,36 +48,73 @@ public actor LicenseService {
 
     /// Call on every app launch. Determines current license state.
     public func initialize() async {
-        // 1. Check for owner JWT first — offline, highest priority
-        if let jwt = KeychainHelper.read(key: .jwt), !jwt.isEmpty {
+        // 1. Owner JWT — highest priority, offline.
+        //    Skipped in DEBUG when DebugFlags.ignoreOwnerLicense = true.
+        #if DEBUG
+        let checkOwner = !DebugFlags.ignoreOwnerLicense
+        #else
+        let checkOwner = true
+        #endif
+
+        if checkOwner, let jwt = KeychainHelper.read(key: .jwt), !jwt.isEmpty {
             if verifyOwnerJWT(jwt) {
                 state = .owner
                 return
             }
         }
 
-        // 2. Check for stored license key
-        guard let licenseKey = KeychainHelper.read(key: .key), !licenseKey.isEmpty else {
-            state = .noLicense
+        let hardwareId = getOrCreateHardwareId()
+
+        // 2. Stored license key — try to validate online
+        if let licenseKey = KeychainHelper.read(key: .key), !licenseKey.isEmpty {
+            let plan = LicensePlan(rawValue: KeychainHelper.read(key: .plan) ?? "") ?? .trial
+            do {
+                let result = try await validateOnline(key: licenseKey, hardwareId: hardwareId)
+                if result.isActive {
+                    KeychainHelper.write(key: .lastValidatedAt, value: ISO8601DateFormatter().string(from: Date()))
+                    let expiresAt = result.expiresAt.flatMap { ISO8601DateFormatter().date(from: $0) }
+                    if plan == .trial {
+                        let days = daysRemaining(from: expiresAt)
+                        state = days > 0 ? .trial(daysRemaining: days) : .expired(plan: .trial)
+                    } else {
+                        state = .active(plan: plan, expiresAt: expiresAt)
+                    }
+                } else {
+                    state = .expired(plan: plan)
+                }
+            } catch LicenseError.licenseInvalid {
+                state = .expired(plan: plan)
+            } catch {
+                // Network failure — grace period
+                state = resolveGracePeriodState(plan: plan)
+            }
             return
         }
 
-        let plan = LicensePlan(rawValue: KeychainHelper.read(key: .plan) ?? "") ?? .trial
+        // 3. No license at all — register trial automatically
+        await registerTrialIfNeeded(hardwareId: hardwareId)
+    }
 
-        // 3. Try online validation
-        let hardwareId = getOrCreateHardwareId()
+    /// Register trial on first launch. Idempotent — safe to call multiple times.
+    public func registerTrialIfNeeded(hardwareId: String) async {
         do {
-            let result = try await validateOnline(key: licenseKey, hardwareId: hardwareId)
-            if result.isActive {
-                KeychainHelper.write(key: .lastValidatedAt, value: ISO8601DateFormatter().string(from: Date()))
-                let expiresAt = result.expiresAt.flatMap { ISO8601DateFormatter().date(from: $0) }
-                state = .active(plan: plan, expiresAt: expiresAt)
+            let result = try await registerTrialOnline(hardwareId: hardwareId)
+            KeychainHelper.write(key: .key, value: result.key)
+            KeychainHelper.write(key: .plan, value: LicensePlan.trial.rawValue)
+            if let exp = result.expiresAt { KeychainHelper.write(key: .expiresAt, value: exp) }
+            KeychainHelper.write(key: .lastValidatedAt, value: ISO8601DateFormatter().string(from: Date()))
+
+            let expiresAt = result.expiresAt.flatMap { ISO8601DateFormatter().date(from: $0) }
+            let days = daysRemaining(from: expiresAt)
+
+            if result.isActive && days > 0 {
+                state = .trial(daysRemaining: days)
             } else {
-                state = .expired(plan: plan)
+                state = .expired(plan: .trial)
             }
         } catch {
-            // Network failure — apply grace period logic
-            state = resolveGracePeriodState(plan: plan)
+            // Can't reach server on first launch — no license yet
+            state = .noLicense
         }
     }
 
@@ -129,26 +166,22 @@ public actor LicenseService {
             let sigData      = base64URLDecode(parts[2])
         else { return false }
 
-        // Verify header claims alg=EdDSA
         guard
             let header = try? JSONDecoder().decode([String: String].self, from: headerData),
             header["alg"] == "EdDSA"
         else { return false }
 
-        // Verify plan = "owner" in payload
         guard
             let payload = try? JSONDecoder().decode(OwnerJWTPayload.self, from: payloadData),
             payload.plan == "owner"
         else { return false }
 
-        // Verify signature
         guard let publicKey = loadOwnerPublicKey() else { return false }
         let message = Data("\(parts[0]).\(parts[1])".utf8)
         guard let signature = try? Curve25519.Signing.PublicKey(rawRepresentation: publicKey) else { return false }
         return (try? signature.isValidSignature(sigData, for: message)) ?? false
     }
 
-    /// Loads the embedded Ed25519 public key raw bytes from PEM.
     private func loadOwnerPublicKey() -> Data? {
         let pem = Self.ownerPublicKeyPEM
             .replacingOccurrences(of: "-----BEGIN PUBLIC KEY-----", with: "")
@@ -157,8 +190,6 @@ public actor LicenseService {
             .trimmingCharacters(in: .whitespaces)
 
         guard let derData = Data(base64Encoded: pem) else { return nil }
-
-        // Ed25519 SubjectPublicKeyInfo DER: 12-byte header + 32 bytes raw key
         guard derData.count == 44 else { return nil }
         return derData.suffix(32)
     }
@@ -170,6 +201,13 @@ public actor LicenseService {
         let remainder = base64.count % 4
         if remainder > 0 { base64 += String(repeating: "=", count: 4 - remainder) }
         return Data(base64Encoded: base64)
+    }
+
+    // MARK: - Helpers
+
+    private func daysRemaining(from date: Date?) -> Int {
+        guard let date else { return 0 }
+        return max(0, Calendar.current.dateComponents([.day], from: Date(), to: date).day ?? 0)
     }
 
     // MARK: - Grace Period
@@ -184,14 +222,20 @@ public actor LicenseService {
         let daysSince = Calendar.current.dateComponents([.day], from: lastValidated, to: Date()).day ?? 999
         let graceDaysLeft = max(0, 7 - daysSince)
 
-        if graceDaysLeft > 0 {
-            return .gracePeriod(daysRemaining: graceDaysLeft)
-        } else {
-            return .expired(plan: plan)
-        }
+        return graceDaysLeft > 0 ? .gracePeriod(daysRemaining: graceDaysLeft) : .expired(plan: plan)
     }
 
     // MARK: - Network Calls
+
+    private struct TrialResponse: Codable {
+        let key: String
+        let plan: String
+        let expires_at: String?
+        let is_active: Bool
+
+        var expiresAt: String? { expires_at }
+        var isActive: Bool { is_active }
+    }
 
     private struct ValidateRequest: Codable {
         let license_key: String
@@ -213,12 +257,25 @@ public actor LicenseService {
     }
 
     private struct ActivateResponse: Codable {
-        let license_key: String
+        let key: String
         let plan: String
         let expires_at: String?
-        let hardware_id: String
+        let hardware_id: String?
 
         var expiresAt: String? { expires_at }
+    }
+
+    private func registerTrialOnline(hardwareId: String) async throws -> TrialResponse {
+        let url = URL(string: "\(backendURL)/license/trial?hardware_id=\(hardwareId)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 10
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw LicenseError.networkError
+        }
+        return try JSONDecoder().decode(TrialResponse.self, from: data)
     }
 
     private func validateOnline(key: String, hardwareId: String) async throws -> ValidateResponse {
@@ -269,9 +326,9 @@ public enum LicenseError: Error, LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .networkError:         return "Cannot reach license server"
-        case .licenseInvalid:       return "License key is invalid or revoked"
-        case .deviceLimitReached:   return "Device limit reached for this license"
+        case .networkError:          return "Cannot reach license server"
+        case .licenseInvalid:        return "License key is invalid or revoked"
+        case .deviceLimitReached:    return "Device limit reached for this license"
         case .jwtVerificationFailed: return "Owner license verification failed"
         }
     }
@@ -321,7 +378,6 @@ enum KeychainHelper {
     @discardableResult
     static func write(key: Key, value: String) -> Bool {
         let data = Data(value.utf8)
-        // Try update first
         let query: [CFString: Any] = [
             kSecClass:       kSecClassGenericPassword,
             kSecAttrAccount: key.rawValue
@@ -330,7 +386,6 @@ enum KeychainHelper {
         let status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
 
         if status == errSecItemNotFound {
-            // Insert new
             var newItem = query
             newItem[kSecValueData] = data
             return SecItemAdd(newItem as CFDictionary, nil) == errSecSuccess

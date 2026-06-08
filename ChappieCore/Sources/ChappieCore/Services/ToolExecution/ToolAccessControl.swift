@@ -7,15 +7,15 @@
 //
 // CHECK ORDER in checkToolAccess():
 // 1. git_diff — iron prohibition, always blocked regardless of settings.
-// 2. ADVISOR role — read-only: list_files, read_file, read_build_log only.
-// 3. EXECUTOR role:
+// 2. Starter plan — read-only: list_files, read_file, read_document only.
+//    WHY: Starter is "Advisor only" per monetization plan — no execution, no writes.
+// 3. ADVISOR role — same read-only gate as Starter.
+// 4. EXECUTOR role:
 //    a. Git tools — require isProgrammingProject + GitAccessLevel.allowedTools.
 //    b. Build/test tools — require isProgrammingProject + TestsAccessLevel.canRun.
 //    c. read_build_log — requires TestsAccessLevel.canReadLog.
 //    d. run_terminal — requires isProgrammingProject + TerminalAccessLevel.isEnabled.
 //    e. run_ssh — requires isProgrammingProject + TerminalAccessLevel.isEnabled.
-//       WHY same gate as run_terminal: SSH is remote terminal access, same risk level.
-//    f. Everything else — allowed.
 
 import Foundation
 
@@ -29,7 +29,7 @@ extension ToolExecutionService {
         return projectSettingsCache[firstProject.id] ?? ProjectSettings()
     }
 
-    /// Checks permission to execute a tool according to project settings (IT-09).
+    /// Checks permission to execute a tool according to project settings and license plan (IT-09).
     func checkToolAccess(toolName: String) -> ToolAccessResult {
         let settings = activeProjectSettings
 
@@ -40,6 +40,20 @@ extension ToolExecutionService {
             This prohibition cannot be overridden by any settings.
             Use git_status to see changed files, then read_file for specific files if needed.
             """)
+        }
+
+        // STARTER plan — read-only access (same as ADVISOR).
+        // WHY: Starter = "Advisor only" per monetization plan.
+        if licenseState.isStarterPlan {
+            let readOnlyTools: Set<String> = ["list_files", "read_file", "read_document", "read_build_log"]
+            if !readOnlyTools.contains(toolName) {
+                return .denied("""
+                ❌ Tool '\(toolName)' requires a Pro or Team license.
+                Your current plan (Starter) provides read-only access only.
+                Upgrade to Pro or Team to unlock full execution capabilities.
+                """)
+            }
+            return .allowed
         }
 
         // ADVISOR role — read only.
@@ -111,7 +125,7 @@ extension ToolExecutionService {
             return .allowed
         }
 
-        // run_terminal and run_ssh share the same access gate — both are terminal-level access.
+        // run_terminal and run_ssh share the same access gate.
         // WHY: SSH to a remote server carries the same risk as local terminal execution.
         if toolName == "run_terminal" || toolName == "run_ssh" {
             if !settings.isProgrammingProject {
@@ -130,5 +144,15 @@ extension ToolExecutionService {
         }
 
         return .allowed
+    }
+}
+
+// MARK: - LicenseState helpers
+
+extension LicenseState {
+    /// True when the active plan is Starter (read-only / Advisor-only).
+    var isStarterPlan: Bool {
+        if case .active(let plan, _) = self, plan == .starter { return true }
+        return false
     }
 }
