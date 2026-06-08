@@ -28,7 +28,7 @@ public actor FileSystemManager {
 
     private let fileManager = FileManager.default
 
-    // MARK: - Backward-compat accessor
+    // MARK: - Accessors
 
     /// First workspace URL — used by callers that still expect a single workspace.
     /// nonisolated: workspaces is a let constant, safe to read without actor hop.

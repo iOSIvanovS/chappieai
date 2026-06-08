@@ -59,6 +59,7 @@ public enum GitAccessLevel: String, Codable, Sendable, CaseIterable {
     }
 
     // git_diff is NEVER allowed — it loads entire project into AI context (costs money).
+    // git_push is available at .write and above — same level as git_commit.
     public var allowedTools: Set<String> {
         switch self {
         case .none:
@@ -66,9 +67,9 @@ public enum GitAccessLevel: String, Codable, Sendable, CaseIterable {
         case .statusOnly:
             return ["git_status", "git_log"]
         case .write:
-            return ["git_status", "git_log", "git_add", "git_commit", "git_reset"]
+            return ["git_status", "git_log", "git_add", "git_commit", "git_push", "git_reset"]
         case .full:
-            return ["git_status", "git_log", "git_add", "git_commit", "git_reset",
+            return ["git_status", "git_log", "git_add", "git_commit", "git_push", "git_reset",
                     "git_revert", "git_checkout"]
         }
     }

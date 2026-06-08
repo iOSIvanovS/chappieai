@@ -14,10 +14,13 @@
 // - read_document / write_document — always injected (work for any project type).
 // - attach_file — always injected. Attaches any file by absolute path to the AI message.
 // - Git tools — only if isProgrammingProject = true.
+//   Each call carries an optional "project" arg; MCP resolves the correct working directory
+//   from projectPathMap. When omitted — MCP falls back to the single attached project.
 // - build_project, run_tests, read_build_log — if isProgrammingProject = true (any env).
 //   Each call carries a "project" arg; MCP routes to the correct env per project.
 // - loc_* — only if at least one Xcode project is attached (independent of isProg on first project).
 // - run_terminal — only if isProgrammingProject = true.
+//   "project" arg makes every call self-contained: auto-prefixes `cd /absolute/path && command`.
 // - git_diff is intentionally OMITTED: it dumps the entire project into AI context (cost + noise).
 
 import Foundation
@@ -29,16 +32,13 @@ extension ToolExecutionService {
         let settings = activeProjectSettings
         let isProg = settings.isProgrammingProject
 
-        // Collect ProjectInfo entries that have programming project settings.
-        // ProjectInfo carries id + name; settings are resolved from projectSettingsCache.
         let allProjectInfos = activeMemoryContext.projects
         let progInfos = allProjectInfos.filter {
             (projectSettingsCache[$0.id] ?? ProjectSettings()).isProgrammingProject
         }
 
         // WHY independent of isProg: loc_* depend on devEnvironment == .xcode across ALL
-        // attached projects, not just the first one. A thread may have a non-prog first project
-        // but still have an Xcode project attached — loc_* must appear in that case too.
+        // attached projects, not just the first one.
         let hasXcodeProject = allProjectInfos.contains {
             let s = projectSettingsCache[$0.id] ?? ProjectSettings()
             return s.isProgrammingProject && s.devEnvironment == .xcode
@@ -88,7 +88,7 @@ extension ToolExecutionService {
             )
         )))
 
-        // MARK: - Office document tools (always — work for any project type)
+        // MARK: - Office document tools (always)
 
         tools.append(AITool(function: AIFunctionDefinition(
             name: "read_document",
@@ -130,7 +130,7 @@ extension ToolExecutionService {
             )
         )))
 
-        // MARK: - attach_file (always — deliver any file to the user as a bubble attachment)
+        // MARK: - attach_file (always)
 
         tools.append(AITool(function: AIFunctionDefinition(
             name: "attach_file",
@@ -249,12 +249,21 @@ extension ToolExecutionService {
 
         // MARK: - Git tools (programming project only)
         // git_diff is intentionally excluded — dumps entire project into context.
+        // "project" arg routes each call to the correct working directory in MCP via projectPathMap.
+        // When only one project is attached — "project" can be omitted (MCP uses the single entry).
 
         if isProg {
+            let gitProjectArgDesc = gitProjectArgDescription(for: progInfos)
+
             tools.append(AITool(function: AIFunctionDefinition(
                 name: "git_status",
                 description: "Show the current git repository status: modified, new, and deleted files.",
-                parameters: AIToolParameters(properties: [:], required: [])
+                parameters: AIToolParameters(
+                    properties: [
+                        "project": AIToolProperty(type: "string", description: gitProjectArgDesc)
+                    ],
+                    required: progInfos.count > 1 ? ["project"] : []
+                )
             )))
 
             tools.append(AITool(function: AIFunctionDefinition(
@@ -262,9 +271,10 @@ extension ToolExecutionService {
                 description: "Add files to the staging area (prepare for commit).",
                 parameters: AIToolParameters(
                     properties: [
-                        "paths": AIToolProperty(type: "string", description: "Space-separated paths, or '.' for all files (default '.')")
+                        "paths": AIToolProperty(type: "string", description: "Space-separated paths, or '.' for all files (default '.')"),
+                        "project": AIToolProperty(type: "string", description: gitProjectArgDesc)
                     ],
-                    required: []
+                    required: progInfos.count > 1 ? ["project"] : []
                 )
             )))
 
@@ -273,9 +283,27 @@ extension ToolExecutionService {
                 description: "Create a git commit with the given message.",
                 parameters: AIToolParameters(
                     properties: [
-                        "message": AIToolProperty(type: "string", description: "Commit message")
+                        "message": AIToolProperty(type: "string", description: "Commit message"),
+                        "project": AIToolProperty(type: "string", description: gitProjectArgDesc)
                     ],
-                    required: ["message"]
+                    required: progInfos.count > 1 ? ["message", "project"] : ["message"]
+                )
+            )))
+
+            tools.append(AITool(function: AIFunctionDefinition(
+                name: "git_push",
+                description: """
+                Push committed changes to the remote repository.
+                Triggers CI/CD if configured (e.g. auto-deploy to VPS on push to main).
+                Use after git_commit when the work is accepted and ready to deploy.
+                """,
+                parameters: AIToolParameters(
+                    properties: [
+                        "remote": AIToolProperty(type: "string", description: "Remote name (default: 'origin')"),
+                        "branch": AIToolProperty(type: "string", description: "Branch name (default: 'main')"),
+                        "project": AIToolProperty(type: "string", description: gitProjectArgDesc)
+                    ],
+                    required: progInfos.count > 1 ? ["project"] : []
                 )
             )))
 
@@ -284,16 +312,22 @@ extension ToolExecutionService {
                 description: "Show the history of recent commits.",
                 parameters: AIToolParameters(
                     properties: [
-                        "count": AIToolProperty(type: "string", description: "Number of commits to show (default 10)")
+                        "count": AIToolProperty(type: "string", description: "Number of commits to show (default 10)"),
+                        "project": AIToolProperty(type: "string", description: gitProjectArgDesc)
                     ],
-                    required: []
+                    required: progInfos.count > 1 ? ["project"] : []
                 )
             )))
 
             tools.append(AITool(function: AIFunctionDefinition(
                 name: "git_reset",
                 description: "Remove all files from the staging area (git reset HEAD).",
-                parameters: AIToolParameters(properties: [:], required: [])
+                parameters: AIToolParameters(
+                    properties: [
+                        "project": AIToolProperty(type: "string", description: gitProjectArgDesc)
+                    ],
+                    required: progInfos.count > 1 ? ["project"] : []
+                )
             )))
 
             tools.append(AITool(function: AIFunctionDefinition(
@@ -306,9 +340,10 @@ extension ToolExecutionService {
                 parameters: AIToolParameters(
                     properties: [
                         "hashes": AIToolProperty(type: "string", description: "Space-separated commit hashes to revert (e.g.: 'abc123 def456')"),
-                        "message": AIToolProperty(type: "string", description: "Message for the resulting revert commit")
+                        "message": AIToolProperty(type: "string", description: "Message for the resulting revert commit"),
+                        "project": AIToolProperty(type: "string", description: gitProjectArgDesc)
                     ],
-                    required: ["hashes", "message"]
+                    required: progInfos.count > 1 ? ["hashes", "message", "project"] : ["hashes", "message"]
                 )
             )))
 
@@ -322,21 +357,21 @@ extension ToolExecutionService {
                 parameters: AIToolParameters(
                     properties: [
                         "ref": AIToolProperty(type: "string", description: "Commit, branch, or relative ref (e.g.: HEAD~1, abc123, main)"),
-                        "paths": AIToolProperty(type: "string", description: "Space-separated file paths to restore")
+                        "paths": AIToolProperty(type: "string", description: "Space-separated file paths to restore"),
+                        "project": AIToolProperty(type: "string", description: gitProjectArgDesc)
                     ],
-                    required: ["ref", "paths"]
+                    required: progInfos.count > 1 ? ["ref", "paths", "project"] : ["ref", "paths"]
                 )
             )))
         }
 
         // MARK: - Build & test tools (any programming project)
-        // Tools are injected once; "project" arg routes each call to the correct env in MCP.
-        // If only one project is attached — "project" can be omitted (MCP uses the single entry).
+        // "project" arg routes each call to the correct env in MCP.
+        // If only one project is attached — "project" can be omitted.
 
         if isProg {
             let projectArgDesc = buildProjectArgDescription(for: progInfos)
 
-            // build_project: only if at least one project has a compilable environment.
             let buildableInfos = progInfos.filter {
                 (projectSettingsCache[$0.id] ?? ProjectSettings()).devEnvironment.specificTools.contains("build_project")
             }
@@ -353,7 +388,6 @@ extension ToolExecutionService {
                 )))
             }
 
-            // run_tests: all programming projects support tests.
             if !progInfos.isEmpty {
                 tools.append(AITool(function: AIFunctionDefinition(
                     name: "run_tests",
@@ -371,7 +405,6 @@ extension ToolExecutionService {
                 )))
             }
 
-            // read_build_log: always available if any programming project is present.
             if !progInfos.isEmpty {
                 tools.append(AITool(function: AIFunctionDefinition(
                     name: "read_build_log",
@@ -381,9 +414,7 @@ extension ToolExecutionService {
             }
         }
 
-        // MARK: - Localization tools (Xcode projects only, independent of isProg on first project)
-        // WHY outside isProg block: hasXcodeProject checks ALL attached projects,
-        // not just the first one. loc_* must appear whenever any Xcode project is in the thread.
+        // MARK: - Localization tools (Xcode projects only)
 
         if hasXcodeProject {
             tools.append(contentsOf: localizationTools())
@@ -426,9 +457,13 @@ extension ToolExecutionService {
         )))
 
         // MARK: - Terminal (LAST RESORT, programming projects only)
-        // WHY LAST: run_terminal is a universal hammer — prefer specialized tools always.
+        // "project" makes every call self-contained: auto-prefixes `cd /absolute/path && command`.
+        // Without "project" — command runs from session root ("/"), use absolute paths manually.
+        // For operations outside any project (e.g. /tmp) — omit "project" and use absolute path.
 
         if isProg {
+            let terminalProjectArgDesc = terminalProjectArgDescription(for: progInfos)
+
             tools.append(AITool(function: AIFunctionDefinition(
                 name: "run_terminal",
                 description: """
@@ -442,7 +477,8 @@ extension ToolExecutionService {
                 parameters: AIToolParameters(
                     properties: [
                         "command": AIToolProperty(type: "string", description: "Shell command to execute."),
-                        "timeout": AIToolProperty(type: "string", description: "Timeout in seconds (default 30). Increase for long operations (build, npm install).")
+                        "timeout": AIToolProperty(type: "string", description: "Timeout in seconds (default 300). Increase for long operations (build, npm install)."),
+                        "project": AIToolProperty(type: "string", description: terminalProjectArgDesc)
                     ],
                     required: ["command"]
                 )
@@ -452,7 +488,7 @@ extension ToolExecutionService {
         return tools
     }
 
-    // MARK: - Localization tool definitions (Xcode / xcstrings)
+    // MARK: - Localization tool definitions
 
     private func localizationTools() -> [AITool] {
         let pathArg = AIToolProperty(type: "string", description: "Relative path to the .xcstrings file (e.g. 'Chappie/Localizable.xcstrings')")
@@ -662,9 +698,19 @@ extension ToolExecutionService {
         ]
     }
 
-    // MARK: - Dynamic tool descriptions (built from ProjectInfo + settings cache)
+    // MARK: - Dynamic tool descriptions
 
-    /// "project" parameter description listing all attached projects with their envs.
+    /// "project" parameter description for git tools — lists all attached programming projects.
+    private func gitProjectArgDescription(for infos: [ActiveMemoryContext.ProjectInfo]) -> String {
+        guard !infos.isEmpty else { return "Project display name to target." }
+        if infos.count == 1 {
+            return "Project name. Only one project: '\(infos[0].name)'. Can be omitted."
+        }
+        let list = infos.map { "'\($0.name)'" }.joined(separator: ", ")
+        return "Project display name — required when multiple projects are attached. Available: \(list)."
+    }
+
+    /// "project" parameter description for build/test tools — includes env names.
     private func buildProjectArgDescription(for infos: [ActiveMemoryContext.ProjectInfo]) -> String {
         guard !infos.isEmpty else { return "Project display name to target." }
         if infos.count == 1 {
@@ -678,7 +724,24 @@ extension ToolExecutionService {
         return "Project display name — required when multiple projects are attached. Available: \(list)."
     }
 
-    /// Description for build_project listing each buildable project's build command.
+    /// "project" parameter description for run_terminal — lists projects with their absolute paths.
+    /// WHY PATHS IN DESCRIPTION: AI needs to know which path it will cd into before calling the tool.
+    private func terminalProjectArgDescription(for infos: [ActiveMemoryContext.ProjectInfo]) -> String {
+        let pathMap = activeMemoryContext.projectPathMap
+        guard !infos.isEmpty else {
+            return "Optional project name. When provided — command is auto-prefixed with 'cd /path && '. Without it — use absolute paths manually."
+        }
+        if infos.count == 1 {
+            let path = pathMap[infos[0].name] ?? "path not yet resolved"
+            return "Optional project name. Specify '\(infos[0].name)' to auto-cd into '\(path)' before the command."
+        }
+        let list = infos.map { info -> String in
+            let path = pathMap[info.name] ?? "path not yet resolved"
+            return "'\(info.name)' → \(path)"
+        }.joined(separator: ", ")
+        return "Optional project name — auto-prefixes 'cd /path && ' before the command. Available: \(list). Omit to use absolute paths manually (e.g. for /tmp operations)."
+    }
+
     private func buildProjectDescription(for infos: [ActiveMemoryContext.ProjectInfo]) -> String {
         if infos.count == 1 {
             let env = (projectSettingsCache[infos[0].id] ?? ProjectSettings()).devEnvironment
@@ -691,7 +754,6 @@ extension ToolExecutionService {
         return "Build a project. Routes to the correct build tool per project:\n\(lines)\nReturns success or a list of compilation errors."
     }
 
-    /// Description for run_tests listing each project's test command.
     private func runTestsDescription(for infos: [ActiveMemoryContext.ProjectInfo]) -> String {
         if infos.count == 1 {
             let env = (projectSettingsCache[infos[0].id] ?? ProjectSettings()).devEnvironment

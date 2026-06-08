@@ -59,6 +59,17 @@
 //   calls the callback → markProjectUnavailable() flips the chip orange in real time.
 //   No timer, no polling — event-driven only.
 //
+// MCP RESTART AFTER PATH RESOLUTION:
+//   syncFileSystemForActiveThread() calls restartMCPIfNeeded() after resolving all paths.
+//   This ensures projectPathMap in MCP always reflects the latest resolved absolutePaths.
+//   Without this, git_* tools would use stale or empty paths on first thread load.
+//
+// TERMINAL PATH MAP SYNC:
+//   After bookmark resolution, syncActiveMemoryContext() is called to push the updated
+//   projectPathMap (name → absolutePath) into ActiveMemoryContext inside ToolExecutionService.
+//   This makes run_terminal's "project" parameter work correctly — it reads projectPathMap
+//   to prefix commands with `cd /absolute/path && ` for deterministic execution.
+//
 // NOTE: v2PersonaBlock lives in ChappieViewModel+PersonaBlock.swift — extracted for size.
 
 import Foundation
@@ -81,13 +92,10 @@ extension ChappieViewModel {
     func assembleThreadSession(for thread: ThreadMetadata) async {
         guard let store = memoryStore else { return }
 
-        // Check cancellation before doing any work — if a newer selectThread()
-        // already cancelled this task, bail out immediately.
         guard !Task.isCancelled else { return }
 
         let builder = SystemPromptBuilder(personaBlock: Self.v2PersonaBlock)
 
-        // Pass Sendable ProjectMetadata DTOs — no SwiftData @Model crosses actor boundary.
         let session = ThreadSession(
             thread: thread,
             projectMetas: activeProjects,
@@ -100,6 +108,7 @@ extension ChappieViewModel {
         print("[ChappieViewModel] ThreadSession assembled for '\(thread.title)' (\(activeProjects.count) projects)")
 
         // M-09 / B-01: Sync FileSystem to cover ALL attached projects.
+        // After this, absolutePaths are resolved and projectPathMap can be built.
         await syncFileSystemForActiveThread()
 
         // B-05 LIVE: register callback so FileTools can flip the chip orange mid-conversation.
@@ -222,7 +231,7 @@ extension ChappieViewModel {
             }
 
             activeProjects[i].isUnavailable = false
-            // Store the resolved absolute path — injected into system prompt so AI always knows location.
+            // Store the resolved absolute path — injected into system prompt AND used for git/terminal routing.
             activeProjects[i].absolutePath = url.path
             workspaces.append((name: project.displayName, url: url))
             print("[ChappieViewModel] M-09: ✅ '\(project.displayName)' → \(url.path)")
@@ -253,6 +262,13 @@ extension ChappieViewModel {
         if let thread = activeThread {
             await rebuildThreadSessionOnly(for: thread)
         }
+
+        // Push updated projectPathMap into ToolExecutionService so run_terminal can use it.
+        // WHY HERE: absolutePaths are now resolved — this is the earliest safe moment to sync.
+        await syncActiveMemoryContext()
+
+        // Restart MCP with fresh projectPathMap — paths are now resolved, git_* tools need them.
+        restartMCPIfNeeded()
 
         let names = workspaces.map(\.name).joined(separator: ", ")
         print("[ChappieViewModel] M-09: FileSystem → [\(names)] (\(workspaces.count) workspaces)")

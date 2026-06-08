@@ -170,5 +170,20 @@ extension ChappieViewModel {
         WHY: LLMs can generate plausible-looking completion reports without doing any real work.
         The read_file → write_file chain is the only proof that work actually happened.
         A response that claims "done" but contains no write_file calls is a hallucination.
+
+    17. TERMINAL DISCIPLINE (CRITICALLY IMPORTANT — NEVER VIOLATE):
+        run_terminal and run_ssh are stateless by design — never rely on previous session state.
+        FOUR ABSOLUTE RULES:
+        A) Always specify project= parameter OR use an absolute path. Never use bare relative paths.
+           run_terminal project="chappie-license-backend" command="pip install -r requirements.txt"
+           run_terminal command="ls /tmp/exports"   ← absolute path, no project needed
+        B) Never chain cd across multiple calls. Each call is independent — previous cd is gone.
+           WRONG: call 1: cd /some/path  →  call 2: ls   ← ls runs in unknown directory
+           RIGHT: call 1: cd /some/path && ls   ← single atomic call
+        C) run_ssh is for remote server commands only. One command = one connection. No interactive input.
+        D) After each logical block of terminal work — verify the result before proceeding.
+           Do NOT assume success. Check exit code or output explicitly.
+        WHY: terminal session state is invisible to you between calls. Any assumption about
+        current directory or environment is a guess — and guesses cause silent failures.
     """
 }

@@ -20,6 +20,11 @@
 //   ToolExecutionService.onMemoryChanged fires → invalidateActiveThreadSession()
 //   clears the cached prompt immediately — no app restart needed.
 //   projectMetas are unchanged, so invalidation (not full rebuild) is sufficient.
+//
+// PROJECT PATH MAP:
+//   projectPathMap (name → absolutePath) is included in ActiveMemoryContext so
+//   run_terminal can prefix commands with `cd /path && ` for deterministic execution.
+//   Populated from activeProjects.absolutePath — available after bookmark resolution.
 
 import ChappieCore
 
@@ -46,7 +51,23 @@ extension ChappieViewModel {
         let projectInfos = activeProjects.map { project in
             ActiveMemoryContext.ProjectInfo(id: project.id, name: project.displayName)
         }
-        let context = ActiveMemoryContext(threadId: activeThread?.id, projects: projectInfos)
+
+        // Build projectPathMap from resolved absolutePaths — populated after bookmark resolution.
+        // Only include projects that are available and have a resolved path.
+        let pathMap: [String: String] = Dictionary(
+            uniqueKeysWithValues: activeProjects
+                .filter { !$0.isUnavailable }
+                .compactMap { project -> (String, String)? in
+                    guard let path = project.absolutePath else { return nil }
+                    return (project.displayName, path)
+                }
+        )
+
+        let context = ActiveMemoryContext(
+            threadId: activeThread?.id,
+            projects: projectInfos,
+            projectPathMap: pathMap
+        )
         await ts.setActiveMemoryContext(context)
 
         // Push project settings so ToolExecutionService can enforce permissions.

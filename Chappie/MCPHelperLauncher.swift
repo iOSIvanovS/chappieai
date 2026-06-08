@@ -4,33 +4,25 @@
 // WHY THIS FILE:
 // Manages the lifecycle of the ChappieMCP child process.
 //
-// SOCKET PATH ARCHITECTURE:
-// Socket is placed in /tmp/ — standard path accessible to all processes
-// without sandbox restrictions (sandbox removed from project).
+// CLI ARGUMENTS PASSED TO ChappieMCP:
+// argv[1] = workspacePath  — workspace root (fallback path for git/build)
+// argv[2] = socketPath     — Unix Domain Socket file path
+// argv[3] = projectEnvMap  — JSON {"ProjectName": "envRawValue"} for build/test routing
+// argv[4] = projectPathMap — JSON {"ProjectName": "/absolute/path"} for git routing
 //
-// WHY WE PASS ARGUMENTS INSTEAD OF HARDCODING IN HELPER:
-// Parent (Chappie.app) is the single source of truth about workspace path,
-// socket path, and project env map. Helper should not independently decide.
+// WHY TWO MAPS:
+// projectEnvMap routes build_project/run_tests to the correct dev environment.
+// projectPathMap routes git_* tools to the correct working directory.
+// Both are needed when multiple projects with different paths are attached.
 //
 // LIFECYCLE:
-// 1. ChappieApp.onAppear → MCPHelperLauncher.shared.launch(workspacePath:projectEnvMap:)
-// 2. Launcher starts Process with arguments: [workspacePath, socketPath, projectEnvMapJSON]
+// 1. ChappieApp.onAppear → MCPHelperLauncher.shared.launch(workspacePath:projectEnvMap:projectPathMap:)
+// 2. Launcher starts Process with arguments: [workspacePath, socketPath, envMapJSON, pathMapJSON]
 // 3. MCPToolBridge uses the same socketPath to connect
 // 4. On Chappie.app exit → terminateHelper() kills child process
 //
-// PROJECT ENV MAP:
-// JSON string {"ProjectName": "envRawValue", ...} passed as argv[3].
-// MCP uses it to route build_project/run_tests to the correct env per project.
-// Launcher restarts the helper whenever the map changes (project added/removed/env changed).
-//
-// WHY @Observable, NOT ObservableObject:
-// In Swift 6 / macOS 26, @Observable macro is preferred.
-// It doesn't require Combine and works natively with @MainActor without warnings.
-//
-// IMPORTANT — stdout/stderr via Pipe, NOT FileHandle.standardOutput:
-// Passing FileHandle.standardOutput directly to the child process
-// causes PTY errors (ErrorCode: 7, Errno: 6 "Device not configured") on macOS 26.5.
-// Using Pipe isolates the child's output from the parent's PTY entirely.
+// RESTART POLICY:
+// Helper restarts whenever workspacePath, projectEnvMap, or projectPathMap changes.
 //
 // PIPE LEAK PREVENTION:
 // readabilityHandler must be explicitly set to nil on both pipes before the process
@@ -43,9 +35,6 @@ import ChappieCore
 import Observation
 
 /// Singleton for managing the ChappieMCP child process.
-///
-/// Why @MainActor: all Process operations and state updates
-/// must happen on the main thread to avoid data races.
 @MainActor
 @Observable
 final class MCPHelperLauncher {
@@ -65,6 +54,7 @@ final class MCPHelperLauncher {
     private var stderrPipe: Pipe?
     private var currentWorkspacePath: String?
     private var currentProjectEnvMap: [String: String] = [:]
+    private var currentProjectPathMap: [String: String] = [:]
 
     // MARK: - Init
 
@@ -74,31 +64,36 @@ final class MCPHelperLauncher {
 
     // MARK: - Public Interface
 
-    /// Launches ChappieMCP helper with the given workspace path and project→env map.
+    /// Launches ChappieMCP helper with the given workspace path, env map, and path map.
     ///
-    /// DOUBLE-LAUNCH SAFETY:
-    /// If helper is already running with the same path AND same map — do nothing.
-    /// If either changed — restart.
-    func launch(workspacePath: String? = nil, projectEnvMap: [String: String] = [:]) {
+    /// If helper is already running with identical arguments — does nothing.
+    /// If any argument changed — restarts.
+    func launch(workspacePath: String? = nil,
+                projectEnvMap: [String: String] = [:],
+                projectPathMap: [String: String] = [:]) {
         let path = workspacePath ?? FileManager.default.currentDirectoryPath
 
         if let process = helperProcess, process.isRunning,
-           currentWorkspacePath == path, currentProjectEnvMap == projectEnvMap {
-            print("[MCPHelperLauncher] ℹ️ Helper already running for: \(path) \(projectEnvMap)")
+           currentWorkspacePath == path,
+           currentProjectEnvMap == projectEnvMap,
+           currentProjectPathMap == projectPathMap {
+            print("[MCPHelperLauncher] ℹ️ Helper already running for: \(path)")
             return
         }
 
         if helperProcess != nil {
-            print("[MCPHelperLauncher] 🔄 Restarting helper: \(path) \(projectEnvMap)")
+            print("[MCPHelperLauncher] 🔄 Restarting helper: \(path)")
             teardownCurrentProcess()
         }
 
-        startHelper(workspacePath: path, projectEnvMap: projectEnvMap)
+        startHelper(workspacePath: path, projectEnvMap: projectEnvMap, projectPathMap: projectPathMap)
     }
 
-    /// Restarts helper with a new workspace path and project→env map.
-    func restartWithWorkspace(_ url: URL, projectEnvMap: [String: String] = [:]) {
-        launch(workspacePath: url.path, projectEnvMap: projectEnvMap)
+    /// Restarts helper with a new workspace URL, env map, and path map.
+    func restartWithWorkspace(_ url: URL,
+                              projectEnvMap: [String: String] = [:],
+                              projectPathMap: [String: String] = [:]) {
+        launch(workspacePath: url.path, projectEnvMap: projectEnvMap, projectPathMap: projectPathMap)
     }
 
     func terminateHelper() {
@@ -111,11 +106,8 @@ final class MCPHelperLauncher {
 
     // MARK: - Private Teardown
 
-    /// Cleanly tears down the current process: cancels pipe handlers FIRST, then terminates.
-    /// WHY pipes first: if we terminate before clearing readabilityHandler, the GCD read
-    /// source fires one last time on the closed FD and then leaks — never getting deallocated.
+    /// Cancels pipe handlers FIRST, then terminates — prevents FD leaks.
     private func teardownCurrentProcess() {
-        // Cancel GCD read sources before terminating — prevents FD leaks.
         stdoutPipe?.fileHandleForReading.readabilityHandler = nil
         stderrPipe?.fileHandleForReading.readabilityHandler = nil
         stdoutPipe = nil
@@ -127,7 +119,9 @@ final class MCPHelperLauncher {
 
     // MARK: - Private Launch Logic
 
-    private func startHelper(workspacePath: String, projectEnvMap: [String: String]) {
+    private func startHelper(workspacePath: String,
+                             projectEnvMap: [String: String],
+                             projectPathMap: [String: String]) {
         guard let helperURL = Bundle.main.url(forAuxiliaryExecutable: "ChappieMCP") else {
             let fallbackURL = Bundle.main.bundleURL
                 .appendingPathComponent("Contents")
@@ -135,7 +129,8 @@ final class MCPHelperLauncher {
                 .appendingPathComponent("ChappieMCP")
 
             if FileManager.default.fileExists(atPath: fallbackURL.path) {
-                startProcess(at: fallbackURL, workspacePath: workspacePath, projectEnvMap: projectEnvMap)
+                startProcess(at: fallbackURL, workspacePath: workspacePath,
+                             projectEnvMap: projectEnvMap, projectPathMap: projectPathMap)
             } else {
                 print("[MCPHelperLauncher] ❌ ChappieMCP binary not found in bundle!")
                 status = .failed("Binary not found in bundle")
@@ -143,26 +138,23 @@ final class MCPHelperLauncher {
             return
         }
 
-        startProcess(at: helperURL, workspacePath: workspacePath, projectEnvMap: projectEnvMap)
+        startProcess(at: helperURL, workspacePath: workspacePath,
+                     projectEnvMap: projectEnvMap, projectPathMap: projectPathMap)
     }
 
-    private func startProcess(at url: URL, workspacePath: String, projectEnvMap: [String: String]) {
-        // Serialize map to JSON for argv[3].
-        let mapJSON: String
-        if let data = try? JSONEncoder().encode(projectEnvMap),
-           let str = String(data: data, encoding: .utf8) {
-            mapJSON = str
-        } else {
-            mapJSON = "{}"
-        }
+    private func startProcess(at url: URL,
+                              workspacePath: String,
+                              projectEnvMap: [String: String],
+                              projectPathMap: [String: String]) {
+        // Serialize both maps to JSON for argv[3] and argv[4].
+        let envMapJSON  = jsonString(from: projectEnvMap)
+        let pathMapJSON = jsonString(from: projectPathMap)
 
         let process = Process()
         process.executableURL = url
-        // argv[1] = workspacePath, argv[2] = socketPath, argv[3] = projectEnvMap JSON
-        process.arguments = [workspacePath, socketPath, mapJSON]
+        // argv[1]=workspacePath, argv[2]=socketPath, argv[3]=envMap, argv[4]=pathMap
+        process.arguments = [workspacePath, socketPath, envMapJSON, pathMapJSON]
 
-        // Use Pipe instead of FileHandle.standardOutput/standardError.
-        // WHY: passing FileHandle.standardOutput directly causes PTY errors on macOS 26.5.
         let outPipe = Pipe()
         let errPipe = Pipe()
         process.standardOutput = outPipe
@@ -188,13 +180,9 @@ final class MCPHelperLauncher {
                 let code = terminatedProcess.terminationStatus
                 print("[MCPHelperLauncher] ⚠️ Helper exited with code: \(code)")
 
-                // Always clear helperProcess if it's the same process that just exited.
-                // WHY: previously we skipped nil-ing on code==15 (SIGTERM), which meant
-                // restarted processes were never released from memory.
                 if self.helperProcess === terminatedProcess {
                     self.helperProcess = nil
                 }
-
                 // Code 15 = SIGTERM — intentional termination (restart or quit), not a crash.
                 if code != 15 {
                     self.status = .crashed(code: Int(code))
@@ -209,15 +197,25 @@ final class MCPHelperLauncher {
             stderrPipe = errPipe
             currentWorkspacePath = workspacePath
             currentProjectEnvMap = projectEnvMap
+            currentProjectPathMap = projectPathMap
             status = .running
             print("[MCPHelperLauncher] ✅ ChappieMCP started (PID: \(process.processIdentifier))")
             print("[MCPHelperLauncher] 📁 Workspace: \(workspacePath)")
             print("[MCPHelperLauncher] 🔌 Socket:    \(socketPath)")
-            print("[MCPHelperLauncher] 🗺️  Projects:  \(projectEnvMap.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ", "))")
+            print("[MCPHelperLauncher] 🗺️  Envs:     \(projectEnvMap.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ", "))")
+            print("[MCPHelperLauncher] 📂 Paths:    \(projectPathMap.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ", "))")
         } catch {
             print("[MCPHelperLauncher] ❌ Failed to start helper: \(error)")
             status = .failed(error.localizedDescription)
         }
+    }
+
+    // MARK: - Helpers
+
+    private func jsonString(from map: [String: String]) -> String {
+        guard let data = try? JSONEncoder().encode(map),
+              let str = String(data: data, encoding: .utf8) else { return "{}" }
+        return str
     }
 }
 

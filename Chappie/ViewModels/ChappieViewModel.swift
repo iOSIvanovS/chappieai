@@ -146,15 +146,29 @@ final class ChappieViewModel {
     var cachedLastActiveThreadId: UUID?
     var _activeThreadSession: ThreadSession?
 
-    // MARK: - Project env map
+    // MARK: - Project maps for MCP routing
 
-    /// Map of project display name → DevEnvironment rawValue for all programming projects in the thread.
-    /// Passed to MCPHelperLauncher so MCP can route build_project/run_tests per project correctly.
+    /// Map of project display name → DevEnvironment rawValue.
+    /// Passed to MCPHelperLauncher so MCP can route build_project/run_tests per project.
     var activeProjectEnvMap: [String: String] {
         Dictionary(
             uniqueKeysWithValues: activeProjects
                 .filter { $0.settings.isProgrammingProject && $0.settings.devEnvironment != .unknown }
                 .map { ($0.displayName, $0.settings.devEnvironment.rawValue) }
+        )
+    }
+
+    /// Map of project display name → absolute path on disk.
+    /// Passed to MCPHelperLauncher so MCP can route git_* tools to the correct directory.
+    /// Only includes projects with a resolved absolutePath (available, bookmark resolved).
+    var activeProjectPathMap: [String: String] {
+        Dictionary(
+            uniqueKeysWithValues: activeProjects
+                .filter { $0.settings.isProgrammingProject && !$0.isUnavailable }
+                .compactMap { project -> (String, String)? in
+                    guard let path = project.absolutePath else { return nil }
+                    return (project.displayName, path)
+                }
         )
     }
 
@@ -305,7 +319,11 @@ final class ChappieViewModel {
         workspaceURL = url
         initializeServices(for: url)
         saveWorkspaceWithSecurityScope(url)
-        MCPHelperLauncher.shared.restartWithWorkspace(url, projectEnvMap: activeProjectEnvMap)
+        MCPHelperLauncher.shared.restartWithWorkspace(
+            url,
+            projectEnvMap: activeProjectEnvMap,
+            projectPathMap: activeProjectPathMap
+        )
 
         if messages.isEmpty {
             messages.append(.message(isUser: false, text: String(localized: "system.project_connected")))
@@ -382,13 +400,21 @@ final class ChappieViewModel {
                 self.initializeServices(for: url)
             }
             if isStale { saveWorkspaceWithSecurityScope(url) }
-            MCPHelperLauncher.shared.launch(workspacePath: url.path, projectEnvMap: activeProjectEnvMap)
+            MCPHelperLauncher.shared.launch(
+                workspacePath: url.path,
+                projectEnvMap: activeProjectEnvMap,
+                projectPathMap: activeProjectPathMap
+            )
         } else if let url = try? URL(resolvingBookmarkData: data, options: [], relativeTo: nil, bookmarkDataIsStale: &isStale) {
             await MainActor.run {
                 self.workspaceURL = url
                 self.initializeServices(for: url)
             }
-            MCPHelperLauncher.shared.launch(workspacePath: url.path, projectEnvMap: activeProjectEnvMap)
+            MCPHelperLauncher.shared.launch(
+                workspacePath: url.path,
+                projectEnvMap: activeProjectEnvMap,
+                projectPathMap: activeProjectPathMap
+            )
         }
     }
 }

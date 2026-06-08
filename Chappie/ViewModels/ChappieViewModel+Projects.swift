@@ -120,11 +120,19 @@ extension ChappieViewModel {
 
     // MARK: - MCP Restart
 
-    /// Restarts MCP helper with the current workspace and updated project env map.
-    /// Call after any change that may affect which environments are active.
+    /// Restarts MCP helper with the current workspace, env map, and path map.
+    /// Call after any change that may affect which environments or paths are active.
+    ///
+    /// WHY BOTH MAPS:
+    /// projectEnvMap routes build_project/run_tests to the correct dev environment.
+    /// projectPathMap routes git_* tools to the correct working directory per project.
     func restartMCPIfNeeded() {
         guard let workspaceURL else { return }
-        MCPHelperLauncher.shared.restartWithWorkspace(workspaceURL, projectEnvMap: activeProjectEnvMap)
+        MCPHelperLauncher.shared.restartWithWorkspace(
+            workspaceURL,
+            projectEnvMap: activeProjectEnvMap,
+            projectPathMap: activeProjectPathMap
+        )
     }
 
     // MARK: - Dev Environment Auto-Detection

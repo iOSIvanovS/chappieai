@@ -20,7 +20,7 @@ import Foundation
 // MARK: - ActiveMemoryContext
 
 /// Active memory context passed to ToolExecutionService.
-/// Carries thread UUID and attached project UUIDs for scope mapping.
+/// Carries thread UUID, attached project UUIDs, and resolved project paths for tool routing.
 public struct ActiveMemoryContext: Sendable {
 
     /// Project identity: UUID for scope mapping, name for tool targetName lookup.
@@ -40,13 +40,20 @@ public struct ActiveMemoryContext: Sendable {
     /// Projects attached to the active thread. Empty = project memory unavailable.
     public let projects: [ProjectInfo]
 
-    public init(threadId: UUID? = nil, projects: [ProjectInfo] = []) {
+    /// Map of project display name → absolute path on disk.
+    /// Used by run_terminal to prefix commands with `cd /path && ` for deterministic execution.
+    /// Populated after bookmark resolution in syncFileSystemForActiveThread().
+    /// Empty until first successful resolution — terminal will fall back to no-cd behavior.
+    public let projectPathMap: [String: String]
+
+    public init(threadId: UUID? = nil, projects: [ProjectInfo] = [], projectPathMap: [String: String] = [:]) {
         self.threadId = threadId
         self.projects = projects
+        self.projectPathMap = projectPathMap
     }
 
     /// Fallback before ModelContainer is initialized.
-    public static let empty = ActiveMemoryContext(threadId: nil, projects: [])
+    public static let empty = ActiveMemoryContext(threadId: nil, projects: [], projectPathMap: [:])
 
     /// Used in PROJECT GUARD to block file tools when no project is attached.
     public var hasProjects: Bool { !projects.isEmpty }

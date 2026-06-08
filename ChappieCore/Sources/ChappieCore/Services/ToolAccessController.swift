@@ -57,7 +57,8 @@ public struct ToolAccessController {
 
     // Git tools grouped by required level.
     private static let gitStatusTools: Set<String> = ["git_status"]
-    private static let gitWriteTools: Set<String> = ["git_add", "git_commit", "git_reset"]
+    // git_push requires write level — same as git_commit (you must have commit rights to push).
+    private static let gitWriteTools: Set<String> = ["git_add", "git_commit", "git_push", "git_reset"]
     private static let gitFullTools: Set<String> = [
         "git_log", "git_revert", "git_checkout"
     ]

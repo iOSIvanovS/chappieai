@@ -5,6 +5,7 @@
 ```
 /Volumes/Storage/Work/Chappie/
 ├── architecture.md                          # This file (root architecture)
+├── licensing.md                             # Licensing system: plans, flows, UI, implementation plan
 ├── Chappie.xcodeproj/
 ├── Chappie/                                 # UI target → see Chappie/architecture.md
 ├── ChappieCore/                             # Business logic → see ChappieCore/architecture.md
@@ -54,16 +55,18 @@ graph TD
 
     subgraph Storage["Persistence"]
         DS["DataStore (actor)\nSingle SwiftData gateway\nStoredRecord — the only @Model"]
-        KC["Keychain\n(API keys by apiKey.id.uuidString)"]
+        KC["Keychain\n(API keys + license data)"]
     end
 
     subgraph Remote["Remote"]
         GH["GitHub\nproviders.json (public)"]
+        LB["License Backend\napi.chappieai.ru"]
     end
 
     Core --> DS
     Core --> KC
     Core -->|HTTP GET on launch| GH
+    Core -->|license validation on launch| LB
 ```
 
 ---
@@ -97,7 +100,8 @@ ChappieMCP
 | Anthropic native API | /v1/messages (AnthropicClient) |
 | AIClientFactory | Picks correct client by model.providerProtocol |
 | Unix Domain Sockets | IPC with ChappieMCP |
-| Keychain | API key storage (per APIKey.id) |
+| Keychain | API keys + license data storage |
+| CryptoKit | Ed25519 signature verification (owner license) |
 | GitHub (public repo) | providers.json catalog hosting |
 
 ---
@@ -112,9 +116,11 @@ ChappieMCP
 | AI providers | `DataStore.Relation.providers` | `[AIProvider]` JSON |
 | App settings | `DataStore.Relation.appSettings` | `AppSettingsPayload` JSON |
 | API keys | Keychain | `apiKey.id.uuidString` |
+| License data | Keychain | `license.*` keys — see licensing.md §5 |
 
 **Rule: DataStore.swift is the ONLY file in the project that imports SwiftData.**
 **StoredRecord is the ONLY @Model. Its schema never changes. No migrations ever needed.**
+**License data lives in Keychain ONLY — never in SwiftData.**
 
 ---
 
@@ -152,6 +158,7 @@ Empty sections are omitted entirely — no wasted tokens.
 | `SystemPromptBuilder` | Deterministic prompt assembly from `PromptContext`; pure value transformer |
 | `ToolAccessController` | Hard gate before every tool execution; returns structured `AccessResult` |
 | `AppSettingsStore` | Actor-based CRUD for the singleton AppSettings record |
+| `LicenseService` | Actor; owns trial/activation/validation/grace period/owner JWT logic |
 
 **Provider/model validation on thread load:**
 1. Resolve `providerId` → if not found: show orange banner, block AI calls
@@ -198,15 +205,27 @@ Supported providers (10): OpenAI, Anthropic, Google Gemini, DeepSeek, Groq, Mist
 
 ---
 
-## 11. 📚 Docs Group in Xcode Navigator
+## 11. Licensing System
+
+See **`licensing.md`** for the full specification:
+- Plans: trial / starter / pro / team / owner
+- Validation flow: online on launch + 7-day grace period
+- Owner license: Ed25519 JWT, offline-only, issued via admin panel
+- UI states: trial banner, paywall sheet, activation sheet, grace period warning
+- LicenseService actor (to be added to ChappieCore)
+- Implementation plan (phased)
+
+---
+
+## 12. 📚 Docs Group in Xcode Navigator
 
 `📚 Docs` group in `project.pbxproj` — navigation only, not included in build.
-Contains root `architecture.md` + references to 4 target architecture files.
+Contains root `architecture.md` + `licensing.md` + references to 4 target architecture files.
 **Manage manually** via `write_file` in `project.pbxproj`.
 
 ---
 
-## 12. Work Pipeline
+## 13. Work Pipeline
 
 1. `git_status` — check for uncommitted changes
 2. Implement (one task per pass)
@@ -219,7 +238,7 @@ Contains root `architecture.md` + references to 4 target architecture files.
 
 ---
 
-## 13. Inviolable Agent Rules
+## 14. Inviolable Agent Rules
 
 **RULE-01: One task per pass** — decompose into backlog, execute one item, commit, repeat.
 

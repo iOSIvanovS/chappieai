@@ -4,7 +4,13 @@
 // WHY THIS FILE:
 // Execution logic for run_terminal tool.
 // Manages a pool of ShellSession objects keyed by threadId.
-// Each thread gets its own persistent bash session — so `cd` is stateful.
+// Each thread gets its own persistent bash session — so `cd` is stateful within a call.
+//
+// PROJECT PARAMETER:
+// When "project" is provided, the command is prefixed with `cd /absolute/path && `
+// so every call is self-contained regardless of session history.
+// The path is resolved from activeProjectPathMap (name → absolute path).
+// WHY: prevents "where am I?" confusion when multiple projects are attached.
 //
 // CONFIRMATION MODE:
 // When terminalAccess == .confirm, the tool does NOT execute the command.
@@ -16,6 +22,16 @@
 // Sessions are created lazily on first use per thread.
 // Sessions are cleared when a thread is deactivated (clearSession called from ViewModel).
 // WHY: stale sessions waste memory and may hold open file handles.
+//
+// WORKING DIRECTORY:
+// Without "project" — sessions start at filesystem root "/".
+// With "project" — each command is prefixed with `cd /absolute/path && `.
+// WHY: deterministic, no reliance on previous cd state.
+//
+// TIMEOUT:
+// Default timeout is 300s (5 min) — enough for apt-get install, pip install, git clone etc.
+// For quick commands the shell returns immediately upon sentinel detection.
+// User can override via the `timeout` parameter in the tool call.
 
 import Foundation
 
@@ -54,16 +70,18 @@ extension ToolExecutionService {
     nonisolated(unsafe) private static var sessionsLock = NSLock()
 
     /// Returns the existing session for a thread or creates a new one.
-    private func session(for threadId: UUID, workspacePath: String) -> ShellSession {
+    /// WHY "/": terminal always starts at filesystem root so absolute paths always work,
+    /// regardless of where projects are located on disk.
+    private func session(for threadId: UUID) -> ShellSession {
         Self.sessionsLock.lock()
         defer { Self.sessionsLock.unlock() }
 
         if let existing = Self.sessions[threadId] {
             return existing
         }
-        let newSession = ShellSession(initialDirectory: workspacePath)
+        let newSession = ShellSession(initialDirectory: "/")
         Self.sessions[threadId] = newSession
-        print("[TerminalTools] 🐚 Created new shell session for thread \(threadId)")
+        print("[TerminalTools] 🐚 Created new shell session for thread \(threadId) at /")
         return newSession
     }
 
@@ -81,6 +99,7 @@ extension ToolExecutionService {
         struct Args: Decodable {
             let command: String
             let timeout: String?
+            let project: String?
         }
 
         guard let args = try? JSONDecoder().decode(Args.self, from: argsData),
@@ -88,8 +107,40 @@ extension ToolExecutionService {
             return "❌ run_terminal: 'command' argument is required and must not be empty."
         }
 
-        let command = args.command.trimmingCharacters(in: .whitespacesAndNewlines)
-        let timeout = args.timeout.flatMap(Double.init) ?? 30.0
+        let rawCommand = args.command.trimmingCharacters(in: .whitespacesAndNewlines)
+        // WHY 300: default covers slow operations (apt-get, pip install, git clone).
+        // Shell returns immediately on sentinel — fast commands are not delayed.
+        let timeout = args.timeout.flatMap(Double.init) ?? 300.0
+
+        // Resolve final command — prefix with `cd /path && ` if project is specified.
+        let command: String
+        if let projectName = args.project?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !projectName.isEmpty {
+            let pathMap = activeMemoryContext.projectPathMap
+            if let projectPath = pathMap[projectName] {
+                // Prefix with cd so the command runs in the correct project directory,
+                // regardless of where the persistent session currently is.
+                command = "cd \(projectPath.shellEscaped) && \(rawCommand)"
+                print("[TerminalTools] 📂 Routing to project '\(projectName)': \(projectPath)")
+            } else {
+                let available = pathMap.keys.sorted().map { "'\($0)'" }.joined(separator: ", ")
+                if available.isEmpty {
+                    return """
+                    ❌ run_terminal: project '\(projectName)' not found.
+                    projectPathMap is empty — no projects with resolved paths are attached.
+                    Try re-attaching the project or switching threads.
+                    """
+                } else {
+                    return """
+                    ❌ run_terminal: project '\(projectName)' not found in projectPathMap.
+                    Available: \(available).
+                    Check that the project is attached to the thread and its folder is accessible.
+                    """
+                }
+            }
+        } else {
+            command = rawCommand
+        }
 
         // LAST-RESORT SAFETY: block unconditionally dangerous commands.
         if let pattern = ShellSession.dangerousPattern(in: command) {
@@ -122,7 +173,8 @@ extension ToolExecutionService {
     }
 
     /// Executes a confirmed command (called by ViewModel after user approval).
-    public func executeConfirmedCommand(_ command: String, timeout: TimeInterval = 30) async -> String {
+    /// WHY 300: same reasoning as executeTerminalTool — covers slow confirmed operations.
+    public func executeConfirmedCommand(_ command: String, timeout: TimeInterval = 300) async -> String {
         // Re-check dangerous patterns even on confirmed commands — belt and suspenders.
         if let pattern = ShellSession.dangerousPattern(in: command) {
             return "🚫 Command blocked: contains dangerous pattern '\(pattern)'."
@@ -133,14 +185,23 @@ extension ToolExecutionService {
     // MARK: - Internal execution
 
     private func runCommand(_ command: String, timeout: TimeInterval) async -> String {
-        let workspacePath = fileSystem.workspaceURL.path
         let threadId = activeMemoryContext.threadId ?? UUID()
-        let shell = session(for: threadId, workspacePath: workspacePath)
+        let shell = session(for: threadId)
 
         print("[TerminalTools] 🖥️ Running: \(command)")
         let result = await shell.run(command, timeout: timeout)
         print("[TerminalTools] \(result.isSuccess ? "✅" : "❌") Exit \(result.exitCode)")
 
         return result.formatted
+    }
+}
+
+// MARK: - String shell escaping helper
+
+private extension String {
+    /// Wraps the string in single quotes and escapes any existing single quotes.
+    /// WHY: paths with spaces or special characters must be quoted for safe shell use.
+    var shellEscaped: String {
+        "'\(self.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 }

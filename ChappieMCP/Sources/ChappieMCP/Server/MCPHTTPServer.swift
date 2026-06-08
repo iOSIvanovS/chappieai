@@ -10,22 +10,17 @@
 // Unix Domain Socket works through the file system (file in /tmp/),
 // the sandbox allows it without additional entitlements.
 //
-// ADDITIONAL UDS ADVANTAGES:
-// - Faster than TCP (no network stack, in-memory copy)
-// - More secure (local only, not visible outside the machine)
-// - Does not require a free port
-//
-// SOCKET PATH:
-// /tmp/com.chappie.mcp.sock — fixed path known to both server and client.
-//
 // PROTOCOL (length-prefixed framing):
 // Request:  4 bytes (UInt32 big-endian, JSON length) + MCPRequest JSON body
 // Response: 4 bytes (UInt32 big-endian, JSON length) + MCPResponse JSON body
 //
 // MULTI-PROJECT ROUTING:
-// ToolDispatcher holds a projectEnvMap [projectName → devEnvironment rawValue].
-// build_project and run_tests carry a "project" arg — dispatcher resolves the env from the map.
-// This makes tools deterministic across multiple projects with different environments.
+// ToolDispatcher holds:
+//   - projectEnvMap  [projectName → devEnvironment rawValue] — for build/test routing
+//   - projectPathMap [projectName → absolutePath]            — for git routing
+// Both maps are populated from CLI argv[3] and argv[4] respectively.
+// git_* tools carry an optional "project" arg — dispatcher resolves the correct
+// working directory from projectPathMap. build_project/run_tests use projectEnvMap.
 
 import Foundation
 
@@ -47,20 +42,23 @@ struct MCPResponse: Codable, Sendable {
 
 // MARK: - MCPUnixServer
 
-/// Server on Unix Domain Socket for MCP tools.
-///
-/// Why @unchecked Sendable: contains Int32 file descriptor,
-/// but we guarantee safety — fd is used only inside acceptLoop on a single DispatchQueue thread.
 final class MCPUnixServer: @unchecked Sendable {
 
     private let socketPath: String
     private let projectPath: String
     private let toolDispatcher: ToolDispatcher
 
-    init(socketPath: String = kMCPSocketPath, projectPath: String, projectEnvMap: [String: String] = [:]) {
+    init(socketPath: String = kMCPSocketPath,
+         projectPath: String,
+         projectEnvMap: [String: String] = [:],
+         projectPathMap: [String: String] = [:]) {
         self.socketPath = socketPath
         self.projectPath = projectPath
-        self.toolDispatcher = ToolDispatcher(projectPath: projectPath, projectEnvMap: projectEnvMap)
+        self.toolDispatcher = ToolDispatcher(
+            projectPath: projectPath,
+            projectEnvMap: projectEnvMap,
+            projectPathMap: projectPathMap
+        )
     }
 
     func start() throws {
@@ -209,7 +207,6 @@ enum MCPServerError: Error, CustomStringConvertible {
 
 // MARK: - ToolResult
 
-/// Tool execution result. Separates success/error without throws across async boundaries.
 struct ToolResult: Sendable {
     let value: String?
     let error: String?
@@ -221,15 +218,17 @@ struct ToolResult: Sendable {
 // MARK: - ToolDispatcher
 
 /// Routes tool calls to the appropriate handler classes.
-/// Adding a new tool = one case in the switch.
+///
+/// Git tools use projectPathMap to resolve the correct working directory per project.
+/// Build/test tools use projectEnvMap to resolve the correct dev environment per project.
 final class ToolDispatcher: Sendable {
     private let gitTools: GitTools
     private let buildTools: BuildTools
     private let locTools: LocalizationTools
     private let docTools: DocumentTools
 
-    init(projectPath: String, projectEnvMap: [String: String]) {
-        self.gitTools   = GitTools(projectPath: projectPath)
+    init(projectPath: String, projectEnvMap: [String: String], projectPathMap: [String: String] = [:]) {
+        self.gitTools   = GitTools(projectPath: projectPath, projectPathMap: projectPathMap)
         self.buildTools = BuildTools(projectPath: projectPath, projectEnvMap: projectEnvMap)
         self.locTools   = LocalizationTools(projectPath: projectPath)
         self.docTools   = DocumentTools(projectPath: projectPath)
@@ -238,33 +237,40 @@ final class ToolDispatcher: Sendable {
     func execute(tool: String, args: [String: String]) async -> ToolResult {
         switch tool {
 
-        // Git tools
+        // MARK: - Git tools
+        // "project" arg resolves the correct working directory via projectPathMap.
+
         case "git_status":
-            return await gitTools.status()
+            return await gitTools.status(projectName: args["project"])
 
         case "git_add":
             let paths = args["paths"] ?? "."
-            return await gitTools.add(paths: paths)
+            return await gitTools.add(paths: paths, projectName: args["project"])
 
         case "git_commit":
             guard let message = args["message"], !message.isEmpty else {
                 return .failure("Argument 'message' is required for git_commit")
             }
-            return await gitTools.commit(message: message)
+            return await gitTools.commit(message: message, projectName: args["project"])
+
+        case "git_push":
+            let remote = args["remote"] ?? "origin"
+            let branch = args["branch"] ?? "main"
+            return await gitTools.push(remote: remote, branch: branch, projectName: args["project"])
 
         case "git_log":
             let count = Int(args["count"] ?? "10") ?? 10
-            return await gitTools.log(count: count)
+            return await gitTools.log(count: count, projectName: args["project"])
 
         case "git_reset":
-            return await gitTools.reset()
+            return await gitTools.reset(projectName: args["project"])
 
         case "git_revert":
             guard let hashes = args["hashes"], !hashes.isEmpty else {
                 return .failure("Argument 'hashes' is required (space-separated commit hashes)")
             }
             let message = args["message"] ?? "revert: roll back commits \(args["hashes"] ?? "")"
-            return await gitTools.revert(hashes: hashes, message: message)
+            return await gitTools.revert(hashes: hashes, message: message, projectName: args["project"])
 
         case "git_checkout":
             guard let ref = args["ref"], !ref.isEmpty else {
@@ -273,9 +279,10 @@ final class ToolDispatcher: Sendable {
             guard let paths = args["paths"], !paths.isEmpty else {
                 return .failure("Argument 'paths' is required (space-separated file paths)")
             }
-            return await gitTools.checkout(ref: ref, paths: paths)
+            return await gitTools.checkout(ref: ref, paths: paths, projectName: args["project"])
 
-        // Build tools — "project" arg routes to the correct env
+        // MARK: - Build tools — "project" arg routes to the correct env
+
         case "build_project":
             return await buildTools.build(projectName: args["project"])
 
@@ -285,7 +292,8 @@ final class ToolDispatcher: Sendable {
         case "read_build_log":
             return await buildTools.readLastLog()
 
-        // Document tools (Office formats: docx, xlsx, pptx, odt, rtf, csv, pdf)
+        // MARK: - Document tools
+
         case "read_document":
             guard let path = args["path"], !path.isEmpty else {
                 return .failure("Argument 'path' is required (e.g. 'contract.docx')")
@@ -306,7 +314,8 @@ final class ToolDispatcher: Sendable {
                 entryName: args["entry_name"]
             )
 
-        // Localization tools (Xcode / xcstrings)
+        // MARK: - Localization tools
+
         case "loc_info":
             return locTools.info()
 

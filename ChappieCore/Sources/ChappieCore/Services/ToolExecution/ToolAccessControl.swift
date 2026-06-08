@@ -60,8 +60,9 @@ extension ToolExecutionService {
         }
 
         // EXECUTOR: check git tools.
+        // git_push is included — it requires the same git access level as git_commit.
         let gitTools: Set<String> = ["git_status", "git_log", "git_add", "git_commit",
-                                     "git_reset", "git_revert", "git_checkout"]
+                                     "git_push", "git_reset", "git_revert", "git_checkout"]
         if gitTools.contains(toolName) {
             if !settings.isProgrammingProject {
                 return .denied("""
