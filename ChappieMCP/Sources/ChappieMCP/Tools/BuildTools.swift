@@ -6,7 +6,8 @@
 //
 // MULTI-PROJECT ROUTING:
 // Each tool call carries a "project" argument (project display name).
-// BuildTools looks up the project's devEnvironment from the projectEnvMap passed at init.
+// BuildTools looks up the project's devEnvironment from projectEnvMap and its absolute path
+// from projectPathMap — both passed at init from CLI argv[3] and argv[4].
 // This makes build_project/run_tests deterministic per project even when multiple projects
 // with different environments are attached to the same thread.
 //
@@ -60,33 +61,38 @@ private final class DataBox: @unchecked Sendable {
 // MARK: - BuildTools
 
 /// Build and test tools router. Delegates to env-specific shell commands.
-/// Resolves the target project's DevEnvironment from projectEnvMap at call time.
+/// Resolves the target project's DevEnvironment and absolute path from maps passed at init.
 final class BuildTools: Sendable {
 
-    private let projectPath: String
+    /// Fallback path — used only when projectPathMap is empty (single-project legacy mode).
+    private let defaultProjectPath: String
 
     /// Map of project display name → DevEnvironment rawValue.
     /// Populated from CLI argv[3] JSON: {"ProjectA": "xcode", "ProjectB": "python"}.
     private let projectEnvMap: [String: String]
 
+    /// Map of project display name → absolute path on disk.
+    /// Populated from CLI argv[4] JSON: {"ProjectA": "/path/A", "ProjectB": "/path/B"}.
+    /// WHY: xcodebuild must run in the correct project directory to find the right .xcodeproj.
+    private let projectPathMap: [String: String]
+
     /// Shared log file path — written by build/test, read by read_build_log.
     private var buildLogPath: String {
-        projectPath + "/.build_log.txt"
+        defaultProjectPath + "/.build_log.txt"
     }
 
-    init(projectPath: String, projectEnvMap: [String: String]) {
-        self.projectPath = projectPath
+    init(projectPath: String, projectEnvMap: [String: String], projectPathMap: [String: String] = [:]) {
+        self.defaultProjectPath = projectPath
         self.projectEnvMap = projectEnvMap
+        self.projectPathMap = projectPathMap
     }
 
-    // MARK: - Public tools
+    // MARK: - Path & Env Resolution
 
     /// Resolves DevEnvironment for the given project name.
-    /// Returns .unknown if the project is not in the map or the rawValue is unrecognized.
     private func environment(for projectName: String?) -> DevEnvironment {
         guard let name = projectName, !name.isEmpty,
               let rawValue = projectEnvMap[name] else {
-            // Single-project fallback: if map has exactly one entry, use it.
             if projectEnvMap.count == 1, let rawValue = projectEnvMap.values.first {
                 return DevEnvironment(rawValue: rawValue) ?? .unknown
             }
@@ -95,32 +101,51 @@ final class BuildTools: Sendable {
         return DevEnvironment(rawValue: rawValue) ?? .unknown
     }
 
+    /// Resolves the absolute working directory for the given project name.
+    ///
+    /// WHY this matters: xcodeProjectName() scans the working directory for .xcodeproj.
+    /// Without the correct path, it finds the wrong project (e.g. Chappie instead of adminPanel).
+    private func resolvePath(for projectName: String?) -> String {
+        if let name = projectName, !name.isEmpty, let path = projectPathMap[name] {
+            return path
+        }
+        // Single-project fallback.
+        if projectPathMap.count == 1, let path = projectPathMap.values.first {
+            return path
+        }
+        return defaultProjectPath
+    }
+
+    // MARK: - Public tools
+
     func build(projectName: String?) async -> ToolResult {
         let env = environment(for: projectName)
+        let path = resolvePath(for: projectName)
         let label = "build_project[\(projectName ?? "?")]"
 
         switch env {
         case .xcode:
             return await runXcodebuild(
-                args: ["-project", xcodeProjectName(), "-scheme", xcodeAppScheme(),
+                args: ["-project", xcodeProjectName(in: path), "-scheme", xcodeAppScheme(in: path),
                        "-configuration", "Debug", "-destination", "platform=macOS", "build"],
                 label: label,
+                workingDirectory: path,
                 env: env
             )
         case .nodejs:
-            return await runShell("npm run build", label: label, env: env)
+            return await runShell("npm run build", label: label, workingDirectory: path, env: env)
         case .go:
-            return await runShell("go build ./...", label: label, env: env)
+            return await runShell("go build ./...", label: label, workingDirectory: path, env: env)
         case .rust:
-            return await runShell("cargo build", label: label, env: env)
+            return await runShell("cargo build", label: label, workingDirectory: path, env: env)
         case .java:
-            return await runShell(mavenOrGradle(maven: "mvn compile", gradle: "gradle build"), label: label, env: env)
+            return await runShell(mavenOrGradle(maven: "mvn compile", gradle: "gradle build", in: path), label: label, workingDirectory: path, env: env)
         case .kotlin:
-            return await runShell(gradleWrapper("build"), label: label, env: env)
+            return await runShell(gradleWrapper("build", in: path), label: label, workingDirectory: path, env: env)
         case .flutter:
-            return await runShell("flutter build", label: label, env: env)
+            return await runShell("flutter build", label: label, workingDirectory: path, env: env)
         case .dotnet:
-            return await runShell("dotnet build", label: label, env: env)
+            return await runShell("dotnet build", label: label, workingDirectory: path, env: env)
         case .python, .reacttypescript:
             return .failure("build_project is not available for \(env.rawValue) — no compile step.")
         case .unknown:
@@ -134,44 +159,45 @@ final class BuildTools: Sendable {
 
     func runTests(projectName: String?, target: String?) async -> ToolResult {
         let env = environment(for: projectName)
+        let path = resolvePath(for: projectName)
         let label = "run_tests[\(projectName ?? "?")]"
 
         switch env {
         case .xcode:
-            var args = ["-project", xcodeProjectName(), "-scheme", xcodeTestScheme(),
+            var args = ["-project", xcodeProjectName(in: path), "-scheme", xcodeTestScheme(in: path),
                         "-destination", "platform=macOS", "test"]
             if let target, !target.isEmpty {
                 args.append(contentsOf: ["-only-testing", target])
             }
-            return await runXcodebuild(args: args, label: label, env: env)
+            return await runXcodebuild(args: args, label: label, workingDirectory: path, env: env)
         case .nodejs:
             let pattern = target.map { " -- \($0)" } ?? ""
-            return await runShell("npm test\(pattern)", label: label, env: env)
+            return await runShell("npm test\(pattern)", label: label, workingDirectory: path, env: env)
         case .python:
             let pattern = target ?? ""
             let cmd = pattern.isEmpty ? "python -m pytest" : "python -m pytest \(pattern)"
-            return await runShell(cmd, label: label, env: env)
+            return await runShell(cmd, label: label, workingDirectory: path, env: env)
         case .go:
             let pkg = target ?? "./..."
-            return await runShell("go test \(pkg)", label: label, env: env)
+            return await runShell("go test \(pkg)", label: label, workingDirectory: path, env: env)
         case .rust:
             let filter = target.map { " \($0)" } ?? ""
-            return await runShell("cargo test\(filter)", label: label, env: env)
+            return await runShell("cargo test\(filter)", label: label, workingDirectory: path, env: env)
         case .java:
             let cls = target.map { " -Dtest=\($0)" } ?? ""
-            return await runShell(mavenOrGradle(maven: "mvn test\(cls)", gradle: "gradle test\(cls)"), label: label, env: env)
+            return await runShell(mavenOrGradle(maven: "mvn test\(cls)", gradle: "gradle test\(cls)", in: path), label: label, workingDirectory: path, env: env)
         case .kotlin:
             let cls = target.map { " --tests \($0)" } ?? ""
-            return await runShell(gradleWrapper("test\(cls)"), label: label, env: env)
+            return await runShell(gradleWrapper("test\(cls)", in: path), label: label, workingDirectory: path, env: env)
         case .flutter:
             let file = target.map { " \($0)" } ?? ""
-            return await runShell("flutter test\(file)", label: label, env: env)
+            return await runShell("flutter test\(file)", label: label, workingDirectory: path, env: env)
         case .reacttypescript:
             let pattern = target.map { " \($0)" } ?? ""
-            return await runShell("npm test\(pattern)", label: label, env: env)
+            return await runShell("npm test\(pattern)", label: label, workingDirectory: path, env: env)
         case .dotnet:
             let proj = target.map { " \($0)" } ?? ""
-            return await runShell("dotnet test\(proj)", label: label, env: env)
+            return await runShell("dotnet test\(proj)", label: label, workingDirectory: path, env: env)
         case .unknown:
             let available = projectEnvMap.keys.sorted().joined(separator: ", ")
             let hint = available.isEmpty
@@ -191,48 +217,53 @@ final class BuildTools: Sendable {
 
     // MARK: - Xcode helpers
 
-    /// Finds the first .xcodeproj in the project directory.
-    private func xcodeProjectName() -> String {
-        if let items = try? FileManager.default.contentsOfDirectory(atPath: projectPath),
+    /// Finds the first .xcodeproj in the given project directory.
+    ///
+    /// WHY `in path` instead of self.projectPath:
+    /// Each project lives in its own directory. Without the correct path,
+    /// xcodeProjectName() would always find Chappie.xcodeproj regardless of which
+    /// project was requested.
+    private func xcodeProjectName(in projectDir: String) -> String {
+        if let items = try? FileManager.default.contentsOfDirectory(atPath: projectDir),
            let proj = items.first(where: { $0.hasSuffix(".xcodeproj") }) {
             return proj
         }
-        return URL(fileURLWithPath: projectPath).lastPathComponent + ".xcodeproj"
+        return URL(fileURLWithPath: projectDir).lastPathComponent + ".xcodeproj"
     }
 
     /// Derives the main app scheme name from the project file name.
-    private func xcodeAppScheme() -> String {
-        xcodeProjectName().replacingOccurrences(of: ".xcodeproj", with: "")
+    private func xcodeAppScheme(in projectDir: String) -> String {
+        xcodeProjectName(in: projectDir).replacingOccurrences(of: ".xcodeproj", with: "")
     }
 
     /// Derives the test scheme: AppName + "CoreTests" (e.g. "ChappieCoreTests").
-    private func xcodeTestScheme() -> String {
-        xcodeAppScheme() + "CoreTests"
+    private func xcodeTestScheme(in projectDir: String) -> String {
+        xcodeAppScheme(in: projectDir) + "CoreTests"
     }
 
     // MARK: - Java/Kotlin helpers
 
-    private func mavenOrGradle(maven: String, gradle: String) -> String {
-        let hasPom = FileManager.default.fileExists(atPath: projectPath + "/pom.xml")
+    private func mavenOrGradle(maven: String, gradle: String, in projectDir: String) -> String {
+        let hasPom = FileManager.default.fileExists(atPath: projectDir + "/pom.xml")
         return hasPom ? maven : gradle
     }
 
-    private func gradleWrapper(_ task: String) -> String {
-        let wrapper = projectPath + "/gradlew"
+    private func gradleWrapper(_ task: String, in projectDir: String) -> String {
+        let wrapper = projectDir + "/gradlew"
         let exe = FileManager.default.fileExists(atPath: wrapper) ? "./gradlew" : "gradle"
         return "\(exe) \(task)"
     }
 
     // MARK: - Shell runner
 
-    private func runShell(_ command: String, label: String, env: DevEnvironment) async -> ToolResult {
+    private func runShell(_ command: String, label: String, workingDirectory: String, env: DevEnvironment) async -> ToolResult {
         print("[ChappieMCP] 🔨 \(label): \(command)")
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let result = self.runProcess(
                     executable: "/bin/sh",
                     args: ["-c", command],
-                    workingDirectory: self.projectPath,
+                    workingDirectory: workingDirectory,
                     label: label,
                     env: env
                 )
@@ -243,14 +274,14 @@ final class BuildTools: Sendable {
 
     // MARK: - Xcode runner
 
-    private func runXcodebuild(args: [String], label: String, env: DevEnvironment) async -> ToolResult {
+    private func runXcodebuild(args: [String], label: String, workingDirectory: String, env: DevEnvironment) async -> ToolResult {
         print("[ChappieMCP] 🔨 \(label): xcodebuild \(args.joined(separator: " "))")
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let result = self.runProcess(
                     executable: "/usr/bin/xcodebuild",
                     args: args,
-                    workingDirectory: self.projectPath,
+                    workingDirectory: workingDirectory,
                     label: label,
                     env: env
                 )

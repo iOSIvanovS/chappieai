@@ -6,8 +6,8 @@
 // Separated from execution logic to keep tool metadata easy to scan and update.
 //
 // TOOL ORDER MATTERS: LLMs tend to reach for tools listed first.
-// Specialized tools (file system, memory, git, build) are listed before run_terminal.
-// run_terminal is intentionally last — it is the tool of last resort.
+// Specialized tools (file system, memory, git, build) are listed before terminal tools.
+// run_terminal and run_ssh are intentionally last — tools of last resort.
 //
 // INJECTION RULES:
 // - Universal tools (file, memory, web, project mgmt) — always injected.
@@ -21,6 +21,9 @@
 // - loc_* — only if at least one Xcode project is attached (independent of isProg on first project).
 // - run_terminal — only if isProgrammingProject = true.
 //   "project" arg makes every call self-contained: auto-prefixes `cd /absolute/path && command`.
+// - run_ssh — only if isProgrammingProject = true + terminal access enabled.
+//   Stateless SSH: one command per call, one connection per call. No interactive input.
+//   Use for remote server commands (VPS diagnostics, service restart, log reads).
 // - git_diff is intentionally OMITTED: it dumps the entire project into AI context (cost + noise).
 
 import Foundation
@@ -249,8 +252,7 @@ extension ToolExecutionService {
 
         // MARK: - Git tools (programming project only)
         // git_diff is intentionally excluded — dumps entire project into context.
-        // "project" arg routes each call to the correct working directory in MCP via projectPathMap.
-        // When only one project is attached — "project" can be omitted (MCP uses the single entry).
+        // "project" arg routes each call to the correct working directory via projectPathMap.
 
         if isProg {
             let gitProjectArgDesc = gitProjectArgDescription(for: progInfos)
@@ -366,8 +368,6 @@ extension ToolExecutionService {
         }
 
         // MARK: - Build & test tools (any programming project)
-        // "project" arg routes each call to the correct env in MCP.
-        // If only one project is attached — "project" can be omitted.
 
         if isProg {
             let projectArgDesc = buildProjectArgDescription(for: progInfos)
@@ -456,12 +456,12 @@ extension ToolExecutionService {
             parameters: AIToolParameters(properties: [:], required: [])
         )))
 
-        // MARK: - Terminal (LAST RESORT, programming projects only)
-        // "project" makes every call self-contained: auto-prefixes `cd /absolute/path && command`.
-        // Without "project" — command runs from session root ("/"), use absolute paths manually.
-        // For operations outside any project (e.g. /tmp) — omit "project" and use absolute path.
+        // MARK: - Terminal tools (LAST RESORT, programming projects only)
+        // run_terminal: persistent session, "project" auto-prefixes `cd /path && command`.
+        // run_ssh: stateless — one command per call. Use for remote VPS/server commands only.
+        // Both require terminal access to be enabled in project settings.
 
-        if isProg {
+        if isProg && settings.terminalAccess.isEnabled {
             let terminalProjectArgDesc = terminalProjectArgDescription(for: progInfos)
 
             tools.append(AITool(function: AIFunctionDefinition(
@@ -481,6 +481,27 @@ extension ToolExecutionService {
                         "project": AIToolProperty(type: "string", description: terminalProjectArgDesc)
                     ],
                     required: ["command"]
+                )
+            )))
+
+            tools.append(AITool(function: AIFunctionDefinition(
+                name: "run_ssh",
+                description: """
+                Execute a command on a remote server via SSH.
+                Use for remote server commands only. One command = one connection. No interactive input.
+                IMPORTANT: stateless — do NOT rely on previous call state. Each call is a fresh connection.
+                Use for: VPS diagnostics, reading logs, restarting services, checking server status.
+                Dangerous commands (rm -rf /, shutdown, etc.) are unconditionally blocked.
+                """,
+                parameters: AIToolParameters(
+                    properties: [
+                        "host": AIToolProperty(type: "string", description: "Remote host IP or domain (e.g. '185.23.34.97' or 'myserver.com')"),
+                        "command": AIToolProperty(type: "string", description: "Shell command to execute on the remote host."),
+                        "user": AIToolProperty(type: "string", description: "SSH username (default: current user). E.g. 'root'."),
+                        "port": AIToolProperty(type: "string", description: "SSH port (default: 22)."),
+                        "timeout": AIToolProperty(type: "string", description: "Connection timeout in seconds (default: 30).")
+                    ],
+                    required: ["host", "command"]
                 )
             )))
         }
@@ -700,7 +721,6 @@ extension ToolExecutionService {
 
     // MARK: - Dynamic tool descriptions
 
-    /// "project" parameter description for git tools — lists all attached programming projects.
     private func gitProjectArgDescription(for infos: [ActiveMemoryContext.ProjectInfo]) -> String {
         guard !infos.isEmpty else { return "Project display name to target." }
         if infos.count == 1 {
@@ -710,7 +730,6 @@ extension ToolExecutionService {
         return "Project display name — required when multiple projects are attached. Available: \(list)."
     }
 
-    /// "project" parameter description for build/test tools — includes env names.
     private func buildProjectArgDescription(for infos: [ActiveMemoryContext.ProjectInfo]) -> String {
         guard !infos.isEmpty else { return "Project display name to target." }
         if infos.count == 1 {
@@ -724,7 +743,6 @@ extension ToolExecutionService {
         return "Project display name — required when multiple projects are attached. Available: \(list)."
     }
 
-    /// "project" parameter description for run_terminal — lists projects with their absolute paths.
     /// WHY PATHS IN DESCRIPTION: AI needs to know which path it will cd into before calling the tool.
     private func terminalProjectArgDescription(for infos: [ActiveMemoryContext.ProjectInfo]) -> String {
         let pathMap = activeMemoryContext.projectPathMap

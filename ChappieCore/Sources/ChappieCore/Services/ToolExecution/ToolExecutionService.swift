@@ -8,13 +8,12 @@
 //   MemoryTools.swift       — IT-08 scope resolution + memory execution cases
 //   FileTools.swift         — file system + document tools + attach_file + web_fetch
 //   GitBuildTools.swift     — git + build/test execution
-//   TerminalTools.swift     — persistent bash session + run_terminal execution
+//   TerminalTools.swift     — persistent bash session (run_terminal) + stateless SSH (run_ssh)
 
 import Foundation
 
 // MARK: - ScopeResolution (IT-08)
 
-/// Maps scope from tool parameters to a string for MemoryStore.
 enum ScopeResolution {
     case resolved(String)
     case failed(String)
@@ -31,13 +30,10 @@ enum ToolAccessResult {
 ///
 /// Why actor: async file system + network ops require isolation in Swift 6.
 public actor ToolExecutionService {
-    // WHY var: V2 thread isolation swaps fileSystem per thread via setFileSystem().
     var fileSystem: FileSystemManager
     let memoryManager: MemoryManager
     let mcpBridge: MCPToolBridge
     let webFetch: WebFetchService?
-
-    // MARK: - Active memory context (IT-08)
 
     var activeMemoryContext: ActiveMemoryContext = .empty
 
@@ -45,28 +41,15 @@ public actor ToolExecutionService {
         activeMemoryContext.hasProjects
     }
 
-    // MARK: - File system readiness flag
-
-    /// False while syncFileSystemForActiveThread() is resolving bookmarks.
     var isFileSystemReady: Bool = true
-
-    // MARK: - Project handlers (IT-07)
 
     var addProjectHandler: (@Sendable (String) async -> String)?
     var removeProjectHandler: (@Sendable (String) async -> String)?
     var listProjectsHandler: (@Sendable () async -> String)?
 
-    // MARK: - Callbacks
-
-    /// Called on MainActor when a FS tool fails for a specific project (B-05).
     var onProjectUnavailable: (@MainActor (String) -> Void)?
-
-    /// Called on MainActor after every memorize/delete_memory to invalidate cached system prompt.
     var onMemoryChanged: (@MainActor () -> Void)?
 
-    // MARK: - IT-09: Project settings cache
-
-    /// Settings by project UUID — passed from ViewModel via setProjectSettings().
     var projectSettingsCache: [UUID: ProjectSettings] = [:]
 
     public init(
@@ -93,7 +76,6 @@ public actor ToolExecutionService {
         }
     }
 
-    /// V2 M-09: Swaps the active FileSystemManager to point at the thread's first project.
     public func setFileSystem(_ fs: FileSystemManager) {
         self.fileSystem = fs
         print("[ToolExecutionService] 📂 FileSystem switched to: \(fs.workspaceURL.path)")
@@ -137,9 +119,6 @@ public actor ToolExecutionService {
 
     // MARK: - loc_* tool names
 
-    /// All localization tool names — routed through MCP bridge.
-    /// WHY explicit set: Swift switch doesn't support Set membership in case patterns,
-    /// so we check containment in the default branch instead.
     private static let locToolNames: Set<String> = [
         "loc_info", "loc_create", "loc_rename", "loc_delete",
         "loc_add_language", "loc_remove_language", "loc_key_check",
@@ -149,25 +128,18 @@ public actor ToolExecutionService {
 
     // MARK: - Tool execution dispatcher
 
-    /// CHECK ORDER:
-    /// 1. FS READINESS GUARD — block file/git/build tools while FileSystem is syncing.
-    /// 2. PROJECT GUARD — require attached project for file/git/build/terminal tools.
-    /// 3. TOOL ACCESS CHECK — check rights from ProjectSettings (IT-09).
-    /// 4. Dispatch to the appropriate execution handler.
     public func execute(call: AIToolCall) async -> String {
         let name = call.function.name
         let argsData = call.function.arguments.data(using: .utf8) ?? Data()
 
         // Tools that require an active workspace project.
-        // read_document / write_document / attach_file are intentionally excluded:
-        // they operate on arbitrary absolute paths (e.g. temp files, Application Support)
-        // and don't need a workspace project to be active.
         let projectRequiredTools: Set<String> = [
             "list_files", "read_file", "write_file", "delete_file",
             "git_status", "git_diff", "git_add", "git_commit",
             "git_log", "git_reset", "git_revert", "git_checkout",
             "build_project", "run_tests", "read_build_log",
             "run_terminal"
+            // run_ssh intentionally excluded — connects to remote host, no local project needed
         ]
 
         if projectRequiredTools.contains(name) && !isFileSystemReady {
@@ -195,6 +167,15 @@ public actor ToolExecutionService {
             }
         }
 
+        // run_ssh has its own access check — requires terminal to be enabled.
+        if name == "run_ssh" {
+            let accessResult = checkToolAccess(toolName: name)
+            if case .denied(let message) = accessResult {
+                print("[ToolExecutionService] 🚫 Access denied for 'run_ssh'")
+                return message
+            }
+        }
+
         do {
             switch name {
             case "list_files", "read_file", "write_file", "delete_file",
@@ -211,6 +192,9 @@ public actor ToolExecutionService {
 
             case "run_terminal":
                 return try await executeTerminalTool(argsData: argsData)
+
+            case "run_ssh":
+                return try await executeSSHTool(argsData: argsData)
 
             case "add_project_to_thread":
                 guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
@@ -239,9 +223,6 @@ public actor ToolExecutionService {
                 return await handler()
 
             default:
-                // Route loc_* tools through MCP bridge.
-                // WHY here and not in a dedicated case: Swift doesn't allow Set membership
-                // checks in case patterns; a default + guard is the cleanest alternative.
                 if Self.locToolNames.contains(name) {
                     guard let args = try? JSONDecoder().decode([String: String].self, from: argsData) else {
                         return "Error: Failed to parse arguments for \(name)"

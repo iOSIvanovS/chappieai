@@ -16,11 +16,11 @@
 //
 // MULTI-PROJECT ROUTING:
 // ToolDispatcher holds:
-//   - projectEnvMap  [projectName → devEnvironment rawValue] — for build/test routing
-//   - projectPathMap [projectName → absolutePath]            — for git routing
+//   - projectEnvMap  [projectName → devEnvironment rawValue] — for build/test env routing
+//   - projectPathMap [projectName → absolutePath]            — for git AND build path routing
 // Both maps are populated from CLI argv[3] and argv[4] respectively.
-// git_* tools carry an optional "project" arg — dispatcher resolves the correct
-// working directory from projectPathMap. build_project/run_tests use projectEnvMap.
+// git_* tools use projectPathMap to resolve working directory per project.
+// build_project/run_tests use BOTH maps: projectEnvMap for env, projectPathMap for path.
 
 import Foundation
 
@@ -219,8 +219,8 @@ struct ToolResult: Sendable {
 
 /// Routes tool calls to the appropriate handler classes.
 ///
-/// Git tools use projectPathMap to resolve the correct working directory per project.
-/// Build/test tools use projectEnvMap to resolve the correct dev environment per project.
+/// Both git_* and build_project/run_tests use projectPathMap to resolve per-project paths.
+/// build_project/run_tests additionally use projectEnvMap to pick the correct build tool.
 final class ToolDispatcher: Sendable {
     private let gitTools: GitTools
     private let buildTools: BuildTools
@@ -229,7 +229,9 @@ final class ToolDispatcher: Sendable {
 
     init(projectPath: String, projectEnvMap: [String: String], projectPathMap: [String: String] = [:]) {
         self.gitTools   = GitTools(projectPath: projectPath, projectPathMap: projectPathMap)
-        self.buildTools = BuildTools(projectPath: projectPath, projectEnvMap: projectEnvMap)
+        // WHY projectPathMap here: BuildTools must run xcodebuild in the correct project directory.
+        // Without it, xcodeProjectName() scans defaultProjectPath and finds the wrong .xcodeproj.
+        self.buildTools = BuildTools(projectPath: projectPath, projectEnvMap: projectEnvMap, projectPathMap: projectPathMap)
         self.locTools   = LocalizationTools(projectPath: projectPath)
         self.docTools   = DocumentTools(projectPath: projectPath)
     }
@@ -281,7 +283,8 @@ final class ToolDispatcher: Sendable {
             }
             return await gitTools.checkout(ref: ref, paths: paths, projectName: args["project"])
 
-        // MARK: - Build tools — "project" arg routes to the correct env
+        // MARK: - Build tools
+        // "project" arg routes to the correct env (projectEnvMap) and path (projectPathMap).
 
         case "build_project":
             return await buildTools.build(projectName: args["project"])

@@ -13,19 +13,15 @@
 //    b. Build/test tools — require isProgrammingProject + TestsAccessLevel.canRun.
 //    c. read_build_log — requires TestsAccessLevel.canReadLog.
 //    d. run_terminal — requires isProgrammingProject + TerminalAccessLevel.isEnabled.
-//    e. Everything else — allowed.
-//
-// PROJECT SETTINGS RESOLUTION:
-// Uses first project in activeMemoryContext (MVP simplification).
-// Falls back to default ProjectSettings (advisor, everything closed) if not found.
+//    e. run_ssh — requires isProgrammingProject + TerminalAccessLevel.isEnabled.
+//       WHY same gate as run_terminal: SSH is remote terminal access, same risk level.
+//    f. Everything else — allowed.
 
 import Foundation
 
 extension ToolExecutionService {
 
     /// Settings of the first project in the active thread.
-    ///
-    /// Falls back to default ProjectSettings if no project or settings not cached.
     var activeProjectSettings: ProjectSettings {
         guard let firstProject = activeMemoryContext.projects.first else {
             return ProjectSettings()
@@ -37,7 +33,7 @@ extension ToolExecutionService {
     func checkToolAccess(toolName: String) -> ToolAccessResult {
         let settings = activeProjectSettings
 
-        // IRON PROHIBITION: git_diff is always blocked — no override possible.
+        // IRON PROHIBITION: git_diff is always blocked.
         if toolName == "git_diff" {
             return .denied("""
             ❌ git_diff is permanently FORBIDDEN — it loads the entire project into AI context and costs real money.
@@ -60,7 +56,6 @@ extension ToolExecutionService {
         }
 
         // EXECUTOR: check git tools.
-        // git_push is included — it requires the same git access level as git_commit.
         let gitTools: Set<String> = ["git_status", "git_log", "git_add", "git_commit",
                                      "git_push", "git_reset", "git_revert", "git_checkout"]
         if gitTools.contains(toolName) {
@@ -116,24 +111,24 @@ extension ToolExecutionService {
             return .allowed
         }
 
-        // run_terminal — requires programming project + terminal access enabled.
-        if toolName == "run_terminal" {
+        // run_terminal and run_ssh share the same access gate — both are terminal-level access.
+        // WHY: SSH to a remote server carries the same risk as local terminal execution.
+        if toolName == "run_terminal" || toolName == "run_ssh" {
             if !settings.isProgrammingProject {
                 return .denied("""
-                ❌ Tool 'run_terminal' requires 'Programming project' flag.
+                ❌ Tool '\(toolName)' requires 'Programming project' flag.
                 Open project settings → enable 'Programming project'.
                 """)
             }
             if !settings.terminalAccess.isEnabled {
                 return .denied("""
-                ❌ Tool 'run_terminal' is blocked: terminal access is disabled.
+                ❌ Tool '\(toolName)' is blocked: terminal access is disabled.
                 Open project settings → Terminal → choose 'С подтверждением' or 'Автоматически'.
                 """)
             }
             return .allowed
         }
 
-        // All other tools (list_files, read_file, write_file, delete_file, web_fetch) — allowed.
         return .allowed
     }
 }
