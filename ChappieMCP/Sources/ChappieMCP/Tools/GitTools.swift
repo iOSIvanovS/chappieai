@@ -24,6 +24,13 @@
 // which waits for TTY input. In our case there is no TTY (headless subprocess),
 // so the pager hangs forever and readDataToEndOfFile() never returns.
 // SOLUTION: always pass GIT_PAGER=cat and GIT_TERMINAL_PROMPT=0 in environment.
+//
+// CRITICAL — SSH_AUTH_SOCK:
+// git push over SSH (e.g. remote "internal") requires the ssh-agent socket.
+// Without SSH_AUTH_SOCK forwarded into the child process environment, git cannot
+// find the agent, authentication fails, and push returns an error.
+// HTTPS remotes (e.g. GitHub "origin") are unaffected — they use ~/.gitconfig credentials.
+// SOLUTION: forward SSH_AUTH_SOCK from the parent process environment if present.
 
 import Foundation
 
@@ -141,7 +148,8 @@ final class GitTools: Sendable {
     /// Pushes the current branch to remote.
     ///
     /// WHY SSH keys work here:
-    /// HOME is passed in the environment, so git finds ~/.ssh/id_ed25519.
+    /// HOME is passed in the environment so git finds ~/.gitconfig and ~/.ssh/id_ed25519.
+    /// SSH_AUTH_SOCK is forwarded from the parent so the ssh-agent is reachable for SSH remotes.
     /// GIT_TERMINAL_PROMPT=0 prevents hanging if auth fails — returns error instead.
     func push(remote: String = "origin", branch: String = "main", projectName: String?) async -> ToolResult {
         return await runGit(["push", remote, branch], projectName: projectName)
@@ -226,18 +234,29 @@ final class GitTools: Sendable {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
-        // GIT_PAGER=cat — disables pager (less/more). Without this git log/diff hang in headless mode.
-        // GIT_TERMINAL_PROMPT=0 — prevents git from requesting password via TTY.
-        // HOME — git needs it to find ~/.gitconfig and ~/.ssh/
-        process.environment = [
+        // Build environment:
+        // HOME            — git needs it to find ~/.gitconfig and ~/.ssh/id_ed25519
+        // PATH            — standard tool locations
+        // GIT_PAGER=cat   — disables pager (less/more); without this git log/diff hang headless
+        // GIT_TERMINAL_PROMPT=0 — prevents git from blocking on TTY password prompt
+        // SSH_AUTH_SOCK   — forwarded from parent so ssh-agent is reachable for SSH remotes
+        //                   (e.g. remote "internal"); without this git push over SSH fails auth
+        // NOTE: GIT_CONFIG_NOSYSTEM removed — it blocked SSH credential helpers on some setups
+        var env: [String: String] = [
             "HOME": NSHomeDirectory(),
             "PATH": "/usr/bin:/usr/local/bin:/opt/homebrew/bin",
             "LANG": "en_US.UTF-8",
             "GIT_PAGER": "cat",
             "GIT_TERMINAL_PROMPT": "0",
-            "GIT_CONFIG_NOSYSTEM": "1",
             "TERM": "dumb"
         ]
+
+        // Forward SSH_AUTH_SOCK from parent process so ssh-agent works for SSH remotes.
+        if let sshAuthSock = ProcessInfo.processInfo.environment["SSH_AUTH_SOCK"] {
+            env["SSH_AUTH_SOCK"] = sshAuthSock
+        }
+
+        process.environment = env
 
         do {
             try process.run()
