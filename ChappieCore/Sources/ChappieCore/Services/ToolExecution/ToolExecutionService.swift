@@ -99,6 +99,29 @@ public actor ToolExecutionService {
         print("[ToolExecutionService] ⚙️ Project settings updated (\(settings.count) projects)")
     }
 
+    /// Atomically updates both the memory context and project settings in a single actor hop.
+    ///
+    /// WHY THIS EXISTS — race window fix:
+    /// setActiveMemoryContext() + setProjectSettings() are two separate async calls.
+    /// Between them, availableTools is computed with projects present but an empty
+    /// projectSettingsCache — causing isProg=false and dropping all git/build tools
+    /// (including git_push) from the tool list sent to the AI.
+    /// This method eliminates the window by writing both in one synchronous pass.
+    public func setMemoryContextAndSettings(
+        context: ActiveMemoryContext,
+        settings: [UUID: ProjectSettings]
+    ) {
+        self.activeMemoryContext = context
+        self.projectSettingsCache = settings
+
+        if context.projects.isEmpty {
+            print("[ToolExecutionService] 🔒 File tools blocked (no projects in thread)")
+        } else {
+            let names = context.projectNames.joined(separator: ", ")
+            print("[ToolExecutionService] 🔓 Context+Settings updated atomically: \(names) (\(settings.count) projects)")
+        }
+    }
+
     /// Updates the license state used for plan-based tool access control.
     public func setLicenseState(_ state: LicenseState) {
         self.licenseState = state
@@ -145,7 +168,7 @@ public actor ToolExecutionService {
         // Tools that require an active workspace project.
         let projectRequiredTools: Set<String> = [
             "list_files", "read_file", "write_file", "delete_file",
-            "git_status", "git_diff", "git_add", "git_commit",
+            "git_status", "git_diff", "git_add", "git_commit", "git_push",
             "git_log", "git_reset", "git_revert", "git_checkout",
             "build_project", "run_tests", "read_build_log",
             "run_terminal"
@@ -195,7 +218,10 @@ public actor ToolExecutionService {
             case "memorize", "recall", "search_memory", "delete_memory":
                 return try await executeMemoryTool(name: name, argsData: argsData)
 
-            case "git_status", "git_diff", "git_add", "git_commit",
+            // WHY git_push is listed explicitly: the switch must cover every git tool name.
+            // Missing git_push here caused it to fall into `default` → "Unknown tool" error,
+            // forcing fallback to run_terminal even when the specialized tool was available.
+            case "git_status", "git_diff", "git_add", "git_commit", "git_push",
                  "git_log", "git_reset", "git_revert", "git_checkout",
                  "build_project", "run_tests", "read_build_log":
                 return try await executeGitBuildTool(name: name, argsData: argsData)

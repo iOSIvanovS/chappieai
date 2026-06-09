@@ -25,6 +25,11 @@
 //   projectPathMap (name → absolutePath) is included in ActiveMemoryContext so
 //   run_terminal can prefix commands with `cd /path && ` for deterministic execution.
 //   Populated from activeProjects.absolutePath — available after bookmark resolution.
+//
+// ATOMIC CONTEXT+SETTINGS UPDATE:
+//   setMemoryContextAndSettings() writes both ActiveMemoryContext and projectSettingsCache
+//   in a single actor hop — eliminating the race window where availableTools was computed
+//   with projects present but an empty settings cache (isProg=false → git tools dropped).
 
 import ChappieCore
 
@@ -68,11 +73,15 @@ extension ChappieViewModel {
             projects: projectInfos,
             projectPathMap: pathMap
         )
-        await ts.setActiveMemoryContext(context)
 
-        // Push project settings so ToolExecutionService can enforce permissions.
+        // Project settings for ToolAccessControl — must arrive together with context.
         let settingsMap = Dictionary(uniqueKeysWithValues: activeProjects.map { ($0.id, $0.settings) })
-        await ts.setProjectSettings(settingsMap)
+
+        // WHY atomic: writing context then settings as two separate actor hops creates a window
+        // where availableTools is computed with projects present but projectSettingsCache empty.
+        // In that window isProg=false and all git/build tools (incl. git_push) vanish from the
+        // tool list sent to the AI. One call = one hop = no window.
+        await ts.setMemoryContextAndSettings(context: context, settings: settingsMap)
 
         // Register callback so memory writes immediately invalidate the cached system prompt.
         // This ensures memorize/delete_memory changes are visible in the very next message.
