@@ -146,9 +146,12 @@ struct LicenseActivationView: View {
                 Text("license.currency_picker_label")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Picker("", selection: $selectedCurrency) {
+                Picker(selection: $selectedCurrency) {
                     ForEach(currencies, id: \.self) { Text($0) }
+                } label: {
+                    EmptyView()
                 }
+                .labelsHidden()
                 .pickerStyle(.segmented)
                 .frame(width: 160)
             }
