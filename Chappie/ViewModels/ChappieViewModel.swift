@@ -168,11 +168,13 @@ final class ChappieViewModel {
 
     /// Map of project display name → absolute path on disk.
     /// Passed to MCPHelperLauncher so MCP can route git_* tools to the correct directory.
-    /// Only includes projects with a resolved absolutePath (available, bookmark resolved).
+    /// WHY no isProgrammingProject filter: git works on ANY project with a repo, not just
+    /// programming ones. Filtering by isProgrammingProject caused non-programming projects
+    /// (e.g. landing sites) to be excluded from git routing, breaking git_status/push/etc.
     var activeProjectPathMap: [String: String] {
         Dictionary(
             uniqueKeysWithValues: activeProjects
-                .filter { $0.settings.isProgrammingProject && !$0.isUnavailable }
+                .filter { !$0.isUnavailable }
                 .compactMap { project -> (String, String)? in
                     guard let path = project.absolutePath else { return nil }
                     return (project.displayName, path)

@@ -64,11 +64,33 @@
 //   This ensures projectPathMap in MCP always reflects the latest resolved absolutePaths.
 //   Without this, git_* tools would use stale or empty paths on first thread load.
 //
+// WHY restartMCPIfNeeded() IS CALLED UNCONDITIONALLY AFTER PATH RESOLUTION:
+//   The guard !Task.isCancelled before FileSystem assembly protects against wiring the wrong
+//   FS to a stale thread, but paths in activeProjects are already resolved at that point.
+//   MCP restart must happen regardless of cancellation — if paths were resolved, MCP needs them.
+//   Skipping the restart on cancellation left MCP with a stale/empty projectPathMap, causing
+//   git_status and other git_* tools to return "projectPathMap is empty" errors.
+//
 // TERMINAL PATH MAP SYNC:
 //   After bookmark resolution, syncActiveMemoryContext() is called to push the updated
 //   projectPathMap (name → absolutePath) into ActiveMemoryContext inside ToolExecutionService.
 //   This makes run_terminal's "project" parameter work correctly — it reads projectPathMap
 //   to prefix commands with `cd /absolute/path && ` for deterministic execution.
+//
+// PRE-RESET BEFORE SYNC (B-05 FIX):
+//   At the start of syncFileSystemForActiveThread(), all projects are reset to
+//   isUnavailable=false before the resolution loop begins.
+//   WHY: if a previous sync Task was cancelled mid-loop, some projects may still carry
+//   isUnavailable=true from that interrupted pass. Without pre-reset, a healthy project
+//   that was never reached in the cancelled loop stays orange permanently — a false positive.
+//   Pre-reset ensures every sync starts from a clean slate.
+//
+// SECURITY SCOPE TIMING (B-05 FIX):
+//   startAccessingSecurityScopedResource() is asynchronous in effect — macOS needs a
+//   brief moment to grant sandbox access before FileManager.fileExists() returns correctly.
+//   Without a yield, fileExists() can return false on a healthy folder immediately after
+//   startAccessingSecurityScopedResource(), causing a false isUnavailable=true.
+//   We yield with Task.yield() after starting access to let the run loop process the grant.
 //
 // NOTE: v2PersonaBlock lives in ChappieViewModel+PersonaBlock.swift — extracted for size.
 
@@ -173,10 +195,20 @@ extension ChappieViewModel {
         self.isFileSystemReady = false
         await ts.setFileSystemReady(false)
 
+        // PRE-RESET: clear stale isUnavailable flags from any previously cancelled sync.
+        // Without this, a project not reached in a cancelled loop stays orange permanently.
+        for i in activeProjects.indices {
+            activeProjects[i].isUnavailable = false
+        }
+
         var workspaces: [(name: String, url: URL)] = []
 
         for i in activeProjects.indices {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                // Paths already resolved up to this point — MCP still needs them.
+                // Fall through to restartMCPIfNeeded() below instead of returning early.
+                break
+            }
 
             let project = activeProjects[i]
 
@@ -198,6 +230,8 @@ extension ChappieViewModel {
                 bookmarkDataIsStale: &isStale
             ) {
                 _ = url.startAccessingSecurityScopedResource()
+                // Yield to let macOS process the sandbox access grant before fileExists() check.
+                await Task.yield()
                 resolvedURL = url
             } else {
                 resolvedURL = try? URL(
@@ -237,7 +271,19 @@ extension ChappieViewModel {
             print("[ChappieViewModel] M-09: ✅ '\(project.displayName)' → \(url.path)")
         }
 
-        guard !Task.isCancelled else { return }
+        // WHY unconditional restart here:
+        // Paths are already written into activeProjects above — MCP must get them regardless
+        // of whether the Task was cancelled. Cancellation only guards FS wiring (wrong thread),
+        // not path propagation to MCP. Without this, git_* tools see an empty projectPathMap.
+        restartMCPIfNeeded()
+        await syncActiveMemoryContext()
+
+        // Guard FS wiring against cancellation — we don't want to wire the wrong thread's FS.
+        guard !Task.isCancelled else {
+            self.isFileSystemReady = true
+            await ts.setFileSystemReady(true)
+            return
+        }
 
         if workspaces.isEmpty {
             print("[ChappieViewModel] M-09: No workspaces resolved — all projects unavailable")
@@ -262,13 +308,6 @@ extension ChappieViewModel {
         if let thread = activeThread {
             await rebuildThreadSessionOnly(for: thread)
         }
-
-        // Push updated projectPathMap into ToolExecutionService so run_terminal can use it.
-        // WHY HERE: absolutePaths are now resolved — this is the earliest safe moment to sync.
-        await syncActiveMemoryContext()
-
-        // Restart MCP with fresh projectPathMap — paths are now resolved, git_* tools need them.
-        restartMCPIfNeeded()
 
         let names = workspaces.map(\.name).joined(separator: ", ")
         print("[ChappieViewModel] M-09: FileSystem → [\(names)] (\(workspaces.count) workspaces)")

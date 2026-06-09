@@ -33,6 +33,10 @@ extension ChappieViewModel {
 
         Task {
             do {
+                // Always create a fresh bookmark from the URL the user actually picked.
+                // WHY: if a project with the same name was previously added from a different
+                // location (e.g. Downloads), the old bookmark points to the wrong folder.
+                // We must update it — not silently skip — to avoid stale path resolution.
                 let bookmarkData: Data
                 do {
                     bookmarkData = try url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
@@ -41,8 +45,24 @@ extension ChappieViewModel {
                 }
 
                 let displayName = url.lastPathComponent
-                guard !activeProjects.contains(where: { $0.displayName == displayName }) else {
-                    print("[ChappieViewModel] Project '\(displayName)' already added")
+
+                // If project with this name is already in this thread — update its bookmark
+                // so the path always reflects the folder the user actually selected.
+                if let existing = activeProjects.first(where: { $0.displayName == displayName }) {
+                    try await pStore.updateBookmark(bookmarkData, forProjectId: existing.id)
+                    print("[ChappieViewModel] Project '\(displayName)' bookmark updated → \(url.path)")
+
+                    // WHY full reload here (not just syncFileSystem):
+                    // After bookmark update, absolutePath in activeProjects is still stale.
+                    // loadProjectsForThread reloads fresh DTOs, buildAndSyncMemoryContext
+                    // rebuilds ThreadSession with them, syncFileSystemForActiveThread resolves
+                    // the new bookmark and injects absolutePath into the system prompt.
+                    // Without this chain the system prompt still shows the old path until restart.
+                    await loadProjectsForThread(thread)
+                    buildAndSyncMemoryContext()
+                    await syncActiveMemoryContext()
+                    await syncFileSystemForActiveThread()
+                    restartMCPIfNeeded()
                     return
                 }
 
@@ -62,7 +82,7 @@ extension ChappieViewModel {
                     await syncFileSystemForActiveThread()
                     restartMCPIfNeeded()
                 }
-                print("[ChappieViewModel] Project '\(displayName)' added to thread '\(thread.title)'")
+                print("[ChappieViewModel] Project '\(displayName)' added to thread '\(thread.title)' → \(url.path)")
             } catch {
                 print("[ChappieViewModel] Error adding project: \(error)")
             }
@@ -123,13 +143,17 @@ extension ChappieViewModel {
     /// Restarts MCP helper with the current workspace, env map, and path map.
     /// Call after any change that may affect which environments or paths are active.
     ///
+    /// WHY workspacePath is optional:
+    /// workspaceURL may be nil when only thread-attached projects are used (no global workspace).
+    /// MCPHelperLauncher handles nil gracefully — falls back to currentDirectoryPath.
+    /// The critical data is projectPathMap — it must always be forwarded regardless of workspaceURL.
+    ///
     /// WHY BOTH MAPS:
     /// projectEnvMap routes build_project/run_tests to the correct dev environment.
     /// projectPathMap routes git_* tools to the correct working directory per project.
     func restartMCPIfNeeded() {
-        guard let workspaceURL else { return }
-        MCPHelperLauncher.shared.restartWithWorkspace(
-            workspaceURL,
+        MCPHelperLauncher.shared.launch(
+            workspacePath: workspaceURL?.path,
             projectEnvMap: activeProjectEnvMap,
             projectPathMap: activeProjectPathMap
         )

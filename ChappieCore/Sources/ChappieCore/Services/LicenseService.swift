@@ -72,7 +72,7 @@ public actor LicenseService {
                 let result = try await validateOnline(key: licenseKey, hardwareId: hardwareId)
                 if result.isActive {
                     KeychainHelper.write(key: .lastValidatedAt, value: ISO8601DateFormatter().string(from: Date()))
-                    let expiresAt = result.expiresAt.flatMap { ISO8601DateFormatter().date(from: $0) }
+                    let expiresAt = result.expiresAt.flatMap { parseDate($0) }
                     if plan == .trial {
                         let days = daysRemaining(from: expiresAt)
                         state = days > 0 ? .trial(daysRemaining: days) : .expired(plan: .trial)
@@ -104,7 +104,7 @@ public actor LicenseService {
             if let exp = result.expiresAt { KeychainHelper.write(key: .expiresAt, value: exp) }
             KeychainHelper.write(key: .lastValidatedAt, value: ISO8601DateFormatter().string(from: Date()))
 
-            let expiresAt = result.expiresAt.flatMap { ISO8601DateFormatter().date(from: $0) }
+            let expiresAt = result.expiresAt.flatMap { parseDate($0) }
             let days = daysRemaining(from: expiresAt)
 
             if result.isActive && days > 0 {
@@ -124,7 +124,7 @@ public actor LicenseService {
         let result = try await activateOnline(key: key, hardwareId: hardwareId)
 
         let plan = LicensePlan(rawValue: result.plan) ?? .starter
-        let expiresAt = result.expiresAt.flatMap { ISO8601DateFormatter().date(from: $0) }
+        let expiresAt = result.expiresAt.flatMap { parseDate($0) }
 
         KeychainHelper.write(key: .key, value: key)
         KeychainHelper.write(key: .plan, value: plan.rawValue)
@@ -151,6 +151,32 @@ public actor LicenseService {
         let new = UUID().uuidString
         KeychainHelper.write(key: .hardwareId, value: new)
         return new
+    }
+
+    // MARK: - Date Parsing
+
+    /// Tolerant ISO8601 parser — handles both "2026-06-15T22:11:31Z" (new backend)
+    /// and legacy "2026-06-15T22:11:31.034478" (old rows without timezone suffix).
+    private func parseDate(_ string: String) -> Date? {
+        // Standard ISO8601 with Z or +offset — covers new backend output
+        let strict = ISO8601DateFormatter()
+        strict.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = strict.date(from: string) { return date }
+
+        // Without fractional seconds
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        if let date = plain.date(from: string) { return date }
+
+        // Legacy: naive datetime without timezone (old DB rows) — treat as UTC
+        let legacy = DateFormatter()
+        legacy.locale = Locale(identifier: "en_US_POSIX")
+        legacy.timeZone = TimeZone(identifier: "UTC")
+        legacy.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSSSS"
+        if let date = legacy.date(from: string) { return date }
+
+        legacy.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        return legacy.date(from: string)
     }
 
     // MARK: - Owner JWT Verification

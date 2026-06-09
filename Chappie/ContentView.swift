@@ -115,6 +115,9 @@ struct ContentView: View {
             .controlSize(.large)
             Spacer()
         }
+        .frame(maxWidth: 400)
+        .padding(40)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .sheet(isPresented: $showLicenseActivation) {
             LicenseActivationView(viewModel: viewModel)
@@ -327,6 +330,16 @@ struct ContentView: View {
 
     private var topPanel: some View {
         VStack(spacing: 6) {
+            
+            // Trial banner — shown only during active trial period
+            if case .trial(let days) = viewModel.licenseState {
+                TrialBannerView(daysRemaining: days) {
+                    showLicenseActivation = true
+                }
+                .padding(.horizontal, 0)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+            
             if viewModel.activeThread != nil && !viewModel.providers.isEmpty {
                 ModelPickerRow(
                     activeProvider: viewModel.activeProvider,
@@ -376,14 +389,7 @@ struct ContentView: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
-            // Trial banner — shown only during active trial period
-            if case .trial(let days) = viewModel.licenseState {
-                TrialBannerView(daysRemaining: days) {
-                    showLicenseActivation = true
-                }
-                .padding(.horizontal, 0)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
+            
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)
