@@ -13,7 +13,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-14%2B-blue?style=flat-square" />
-  <img src="https://img.shields.io/badge/version-1.1-brightgreen?style=flat-square" />
+  <img src="https://img.shields.io/badge/version-1.0.1-brightgreen?style=flat-square" />
   <img src="https://img.shields.io/badge/license-commercial-orange?style=flat-square" />
   <img src="https://img.shields.io/badge/Telegram-chappieaiapp-2CA5E0?style=flat-square&logo=telegram" />
 </p>
@@ -79,8 +79,8 @@ Chappie checks for updates automatically and installs them in the background via
 
 | Version | Release date | Download |
 |---------|-------------|---------|
-| 1.1 | 2026 | [ChappieAI-1.1.dmg](https://github.com/iOSIvanovS/chappieai/raw/main/releases/ChappieAI-1.1.dmg) |
-| 1.0 | 2026 | [ChappieAI-1.0.dmg](https://github.com/iOSIvanovS/chappieai/raw/main/releases/ChappieAI-1.0.dmg) |
+| 1.0.1 | June 2025 | [ChappieAI-1.0.1.dmg](https://github.com/iOSIvanovS/chappieai/raw/main/releases/ChappieAI-1.0.1.dmg) |
+| 1.0.0 | June 2025 | [ChappieAI-1.0.0.dmg](https://github.com/iOSIvanovS/chappieai/raw/main/releases/ChappieAI-1.0.0.dmg) |
 
 **System requirements:** macOS 14 Sonoma or later · Apple Silicon or Intel
 
@@ -96,11 +96,9 @@ macOS may show a security warning on first launch because ChappieAI is distribut
 
 ## Pricing
 
-| Plan | Price | Devices |
-|------|-------|---------|
-| Starter | 990 ₽ / month | 1 Mac |
-| Pro | 1 990 ₽ / month | 1 Mac |
-| Team | 4 990 ₽ / month | up to 5 Macs |
+Visit [chappieai.app](https://chappieai.app) (worldwide) or [chappieai.ru](https://chappieai.ru) (Russia) for current pricing.
+
+All plans include a **7-day free trial** with full access — no credit card required.
 
 > **Your own API keys** — Chappie does not proxy your requests. You connect directly to OpenAI, Anthropic, or any other provider. You pay them, not us.
 
