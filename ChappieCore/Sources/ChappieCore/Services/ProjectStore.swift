@@ -160,6 +160,28 @@ public actor ProjectStore {
         try await refreshCache()
     }
 
+    // MARK: - Downgrade all projects to Advisor
+
+    /// Resets ALL projects to .advisor role, clearing all access flags.
+    /// Called when a Starter license is activated — Starter plan forbids Executor mode.
+    /// WHY single batch write: avoids N round-trips to DataStore for N projects.
+    public func downgradeAllProjectsToAdvisor() async throws {
+        var payloads = try await loadPayloads()
+        var changed = false
+        for idx in payloads.indices {
+            if var settings = try? JSONDecoder().decode(ProjectSettings.self, from: payloads[idx].settingsJSON),
+               settings.agentRole == .executor {
+                settings.downgradeToAdvisor()
+                payloads[idx].settingsJSON = (try? JSONEncoder().encode(settings)) ?? payloads[idx].settingsJSON
+                changed = true
+            }
+        }
+        guard changed else { return }
+        try await savePayloads(payloads)
+        try await refreshCache()
+        print("[ProjectStore] ✅ All projects downgraded to Advisor (Starter plan)")
+    }
+
     // MARK: - Delete
 
     /// Deletes a project and its bookmark.

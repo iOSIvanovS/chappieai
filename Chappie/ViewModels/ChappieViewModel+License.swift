@@ -21,6 +21,7 @@ extension ChappieViewModel {
 
     /// Sync actor state → @Observable property so SwiftUI re-renders.
     /// Also pushes the new state to ToolExecutionService for plan-based access control.
+    /// When Starter plan is detected — downgrades all projects to Advisor role.
     func syncLicenseState() async {
         let newState = await licenseService.state
         licenseState = newState
@@ -29,6 +30,19 @@ extension ChappieViewModel {
         // Propagate to ToolExecutionService so Starter plan blocks execution tools.
         if let ts = toolService {
             await ts.setLicenseState(newState)
+        }
+
+        // Starter plan forbids Executor role — downgrade all projects silently.
+        if case .active(let plan, _) = newState, plan == .starter {
+            if let pStore = projectStore {
+                try? await pStore.downgradeAllProjectsToAdvisor()
+                // Reload active projects so UI reflects the change immediately.
+                if let thread = activeThread {
+                    await loadProjectsForThread(thread)
+                    buildAndSyncMemoryContext()
+                    await syncActiveMemoryContext()
+                }
+            }
         }
     }
 

@@ -39,6 +39,8 @@
 //   balance is passed as Double? from StreamingState.currentBalance in ContentView.
 //   Balance pill is hidden when nil — provider doesn't support balance or hasn't returned one.
 //   Balance updates do NOT invalidate ContentView — only ProjectChipsView re-renders.
+//
+// UX: Remove button is always visible (not hover-triggered) to prevent chip width jitter.
 
 import SwiftUI
 import ChappieCore
@@ -66,7 +68,6 @@ struct ProjectChipsView: View {
 
     // MARK: - State
 
-    @State private var hoveredProjectId: UUID? = nil
     /// Width of the right pill — measured via background GeometryReader.
     @State private var rightPillWidth: CGFloat = 0
 
@@ -160,6 +161,9 @@ struct ProjectChipsView: View {
         let chipColor: Color = project.isUnavailable ? .orange : Color.accentColor
         let borderOpacity: Double = project.isUnavailable ? 0.6 : (isFileSystemReady ? 0.2 : 0.08)
         let isInteractive = !isThinking && isFileSystemReady && !project.isUnavailable
+        // Remove button is visible when not blocked by thinking/loading.
+        // Always shown for unavailable projects so user can clean up broken entries.
+        let showRemove = !isThinking && isFileSystemReady
 
         return HStack(spacing: 4) {
             if project.isUnavailable {
@@ -189,9 +193,9 @@ struct ProjectChipsView: View {
                 roleIndicator(for: project.settings.agentRole)
             }
 
-            // Show remove button on hover — always available for unavailable projects
-            // so user can clean up broken entries without restoring the folder.
-            if hoveredProjectId == project.id && !isThinking && isFileSystemReady {
+            // Remove button is always visible — no hover needed.
+            // Prevents chip width jitter caused by the button appearing/disappearing on hover.
+            if showRemove {
                 Button {
                     onRemoveProject(project.id)
                 } label: {
@@ -200,7 +204,6 @@ struct ProjectChipsView: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .transition(.scale.combined(with: .opacity))
             }
         }
         .padding(.horizontal, 8)
@@ -211,11 +214,6 @@ struct ProjectChipsView: View {
                 : Color(NSColor.controlBackgroundColor)
         ))
         .overlay(Capsule().stroke(chipColor.opacity(borderOpacity), lineWidth: project.isUnavailable ? 1.0 : 0.5))
-        .onHover { isHovered in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                hoveredProjectId = isHovered ? project.id : nil
-            }
-        }
         .onTapGesture {
             if isInteractive { onOpenSettings(project.id) }
         }

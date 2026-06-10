@@ -279,11 +279,13 @@ struct SettingsView: View {
                             .font(.headline)
 
                         HStack(spacing: 12) {
-                            // Current license state badge
+                            // Status badge: shows state + plan name when available.
                             HStack(spacing: 6) {
                                 Image(systemName: licenseIcon)
                                     .foregroundStyle(licenseColor)
-                                Text(licenseLabel)
+                                // WHY: plan name (Starter/Pro/Team) shown after status
+                                // so users immediately see which plan they're on.
+                                Text(licenseBadgeText)
                                     .font(.system(size: 13, weight: .medium))
                                     .foregroundStyle(licenseColor)
                             }
@@ -293,14 +295,12 @@ struct SettingsView: View {
 
                             Spacer()
 
-                            // Only show Activate button when not yet licensed
-                            if !viewModel.isOwner {
-                                Button {
-                                    showLicenseActivation = true
-                                } label: {
-                                    Label("license.activate_button", systemImage: "key.badge.plus")
-                                }
-                                .buttonStyle(.borderedProminent)
+                            // WHY: Always show the button so users can upgrade their plan.
+                            // Active/owner users see "Manage Plan", others see "Activate".
+                            Button {
+                                showLicenseActivation = true
+                            } label: {
+                                Label(licenseButtonLabel, systemImage: licenseButtonIcon)
                             }
                         }
                     }
@@ -355,6 +355,38 @@ struct SettingsView: View {
 
     // MARK: - License helpers
 
+    // WHY: Plan names (Starter/Pro/Team) are brand names — same in all languages.
+    // Status label is localized, plan name is appended as a fixed suffix.
+    private var licenseBadgeText: String {
+        let status = licenseLabel
+        if let plan = licensePlanName {
+            return "\(status) · \(plan)"
+        }
+        return status
+    }
+
+    // Returns the marketing plan name or nil when not applicable (trial/owner/etc).
+    private var licensePlanName: String? {
+        switch viewModel.licenseState {
+        case .active(let plan, _):
+            switch plan {
+            case .starter: return "Starter"
+            case .pro:     return "Pro"
+            case .team:    return "Team"
+            default:       return nil
+            }
+        case .expired(let plan):
+            switch plan {
+            case .starter: return "Starter"
+            case .pro:     return "Pro"
+            case .team:    return "Team"
+            default:       return nil
+            }
+        default:
+            return nil
+        }
+    }
+
     private var licenseLabel: String {
         switch viewModel.licenseState {
         case .loading:     return String(localized: "license.state_checking")
@@ -387,6 +419,25 @@ struct SettingsView: View {
         case .expired:     return .red
         default:           return .secondary
         }
+    }
+
+    // WHY: Users with an active plan see "Manage Plan" (upgrade path),
+    // everyone else sees "Activate" (primary CTA).
+    private var isLicensed: Bool {
+        switch viewModel.licenseState {
+        case .owner, .active: return true
+        default: return false
+        }
+    }
+
+    private var licenseButtonLabel: String {
+        isLicensed
+            ? String(localized: "license.manage_plan_button")
+            : String(localized: "license.activate_button")
+    }
+
+    private var licenseButtonIcon: String {
+        isLicensed ? "arrow.up.circle" : "key.badge.plus"
     }
 
     // MARK: - Helpers

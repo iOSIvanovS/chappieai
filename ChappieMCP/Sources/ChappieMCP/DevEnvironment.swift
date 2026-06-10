@@ -25,4 +25,6 @@ enum DevEnvironment: String {
     case flutter         = "flutter"
     case reacttypescript = "react_typescript"
     case dotnet          = "dotnet"
+    // Static HTML/CSS/JS — no dedicated build/test tools in ChappieMCP.
+    case html            = "html"
 }

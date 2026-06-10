@@ -151,13 +151,22 @@ struct ContentView: View {
             .sheet(item: $selectedProjectForSettings) { project in
                 ProjectSettingsSheet(
                     project: project,
+                    canExecuteTools: viewModel.canExecuteTools,
                     onSave: { newSettings in
                         viewModel.updateProjectSettings(newSettings, forProjectId: project.id)
                         selectedProjectForSettings = nil
                     },
                     onDismiss: { selectedProjectForSettings = nil },
+                    // "Change Plan" dismisses the settings sheet and opens LicenseActivationView
+                    onChangePlan: { showLicenseActivation = true },
                     onDetectEnvironment: { completion in
-                        viewModel.detectDevEnvironment(for: project, completion: completion)
+                        // WHY fresh lookup by id (not captured `project`):
+                        // `project` is a value-type snapshot captured when the sheet opened.
+                        // absolutePath is runtime-only — it may have been nil at capture time
+                        // if syncFileSystemForActiveThread() hadn't finished yet.
+                        // We look up the live copy from activeProjects so absolutePath is current.
+                        let live = viewModel.activeProjects.first(where: { $0.id == project.id }) ?? project
+                        viewModel.detectDevEnvironment(for: live, completion: completion)
                     }
                 )
             }

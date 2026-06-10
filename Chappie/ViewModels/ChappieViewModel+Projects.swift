@@ -2,7 +2,7 @@
 // Chappie
 //
 // Project management: add/remove via UI or AI tool, settings update, reload after change.
-// detectDevEnvironment: sends file list to AI and parses the detected DevEnvironment.
+// detectDevEnvironment: local rule-based detection first, AI fallback for exotic stacks.
 
 import SwiftUI
 import ChappieCore
@@ -52,12 +52,6 @@ extension ChappieViewModel {
                     try await pStore.updateBookmark(bookmarkData, forProjectId: existing.id)
                     print("[ChappieViewModel] Project '\(displayName)' bookmark updated → \(url.path)")
 
-                    // WHY full reload here (not just syncFileSystem):
-                    // After bookmark update, absolutePath in activeProjects is still stale.
-                    // loadProjectsForThread reloads fresh DTOs, buildAndSyncMemoryContext
-                    // rebuilds ThreadSession with them, syncFileSystemForActiveThread resolves
-                    // the new bookmark and injects absolutePath into the system prompt.
-                    // Without this chain the system prompt still shows the old path until restart.
                     await loadProjectsForThread(thread)
                     buildAndSyncMemoryContext()
                     await syncActiveMemoryContext()
@@ -141,12 +135,6 @@ extension ChappieViewModel {
     // MARK: - MCP Restart
 
     /// Restarts MCP helper with the current workspace, env map, and path map.
-    /// Call after any change that may affect which environments or paths are active.
-    ///
-    /// WHY workspacePath is optional:
-    /// workspaceURL may be nil when only thread-attached projects are used (no global workspace).
-    /// MCPHelperLauncher handles nil gracefully — falls back to currentDirectoryPath.
-    /// The critical data is projectPathMap — it must always be forwarded regardless of workspaceURL.
     ///
     /// WHY BOTH MAPS:
     /// projectEnvMap routes build_project/run_tests to the correct dev environment.
@@ -161,27 +149,64 @@ extension ChappieViewModel {
 
     // MARK: - Dev Environment Auto-Detection
 
-    /// Sends the project file list to the active AI model and asks it to identify
-    /// the dev environment. Calls completion on MainActor with the detected value.
-    /// Falls back to .unknown on any error or if no AI client is available.
+    /// Detects the dev environment for a specific project by scanning its own files.
+    ///
+    /// WHY we resolve the bookmark directly here instead of using project.absolutePath:
+    /// absolutePath is populated asynchronously by syncFileSystemForActiveThread(), and
+    /// that method has a PRE-RESET step that clears absolutePath on ALL projects before
+    /// the resolution loop. If the user taps "Detect" while a sync is in progress (e.g.
+    /// triggered by saving settings), absolutePath may be nil even for healthy projects.
+    /// Resolving the bookmark ourselves makes detection independent of sync timing.
+    ///
+    /// Local detection runs first — covers all common stacks without an AI call.
+    /// AI fallback fires only for exotic stacks not covered by local rules.
     func detectDevEnvironment(
         for project: ProjectMetadata,
         completion: @escaping @MainActor (DevEnvironment) -> Void
     ) {
-        guard let client = aiClient else {
-            print("[ChappieViewModel] detectDevEnvironment: no AI client")
+        guard let pStore = projectStore else {
             Task { @MainActor in completion(.unknown) }
             return
         }
 
         Task {
-            let fileList: String
-            if let fs = fileSystem {
-                let files = (try? await fs.listFiles()) ?? []
-                fileList = files.prefix(200).joined(separator: "\n")
-            } else {
-                fileList = "(file list unavailable)"
+            // Resolve bookmark directly — do NOT rely on project.absolutePath.
+            // WHY: see method-level comment above.
+            let resolvedURL = await resolveBookmarkURL(for: project.id, using: pStore)
+
+            guard let projectURL = resolvedURL else {
+                print("[detectEnv] Could not resolve bookmark for '\(project.displayName)' → .unknown")
+                await MainActor.run { completion(.unknown) }
+                return
             }
+
+            let absolutePath = projectURL.path
+            let projectFS = FileSystemManager(workspaceURL: projectURL)
+
+            let files = (try? await projectFS.listFiles()) ?? []
+            print("[detectEnv] '\(project.displayName)': \(files.count) files scanned at \(absolutePath)")
+
+            guard !files.isEmpty else {
+                print("[detectEnv] empty file list for '\(project.displayName)' → .unknown")
+                await MainActor.run { completion(.unknown) }
+                return
+            }
+
+            // Local rule-based detection — fast, free, covers all common stacks.
+            if let local = detectEnvironmentLocally(from: files, projectName: project.displayName) {
+                print("[detectEnv] local match → \(local.displayName) for '\(project.displayName)'")
+                await MainActor.run { completion(local) }
+                return
+            }
+
+            // AI fallback — only for exotic stacks not covered by local rules.
+            guard let client = aiClient else {
+                print("[detectEnv] no AI client, local rules found no match → .unknown for '\(project.displayName)'")
+                await MainActor.run { completion(.unknown) }
+                return
+            }
+
+            let fileList = files.prefix(200).joined(separator: "\n")
 
             let hints = DevEnvironment.allCases
                 .filter { $0 != .unknown }
@@ -190,7 +215,7 @@ extension ChappieViewModel {
 
             let systemPrompt = """
             You are a dev environment detector. Respond with EXACTLY one raw value from this list:
-            unknown, xcode, nodejs, python, go, rust, java, kotlin, flutter, react_typescript, dotnet
+            unknown, xcode, nodejs, python, go, rust, java, kotlin, flutter, react_typescript, dotnet, html
 
             Detection hints (env: marker files):
             \(hints)
@@ -200,6 +225,8 @@ extension ChappieViewModel {
             - If you see package.json → nodejs
             - If you see pubspec.yaml → flutter
             - If you see tsconfig.json or .tsx files → react_typescript
+            - If you see index.html or .html files without any framework marker → html
+            - If the stack is not in the list above → unknown
             - Respond with the single raw value only. No explanation, no punctuation.
             """
 
@@ -220,13 +247,79 @@ extension ChappieViewModel {
                     .lowercased()
 
                 let detected = DevEnvironment(rawValue: raw) ?? .unknown
-                print("[ChappieViewModel] detectDevEnvironment → '\(raw)' → \(detected.displayName)")
+                print("[detectEnv] AI → '\(raw)' → \(detected.displayName) for '\(project.displayName)'")
                 await MainActor.run { completion(detected) }
             } catch {
-                print("[ChappieViewModel] detectDevEnvironment failed: \(error.localizedDescription)")
+                print("[detectEnv] AI call failed: \(error.localizedDescription) → .unknown for '\(project.displayName)'")
                 await MainActor.run { completion(.unknown) }
             }
         }
+    }
+
+    /// Resolves security-scoped bookmark for a project directly from ProjectStore.
+    /// Returns nil if bookmark is missing, stale, or the folder doesn't exist.
+    private func resolveBookmarkURL(for projectId: UUID, using pStore: ProjectStore) async -> URL? {
+        guard let bookmarkData = try? await pStore.loadBookmark(forProjectId: projectId),
+              !bookmarkData.isEmpty else { return nil }
+
+        var isStale = false
+        let url: URL?
+
+        if let resolved = try? URL(
+            resolvingBookmarkData: bookmarkData,
+            options: .withSecurityScope,
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        ) {
+            _ = resolved.startAccessingSecurityScopedResource()
+            await Task.yield()
+            url = resolved
+        } else {
+            url = try? URL(
+                resolvingBookmarkData: bookmarkData,
+                options: [],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            )
+        }
+
+        guard let resolvedURL = url, !isStale else { return nil }
+        guard FileManager.default.fileExists(atPath: resolvedURL.path) else { return nil }
+        return resolvedURL
+    }
+
+    /// Fast local detection by scanning file names and extensions against known marker files.
+    /// Returns nil only if no rule matches — caller falls back to AI for exotic stacks.
+    ///
+    /// WHY html is last: it's the most generic stack (any folder can have .html).
+    /// We only assign it when no more specific framework marker is found.
+    private func detectEnvironmentLocally(from files: [String], projectName: String = "") -> DevEnvironment? {
+        let fileNames = Set(files.map { URL(fileURLWithPath: $0).lastPathComponent.lowercased() })
+        let extensions = Set(files.compactMap {
+            let ext = URL(fileURLWithPath: $0).pathExtension.lowercased()
+            return ext.isEmpty ? nil : ext
+        })
+
+        print("[detectEnv] '\(projectName)' fileNames sample: \(Array(fileNames.prefix(10)))")
+        print("[detectEnv] '\(projectName)' extensions: \(extensions)")
+
+        // Ordered by specificity — most specific markers first.
+        let candidates: [(DevEnvironment, Bool)] = [
+            (.xcode,           fileNames.contains(where: { $0.hasSuffix(".xcodeproj") || $0.hasSuffix(".xcworkspace") }) || extensions.contains("swift")),
+            (.flutter,         fileNames.contains("pubspec.yaml")),
+            (.reacttypescript,  fileNames.contains("tsconfig.json") || fileNames.contains("vite.config.ts") || fileNames.contains("next.config.ts") || extensions.contains("tsx")),
+            (.nodejs,           fileNames.contains("package.json")),
+            (.python,           fileNames.contains("requirements.txt") || fileNames.contains("pyproject.toml") || fileNames.contains("setup.py") || fileNames.contains("main.py") || fileNames.contains("manage.py") || extensions.contains("py")),
+            (.rust,             fileNames.contains("cargo.toml")),
+            (.go,               fileNames.contains("go.mod")),
+            (.kotlin,           fileNames.contains("androidmanifest.xml") || fileNames.contains("build.gradle.kts")),
+            (.java,             fileNames.contains("pom.xml") || (fileNames.contains("build.gradle") && !fileNames.contains("androidmanifest.xml"))),
+            (.dotnet,           extensions.contains("csproj") || extensions.contains("sln") || extensions.contains("cs")),
+            // HTML/CSS/JS: static site — checked last, most generic.
+            (.html,             fileNames.contains("index.html") || extensions.contains("html")),
+        ]
+
+        return candidates.first(where: { $0.1 })?.0
     }
 
     // MARK: - Register AI Tool Handlers

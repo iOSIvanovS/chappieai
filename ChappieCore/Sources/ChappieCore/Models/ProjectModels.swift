@@ -214,6 +214,9 @@ public enum DevEnvironment: String, Codable, Sendable, CaseIterable {
     case flutter         = "flutter"
     case reacttypescript = "react_typescript"
     case dotnet          = "dotnet"
+    // Static HTML/CSS/JS — no build system, no package manager.
+    // Detected by index.html or .html files when no framework marker is present.
+    case html            = "html"
 
     public var displayName: String {
         switch self {
@@ -228,6 +231,7 @@ public enum DevEnvironment: String, Codable, Sendable, CaseIterable {
         case .flutter:         return "Flutter (Dart)"
         case .reacttypescript: return "React / TypeScript"
         case .dotnet:          return ".NET (C#)"
+        case .html:            return "HTML / CSS / JS"
         }
     }
 
@@ -245,35 +249,27 @@ public enum DevEnvironment: String, Codable, Sendable, CaseIterable {
         case .flutter:         return ["pubspec.yaml", "pubspec.lock", ".dart"]
         case .reacttypescript: return ["tsconfig.json", "vite.config.ts", "next.config.ts", ".tsx"]
         case .dotnet:          return [".csproj", ".sln", ".cs"]
+        case .html:            return ["index.html", ".html", ".css", ".js"]
         }
     }
 
     /// Env-specific tools injected into the system prompt when this env is active.
     /// Universal tools (git, memory, web_fetch) are always injected regardless.
+    /// HTML/CSS/JS has no dedicated build/test tools — run_terminal is sufficient.
     public var specificTools: [String] {
         switch self {
-        case .unknown:
-            return []
-        case .xcode:
-            return ["build_project", "run_tests", "read_build_log"]
-        case .nodejs:
-            return ["build_project", "run_tests", "read_build_log"]
-        case .python:
-            return ["run_tests", "read_build_log"]
-        case .go:
-            return ["build_project", "run_tests", "read_build_log"]
-        case .rust:
-            return ["build_project", "run_tests", "read_build_log"]
-        case .java:
-            return ["build_project", "run_tests", "read_build_log"]
-        case .kotlin:
-            return ["build_project", "run_tests", "read_build_log"]
-        case .flutter:
-            return ["build_project", "run_tests", "read_build_log"]
-        case .reacttypescript:
-            return ["run_tests", "read_build_log"]
-        case .dotnet:
-            return ["build_project", "run_tests", "read_build_log"]
+        case .unknown:         return []
+        case .xcode:           return ["build_project", "run_tests", "read_build_log"]
+        case .nodejs:          return ["build_project", "run_tests", "read_build_log"]
+        case .python:          return ["run_tests", "read_build_log"]
+        case .go:              return ["build_project", "run_tests", "read_build_log"]
+        case .rust:            return ["build_project", "run_tests", "read_build_log"]
+        case .java:            return ["build_project", "run_tests", "read_build_log"]
+        case .kotlin:          return ["build_project", "run_tests", "read_build_log"]
+        case .flutter:         return ["build_project", "run_tests", "read_build_log"]
+        case .reacttypescript: return ["run_tests", "read_build_log"]
+        case .dotnet:          return ["build_project", "run_tests", "read_build_log"]
+        case .html:            return []
         }
     }
 }

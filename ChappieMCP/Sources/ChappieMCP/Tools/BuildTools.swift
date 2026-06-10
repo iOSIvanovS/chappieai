@@ -146,7 +146,8 @@ final class BuildTools: Sendable {
             return await runShell("flutter build", label: label, workingDirectory: path, env: env)
         case .dotnet:
             return await runShell("dotnet build", label: label, workingDirectory: path, env: env)
-        case .python, .reacttypescript:
+        case .python, .reacttypescript, .html:
+            // No compile step for these environments.
             return .failure("build_project is not available for \(env.rawValue) — no compile step.")
         case .unknown:
             let available = projectEnvMap.keys.sorted().joined(separator: ", ")
@@ -198,6 +199,9 @@ final class BuildTools: Sendable {
         case .dotnet:
             let proj = target.map { " \($0)" } ?? ""
             return await runShell("dotnet test\(proj)", label: label, workingDirectory: path, env: env)
+        case .html:
+            // HTML/CSS/JS has no test runner — no dedicated test tools available.
+            return .failure("run_tests is not available for HTML/CSS/JS projects — no test runner configured.")
         case .unknown:
             let available = projectEnvMap.keys.sorted().joined(separator: ", ")
             let hint = available.isEmpty
