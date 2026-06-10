@@ -46,17 +46,40 @@ extension ChappieViewModel {
 
                 let displayName = url.lastPathComponent
 
-                // If project with this name is already in this thread — update its bookmark
-                // so the path always reflects the folder the user actually selected.
-                if let existing = activeProjects.first(where: { $0.displayName == displayName }) {
+                // Search ALL projects in store — not just activeProjects (current thread only).
+                // WHY: AI tool add_project_to_thread creates a project with empty bookmarkData.
+                // When the user later picks the folder via UI, we must update that project's
+                // bookmark regardless of which thread it belongs to. Without this, the project
+                // stays with an empty bookmark → unavailable → git/file tools fail.
+                let allProjects = (try? await pStore.loadProjects()) ?? []
+                if let existing = allProjects.first(where: { $0.displayName == displayName }) {
                     try await pStore.updateBookmark(bookmarkData, forProjectId: existing.id)
-                    print("[ChappieViewModel] Project '\(displayName)' bookmark updated → \(url.path)")
+                    print("[ChappieViewModel] Project '\(displayName)' bookmark updated (global search) → \(url.path)")
 
-                    await loadProjectsForThread(thread)
-                    buildAndSyncMemoryContext()
-                    await syncActiveMemoryContext()
-                    await syncFileSystemForActiveThread()
-                    restartMCPIfNeeded()
+                    // If this project is not yet in the current thread — add it.
+                    if !thread.projectIds.contains(existing.id) {
+                        var updatedIds = thread.projectIds
+                        updatedIds.append(existing.id)
+                        try await tStore.updateProjectBindings(updatedIds, forThreadId: thread.id)
+
+                        let refreshed = try await tStore.loadThreads()
+                        self.threads = refreshed
+
+                        if let updatedThread = refreshed.first(where: { $0.id == thread.id }) {
+                            self.activeThread = updatedThread
+                            await loadProjectsForThread(updatedThread)
+                            buildAndSyncMemoryContext()
+                            await syncActiveMemoryContext()
+                            await syncFileSystemForActiveThread()
+                            restartMCPIfNeeded()
+                        }
+                    } else {
+                        await loadProjectsForThread(thread)
+                        buildAndSyncMemoryContext()
+                        await syncActiveMemoryContext()
+                        await syncFileSystemForActiveThread()
+                        restartMCPIfNeeded()
+                    }
                     return
                 }
 
@@ -412,8 +435,14 @@ extension ChappieViewModel {
 
             let projectId: UUID
             if let existing = allProjects.first(where: { $0.displayName == displayName }) {
+                // Reuse existing project (may already have a valid bookmark from a previous UI pick).
+                // WHY: creating a duplicate with empty bookmarkData would shadow the real one,
+                // causing git/file tools to fail with "projectPathMap is empty" until the user
+                // manually re-picks the folder.
                 projectId = existing.id
             } else {
+                // New project — bookmark is empty until the user picks the folder via UI.
+                // This is expected: AI can attach a project by name, user provides the path later.
                 projectId = try await projectStore.addProject(displayName: displayName, bookmarkData: Data())
             }
 

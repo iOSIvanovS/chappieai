@@ -13,18 +13,21 @@
 // - Universal tools (file, memory, web, project mgmt) — always injected.
 // - read_document / write_document — always injected (work for any project type).
 // - attach_file — always injected. Attaches any file by absolute path to the AI message.
-// - Git tools — only if isProgrammingProject = true.
-//   Each call carries an optional "project" arg; MCP resolves the correct working directory
-//   from projectPathMap. When omitted — MCP falls back to the single attached project.
-// - build_project, run_tests, read_build_log — if isProgrammingProject = true (any env).
+// - Git tools — only if any attached project has isProgrammingProject = true.
+// - build_project, run_tests, read_build_log — if any programming project is attached.
 //   Each call carries a "project" arg; MCP routes to the correct env per project.
-// - loc_* — only if at least one Xcode project is attached (independent of isProg on first project).
-// - run_terminal — only if isProgrammingProject = true.
+// - loc_* — only if at least one Xcode project is attached.
+// - run_terminal — only if any programming project has terminal access enabled.
 //   "project" arg makes every call self-contained: auto-prefixes `cd /absolute/path && command`.
-// - run_ssh — only if isProgrammingProject = true + terminal access enabled.
-//   Stateless SSH: one command per call, one connection per call. No interactive input.
-//   Use for remote server commands (VPS diagnostics, service restart, log reads).
+// - run_ssh — only if any programming project has terminal access enabled.
+//   Stateless SSH: one command per call, one connection per call.
 // - git_diff is intentionally OMITTED: it dumps the entire project into AI context (cost + noise).
+//
+// MULTI-PROJECT NOTE:
+// Tool availability is based on the union of all attached projects' settings.
+// Access control per call is resolved in ToolAccessControl.swift using the "project" arg.
+// WHY UNION: if any project is Executor with git, git tools must appear in the tool list.
+// Blocking happens at execution time, not at injection time.
 
 import Foundation
 
@@ -32,15 +35,24 @@ extension ToolExecutionService {
 
     /// Filtered list of tools available to the AI agent based on active project settings.
     public var availableTools: [AITool] {
-        let settings = activeProjectSettings
-        let isProg = settings.isProgrammingProject
-
         let allProjectInfos = activeMemoryContext.projects
+
+        // Derive capabilities from the UNION of all attached projects.
+        // WHY: tool list must include tools for any project that supports them.
+        // Per-call access control is enforced in checkToolAccess(toolName:projectName:).
+        let anyProg = allProjectInfos.contains {
+            (projectSettingsCache[$0.id] ?? ProjectSettings()).isProgrammingProject
+        }
+        let anyTerminalEnabled = allProjectInfos.contains {
+            let s = projectSettingsCache[$0.id] ?? ProjectSettings()
+            return s.isProgrammingProject && s.terminalAccess.isEnabled
+        }
+
         let progInfos = allProjectInfos.filter {
             (projectSettingsCache[$0.id] ?? ProjectSettings()).isProgrammingProject
         }
 
-        // WHY independent of isProg: loc_* depend on devEnvironment == .xcode across ALL
+        // WHY independent of anyProg: loc_* depend on devEnvironment == .xcode across ALL
         // attached projects, not just the first one.
         let hasXcodeProject = allProjectInfos.contains {
             let s = projectSettingsCache[$0.id] ?? ProjectSettings()
@@ -260,11 +272,11 @@ extension ToolExecutionService {
             )
         )))
 
-        // MARK: - Git tools (programming project only)
+        // MARK: - Git tools (any programming project)
         // git_diff is intentionally excluded — dumps entire project into context.
         // "project" arg routes each call to the correct working directory via projectPathMap.
 
-        if isProg {
+        if anyProg {
             let gitProjectArgDesc = gitProjectArgDescription(for: progInfos)
 
             tools.append(AITool(function: AIFunctionDefinition(
@@ -379,7 +391,7 @@ extension ToolExecutionService {
 
         // MARK: - Build & test tools (any programming project)
 
-        if isProg {
+        if anyProg {
             let projectArgDesc = buildProjectArgDescription(for: progInfos)
 
             let buildableInfos = progInfos.filter {
@@ -466,12 +478,12 @@ extension ToolExecutionService {
             parameters: AIToolParameters(properties: [:], required: [])
         )))
 
-        // MARK: - Terminal tools (LAST RESORT, programming projects only)
+        // MARK: - Terminal tools (LAST RESORT, any programming project with terminal enabled)
         // run_terminal: persistent session, "project" auto-prefixes `cd /path && command`.
         // run_ssh: stateless — one command per call. Use for remote VPS/server commands only.
-        // Both require terminal access to be enabled in project settings.
+        // Both require terminal access to be enabled in at least one project's settings.
 
-        if isProg && settings.terminalAccess.isEnabled {
+        if anyTerminalEnabled {
             let terminalProjectArgDesc = terminalProjectArgDescription(for: progInfos)
 
             tools.append(AITool(function: AIFunctionDefinition(

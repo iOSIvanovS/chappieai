@@ -165,6 +165,10 @@ public actor ToolExecutionService {
         let name = call.function.name
         let argsData = call.function.arguments.data(using: .utf8) ?? Data()
 
+        // Extract "project" arg once — used by access control to resolve the correct
+        // ProjectSettings in multi-project threads (fixes Advisor-blocks-Executor bug).
+        let projectArg = (try? JSONDecoder().decode([String: String].self, from: argsData))?["project"]
+
         // Tools that require an active workspace project.
         let projectRequiredTools: Set<String> = [
             "list_files", "read_file", "write_file", "delete_file",
@@ -193,7 +197,7 @@ public actor ToolExecutionService {
         }
 
         if projectRequiredTools.contains(name) {
-            let accessResult = checkToolAccess(toolName: name)
+            let accessResult = checkToolAccess(toolName: name, projectName: projectArg)
             if case .denied(let message) = accessResult {
                 print("[ToolExecutionService] 🚫 Access denied for '\(name)'")
                 return message
@@ -201,8 +205,9 @@ public actor ToolExecutionService {
         }
 
         // run_ssh has its own access check — requires terminal to be enabled.
+        // No "project" arg for SSH — it targets a remote host, not a local project.
         if name == "run_ssh" {
-            let accessResult = checkToolAccess(toolName: name)
+            let accessResult = checkToolAccess(toolName: name, projectName: nil)
             if case .denied(let message) = accessResult {
                 print("[ToolExecutionService] 🚫 Access denied for 'run_ssh'")
                 return message

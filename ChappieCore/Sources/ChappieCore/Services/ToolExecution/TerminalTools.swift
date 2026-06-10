@@ -131,7 +131,8 @@ extension ToolExecutionService {
             """
         }
 
-        let settings = activeProjectSettings
+        // Resolve settings for the specific project being targeted — fixes multi-project bug.
+        let settings = resolveProjectSettings(for: args.project)
         guard settings.terminalAccess.isEnabled else {
             return "❌ Terminal is disabled for this project. Enable it in project settings → Terminal."
         }

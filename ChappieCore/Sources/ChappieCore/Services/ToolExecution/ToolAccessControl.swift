@@ -16,13 +16,34 @@
 //    c. read_build_log — requires TestsAccessLevel.canReadLog.
 //    d. run_terminal — requires isProgrammingProject + TerminalAccessLevel.isEnabled.
 //    e. run_ssh — requires isProgrammingProject + TerminalAccessLevel.isEnabled.
+//
+// PROJECT RESOLUTION:
+// When a tool carries a "project" argument (e.g. git_add, build_project),
+// settings are resolved from that specific project by display name.
+// This fixes the multi-project bug: if thread has Advisor + Executor projects,
+// the Executor project's tools must not be blocked by the Advisor project's settings.
+// Fallback: if no "project" arg or no match found — use projects.first (single-project threads).
 
 import Foundation
 
 extension ToolExecutionService {
 
-    /// Settings of the first project in the active thread.
-    var activeProjectSettings: ProjectSettings {
+    /// Settings of the project that owns this tool call.
+    ///
+    /// WHY projectName param:
+    /// Tools like git_add, build_project carry a "project" display name in their args.
+    /// We resolve settings for that specific project — not blindly for projects.first.
+    /// This prevents the Advisor-blocks-Executor bug in multi-project threads.
+    func resolveProjectSettings(for projectName: String?) -> ProjectSettings {
+        // Try to match by name when a project arg is present.
+        if let name = projectName, !name.isEmpty {
+            if let match = activeMemoryContext.projects.first(where: {
+                $0.name.lowercased() == name.lowercased()
+            }) {
+                return projectSettingsCache[match.id] ?? ProjectSettings()
+            }
+        }
+        // Fallback: first project (correct for single-project threads).
         guard let firstProject = activeMemoryContext.projects.first else {
             return ProjectSettings()
         }
@@ -30,8 +51,11 @@ extension ToolExecutionService {
     }
 
     /// Checks permission to execute a tool according to project settings and license plan (IT-09).
-    func checkToolAccess(toolName: String) -> ToolAccessResult {
-        let settings = activeProjectSettings
+    ///
+    /// projectName: the "project" argument from the tool call, used to resolve
+    /// the correct ProjectSettings in multi-project threads.
+    func checkToolAccess(toolName: String, projectName: String? = nil) -> ToolAccessResult {
+        let settings = resolveProjectSettings(for: projectName)
 
         // IRON PROHIBITION: git_diff is always blocked.
         if toolName == "git_diff" {
