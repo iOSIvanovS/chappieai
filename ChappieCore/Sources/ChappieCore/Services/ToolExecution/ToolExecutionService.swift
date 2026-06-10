@@ -9,6 +9,11 @@
 //   FileTools.swift         — file system + document tools + attach_file + web_fetch
 //   GitBuildTools.swift     — git + build/test execution
 //   TerminalTools.swift     — persistent bash session (run_terminal) + stateless SSH (run_ssh)
+//
+// UNIFIED PROJECT ARG:
+// Every tool that operates within a project scope carries an explicit "project" display name arg.
+// Access control resolves settings via args["project"] — no path heuristics, no guessing.
+// Exceptions: attach_file (absolute path, no project scope), run_ssh (remote host).
 
 import Foundation
 
@@ -165,13 +170,17 @@ public actor ToolExecutionService {
         let name = call.function.name
         let argsData = call.function.arguments.data(using: .utf8) ?? Data()
 
-        // Extract "project" arg once — used by access control to resolve the correct
-        // ProjectSettings in multi-project threads (fixes Advisor-blocks-Executor bug).
-        let projectArg = (try? JSONDecoder().decode([String: String].self, from: argsData))?["project"]
+        // Decode all string args once — used for both access control and execution.
+        let args = (try? JSONDecoder().decode([String: String].self, from: argsData)) ?? [:]
+
+        // All project-scoped tools carry an explicit "project" display name arg.
+        // Access control resolves settings via this arg — no path heuristics.
+        let projectName = args["project"]
 
         // Tools that require an active workspace project.
         let projectRequiredTools: Set<String> = [
             "list_files", "read_file", "write_file", "delete_file",
+            "read_document", "write_document",
             "git_status", "git_diff", "git_add", "git_commit", "git_push",
             "git_log", "git_reset", "git_revert", "git_checkout",
             "build_project", "run_tests", "read_build_log",
@@ -197,15 +206,16 @@ public actor ToolExecutionService {
         }
 
         if projectRequiredTools.contains(name) {
-            let accessResult = checkToolAccess(toolName: name, projectName: projectArg)
+            let accessResult = checkToolAccess(toolName: name, projectName: projectName)
             if case .denied(let message) = accessResult {
-                print("[ToolExecutionService] 🚫 Access denied for '\(name)'")
+                print("[ToolExecutionService] 🚫 Access denied for '\(name)' (project: \(projectName ?? "nil"))")
                 return message
             }
         }
 
         // run_ssh has its own access check — requires terminal to be enabled.
         // No "project" arg for SSH — it targets a remote host, not a local project.
+        // WHY nil: SSH access is granted if terminal is enabled in ANY attached project.
         if name == "run_ssh" {
             let accessResult = checkToolAccess(toolName: name, projectName: nil)
             if case .denied(let message) = accessResult {
@@ -238,8 +248,7 @@ public actor ToolExecutionService {
                 return try await executeSSHTool(argsData: argsData)
 
             case "add_project_to_thread":
-                guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
-                      let displayName = args["display_name"], !displayName.isEmpty else {
+                guard let displayName = args["display_name"], !displayName.isEmpty else {
                     return "Error: Argument 'display_name' is required for add_project_to_thread"
                 }
                 guard let handler = addProjectHandler else {
@@ -248,8 +257,7 @@ public actor ToolExecutionService {
                 return await handler(displayName)
 
             case "remove_project_from_thread":
-                guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
-                      let displayName = args["display_name"], !displayName.isEmpty else {
+                guard let displayName = args["display_name"], !displayName.isEmpty else {
                     return "Error: Argument 'display_name' is required for remove_project_from_thread"
                 }
                 guard let handler = removeProjectHandler else {
@@ -265,9 +273,6 @@ public actor ToolExecutionService {
 
             default:
                 if Self.locToolNames.contains(name) {
-                    guard let args = try? JSONDecoder().decode([String: String].self, from: argsData) else {
-                        return "Error: Failed to parse arguments for \(name)"
-                    }
                     return await mcpBridge.execute(tool: name, args: args)
                 }
                 return "Error: Unknown tool \(name)"

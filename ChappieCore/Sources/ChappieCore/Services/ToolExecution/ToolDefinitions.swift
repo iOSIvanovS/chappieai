@@ -9,6 +9,12 @@
 // Specialized tools (file system, memory, git, build) are listed before terminal tools.
 // run_terminal and run_ssh are intentionally last — tools of last resort.
 //
+// UNIFIED "project" PARAMETER:
+// Every tool that operates within a project scope carries a "project" display name arg.
+// This is the single source of truth for access control — no path heuristics, no guessing.
+// Access control in ToolAccessControl.swift resolves settings via args["project"] only.
+// Exceptions: attach_file (absolute path, no project scope), run_ssh (remote host).
+//
 // INJECTION RULES:
 // - Universal tools (file, memory, web, project mgmt) — always injected.
 // - read_document / write_document — always injected (work for any project type).
@@ -63,7 +69,7 @@ extension ToolExecutionService {
 
         // MARK: - File system (always)
 
-        // "project" arg scopes listing to one project — avoids mixing all projects in one dump.
+        // "project" arg scopes the call to one project and is used for access control.
         // Required when multiple projects are attached; optional for single-project threads.
         tools.append(AITool(function: AIFunctionDefinition(
             name: "list_files",
@@ -84,9 +90,13 @@ extension ToolExecutionService {
             description: "Read the contents of a file in the project.",
             parameters: AIToolParameters(
                 properties: [
-                    "path": AIToolProperty(type: "string", description: "Relative path to the file")
+                    "path": AIToolProperty(type: "string", description: "Relative path to the file"),
+                    "project": AIToolProperty(
+                        type: "string",
+                        description: fileToolProjectArgDescription(for: allProjectInfos)
+                    )
                 ],
-                required: ["path"]
+                required: allProjectInfos.count > 1 ? ["path", "project"] : ["path"]
             )
         )))
 
@@ -96,9 +106,13 @@ extension ToolExecutionService {
             parameters: AIToolParameters(
                 properties: [
                     "path": AIToolProperty(type: "string", description: "Relative path to the file"),
-                    "content": AIToolProperty(type: "string", description: "Full code or text to write into the file")
+                    "content": AIToolProperty(type: "string", description: "Full code or text to write into the file"),
+                    "project": AIToolProperty(
+                        type: "string",
+                        description: fileToolProjectArgDescription(for: allProjectInfos)
+                    )
                 ],
-                required: ["path", "content"]
+                required: allProjectInfos.count > 1 ? ["path", "content", "project"] : ["path", "content"]
             )
         )))
 
@@ -107,9 +121,13 @@ extension ToolExecutionService {
             description: "Delete a file from the project.",
             parameters: AIToolParameters(
                 properties: [
-                    "path": AIToolProperty(type: "string", description: "Relative path to the file to delete")
+                    "path": AIToolProperty(type: "string", description: "Relative path to the file to delete"),
+                    "project": AIToolProperty(
+                        type: "string",
+                        description: fileToolProjectArgDescription(for: allProjectInfos)
+                    )
                 ],
-                required: ["path"]
+                required: allProjectInfos.count > 1 ? ["path", "project"] : ["path"]
             )
         )))
 
@@ -126,9 +144,13 @@ extension ToolExecutionService {
             """,
             parameters: AIToolParameters(
                 properties: [
-                    "path": AIToolProperty(type: "string", description: "Relative path to the document file (e.g. 'contract.docx', 'report.xlsx')")
+                    "path": AIToolProperty(type: "string", description: "Relative path to the document file (e.g. 'contract.docx', 'report.xlsx')"),
+                    "project": AIToolProperty(
+                        type: "string",
+                        description: fileToolProjectArgDescription(for: allProjectInfos)
+                    )
                 ],
-                required: ["path"]
+                required: allProjectInfos.count > 1 ? ["path", "project"] : ["path"]
             )
         )))
 
@@ -149,13 +171,17 @@ extension ToolExecutionService {
                     "path": AIToolProperty(type: "string", description: "Relative path to the original document"),
                     "content": AIToolProperty(type: "string", description: "Full modified XML (for docx/xlsx/pptx/odt) or text (for rtf/csv)"),
                     "output_path": AIToolProperty(type: "string", description: "Optional: save as a new file at this path, keeping the original untouched"),
-                    "entry_name": AIToolProperty(type: "string", description: "Optional: override which ZIP entry to replace (e.g. 'ppt/slides/slide2.xml'). Defaults to the primary entry for each format.")
+                    "entry_name": AIToolProperty(type: "string", description: "Optional: override which ZIP entry to replace (e.g. 'ppt/slides/slide2.xml'). Defaults to the primary entry for each format."),
+                    "project": AIToolProperty(
+                        type: "string",
+                        description: fileToolProjectArgDescription(for: allProjectInfos)
+                    )
                 ],
-                required: ["path", "content"]
+                required: allProjectInfos.count > 1 ? ["path", "content", "project"] : ["path", "content"]
             )
         )))
 
-        // MARK: - attach_file (always)
+        // MARK: - attach_file (always, no "project" — takes absolute path)
 
         tools.append(AITool(function: AIFunctionDefinition(
             name: "attach_file",
@@ -431,7 +457,12 @@ extension ToolExecutionService {
                 tools.append(AITool(function: AIFunctionDefinition(
                     name: "read_build_log",
                     description: "Read the full log of the last build or test run.",
-                    parameters: AIToolParameters(properties: [:], required: [])
+                    parameters: AIToolParameters(
+                        properties: [
+                            "project": AIToolProperty(type: "string", description: projectArgDesc)
+                        ],
+                        required: []
+                    )
                 )))
             }
         }
@@ -480,7 +511,7 @@ extension ToolExecutionService {
 
         // MARK: - Terminal tools (LAST RESORT, any programming project with terminal enabled)
         // run_terminal: persistent session, "project" auto-prefixes `cd /path && command`.
-        // run_ssh: stateless — one command per call. Use for remote VPS/server commands only.
+        // run_ssh: stateless — one command per call. No "project" — targets a remote host.
         // Both require terminal access to be enabled in at least one project's settings.
 
         if anyTerminalEnabled {
@@ -743,10 +774,21 @@ extension ToolExecutionService {
 
     // MARK: - Dynamic tool descriptions
 
-    /// Describes the "project" arg for list_files based on how many projects are attached.
     private func listFilesProjectArgDescription(for infos: [ActiveMemoryContext.ProjectInfo]) -> String {
         guard !infos.isEmpty else {
             return "Project display name to scope the file listing."
+        }
+        if infos.count == 1 {
+            return "Project name. Only one project: '\(infos[0].name)'. Can be omitted."
+        }
+        let list = infos.map { "'\($0.name)'" }.joined(separator: ", ")
+        return "Project display name — required when multiple projects are attached. Available: \(list)."
+    }
+
+    /// Used for read_file, write_file, delete_file, read_document, write_document.
+    private func fileToolProjectArgDescription(for infos: [ActiveMemoryContext.ProjectInfo]) -> String {
+        guard !infos.isEmpty else {
+            return "Project display name — identifies which project this file belongs to."
         }
         if infos.count == 1 {
             return "Project name. Only one project: '\(infos[0].name)'. Can be omitted."

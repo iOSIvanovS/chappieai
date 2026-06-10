@@ -16,14 +16,19 @@
 // a structured JSON response that AIOrchestrator picks up as an output file.
 //
 // LIVE UNAVAILABILITY (B-05):
-// When a FS tool throws — we extract the project name from the path prefix
-// and call onProjectUnavailable(projectName). ViewModel marks the chip orange
-// without requiring a thread re-entry or a background timer.
+// When a FS tool throws — we use the explicit "project" arg to mark the chip orange.
+// All tools now carry "project" as the unified project identifier — no path heuristics.
 //
-// list_files project= scoping (B-XX):
-// list_files now accepts an optional "project" arg. When provided — only that
-// project's files are returned and only that project is marked orange on error.
-// Without "project" — falls back to all workspaces, no chip is marked (can't tell which failed).
+// PROJECT ROUTING:
+// args["project"] is passed explicitly to FileSystemManager for read/write/delete.
+// WHY: AI passes bare path ("readme.md") + project ("MyFolder") as separate args.
+// FileSystemManager.resolveForOperation() uses the project name to find the workspace
+// directly — no prefix parsing needed, works for any path format.
+//
+// list_files project= scoping:
+// list_files accepts an optional "project" arg. When provided — only that project's
+// files are returned and only that project is marked orange on error.
+// Without "project" — falls back to all workspaces, no chip is marked.
 
 import Foundation
 
@@ -59,9 +64,10 @@ extension ToolExecutionService {
                 return "Error: Invalid arguments for read_file"
             }
             do {
-                return try await fileSystem.readFile(at: path)
+                // Pass projectName explicitly — path may be bare ("readme.md") without prefix.
+                return try await fileSystem.readFile(at: path, projectName: args["project"])
             } catch {
-                await reportUnavailable(projectName(from: path))
+                await reportUnavailable(args["project"])
                 throw error
             }
 
@@ -72,10 +78,11 @@ extension ToolExecutionService {
                 return "Error: Invalid arguments for write_file"
             }
             do {
-                try await fileSystem.writeFile(at: path, content: content)
+                // Pass projectName explicitly — path may be bare ("readme.md") without prefix.
+                try await fileSystem.writeFile(at: path, content: content, projectName: args["project"])
                 return "Success: File \(path) written."
             } catch {
-                await reportUnavailable(projectName(from: path))
+                await reportUnavailable(args["project"])
                 throw error
             }
 
@@ -85,10 +92,11 @@ extension ToolExecutionService {
                 return "Error: Invalid arguments for delete_file"
             }
             do {
-                try await fileSystem.deleteFile(at: path)
+                // Pass projectName explicitly — path may be bare ("readme.md") without prefix.
+                try await fileSystem.deleteFile(at: path, projectName: args["project"])
                 return "Success: File \(path) deleted."
             } catch {
-                await reportUnavailable(projectName(from: path))
+                await reportUnavailable(args["project"])
                 throw error
             }
 
@@ -155,19 +163,10 @@ extension ToolExecutionService {
 
     // MARK: - Helpers
 
-    /// Extracts project name from a prefixed path ("ProjectName/relative/path" → "ProjectName").
-    /// For single-workspace paths (no prefix) — returns nil, nothing to report.
-    private func projectName(from path: String) -> String? {
-        let parts = path.split(separator: "/", maxSplits: 1)
-        guard parts.count == 2 else { return nil }
-        let candidate = String(parts[0])
-        let known = fileSystem.workspaceNames
-        return known.contains(candidate) ? candidate : nil
-    }
-
-    /// Calls onProjectUnavailable on MainActor if a name is known.
+    /// Calls onProjectUnavailable on MainActor if a project name is known.
+    /// WHY: all tools now carry explicit "project" arg — no path heuristics needed.
     private func reportUnavailable(_ name: String?) async {
-        guard let name, let callback = onProjectUnavailable else { return }
+        guard let name, !name.isEmpty, let callback = onProjectUnavailable else { return }
         await MainActor.run { callback(name) }
     }
 }

@@ -7,35 +7,33 @@
 //
 // CHECK ORDER in checkToolAccess():
 // 1. git_diff — iron prohibition, always blocked regardless of settings.
-// 2. Starter plan — read-only: list_files, read_file, read_document only.
+// 2. Starter plan — read-only: list_files, read_file, read_document, read_build_log only.
 //    WHY: Starter is "Advisor only" per monetization plan — no execution, no writes.
 // 3. ADVISOR role — same read-only gate as Starter.
 // 4. EXECUTOR role:
 //    a. Git tools — require isProgrammingProject + GitAccessLevel.allowedTools.
-//    b. Build/test tools — require isProgrammingProject + TestsAccessLevel.canRun.
-//    c. read_build_log — requires TestsAccessLevel.canReadLog.
-//    d. run_terminal — requires isProgrammingProject + TerminalAccessLevel.isEnabled.
-//    e. run_ssh — requires isProgrammingProject + TerminalAccessLevel.isEnabled.
+//    b. build_project — requires isProgrammingProject + Executor role.
+//    c. run_tests — requires isProgrammingProject + TestsAccessLevel.canRun.
+//    d. read_build_log — always allowed for Executor (read-only diagnostic tool).
+//    e. write_document — requires Executor role (document writes = mutations).
+//    f. run_terminal — requires isProgrammingProject + TerminalAccessLevel.isEnabled.
+//    g. run_ssh — requires isProgrammingProject + TerminalAccessLevel.isEnabled.
 //
 // PROJECT RESOLUTION:
-// When a tool carries a "project" argument (e.g. git_add, build_project),
-// settings are resolved from that specific project by display name.
-// This fixes the multi-project bug: if thread has Advisor + Executor projects,
-// the Executor project's tools must not be blocked by the Advisor project's settings.
-// Fallback: if no "project" arg or no match found — use projects.first (single-project threads).
+// All tools carry a "project" display name arg — single source of truth for access control.
+// resolveProjectSettings(for:) matches by name; falls back to projects.first for single-project threads.
+// No path heuristics. No guessing. One rule: args["project"] → settings.
 
 import Foundation
 
 extension ToolExecutionService {
 
-    /// Settings of the project that owns this tool call.
+    /// Resolves ProjectSettings for the project named in the tool call.
     ///
-    /// WHY projectName param:
-    /// Tools like git_add, build_project carry a "project" display name in their args.
-    /// We resolve settings for that specific project — not blindly for projects.first.
-    /// This prevents the Advisor-blocks-Executor bug in multi-project threads.
+    /// WHY: every tool carries an explicit "project" arg (display name).
+    /// We match by name — no path heuristics, no fallback to first project
+    /// unless the thread has only one project (single-project threads can omit "project").
     func resolveProjectSettings(for projectName: String?) -> ProjectSettings {
-        // Try to match by name when a project arg is present.
         if let name = projectName, !name.isEmpty {
             if let match = activeMemoryContext.projects.first(where: {
                 $0.name.lowercased() == name.lowercased()
@@ -43,7 +41,7 @@ extension ToolExecutionService {
                 return projectSettingsCache[match.id] ?? ProjectSettings()
             }
         }
-        // Fallback: first project (correct for single-project threads).
+        // Fallback: first project — correct for single-project threads where "project" is optional.
         guard let firstProject = activeMemoryContext.projects.first else {
             return ProjectSettings()
         }
@@ -52,8 +50,8 @@ extension ToolExecutionService {
 
     /// Checks permission to execute a tool according to project settings and license plan (IT-09).
     ///
-    /// projectName: the "project" argument from the tool call, used to resolve
-    /// the correct ProjectSettings in multi-project threads.
+    /// projectName: the "project" argument from the tool call — resolves correct ProjectSettings
+    /// in multi-project threads, preventing Advisor-blocks-Executor cross-contamination.
     func checkToolAccess(toolName: String, projectName: String? = nil) -> ToolAccessResult {
         let settings = resolveProjectSettings(for: projectName)
 
@@ -66,11 +64,15 @@ extension ToolExecutionService {
             """)
         }
 
-        // STARTER plan — read-only access (same as ADVISOR).
+        // Read-only tools — always allowed regardless of role or plan.
+        let alwaysAllowedTools: Set<String> = [
+            "list_files", "read_file", "read_document", "read_build_log"
+        ]
+
+        // STARTER plan — read-only access.
         // WHY: Starter = "Advisor only" per monetization plan.
         if licenseState.isStarterPlan {
-            let readOnlyTools: Set<String> = ["list_files", "read_file", "read_document", "read_build_log"]
-            if !readOnlyTools.contains(toolName) {
+            if !alwaysAllowedTools.contains(toolName) {
                 return .denied("""
                 ❌ Tool '\(toolName)' requires a Pro or Team license.
                 Your current plan (Starter) provides read-only access only.
@@ -82,11 +84,10 @@ extension ToolExecutionService {
 
         // ADVISOR role — read only.
         if settings.agentRole == .advisor {
-            let readOnlyTools: Set<String> = ["list_files", "read_file", "read_build_log"]
-            if !readOnlyTools.contains(toolName) {
+            if !alwaysAllowedTools.contains(toolName) {
                 return .denied("""
                 ❌ Tool '\(toolName)' is blocked: current role is ADVISOR (read-only).
-                ADVISOR can only use: list_files, read_file, read_build_log.
+                ADVISOR can only use: list_files, read_file, read_document, read_build_log.
                 To enable this tool: open project settings → change role to EXECUTOR.
                 """)
             }
@@ -113,39 +114,44 @@ extension ToolExecutionService {
             return .allowed
         }
 
-        // EXECUTOR: check build/test tools.
-        let buildTools: Set<String> = ["build_project", "run_tests"]
-        if buildTools.contains(toolName) {
+        // EXECUTOR: build_project — requires programming project + executor role (already checked above).
+        if toolName == "build_project" {
             if !settings.isProgrammingProject {
                 return .denied("""
-                ❌ Tool '\(toolName)' requires 'Programming project' flag.
+                ❌ Tool 'build_project' requires 'Programming project' flag.
+                Open project settings → enable 'Programming project'.
+                """)
+            }
+            return .allowed
+        }
+
+        // EXECUTOR: run_tests — requires canRun access level.
+        if toolName == "run_tests" {
+            if !settings.isProgrammingProject {
+                return .denied("""
+                ❌ Tool 'run_tests' requires 'Programming project' flag.
                 Open project settings → enable 'Programming project'.
                 """)
             }
             if !settings.testsAccess.canRun {
                 if settings.testsAccess == .readOnly {
                     return .denied("""
-                    ❌ Tool '\(toolName)' is blocked: tests access is 'read-only'.
+                    ❌ Tool 'run_tests' is blocked: tests access is 'read-only'.
                     You can read logs via read_build_log, but cannot run tests.
                     Open project settings → Tests → set to 'Run' or 'Run + Write'.
                     """)
                 }
                 return .denied("""
-                ❌ Tool '\(toolName)' is blocked: tests access is disabled.
+                ❌ Tool 'run_tests' is blocked: tests access is disabled.
                 Open project settings → Tests → enable test access.
                 """)
             }
             return .allowed
         }
 
-        // read_build_log — available if tests at least at readOnly level.
-        if toolName == "read_build_log" {
-            if settings.isProgrammingProject && !settings.testsAccess.canReadLog {
-                return .denied("""
-                ❌ Tool 'read_build_log' is blocked: tests access is disabled.
-                Open project settings → Tests → enable at least 'Read logs'.
-                """)
-            }
+        // EXECUTOR: write_document — mutation of documents, requires executor (already checked).
+        // read_document is in alwaysAllowedTools above — no check needed here.
+        if toolName == "write_document" {
             return .allowed
         }
 

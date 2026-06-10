@@ -15,6 +15,14 @@
 // SECURITY:
 // Each workspace has its own validateAndResolvePath() guard (CWE-22).
 // Cross-workspace traversal is impossible — routing is done by prefix, not by path.
+//
+// PROJECT PARAM ROUTING:
+// read/write/delete accept an explicit projectName parameter (from args["project"]).
+// WHY: AI now always passes "project" as a separate arg — path may be a bare filename
+// like "readme.md" with no project prefix. Without explicit routing, resolveWorkspace()
+// would fail to find a matching prefix and throw "Cannot route path".
+// When projectName is provided — workspace is resolved by name, not by path prefix.
+// When projectName is nil — falls back to prefix-based routing (backward compat).
 
 import Foundation
 
@@ -84,6 +92,17 @@ public actor FileSystemManager {
     }
 
     // MARK: - Routing
+
+    /// Resolves workspace by explicit project name.
+    /// WHY: AI passes project= separately — path may be a bare filename with no prefix.
+    private func resolveWorkspace(byName name: String) throws -> URL {
+        guard let workspace = workspaces.first(where: { $0.name == name }) else {
+            throw ChappieError.fileSystemError(
+                "Project '\(name)' not found. Available: \(workspaces.map(\.name).joined(separator: ", "))"
+            )
+        }
+        return workspace.url
+    }
 
     /// Splits "ProjectName/relative/path" into (workspace URL, "relative/path").
     /// For single-workspace mode (name == "") — returns the only workspace and the path as-is.
@@ -168,8 +187,12 @@ public actor FileSystemManager {
         return allPaths
     }
 
-    public func readFile(at path: String) throws -> String {
-        let (workspaceURL, relativePath) = try resolveWorkspace(for: path)
+    // MARK: - File operations
+    // projectName: explicit project from args["project"] — used when path has no prefix.
+    // Falls back to prefix-based routing when projectName is nil (backward compat).
+
+    public func readFile(at path: String, projectName: String? = nil) throws -> String {
+        let (workspaceURL, relativePath) = try resolveForOperation(path: path, projectName: projectName)
         let safeURL = try validateAndResolvePath(relativePath, in: workspaceURL)
         do {
             return try String(contentsOf: safeURL, encoding: .utf8)
@@ -178,8 +201,8 @@ public actor FileSystemManager {
         }
     }
 
-    public func writeFile(at path: String, content: String) throws {
-        let (workspaceURL, relativePath) = try resolveWorkspace(for: path)
+    public func writeFile(at path: String, content: String, projectName: String? = nil) throws {
+        let (workspaceURL, relativePath) = try resolveForOperation(path: path, projectName: projectName)
         let safeURL = try validateAndResolvePath(relativePath, in: workspaceURL)
         let directoryURL = safeURL.deletingLastPathComponent()
         do {
@@ -195,8 +218,8 @@ public actor FileSystemManager {
         }
     }
 
-    public func deleteFile(at path: String) throws {
-        let (workspaceURL, relativePath) = try resolveWorkspace(for: path)
+    public func deleteFile(at path: String, projectName: String? = nil) throws {
+        let (workspaceURL, relativePath) = try resolveForOperation(path: path, projectName: projectName)
         let safeURL = try validateAndResolvePath(relativePath, in: workspaceURL)
         guard fileManager.fileExists(atPath: safeURL.path) else {
             throw ChappieError.fileSystemError("File not found: '\(path)'")
@@ -206,5 +229,21 @@ public actor FileSystemManager {
         } catch {
             throw ChappieError.fileSystemError("Failed to delete '\(path)': \(error.localizedDescription)")
         }
+    }
+
+    // MARK: - Private routing helper
+
+    /// Resolves workspace and relative path for a file operation.
+    /// WHY: when projectName is provided — route by name (AI passes bare path + project arg).
+    /// When nil — route by path prefix (legacy / single-workspace compat).
+    private func resolveForOperation(path: String, projectName: String?) throws -> (url: URL, relativePath: String) {
+        if let name = projectName, !name.isEmpty {
+            let url = try resolveWorkspace(byName: name)
+            // Path may already contain the project prefix (e.g. "ProjectName/file.md") — strip it.
+            let prefix = name + "/"
+            let relativePath = path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : path
+            return (url, relativePath)
+        }
+        return try resolveWorkspace(for: path)
     }
 }
