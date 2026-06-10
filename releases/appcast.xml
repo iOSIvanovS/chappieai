@@ -45,5 +45,18 @@
             />
         </item>
 
+
+        <item>
+            <title>Version 1.2.2</title>
+            <pubDate>Wed, 10 Jun 2026 16:39:26 +0000</pubDate>
+            <sparkle:version>4</sparkle:version>
+            <sparkle:shortVersionString>1.2.2</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.2.2.dmg"
+                sparkle:edSignature="63faQRd5cUqSj0I+5+49wvXqrCvIWqvqnFvqJ9C2kOgeZ50ZEymj6ZhnjxJV+UiLW3Qc0OZXzEWBiG9vrhGWDg=="
+                length="7447673"
+                type="application/octet-stream"
+            />
+        </item>
     </channel>
 </rss>
