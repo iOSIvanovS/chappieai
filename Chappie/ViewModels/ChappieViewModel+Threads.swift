@@ -287,7 +287,7 @@ extension ChappieViewModel {
     private func sendWelcomeGreeting(for thread: ThreadMetadata) async {
         guard let client = aiClient, let store = threadStore else { return }
 
-        let appLanguage: String? = "ru"
+        let appLanguage: String? = Locale.current.language.languageCode?.identifier
 
         guard let greetingText = await WelcomeService.generateGreeting(
             using: client,

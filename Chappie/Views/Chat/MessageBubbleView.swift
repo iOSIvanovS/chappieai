@@ -189,11 +189,11 @@ struct MessageBubbleView: View {
                     }
                     if !text.isEmpty {
                         MarkdownTextView(text: text, fontSize: 14)
-                            .padding(.bottom, cost != nil ? 18 : 0)
+                            .padding(.bottom, (cost ?? 0) > 0 ? 18 : 0)
                     }
                 }
 
-                if let cost = cost {
+                if let cost = cost, cost > 0 {
                     Text(String(format: "🪙 %.2f ₽", cost))
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(.secondary)
