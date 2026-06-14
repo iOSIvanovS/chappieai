@@ -13,7 +13,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-14%2B-blue?style=flat-square" />
-  <img src="https://img.shields.io/badge/version-1.0.6-brightgreen?style=flat-square" />
+  <img src="https://img.shields.io/badge/version-1.0.7-brightgreen?style=flat-square" />
   <img src="https://img.shields.io/badge/license-commercial-orange?style=flat-square" />
   <img src="https://img.shields.io/badge/Telegram-chappieaiapp-2CA5E0?style=flat-square&logo=telegram" />
 </p>
@@ -79,6 +79,7 @@ Chappie checks for updates automatically and installs them in the background via
 
 | Version | Release date | Download |
 |---------|-------------|---------|
+| 1.0.7 | June 14, 2026 | [ChappieAI-1.0.7.dmg](https://github.com/iOSIvanovS/chappieai/raw/main/releases/ChappieAI-1.0.7.dmg) |
 | 1.0.6 | June 14, 2026 | [ChappieAI-1.0.6.dmg](https://github.com/iOSIvanovS/chappieai/raw/main/releases/ChappieAI-1.0.6.dmg) |
 | 1.0.5 | June 12, 2026 | [ChappieAI-1.0.5.dmg](https://github.com/iOSIvanovS/chappieai/raw/main/releases/ChappieAI-1.0.5.dmg) |
 | 1.0.4 | June 11, 2026 | [ChappieAI-1.0.4.dmg](https://github.com/iOSIvanovS/chappieai/raw/main/releases/ChappieAI-1.0.4.dmg) |
