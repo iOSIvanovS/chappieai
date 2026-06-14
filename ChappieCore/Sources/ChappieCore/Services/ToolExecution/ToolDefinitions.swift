@@ -473,35 +473,8 @@ extension ToolExecutionService {
             tools.append(contentsOf: localizationTools())
         }
 
-        // MARK: - Project management (IT-07, always)
-
-        tools.append(AITool(function: AIFunctionDefinition(
-            name: "add_project_to_thread",
-            description: "Add a project to the current thread by folder name. Use when the user asks to attach a project to the conversation or when the task clearly belongs to a specific project.",
-            parameters: AIToolParameters(
-                properties: [
-                    "display_name": AIToolProperty(
-                        type: "string",
-                        description: "Display name of the project (folder name). E.g.: 'Chappie', 'MyApp', 'Backend'. Must match the real folder name of the project."
-                    )
-                ],
-                required: ["display_name"]
-            )
-        )))
-
-        tools.append(AITool(function: AIFunctionDefinition(
-            name: "remove_project_from_thread",
-            description: "Remove a project from the current thread by name. Use when the user asks to detach a project or the task no longer concerns this project.",
-            parameters: AIToolParameters(
-                properties: [
-                    "display_name": AIToolProperty(
-                        type: "string",
-                        description: "Display name of the project to remove from the thread. Must exactly match the name of the added project."
-                    )
-                ],
-                required: ["display_name"]
-            )
-        )))
+        // MARK: - Project management (read-only, always)
+        // add/remove are UI-only — only the user can attach or detach projects.
 
         tools.append(AITool(function: AIFunctionDefinition(
             name: "list_thread_projects",

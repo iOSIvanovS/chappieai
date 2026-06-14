@@ -132,7 +132,7 @@ struct ContentView: View {
             id: thread.id,
             title: thread.title,
             settings: viewModel.activeThreadSettings,
-            projectIds: thread.projectIds,
+            projects: thread.projects,
             createdAt: thread.createdAt,
             updatedAt: thread.updatedAt
         )

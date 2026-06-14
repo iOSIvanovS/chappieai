@@ -144,6 +144,8 @@ final class ChappieViewModel {
 
     var memoryStore: MemoryStore?
     var threadStore: ThreadStore?
+    // ProjectStore is kept for downgradeAllProjectsToAdvisor (license enforcement).
+    // It is NOT used for project attachment — that is now thread-scoped via ThreadStore.
     var projectStore: ProjectStore?
     var providerStore: AIProviderStore?
 
@@ -266,7 +268,7 @@ final class ChappieViewModel {
         let tStore = ThreadStore(dataStore: ds)
         self.threadStore = tStore
 
-        let pStore = ProjectStore(dataStore: ds)
+        let pStore = ProjectStore(dataStore: ds, threadStore: tStore)
         self.projectStore = pStore
 
         let provStore = AIProviderStore(dataStore: ds)
@@ -280,7 +282,7 @@ final class ChappieViewModel {
         print("[ChappieViewModel] ModelContainer connected, ChappieDataStore initialized")
 
         if let ts = toolService {
-            registerProjectToolHandlers(toolService: ts, projectStore: pStore, threadStore: tStore)
+            registerProjectToolHandlers(toolService: ts)
         }
 
         // License check runs in parallel with other startup tasks — no blocking.
@@ -368,9 +370,7 @@ final class ChappieViewModel {
             self.orchestrator = AIOrchestrator(aiClient: client, toolService: ts, fileSystem: fs, memoryManager: mm)
         }
 
-        if let pStore = projectStore, let tStore = threadStore {
-            registerProjectToolHandlers(toolService: ts, projectStore: pStore, threadStore: tStore)
-        }
+        registerProjectToolHandlers(toolService: ts)
 
         Task { await syncActiveMemoryContext() }
     }

@@ -27,10 +27,10 @@ ChappieCore/
     │   ├── AppConfig.swift             # Centralized config (dynamic, per-thread). Default: 100 messages.
     │   ├── ChappieError.swift          # ChappieError enum
     │   ├── MemoryModels.swift          # MemoryEntry, MemoryScope, MemoryStorage
-    │   ├── ProjectModels.swift         # ProjectPayload, ProjectSettings, ProjectMetadata
+    │   ├── ProjectModels.swift         # ProjectSettings, ProjectMetadata, ThreadProjectEntry
     │   ├── RemoteProviderCatalog.swift  # DTOs for providers.json (GitHub-hosted catalog)
     │   ├── RequestLog.swift            # Request/response logging model
-    │   └── ThreadModels.swift          # ThreadSettings (default 30 msg), ThreadMetadata
+    │   └── ThreadModels.swift          # ThreadSettings, ThreadMetadata, ThreadPayload (with projects)
     └── Services/
         ├── AIClient.swift              # OpenAI-compatible HTTP client (entry point)
         ├── AIClient+HTTP.swift         # HTTP request building + response parsing
@@ -47,13 +47,13 @@ ChappieCore/
         ├── MCPToolBridge.swift         # Bridge to ChappieMCP via Unix socket
         ├── MemoryManager.swift         # Semantic memory (read/write/search) via DataStore
         ├── MemoryStore.swift           # Persistence CRUD for memory scopes
-        ├── ProjectStore.swift          # CRUD for projects
+        ├── ProjectStore.swift          # downgradeAllProjectsToAdvisor() only — no CRUD
         ├── ProvidersRemoteService.swift # Fetches + caches providers.json from GitHub
         ├── ShellSession.swift          # Persistent bash session (per-thread, run_terminal)
         ├── StallWatchdog.swift         # Cancels stalled AI streams after timeout
         ├── SystemPromptBuilder.swift   # Deterministic system prompt assembler
         ├── ThreadSession.swift         # Runtime container for an active thread
-        ├── ThreadStore.swift           # CRUD for threads
+        ├── ThreadStore.swift           # CRUD for threads + project management within threads
         ├── ToolAccessController.swift  # Hard gate before every tool execution
         ├── WebFetchService.swift       # Fetches web pages and extracts clean text
         ├── WelcomeService.swift        # Generates AI welcome message for new threads
@@ -90,7 +90,6 @@ The schema is frozen. It will never change. No SwiftData migrations are ever nee
 ```swift
 enum Relation: String {
     case threads      = "threads"
-    case projects     = "projects"
     case memory       = "memory"
     case providers    = "providers"
     case appSettings  = "app_settings"
@@ -98,6 +97,8 @@ enum Relation: String {
 ```
 
 One row per relation. The payload is a JSON-encoded domain collection.
+
+> **Note:** `case projects` was removed. Projects now live inside `ThreadPayload.projects`.
 
 ### DataStore API
 
@@ -134,17 +135,38 @@ Structs that must follow these rules:
 | Struct | Stored under |
 |---|---|
 | `[ThreadPayload]` | `DataStore.Relation.threads` |
-| `[ProjectPayload]` | `DataStore.Relation.projects` |
 | `[MemoryScope]` | `DataStore.Relation.memory` |
 | `[AIProvider]` | `DataStore.Relation.providers` |
 | `AppSettingsPayload` | `DataStore.Relation.appSettings` |
 | `ThreadSettings` | inside `ThreadPayload` |
-| `ProjectSettings` | inside `ProjectPayload` |
+| `[ThreadProjectEntry]` | inside `ThreadPayload` |
+| `ProjectSettings` | inside `ThreadProjectEntry` |
 | `[MemoryEntry]` | inside `MemoryScope` |
 
 ---
 
-## 5. Architecture Diagram
+## 5. Project Model
+
+Projects are **thread-local** — no global registry, no bookmarks.
+
+```swift
+struct ThreadProjectEntry: Codable, Identifiable, Sendable {
+    var id: UUID
+    var displayName: String
+    var absolutePath: String       // full path set at attachment time
+    var settings: ProjectSettings
+}
+```
+
+**Rules:**
+- Added only by user (via `+` button or drag & drop). AI cannot add/remove.
+- Duplicate check: same `absolutePath` → silently ignored.
+- `FileSystemManager` reads `absolutePath` directly — no bookmark resolution needed.
+- `list_thread_projects` is the only AI tool that touches projects (read-only).
+
+---
+
+## 6. Architecture Diagram
 
 ```mermaid
 graph TD
@@ -155,18 +177,18 @@ graph TD
     end
 
     subgraph Stores["Domain Stores (actors)"]
-        TS["ThreadStore"]
-        PS["ProjectStore"]
+        TS["ThreadStore\n(owns project CRUD within threads)"]
         MS["MemoryStore"]
         APS["AIProviderStore"]
         ASS["AppSettingsStore"]
+        PS["ProjectStore\n(downgradeAllProjectsToAdvisor only)"]
     end
 
     TS --> DS
-    PS --> DS
     MS --> DS
     APS --> DS
     ASS --> DS
+    PS --> TS
 
     subgraph Services["Services (actors)"]
         Orch["AIOrchestrator\nReasoning loop"]
@@ -175,7 +197,7 @@ graph TD
         TAC["ToolAccessController\nHard gate per tool call"]
         TSess["ThreadSession\nRuntime thread container"]
         MemM["MemoryManager\nSemantic memory (DataStore only)"]
-        FSM["FileSystemManager\nSecure FS access"]
+        FSM["FileSystemManager\nSecure FS access (absolutePath)"]
         SSH["ShellSession\nPersistent bash (per thread)"]
         MCP["MCPToolBridge\nUnix Socket client"]
         WFS["WebFetchService\nHTTP page fetch"]
@@ -198,7 +220,6 @@ graph TD
     TES --> MemM
     TES --> MCP
     TES --> TS
-    TES --> PS
     TES --> WFS
     TES --> TAC
     TES --> SSH
@@ -209,7 +230,7 @@ graph TD
 
 ---
 
-## 6. Key Models
+## 7. Key Models
 
 ### ThreadSettings (default: 30 messages)
 
@@ -256,7 +277,7 @@ struct AIProvider: Codable {
 
 ---
 
-## 7. AI Client Architecture
+## 8. AI Client Architecture
 
 ```
 AIClientProtocol
@@ -269,7 +290,7 @@ AIClientFactory.make(for:apiKey:model:) → AIClient | AnthropicClient
 
 ---
 
-## 8. AIOrchestrator — Reasoning Loop
+## 9. AIOrchestrator — Reasoning Loop
 
 ```
 process(prompt, history, config, memoryContext)
@@ -284,7 +305,7 @@ process(prompt, history, config, memoryContext)
 
 ---
 
-## 9. SystemPromptBuilder — Injection Order
+## 10. SystemPromptBuilder — Injection Order
 
 Pure value transformer — no async, no SwiftData, no side effects.
 
@@ -299,7 +320,7 @@ Empty sections are omitted — no wasted tokens.
 
 ---
 
-## 10. ToolAccessController
+## 11. ToolAccessController
 
 Hard gate before every tool execution.
 
@@ -311,10 +332,11 @@ public enum AccessResult: Sendable {
 ```
 
 `git_diff` is permanently blocked — cannot be overridden by any settings.
+`add_project_to_thread` and `remove_project_from_thread` are permanently removed — user-only operations.
 
 ---
 
-## 11. ShellSession + TerminalTools
+## 12. ShellSession + TerminalTools
 
 `ShellSession` — persistent bash process per thread ID.
 
@@ -322,3 +344,13 @@ public enum AccessResult: Sendable {
 - `.none` — terminal unavailable (default)
 - `.confirm` — every command requires user approval
 - `.auto` — commands execute immediately
+
+---
+
+## 📚 Changelog
+
+| Date | Change |
+|------|--------|
+| 2025-07 | Initial architecture |
+| 2026-06 | Storage cleanup: removed DataStoreMigration, V2/V3 schema stubs |
+| 2026-07 | Projects refactor: removed ProjectPayload, DataStore.Relation.projects, bookmark logic. Projects now live in ThreadPayload as [ThreadProjectEntry] with absolutePath. ThreadStore owns project CRUD. ProjectStore reduced to downgradeAllProjectsToAdvisor() only. AI tools add/remove_project_to_thread removed from ToolDefinitions. |

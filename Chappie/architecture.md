@@ -23,8 +23,8 @@ All business logic lives in ChappieCore. The UI target is responsible only for:
 Chappie/
 ├── ChappieApp.swift                    # @main, ModelContainer (AppSettingsSchema), AppDelegate
 ├── ContentView.swift                   # Conductor: assembles components, manages sheets
-├── DropHandler.swift                   # Drag-and-drop file handling
-├── MCPHelperLauncher.swift             # Launches ChappieMCP child processУпс, ошибка: Неизвестная ошибка: Orchestrator step limit exceeded (maxOrchestratorSteps = 100). Loop artificially stopped. Increase AppConfig.maxOrchestratorSteps if needed.
+├── DropHandler.swift                   # Drag-and-drop: files AND project folders
+├── MCPHelperLauncher.swift             # Launches ChappieMCP child process
 ├── Models/
 │   ├── AppState.swift                  # @Observable singleton: onboarding state
 │   ├── ChatMessage.swift               # UI message model (enum: .message / .toolCall / .terminalConfirmation)
@@ -38,7 +38,7 @@ Chappie/
 │   ├── ChappieViewModel+Providers.swift      # Provider/key switching + balance
 │   ├── ChappieViewModel+AppSettings.swift    # AppSettings read/write via AppSettingsStore
 │   ├── ChappieViewModel+Memory.swift         # Memory tool callbacks
-│   ├── ChappieViewModel+Projects.swift       # Project CRUD + settings
+│   ├── ChappieViewModel+Projects.swift       # Project add/remove/settings — user-only, via ThreadStore
 │   ├── ChappieViewModel+Terminal.swift       # Terminal confirmation flow (approve/reject)
 │   ├── ChappieViewModel+PersonaBlock.swift   # v2PersonaBlock + baseSystemPrompt constants
 │   └── StreamingState.swift            # Streaming state model (isolated from ViewModel)
@@ -127,8 +127,7 @@ graph TD
         TSess["ThreadSession"]
         SPB["SystemPromptBuilder"]
         TAC["ToolAccessController"]
-        TS["ThreadStore"]
-        PS["ProjectStore"]
+        TS["ThreadStore\n(owns project CRUD)"]
         MS["MemoryStore"]
         APS["AIProviderStore"]
         ASS["AppSettingsStore"]
@@ -157,7 +156,6 @@ graph TD
     VM --> Orch
     VM --> TSess
     VM --> TS
-    VM --> PS
     VM --> MS
     VM --> APS
     VM --> ASS
@@ -215,9 +213,22 @@ viewModel.setModelContainer(modelContainer)  // called once in .onAppear
 | `+Providers.swift` | Provider/key switching, balance loading, invalidation |
 | `+AppSettings.swift` | `AppSettingsStore` read/write |
 | `+Memory.swift` | Memory tool callbacks |
-| `+Projects.swift` | Project CRUD, `updateProjectSettings()` |
+| `+Projects.swift` | Project add/remove/settings via `ThreadStore` — **user-only, no AI** |
 | `+Terminal.swift` | Terminal confirmation flow — approve/reject pending commands |
 | `+PersonaBlock.swift` | `v2PersonaBlock` + `baseSystemPrompt` constants |
+
+### Project Attachment Rules
+
+Projects are attached **exclusively by the user** — via `+` button or drag & drop.
+AI cannot add or remove projects. `add_project_to_thread` / `remove_project_from_thread` tools do not exist.
+
+```
+User picks folder (NSOpenPanel or drop)
+  → ChappieViewModel+Projects.addProject(url:)
+  → ThreadStore.addProject(threadId:entry:)  — duplicate absolutePath → no-op
+  → loadProjectsForThread() → UI updates
+  → syncFileSystemForActiveThread() — reads absolutePath directly, no bookmark
+```
 
 ### Provider / Key / Model Selection
 
@@ -308,3 +319,4 @@ Auto-select: if provider has exactly one key → pre-selected automatically.
 | 2026-06 | Storage cleanup: removed DataStoreMigration, V2/V3 schema stubs |
 | 2026-06 | Onboarding: skip provider step if provider already exists |
 | 2026-07 | T-06: architecture files actualized (added DropHandler, EULAView, MemoryManagementView, ProviderIconView) |
+| 2026-07 | Projects refactor: removed ProjectStore CRUD, bookmark logic, AI add/remove tools. Projects now thread-local via ThreadProjectEntry.absolutePath. ChappieViewModel+Projects uses ThreadStore only. |

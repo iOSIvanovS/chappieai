@@ -49,11 +49,9 @@ public actor ToolExecutionService {
     var isFileSystemReady: Bool = true
 
     // Current license state — injected from ViewModel on every state change.
-    // Used by ToolAccessControl to enforce plan-based restrictions (e.g. Starter = read-only).
     var licenseState: LicenseState = .loading
 
-    var addProjectHandler: (@Sendable (String) async -> String)?
-    var removeProjectHandler: (@Sendable (String) async -> String)?
+    // list_thread_projects only — add/remove are UI-only, not available to AI.
     var listProjectsHandler: (@Sendable () async -> String)?
 
     var onProjectUnavailable: (@MainActor (String) -> Void)?
@@ -106,12 +104,9 @@ public actor ToolExecutionService {
 
     /// Atomically updates both the memory context and project settings in a single actor hop.
     ///
-    /// WHY THIS EXISTS — race window fix:
-    /// setActiveMemoryContext() + setProjectSettings() are two separate async calls.
-    /// Between them, availableTools is computed with projects present but an empty
-    /// projectSettingsCache — causing isProg=false and dropping all git/build tools
-    /// (including git_push) from the tool list sent to the AI.
-    /// This method eliminates the window by writing both in one synchronous pass.
+    /// WHY: setActiveMemoryContext() + setProjectSettings() are two separate async calls.
+    /// Between them, availableTools could be computed with projects present but empty
+    /// projectSettingsCache — causing isProg=false and dropping git/build tools from the list.
     public func setMemoryContextAndSettings(
         context: ActiveMemoryContext,
         settings: [UUID: ProjectSettings]
@@ -127,7 +122,6 @@ public actor ToolExecutionService {
         }
     }
 
-    /// Updates the license state used for plan-based tool access control.
     public func setLicenseState(_ state: LicenseState) {
         self.licenseState = state
         print("[ToolExecutionService] 🔑 License state updated: \(state)")
@@ -142,17 +136,13 @@ public actor ToolExecutionService {
         print("[ToolExecutionService] ✅ Memory change callback registered")
     }
 
-    // MARK: - Project handler registration (IT-07)
+    // MARK: - Project handler registration (list only)
 
     public func registerProjectHandlers(
-        addProject: @escaping @Sendable (String) async -> String,
-        removeProject: @escaping @Sendable (String) async -> String,
         listProjects: @escaping @Sendable () async -> String
     ) {
-        self.addProjectHandler = addProject
-        self.removeProjectHandler = removeProject
         self.listProjectsHandler = listProjects
-        print("[ToolExecutionService] ✅ Project handlers registered")
+        print("[ToolExecutionService] ✅ Project list handler registered")
     }
 
     // MARK: - loc_* tool names
@@ -170,14 +160,9 @@ public actor ToolExecutionService {
         let name = call.function.name
         let argsData = call.function.arguments.data(using: .utf8) ?? Data()
 
-        // Decode all string args once — used for both access control and execution.
         let args = (try? JSONDecoder().decode([String: String].self, from: argsData)) ?? [:]
-
-        // All project-scoped tools carry an explicit "project" display name arg.
-        // Access control resolves settings via this arg — no path heuristics.
         let projectName = args["project"]
 
-        // Tools that require an active workspace project.
         let projectRequiredTools: Set<String> = [
             "list_files", "read_file", "write_file", "delete_file",
             "read_document", "write_document",
@@ -185,7 +170,6 @@ public actor ToolExecutionService {
             "git_log", "git_reset", "git_revert", "git_checkout",
             "build_project", "run_tests", "read_build_log",
             "run_terminal"
-            // run_ssh intentionally excluded — connects to remote host, no local project needed
         ]
 
         if projectRequiredTools.contains(name) && !isFileSystemReady {
@@ -201,7 +185,7 @@ public actor ToolExecutionService {
 
             To use file tools and git commands, add a project to the thread first:
             • Click the '+' button in the projects bar above the chat, or
-            • Tell me: "Add project [folder name]" — I'll call add_project_to_thread.
+            • Drag and drop the project folder into the chat window.
             """
         }
 
@@ -213,9 +197,6 @@ public actor ToolExecutionService {
             }
         }
 
-        // run_ssh has its own access check — requires terminal to be enabled.
-        // No "project" arg for SSH — it targets a remote host, not a local project.
-        // WHY nil: SSH access is granted if terminal is enabled in ANY attached project.
         if name == "run_ssh" {
             let accessResult = checkToolAccess(toolName: name, projectName: nil)
             if case .denied(let message) = accessResult {
@@ -233,9 +214,6 @@ public actor ToolExecutionService {
             case "memorize", "recall", "search_memory", "delete_memory":
                 return try await executeMemoryTool(name: name, argsData: argsData)
 
-            // WHY git_push is listed explicitly: the switch must cover every git tool name.
-            // Missing git_push here caused it to fall into `default` → "Unknown tool" error,
-            // forcing fallback to run_terminal even when the specialized tool was available.
             case "git_status", "git_diff", "git_add", "git_commit", "git_push",
                  "git_log", "git_reset", "git_revert", "git_checkout",
                  "build_project", "run_tests", "read_build_log":
@@ -247,27 +225,9 @@ public actor ToolExecutionService {
             case "run_ssh":
                 return try await executeSSHTool(argsData: argsData)
 
-            case "add_project_to_thread":
-                guard let displayName = args["display_name"], !displayName.isEmpty else {
-                    return "Error: Argument 'display_name' is required for add_project_to_thread"
-                }
-                guard let handler = addProjectHandler else {
-                    return "Error: Project management tools unavailable. Check that ModelContainer is connected."
-                }
-                return await handler(displayName)
-
-            case "remove_project_from_thread":
-                guard let displayName = args["display_name"], !displayName.isEmpty else {
-                    return "Error: Argument 'display_name' is required for remove_project_from_thread"
-                }
-                guard let handler = removeProjectHandler else {
-                    return "Error: Project management tools unavailable. Check that ModelContainer is connected."
-                }
-                return await handler(displayName)
-
             case "list_thread_projects":
                 guard let handler = listProjectsHandler else {
-                    return "Error: Project management tools unavailable. Check that ModelContainer is connected."
+                    return "Error: Project list handler unavailable."
                 }
                 return await handler()
 

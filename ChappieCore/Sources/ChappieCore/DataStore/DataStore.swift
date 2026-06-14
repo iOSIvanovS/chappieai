@@ -12,7 +12,7 @@
 //
 // RELATION DESIGN:
 // Static cases (.threads, .providers, etc.) hold collections.
-// Dynamic cases (.threadMessages, .projectBookmark) hold per-entity data
+// Dynamic cases (.threadMessages) hold per-entity data
 // and generate unique keys via UUID — e.g. "thread_messages.<uuid>".
 // This avoids loading all messages when only the thread list is needed.
 //
@@ -72,7 +72,7 @@ public actor ChappieDataStore {
         case providers
         case appSettings
         case threadMessages(UUID)
-        case projectBookmark(UUID)
+        // projectBookmark(UUID) — removed. Projects are now thread-scoped (absolutePath in ThreadProjectEntry).
 
         public var key: String {
             switch self {
@@ -82,7 +82,6 @@ public actor ChappieDataStore {
             case .providers:                return "providers"
             case .appSettings:              return "app_settings"
             case .threadMessages(let id):   return "thread_messages.\(id.uuidString)"
-            case .projectBookmark(let id):  return "project_bookmark.\(id.uuidString)"
             }
         }
     }

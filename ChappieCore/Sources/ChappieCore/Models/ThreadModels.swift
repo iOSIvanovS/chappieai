@@ -16,6 +16,46 @@
 
 import Foundation
 
+// MARK: - ThreadProjectEntry
+
+/// A project attached to a specific thread. Stored inside ThreadPayload.projectsJSON.
+///
+/// WHY HERE, NOT IN ProjectStore:
+/// Projects are thread-scoped — the same folder can be attached to different threads
+/// with different settings. There is no global project registry anymore.
+/// absolutePath is stored at attachment time (from the URL the user picked) and is
+/// used directly for FS access — no bookmark resolution needed.
+public struct ThreadProjectEntry: Codable, Sendable, Identifiable, Hashable {
+
+    public let id: UUID
+    public var displayName: String
+    public var absolutePath: String
+    public var settings: ProjectSettings
+    public var createdAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        displayName: String,
+        absolutePath: String,
+        settings: ProjectSettings = ProjectSettings(),
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.absolutePath = absolutePath
+        self.settings = settings
+        self.createdAt = createdAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case displayName  = "display_name"
+        case absolutePath = "absolute_path"
+        case settings
+        case createdAt    = "created_at"
+    }
+}
+
 // MARK: - ThreadSettings
 
 /// Per-thread configuration — serialized to JSON and stored inside ThreadPayload.settingsJSON.
@@ -83,7 +123,8 @@ public struct ThreadMetadata: Sendable, Identifiable, Hashable {
     public let createdAt: Date
     /// Used for sorting in the sidebar.
     public let updatedAt: Date
-    public let projectIds: [UUID]
+    /// Thread-scoped projects. Source of truth for project attachment.
+    public let projects: [ThreadProjectEntry]
     /// Included so UI can show settings without an extra ThreadStore call.
     public let settings: ThreadSettings
 
@@ -92,14 +133,14 @@ public struct ThreadMetadata: Sendable, Identifiable, Hashable {
         id: UUID = UUID(),
         title: String,
         settings: ThreadSettings = ThreadSettings(),
-        projectIds: [UUID] = [],
+        projects: [ThreadProjectEntry] = [],
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
         self.id = id
         self.title = title
         self.settings = settings
-        self.projectIds = projectIds
+        self.projects = projects
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }

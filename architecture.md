@@ -110,8 +110,7 @@ ChappieMCP
 
 | What | Where | Key/Format |
 |---|---|---|
-| Threads, messages, settings | `DataStore.Relation.threads` | `[ThreadPayload]` JSON |
-| Projects (folder registry) | `DataStore.Relation.projects` | `[ProjectPayload]` JSON |
+| Threads, messages, projects, settings | `DataStore.Relation.threads` | `[ThreadPayload]` JSON |
 | Memory (3 levels) | `DataStore.Relation.memory` | `[MemoryScope]` JSON |
 | AI providers | `DataStore.Relation.providers` | `[AIProvider]` JSON |
 | App settings | `DataStore.Relation.appSettings` | `AppSettingsPayload` JSON |
@@ -121,6 +120,9 @@ ChappieMCP
 **Rule: DataStore.swift is the ONLY file in the project that imports SwiftData.**
 **StoredRecord is the ONLY @Model. Its schema never changes. No migrations ever needed.**
 **License data lives in Keychain ONLY — never in SwiftData.**
+
+> **Projects are stored inside ThreadPayload** — no separate global project registry.
+> Each thread owns its own `[ThreadProjectEntry]` with `id`, `displayName`, `absolutePath`.
 
 ---
 
@@ -152,13 +154,18 @@ Empty sections are omitted entirely — no wasted tokens.
 
 | Entity | Role |
 |---|---|
-| `ThreadProject` | Project in context of a specific thread; owns its own `ProjectSettings` and memory |
-| `ProjectEntity` | Global folder registry only — path + displayName, no logic, no memory |
+| `ThreadProjectEntry` | Project in context of a specific thread; owns `absolutePath`, `ProjectSettings`, memory |
 | `ThreadSession` | Runtime container assembled on thread activation, discarded on switch |
 | `SystemPromptBuilder` | Deterministic prompt assembly from `PromptContext`; pure value transformer |
 | `ToolAccessController` | Hard gate before every tool execution; returns structured `AccessResult` |
 | `AppSettingsStore` | Actor-based CRUD for the singleton AppSettings record |
 | `LicenseService` | Actor; owns trial/activation/validation/grace period/owner JWT logic |
+
+**Project attachment rules:**
+- Only the user can add/remove projects (via `+` button or drag & drop). AI cannot.
+- `absolutePath` is set at attachment time and stored directly in `ThreadPayload`.
+- Duplicate check: same `absolutePath` → silently ignored, no duplicate added.
+- `list_thread_projects` tool is available to AI (read-only).
 
 **Provider/model validation on thread load:**
 1. Resolve `providerId` → if not found: show orange banner, block AI calls
@@ -251,3 +258,13 @@ Contains root `architecture.md` + `licensing.md` + references to 4 target archit
 **RULE-05: No final commit if build or tests are red** — a broken commit is worse than none.
 
 **RULE-06: Commit only after user acceptance** — never commit autonomously after task completion.
+
+---
+
+## 📚 Changelog
+
+| Date | Change |
+|------|--------|
+| 2025-07 | Initial architecture |
+| 2026-06 | Storage cleanup: removed DataStoreMigration, V2/V3 schema stubs |
+| 2026-07 | Projects refactor: removed global ProjectPayload registry + bookmarks. Projects now live inside ThreadPayload as [ThreadProjectEntry] with absolutePath. AI tools add/remove_project_to_thread removed. |

@@ -5,7 +5,7 @@
 // No SwiftData imports here — all persistence goes through ChappieDataStore.
 //
 // STORAGE LAYOUT:
-// - Relation.threads           → [ThreadPayload]   (thread list, metadata, settings)
+// - Relation.threads            → [ThreadPayload]  (thread list, metadata, settings)
 // - Relation.threadMessages(id) → raw JSON Data    (per-thread messages, loaded on demand)
 //
 // Messages are stored as raw JSON Data (saveRawData/loadRawData) to avoid double-encoding.
@@ -37,20 +37,24 @@ public struct ThreadPayload: Codable, Sendable, Identifiable {
     public var createdAt: Date
     public var updatedAt: Date
     public var settingsJSON: Data
+    /// Legacy field — kept for Codable compatibility with old records. Not written by new code.
     public var projectBindingsJSON: Data
+    /// Thread-scoped projects with absolute paths. Default Data() for old records.
+    public var projectsJSON: Data
 
     public init(
         id: UUID = UUID(),
         title: String,
         settings: ThreadSettings = ThreadSettings(),
-        projectIds: [UUID] = []
+        projects: [ThreadProjectEntry] = []
     ) {
         self.id = id
         self.title = title
         self.createdAt = Date()
         self.updatedAt = Date()
         self.settingsJSON = (try? JSONEncoder().encode(settings)) ?? Data()
-        self.projectBindingsJSON = (try? JSONEncoder().encode(projectIds)) ?? Data()
+        self.projectBindingsJSON = Data()
+        self.projectsJSON = (try? JSONEncoder().encode(projects)) ?? Data()
     }
 
     // CodingKeys guard against future renames.
@@ -61,6 +65,20 @@ public struct ThreadPayload: Codable, Sendable, Identifiable {
         case updatedAt           = "updated_at"
         case settingsJSON        = "settings_json"
         case projectBindingsJSON = "project_bindings_json"
+        case projectsJSON        = "projects_json"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id           = try c.decode(UUID.self, forKey: .id)
+        title        = try c.decode(String.self, forKey: .title)
+        createdAt    = try c.decode(Date.self, forKey: .createdAt)
+        updatedAt    = try c.decode(Date.self, forKey: .updatedAt)
+        settingsJSON = try c.decodeIfPresent(Data.self, forKey: .settingsJSON) ?? Data()
+        // Legacy field — present in old records, empty in new ones. Never written by new code.
+        projectBindingsJSON = try c.decodeIfPresent(Data.self, forKey: .projectBindingsJSON) ?? Data()
+        // New field — default empty so old records decode cleanly.
+        projectsJSON = try c.decodeIfPresent(Data.self, forKey: .projectsJSON) ?? Data()
     }
 }
 
@@ -142,7 +160,7 @@ public actor ThreadStore {
         let data = try JSONEncoder().encode(messages)
         try await dataStore.saveRawData(data, for: messagesRelation(for: threadId))
 
-        // Update updatedAt in the thread payload
+        // Update updatedAt in the thread payload.
         var payloads = try await loadPayloads()
         if let idx = payloads.firstIndex(where: { $0.id == threadId }) {
             payloads[idx].updatedAt = Date()
@@ -183,70 +201,84 @@ public actor ThreadStore {
         return settings
     }
 
-    // MARK: - Project Bindings
+    // MARK: - Thread-scoped Projects
 
-    public func loadProjectIds(forThreadId threadId: UUID) async throws -> [UUID] {
+    /// Loads thread-scoped projects for a thread.
+    public func loadProjects(forThreadId threadId: UUID) async throws -> [ThreadProjectEntry] {
         let payloads = try await loadPayloads()
         guard let payload = payloads.first(where: { $0.id == threadId }),
-              !payload.projectBindingsJSON.isEmpty,
-              let ids = try? JSONDecoder().decode([UUID].self, from: payload.projectBindingsJSON)
+              !payload.projectsJSON.isEmpty,
+              let projects = try? JSONDecoder().decode([ThreadProjectEntry].self, from: payload.projectsJSON)
         else { return [] }
-        return ids
+        return projects
     }
 
-    public func updateProjectBindings(_ projectIds: [UUID], forThreadId threadId: UUID) async throws {
-        var payloads = try await loadPayloads()
-        guard let idx = payloads.firstIndex(where: { $0.id == threadId }) else {
-            print("[ThreadStore] ⚠️ Thread \(threadId) not found when updating project bindings")
-            return
-        }
-        payloads[idx].projectBindingsJSON = (try? JSONEncoder().encode(projectIds)) ?? payloads[idx].projectBindingsJSON
-        payloads[idx].updatedAt = Date()
-        try await savePayloads(payloads)
-        try await refreshCache()
-        print("[ThreadStore] ✅ Updated project bindings for thread \(threadId): \(projectIds.count) projects")
-    }
-
-    public func addProject(id projectId: UUID, toThreadId threadId: UUID) async throws {
+    /// Adds a project to a thread. Deduplicates by absolutePath.
+    public func addProject(_ entry: ThreadProjectEntry, toThreadId threadId: UUID) async throws {
         var payloads = try await loadPayloads()
         guard let idx = payloads.firstIndex(where: { $0.id == threadId }) else { return }
 
-        var ids: [UUID] = []
-        if !payloads[idx].projectBindingsJSON.isEmpty {
-            ids = (try? JSONDecoder().decode([UUID].self, from: payloads[idx].projectBindingsJSON)) ?? []
+        var projects: [ThreadProjectEntry] = []
+        if !payloads[idx].projectsJSON.isEmpty {
+            projects = (try? JSONDecoder().decode([ThreadProjectEntry].self, from: payloads[idx].projectsJSON)) ?? []
         }
 
-        guard !ids.contains(projectId) else {
-            print("[ThreadStore] ℹ️ Project \(projectId) already in thread \(threadId)")
+        // Same folder must not appear twice in one thread.
+        guard !projects.contains(where: { $0.absolutePath == entry.absolutePath }) else {
+            print("[ThreadStore] ℹ️ Project '\(entry.displayName)' already in thread (same path)")
             return
         }
 
-        ids.append(projectId)
-        payloads[idx].projectBindingsJSON = (try? JSONEncoder().encode(ids)) ?? payloads[idx].projectBindingsJSON
+        projects.append(entry)
+        payloads[idx].projectsJSON = (try? JSONEncoder().encode(projects)) ?? payloads[idx].projectsJSON
         payloads[idx].updatedAt = Date()
         try await savePayloads(payloads)
         try await refreshCache()
-        print("[ThreadStore] ✅ Project \(projectId) added to thread \(threadId)")
+        print("[ThreadStore] ✅ Project '\(entry.displayName)' added to thread \(threadId)")
     }
 
+    /// Removes a project from a thread by its id.
     public func removeProject(id projectId: UUID, fromThreadId threadId: UUID) async throws {
         var payloads = try await loadPayloads()
         guard let idx = payloads.firstIndex(where: { $0.id == threadId }) else { return }
 
-        var ids: [UUID] = []
-        if !payloads[idx].projectBindingsJSON.isEmpty {
-            ids = (try? JSONDecoder().decode([UUID].self, from: payloads[idx].projectBindingsJSON)) ?? []
+        var projects: [ThreadProjectEntry] = []
+        if !payloads[idx].projectsJSON.isEmpty {
+            projects = (try? JSONDecoder().decode([ThreadProjectEntry].self, from: payloads[idx].projectsJSON)) ?? []
         }
 
-        let countBefore = ids.count
-        ids.removeAll { $0 == projectId }
-        guard ids.count < countBefore else { return }
+        let before = projects.count
+        projects.removeAll { $0.id == projectId }
+        guard projects.count < before else { return }
 
-        payloads[idx].projectBindingsJSON = (try? JSONEncoder().encode(ids)) ?? payloads[idx].projectBindingsJSON
+        payloads[idx].projectsJSON = (try? JSONEncoder().encode(projects)) ?? payloads[idx].projectsJSON
         payloads[idx].updatedAt = Date()
         try await savePayloads(payloads)
         try await refreshCache()
         print("[ThreadStore] ✅ Project \(projectId) removed from thread \(threadId)")
+    }
+
+    /// Updates settings for a specific project inside a thread.
+    public func updateProjectSettings(
+        _ settings: ProjectSettings,
+        projectId: UUID,
+        threadId: UUID
+    ) async throws {
+        var payloads = try await loadPayloads()
+        guard let tIdx = payloads.firstIndex(where: { $0.id == threadId }) else { return }
+
+        var projects: [ThreadProjectEntry] = []
+        if !payloads[tIdx].projectsJSON.isEmpty {
+            projects = (try? JSONDecoder().decode([ThreadProjectEntry].self, from: payloads[tIdx].projectsJSON)) ?? []
+        }
+
+        guard let pIdx = projects.firstIndex(where: { $0.id == projectId }) else { return }
+        projects[pIdx].settings = settings
+        payloads[tIdx].projectsJSON = (try? JSONEncoder().encode(projects)) ?? payloads[tIdx].projectsJSON
+        payloads[tIdx].updatedAt = Date()
+        try await savePayloads(payloads)
+        try await refreshCache()
+        print("[ThreadStore] ✅ Settings updated for project \(projectId) in thread \(threadId)")
     }
 
     // MARK: - Rename
@@ -268,7 +300,7 @@ public actor ThreadStore {
         let title = payloads[idx].title
         payloads.remove(at: idx)
         try await savePayloads(payloads)
-        // Delete the messages record for this thread too
+        // Delete the messages record for this thread too.
         try await dataStore.delete(messagesRelation(for: threadId))
         try await refreshCache()
         print("[ThreadStore] 🗑 Thread '\(title)' deleted")
@@ -337,11 +369,12 @@ extension ThreadMetadata {
         self.createdAt = payload.createdAt
         self.updatedAt = payload.updatedAt
 
-        if !payload.projectBindingsJSON.isEmpty,
-           let ids = try? JSONDecoder().decode([UUID].self, from: payload.projectBindingsJSON) {
-            self.projectIds = ids
+        // Thread-scoped projects — source of truth.
+        if !payload.projectsJSON.isEmpty,
+           let entries = try? JSONDecoder().decode([ThreadProjectEntry].self, from: payload.projectsJSON) {
+            self.projects = entries
         } else {
-            self.projectIds = []
+            self.projects = []
         }
 
         if !payload.settingsJSON.isEmpty,

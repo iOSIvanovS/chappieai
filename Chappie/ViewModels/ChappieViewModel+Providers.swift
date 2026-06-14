@@ -150,7 +150,7 @@ extension ChappieViewModel {
             id: old.id,
             title: old.title,
             settings: settings,
-            projectIds: old.projectIds,
+            projects: old.projects,
             createdAt: old.createdAt,
             updatedAt: Date()
         )

@@ -4,8 +4,9 @@
 // ThreadSession lifecycle — assembly on thread activation, invalidation on memory change.
 //
 // DESIGN:
-//   ProjectEntity is a SwiftData @Model — non-Sendable, cannot cross actor boundaries.
-//   We use Sendable ProjectMetadata DTOs instead — all @Model data stays on MainActor.
+//   ProjectMetadata is a Sendable DTO — all data comes from ThreadProjectEntry stored in the thread.
+//   absolutePath is stored at attachment time (from the URL the user picked).
+//   No bookmark resolution — absolutePath is read directly from ProjectMetadata.
 //
 // FLOW:
 //   selectThread() → assembleThreadSession() → ThreadSession stored in _activeThreadSession
@@ -17,35 +18,31 @@
 //   ThreadSession captures projectMetas by value at init time — they are immutable in the actor.
 //   invalidateCache() alone does NOT pick up new settings because the old DTOs are still in place.
 //   rebuildThreadSessionOnly() creates a new ThreadSession with fresh activeProjects but skips
-//   the expensive bookmark resolution (syncFileSystemForActiveThread) — safe for settings-only changes.
+//   the expensive FS sync — safe for settings-only changes.
 //
-// M-09 WORKSPACE ISOLATION (B-01 FIX):
-//   syncFileSystemForActiveThread() resolves bookmarks for ALL attached projects
-//   and builds a multi-workspace FileSystemManager so list_files / read_file / etc.
-//   can access every project, not just the first one.
+// M-09 WORKSPACE ISOLATION:
+//   syncFileSystemForActiveThread() reads absolutePath from each ProjectMetadata directly.
+//   No bookmarks. No global project registry. Path is always the one the user picked.
 //   Paths are prefixed: "ProjectName/relative/path".
 //   On threads with no projects — restores the global fileSystem (from workspaceURL).
 //
 // FS READINESS GUARD:
 //   syncFileSystemForActiveThread() sets isFileSystemReady=false on ViewModel (→ UI spinner)
-//   and on ToolExecutionService (→ file tools blocked) before bookmark resolution starts.
+//   and on ToolExecutionService (→ file tools blocked) before path resolution starts.
 //   Both are set true after FileSystem is wired. This prevents stale FS responses
-//   during thread switch when bookmark resolution is slow (100ms–1s per project).
+//   during thread switch when path resolution is slow.
 //
 // SYNC TASK CANCELLATION:
 //   _syncTask holds the current background Task launched by selectThread().
 //   On every selectThread() call, the previous Task is cancelled before a new one starts.
-//   This prevents a slow syncFileSystemForActiveThread() from a previous thread from
-//   racing with the new thread's sync and leaving isFileSystemReady in a wrong state.
+//   This prevents a slow sync from a previous thread from racing with the new thread's sync.
 //
-// STALE BOOKMARK HEALTH-CHECK:
-//   Before spending time on bookmark resolution, we verify the resolved URL is:
-//   (a) bookmark is not stale (isStale == false) — stale means macOS re-routed it elsewhere
-//   (b) reachable — fileExists(atPath:) returns true
-//   (c) not in Trash — path contains "/.Trash/" (user Trash) or "/.Trashes/" (volume Trash)
-//   Stale projects are marked isUnavailable=true in activeProjects and shown with
-//   an orange icon in ProjectChipsView. This gives the user a clear signal to either
-//   restore the folder or remove the project from the thread.
+// PATH HEALTH-CHECK:
+//   Before using a path, we verify:
+//   (a) path is not empty
+//   (b) folder exists — FileManager.fileExists(atPath:) returns true
+//   (c) not in Trash — path contains "/.Trash/" or "/.Trashes/"
+//   Unavailable projects are marked isUnavailable=true and shown with an orange icon.
 //
 // B-05 UNAVAILABILITY:
 //   Projects that fail health-check are NOT removed from activeProjects — the chip stays
@@ -57,40 +54,10 @@
 //   After FS is wired, we register onProjectUnavailable callback in ToolExecutionService.
 //   When a file tool fails mid-conversation (folder deleted while chat is open), FileTools
 //   calls the callback → markProjectUnavailable() flips the chip orange in real time.
-//   No timer, no polling — event-driven only.
 //
 // MCP RESTART AFTER PATH RESOLUTION:
 //   syncFileSystemForActiveThread() calls restartMCPIfNeeded() after resolving all paths.
 //   This ensures projectPathMap in MCP always reflects the latest resolved absolutePaths.
-//   Without this, git_* tools would use stale or empty paths on first thread load.
-//
-// WHY restartMCPIfNeeded() IS CALLED UNCONDITIONALLY AFTER PATH RESOLUTION:
-//   The guard !Task.isCancelled before FileSystem assembly protects against wiring the wrong
-//   FS to a stale thread, but paths in activeProjects are already resolved at that point.
-//   MCP restart must happen regardless of cancellation — if paths were resolved, MCP needs them.
-//   Skipping the restart on cancellation left MCP with a stale/empty projectPathMap, causing
-//   git_status and other git_* tools to return "projectPathMap is empty" errors.
-//
-// TERMINAL PATH MAP SYNC:
-//   After bookmark resolution, syncActiveMemoryContext() is called to push the updated
-//   projectPathMap (name → absolutePath) into ActiveMemoryContext inside ToolExecutionService.
-//   This makes run_terminal's "project" parameter work correctly — it reads projectPathMap
-//   to prefix commands with `cd /absolute/path && ` for deterministic execution.
-//
-// PRE-RESET BEFORE SYNC (B-05 FIX):
-//   At the start of syncFileSystemForActiveThread(), all projects are reset to
-//   isUnavailable=false before the resolution loop begins.
-//   WHY: if a previous sync Task was cancelled mid-loop, some projects may still carry
-//   isUnavailable=true from that interrupted pass. Without pre-reset, a healthy project
-//   that was never reached in the cancelled loop stays orange permanently — a false positive.
-//   Pre-reset ensures every sync starts from a clean slate.
-//
-// SECURITY SCOPE TIMING (B-05 FIX):
-//   startAccessingSecurityScopedResource() is asynchronous in effect — macOS needs a
-//   brief moment to grant sandbox access before FileManager.fileExists() returns correctly.
-//   Without a yield, fileExists() can return false on a healthy folder immediately after
-//   startAccessingSecurityScopedResource(), causing a false isUnavailable=true.
-//   We yield with Task.yield() after starting access to let the run loop process the grant.
 //
 // NOTE: v2PersonaBlock lives in ChappieViewModel+PersonaBlock.swift — extracted for size.
 
@@ -129,8 +96,7 @@ extension ChappieViewModel {
         self._activeThreadSession = session
         print("[ChappieViewModel] ThreadSession assembled for '\(thread.title)' (\(activeProjects.count) projects)")
 
-        // M-09 / B-01: Sync FileSystem to cover ALL attached projects.
-        // After this, absolutePaths are resolved and projectPathMap can be built.
+        // M-09: Sync FileSystem to cover ALL attached projects.
         await syncFileSystemForActiveThread()
 
         // B-05 LIVE: register callback so FileTools can flip the chip orange mid-conversation.
@@ -139,7 +105,7 @@ extension ChappieViewModel {
 
     // MARK: - Rebuild (settings-only — skips FS sync)
 
-    /// Rebuilds ThreadSession with fresh projectMetas WITHOUT re-resolving bookmarks.
+    /// Rebuilds ThreadSession with fresh projectMetas WITHOUT re-syncing the FileSystem.
     /// Use when only project settings changed (role, comments, terminal access, etc.).
     func rebuildThreadSessionOnly(for thread: ThreadMetadata) async {
         guard let store = memoryStore else { return }
@@ -174,7 +140,7 @@ extension ChappieViewModel {
         return try? await session.systemPrompt()
     }
 
-    // MARK: - M-09 / B-01: Multi-workspace isolation
+    // MARK: - M-09: Multi-workspace FileSystem sync
 
     func syncFileSystemForActiveThread() async {
         guard let ts = toolService else { return }
@@ -190,13 +156,10 @@ extension ChappieViewModel {
             return
         }
 
-        guard let pStore = projectStore else { return }
-
         self.isFileSystemReady = false
         await ts.setFileSystemReady(false)
 
         // PRE-RESET: clear stale isUnavailable flags from any previously cancelled sync.
-        // Without this, a project not reached in a cancelled loop stays orange permanently.
         for i in activeProjects.indices {
             activeProjects[i].isUnavailable = false
         }
@@ -204,81 +167,32 @@ extension ChappieViewModel {
         var workspaces: [(name: String, url: URL)] = []
 
         for i in activeProjects.indices {
-            guard !Task.isCancelled else {
-                // Paths already resolved up to this point — MCP still needs them.
-                // Fall through to restartMCPIfNeeded() below instead of returning early.
-                break
-            }
+            guard !Task.isCancelled else { break }
 
             let project = activeProjects[i]
 
-            guard let bookmarkData = try? await pStore.loadBookmark(forProjectId: project.id),
-                  !bookmarkData.isEmpty else {
-                print("[ChappieViewModel] M-09: No bookmark for '\(project.displayName)' — marked unavailable")
+            // absolutePath is stored at attachment time — read directly, no bookmark needed.
+            guard let path = project.absolutePath, !path.isEmpty else {
+                print("[ChappieViewModel] M-09: No absolutePath for '\(project.displayName)' — marked unavailable")
                 activeProjects[i].isUnavailable = true
-                activeProjects[i].absolutePath = nil
                 continue
             }
 
-            var isStale = false
-            let resolvedURL: URL?
-
-            if let url = try? URL(
-                resolvingBookmarkData: bookmarkData,
-                options: .withSecurityScope,
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            ) {
-                _ = url.startAccessingSecurityScopedResource()
-                // Yield to let macOS process the sandbox access grant before fileExists() check.
-                await Task.yield()
-                resolvedURL = url
-            } else {
-                resolvedURL = try? URL(
-                    resolvingBookmarkData: bookmarkData,
-                    options: [],
-                    relativeTo: nil,
-                    bookmarkDataIsStale: &isStale
-                )
-            }
-
-            guard let url = resolvedURL else {
-                print("[ChappieViewModel] M-09: ❌ Could not resolve bookmark for '\(project.displayName)' — marked unavailable")
+            if isPathStale(path) {
+                print("[ChappieViewModel] M-09: ⚠️ Stale path for '\(project.displayName)' — marked unavailable (\(path))")
                 activeProjects[i].isUnavailable = true
-                activeProjects[i].absolutePath = nil
                 continue
             }
 
-            // CRITICAL: stale bookmark means macOS re-routed it to a DIFFERENT folder — reject.
-            if isStale {
-                print("[ChappieViewModel] M-09: ⚠️ Stale bookmark for '\(project.displayName)' — macOS re-routed to '\(url.path)', rejecting")
-                activeProjects[i].isUnavailable = true
-                activeProjects[i].absolutePath = nil
-                continue
-            }
-
-            if isURLStale(url) {
-                print("[ChappieViewModel] M-09: ⚠️ Stale path for '\(project.displayName)' — marked unavailable (\(url.path))")
-                activeProjects[i].isUnavailable = true
-                activeProjects[i].absolutePath = nil
-                continue
-            }
-
+            let url = URL(fileURLWithPath: path)
             activeProjects[i].isUnavailable = false
-            // Store the resolved absolute path — injected into system prompt AND used for git/terminal routing.
-            activeProjects[i].absolutePath = url.path
             workspaces.append((name: project.displayName, url: url))
-            print("[ChappieViewModel] M-09: ✅ '\(project.displayName)' → \(url.path)")
+            print("[ChappieViewModel] M-09: ✅ '\(project.displayName)' → \(path)")
         }
 
-        // WHY unconditional restart here:
-        // Paths are already written into activeProjects above — MCP must get them regardless
-        // of whether the Task was cancelled. Cancellation only guards FS wiring (wrong thread),
-        // not path propagation to MCP. Without this, git_* tools see an empty projectPathMap.
         restartMCPIfNeeded()
         await syncActiveMemoryContext()
 
-        // Guard FS wiring against cancellation — we don't want to wire the wrong thread's FS.
         guard !Task.isCancelled else {
             self.isFileSystemReady = true
             await ts.setFileSystemReady(true)
@@ -292,19 +206,17 @@ extension ChappieViewModel {
             return
         }
 
-        let fs: FileSystemManager
-        if workspaces.count == 1 {
-            fs = FileSystemManager(workspaceURL: workspaces[0].url)
-        } else {
-            fs = FileSystemManager(workspaces: workspaces)
-        }
+        // Always use named multi-workspace init — even for a single project.
+        // WHY: single-workspace init(workspaceURL:) assigns name="" which breaks
+        // project= routing when AI calls list_files(project: "Chappie") — name mismatch → orange chip.
+        let fs = FileSystemManager(workspaces: workspaces)
 
         await ts.setFileSystem(fs)
 
         self.isFileSystemReady = true
         await ts.setFileSystemReady(true)
 
-        // Rebuild ThreadSession with updated absolutePath values so the system prompt reflects them.
+        // Rebuild ThreadSession so the system prompt reflects updated absolutePaths.
         if let thread = activeThread {
             await rebuildThreadSessionOnly(for: thread)
         }
@@ -331,11 +243,10 @@ extension ChappieViewModel {
         print("[ChappieViewModel] B-05 LIVE: '\(name)' marked unavailable after FS tool failure")
     }
 
-    // MARK: - Stale URL detection
+    // MARK: - Path health-check
 
-    private func isURLStale(_ url: URL) -> Bool {
-        let path = url.path
-        if path.contains("/.Trash/") { return true }
+    private func isPathStale(_ path: String) -> Bool {
+        if path.contains("/.Trash/")   { return true }
         if path.contains("/.Trashes/") { return true }
         if !FileManager.default.fileExists(atPath: path) { return true }
         return false

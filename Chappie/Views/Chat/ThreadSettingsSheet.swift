@@ -393,7 +393,6 @@ private struct KeySelectRow: View {
             id: UUID(),
             title: "Chappie Development",
             settings: ThreadSettings(),
-            projectIds: [],
             createdAt: Date(),
             updatedAt: Date()
         ),
