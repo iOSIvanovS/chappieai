@@ -55,9 +55,16 @@
 //   When a file tool fails mid-conversation (folder deleted while chat is open), FileTools
 //   calls the callback → markProjectUnavailable() flips the chip orange in real time.
 //
-// MCP RESTART AFTER PATH RESOLUTION:
-//   syncFileSystemForActiveThread() calls restartMCPIfNeeded() after resolving all paths.
-//   This ensures projectPathMap in MCP always reflects the latest resolved absolutePaths.
+// MCP RESTART:
+//   restartMCPIfNeeded() is called ONCE from assembleThreadSession(), after FS paths are resolved.
+//   It is NOT called inside syncFileSystemForActiveThread() — that would cause a double restart
+//   when selectThread() calls assembleThreadSession() (which calls syncFileSystemForActiveThread()).
+//
+// MEMORY SYNC:
+//   syncActiveMemoryContext() is called ONCE from selectThread()._syncTask before assembleThreadSession().
+//   It is NOT called inside syncFileSystemForActiveThread() — that would cause a double sync.
+//   For project add/remove (addProject/removeProject in +Projects.swift), callers are responsible
+//   for calling syncActiveMemoryContext() before invoking syncFileSystemForActiveThread().
 //
 // NOTE: v2PersonaBlock lives in ChappieViewModel+PersonaBlock.swift — extracted for size.
 
@@ -74,9 +81,9 @@ extension ChappieViewModel {
         set { _activeThreadSession = newValue }
     }
 
-    // MARK: - Assemble (full — includes FS sync)
+    // MARK: - Assemble (full — includes FS sync + MCP restart)
 
-    /// Builds a fresh ThreadSession + syncs FileSystem for the given thread.
+    /// Builds a fresh ThreadSession + syncs FileSystem + restarts MCP for the given thread.
     /// Called from selectThread() and when projects are added/removed.
     func assembleThreadSession(for thread: ThreadMetadata) async {
         guard let store = memoryStore else { return }
@@ -98,6 +105,9 @@ extension ChappieViewModel {
 
         // M-09: Sync FileSystem to cover ALL attached projects.
         await syncFileSystemForActiveThread()
+
+        // Single MCP restart after FS paths are resolved — not inside syncFileSystemForActiveThread().
+        restartMCPIfNeeded()
 
         // B-05 LIVE: register callback so FileTools can flip the chip orange mid-conversation.
         registerProjectUnavailableCallback()
@@ -142,6 +152,11 @@ extension ChappieViewModel {
 
     // MARK: - M-09: Multi-workspace FileSystem sync
 
+    /// Resolves absolutePaths for all active projects and wires them into ToolExecutionService.
+    ///
+    /// IMPORTANT: does NOT call restartMCPIfNeeded() or syncActiveMemoryContext() —
+    /// those are called exactly once by the caller (assembleThreadSession / addProject / removeProject).
+    /// This avoids double restarts and double memory syncs on every thread switch.
     func syncFileSystemForActiveThread() async {
         guard let ts = toolService else { return }
 
@@ -189,9 +204,6 @@ extension ChappieViewModel {
             workspaces.append((name: project.displayName, url: url))
             print("[ChappieViewModel] M-09: ✅ '\(project.displayName)' → \(path)")
         }
-
-        restartMCPIfNeeded()
-        await syncActiveMemoryContext()
 
         guard !Task.isCancelled else {
             self.isFileSystemReady = true

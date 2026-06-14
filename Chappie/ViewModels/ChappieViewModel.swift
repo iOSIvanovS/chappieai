@@ -73,6 +73,9 @@ final class ChappieViewModel {
     }
 
     var isLoadingThread: Bool = false
+    // True from selectThread() start until _syncTask fully completes (messages + session ready).
+    // Drives the "Загрузка" spinner in ChatScrollView — hides empty flash during thread switch.
+    var isLoadingMessages: Bool = false
     var isAppReady: Bool = false
     var currentRequestTask: Task<Void, Never>? = nil
     var showNoProviderAlert: Bool = false

@@ -47,6 +47,7 @@ extension ChappieViewModel {
         _syncTask = nil
 
         self.isLoadingThread = true
+        self.isLoadingMessages = true
         self.messages = []
         self.displayedMessages = []
         self.activeThread = thread
@@ -65,28 +66,30 @@ extension ChappieViewModel {
         _syncTask = Task { [weak self] in
             guard let self else { return }
 
+            // Step 1: load messages — spinner stays up until this completes.
             if let loaded = try? await store.loadMessages(fromThreadId: thread.id, as: ChatMessage.self) {
                 guard !Task.isCancelled else { return }
                 self.messages = loaded
                 self.resetPagination(fireScrollTrigger: true)
                 print("[ChappieViewModel] Thread '\(thread.title)' selected (\(loaded.count) messages)")
             }
+            self.isLoadingMessages = false
 
             guard !Task.isCancelled else { return }
+
+            // Step 2: load projects.
             await self.loadProjectsForThread(thread)
 
-            // Restart MCP with the now-populated project env map.
-            // WHY HERE: at app launch, MCP starts before projects are loaded (activeProjectEnvMap = {}).
-            // After loadProjectsForThread() the map is populated — MCP needs to restart to pick it up.
             guard !Task.isCancelled else { return }
-            self.restartMCPIfNeeded()
 
-            guard !Task.isCancelled else { return }
+            // Step 3: memory context — once, here. syncFileSystemForActiveThread() does NOT call it.
             self.buildAndSyncMemoryContext()
             await self.syncActiveMemoryContext()
             self.refreshBalanceForActiveProvider()
 
             guard !Task.isCancelled else { return }
+
+            // Step 4: full session assembly (FS sync + MCP restart — once, inside assembleThreadSession).
             await self.assembleThreadSession(for: thread)
         }
     }

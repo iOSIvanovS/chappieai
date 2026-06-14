@@ -21,6 +21,11 @@
 //   4. Paywall — if licenseState is .noLicense or .expired
 //   5. Main app
 //
+// THREAD SWITCH OVERLAY (UX-SWITCH):
+//   While isLoadingMessages == true: a full-window dim overlay with spinner blocks input.
+//   The toolbar (sidebar button + settings) is NOT blocked — it sits above the overlay in ZStack.
+//   Overlay fades in/out with .easeInOut(0.15).
+//
 // CPU-08: onGeometryChange instead of GeometryReader — pure side-effect, no layout loop.
 // CPU-13: streaming state isolated to ChatScrollView + InputMorphView — not read in body.
 // CPU-22: currentPanelHeight measured directly from rendered InputMorphView.
@@ -157,14 +162,8 @@ struct ContentView: View {
                         selectedProjectForSettings = nil
                     },
                     onDismiss: { selectedProjectForSettings = nil },
-                    // "Change Plan" dismisses the settings sheet and opens LicenseActivationView
                     onChangePlan: { showLicenseActivation = true },
                     onDetectEnvironment: { completion in
-                        // WHY fresh lookup by id (not captured `project`):
-                        // `project` is a value-type snapshot captured when the sheet opened.
-                        // absolutePath is runtime-only — it may have been nil at capture time
-                        // if syncFileSystemForActiveThread() hadn't finished yet.
-                        // We look up the live copy from activeProjects so absolutePath is current.
                         let live = viewModel.activeProjects.first(where: { $0.id == project.id }) ?? project
                         viewModel.detectDevEnvironment(for: live, completion: completion)
                     }
@@ -229,6 +228,14 @@ struct ContentView: View {
                         onOpenSettings: { showSettings = true }
                     )
                 }
+
+            // UX-SWITCH: dim overlay during thread switch — blocks chat/input, not toolbar
+            if viewModel.isLoadingMessages {
+                threadSwitchOverlay
+                    .transition(.opacity)
+                    .animation(.easeInOut(duration: 0.15), value: viewModel.isLoadingMessages)
+                    .zIndex(10)
+            }
 
             if isSidebarVisible {
                 Color.black.opacity(0.25)
@@ -305,6 +312,35 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Thread Switch Overlay
+
+    /// Full-window dim + spinner during thread switch.
+    /// Blocks all interaction with chat and input, but NOT the toolbar (sidebar / settings buttons).
+    private var threadSwitchOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.35)
+                .ignoresSafeArea()
+
+            VStack(spacing: 14) {
+                // High-contrast spinner — white circle on dark background
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .scaleEffect(1.1)
+                    .tint(.white)
+
+                Text("chat.loading")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+            .padding(.horizontal, 28)
+            .padding(.vertical, 20)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .shadow(color: .black.opacity(0.3), radius: 16, y: 4)
+        }
+        .allowsHitTesting(true)   // blocks clicks on chat/input below
+        .ignoresSafeArea()
+    }
+
     // MARK: - Main Chat Area
 
     private var mainChatArea: some View {
@@ -316,7 +352,9 @@ struct ContentView: View {
                 hasMoreMessages: viewModel.hasMoreMessages,
                 onLoadMore: { viewModel.loadMoreMessages() },
                 streaming: viewModel.streaming,
-                isLoadingHistory: viewModel.isLoadingThread,
+                // isLoadingMessages stays true until _syncTask fully completes (messages + session).
+                // This prevents the flash of empty chat during thread switch.
+                isLoadingHistory: viewModel.isLoadingMessages,
                 headerHeight: topPanelHeight + safeAreaTop,
                 footerHeight: currentPanelHeight,
                 loadMoreAnchorId: viewModel.loadMoreAnchorId,
@@ -397,8 +435,6 @@ struct ContentView: View {
                 )
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
-
-            
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)
