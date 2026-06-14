@@ -39,7 +39,11 @@ extension ChappieViewModel {
         }
     }
 
-    func selectThread(_ thread: ThreadMetadata) async {
+    /// Selects a thread and loads its messages.
+    ///
+    /// - Parameter insertGreeting: pass true for brand-new threads — greeting is inserted
+    ///   inside _syncTask after loadMessages(), so it is never overwritten by the loaded array.
+    func selectThread(_ thread: ThreadMetadata, insertGreeting: Bool = false) async {
         guard let store = threadStore else { return }
 
         // Cancel any in-flight background sync from a previous thread switch.
@@ -66,13 +70,22 @@ extension ChappieViewModel {
         _syncTask = Task { [weak self] in
             guard let self else { return }
 
-            // Step 1: load messages — spinner stays up until this completes.
+            // Step 1: load messages from SwiftData.
             if let loaded = try? await store.loadMessages(fromThreadId: thread.id, as: ChatMessage.self) {
                 guard !Task.isCancelled else { return }
                 self.messages = loaded
                 self.resetPagination(fireScrollTrigger: true)
                 print("[ChappieViewModel] Thread '\(thread.title)' selected (\(loaded.count) messages)")
             }
+
+            // Step 1a: insert greeting for new threads — AFTER loadMessages so it is never overwritten.
+            // WHY HERE: confirmNewThread() calls selectThread() which starts _syncTask.
+            // If greeting were inserted after selectThread() returns, _syncTask would overwrite it
+            // with the empty array from loadMessages(). Inserting here guarantees correct order.
+            if insertGreeting {
+                await self.insertStaticWelcomeGreeting(for: thread)
+            }
+
             self.isLoadingMessages = false
 
             guard !Task.isCancelled else { return }
@@ -212,9 +225,8 @@ extension ChappieViewModel {
                         self.pendingNewThread = newThread
                         self.showNewThreadProviderPicker = true
                     } else {
+                        // No providers configured — select thread without greeting.
                         await selectThread(newThread)
-                        self.messages = []
-                        resetPagination(fireScrollTrigger: false)
                         self.activeProjects = []
                         buildAndSyncMemoryContext()
                         await syncActiveMemoryContext()
@@ -261,16 +273,9 @@ extension ChappieViewModel {
         self.threads = refreshed
         let updatedThread = refreshed.first(where: { $0.id == thread.id }) ?? thread
 
-        await selectThread(updatedThread)
-        self.messages = []
-        resetPagination(fireScrollTrigger: false)
-        self.activeProjects = []
-        buildAndSyncMemoryContext()
-        await syncActiveMemoryContext()
-
-        Task { [weak self] in
-            await self?.sendWelcomeGreeting(for: updatedThread)
-        }
+        // insertGreeting: true — greeting is inserted inside _syncTask after loadMessages(),
+        // so it is never overwritten by the empty array returned from SwiftData.
+        await selectThread(updatedThread, insertGreeting: true)
     }
 
     func cancelNewThread() {
@@ -287,25 +292,45 @@ extension ChappieViewModel {
 
     // MARK: - Welcome Greeting
 
-    private func sendWelcomeGreeting(for thread: ThreadMetadata) async {
-        guard let client = aiClient, let store = threadStore else { return }
-
-        let appLanguage: String? = Locale.current.language.languageCode?.identifier
-
-        guard let greetingText = await WelcomeService.generateGreeting(
-            using: client,
-            appLanguage: appLanguage
-        ) else { return }
-
-        let greetingMessage = ChatMessage.message(isUser: false, text: greetingText)
-
+    /// Inserts a static localized greeting as the first assistant message.
+    ///
+    /// WHY STATIC: AI-generated greetings cause 5–10 s delays on slow models (Gemini
+    /// spends time "thinking" even on a trivial prompt). A static string is instant,
+    /// deterministic, and fully localized — no network round-trip needed.
+    ///
+    /// WHY CALLED FROM _syncTask: must run after loadMessages() sets self.messages = loaded,
+    /// otherwise the loaded empty array would overwrite the greeting.
+    private func insertStaticWelcomeGreeting(for thread: ThreadMetadata) async {
+        guard let store = threadStore else { return }
         guard activeThread?.id == thread.id, messages.isEmpty else { return }
+
+        let greeting = Self.localizedWelcomeGreeting()
+        let greetingMessage = ChatMessage.message(isUser: false, text: greeting)
 
         messages.append(greetingMessage)
         appendToDisplayed(greetingMessage)
 
         try? await store.saveMessages(messages, toThreadId: thread.id)
-        print("[ChappieViewModel] Welcome greeting saved for thread '\(thread.title)'")
+        print("[ChappieViewModel] Static welcome greeting inserted for thread '\(thread.title)'")
+    }
+
+    /// Returns a greeting string for the current device language.
+    /// Falls back to English for any unsupported language code.
+    static func localizedWelcomeGreeting() -> String {
+        let lang = Locale.current.language.languageCode?.identifier ?? "en"
+        let greetings: [String: String] = [
+            "en": "Hi! I'm your AI assistant. How can I help you today?",
+            "ru": "Привет! Я ваш AI-ассистент. Чем могу помочь?",
+            "de": "Hallo! Ich bin Ihr KI-Assistent. Wie kann ich Ihnen helfen?",
+            "fr": "Bonjour ! Je suis votre assistant IA. Comment puis-je vous aider ?",
+            "es": "¡Hola! Soy tu asistente de IA. ¿En qué puedo ayudarte?",
+            "pt": "Olá! Sou seu assistente de IA. Como posso ajudar?",
+            "ar": "مرحباً! أنا مساعدك الذكي. كيف يمكنني مساعدتك؟",
+            "zh": "你好！我是你的 AI 助手。有什么我可以帮你的吗？",
+            "ja": "こんにちは！AIアシスタントです。何かお手伝いできますか？",
+            "hi": "नमस्ते! मैं आपका AI सहायक हूँ। मैं आपकी कैसे मदद कर सकता हूँ?"
+        ]
+        return greetings[lang] ?? greetings["en"]!
     }
 
     // MARK: - Delete / Rename
