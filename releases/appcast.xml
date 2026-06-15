@@ -110,17 +110,5 @@
             />
         </item>
 
-        <item>
-            <title>Version 1.0.8</title>
-            <pubDate>Mon, 15 Jun 2026 20:06:56 +0000</pubDate>
-            <sparkle:version>9</sparkle:version>
-            <sparkle:shortVersionString>1.0.8</sparkle:shortVersionString>
-            <enclosure
-                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.8.dmg"
-                sparkle:edSignature="e4/3XBiFOX8QM8CZQzWRnVXCoE1rytFGgEyw0de6sJT09M+CMZiIoVqznS7inrkTKQM7OBkySUBu176rH0j5Ag=="
-                length="7375848"
-                type="application/octet-stream"
-            />
-        </item>
     </channel>
 </rss>
