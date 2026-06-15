@@ -257,58 +257,65 @@ final class ChappieViewModel {
     // MARK: - Connect SwiftData
 
     func setModelContainer(_ container: ModelContainer) {
-        guard self.modelContainer == nil else { return }
-        self.modelContainer = container
+    guard self.modelContainer == nil else { return }
+    self.modelContainer = container
 
-        // ChappieDataStore is created first — the only object that owns ModelContainer.
-        // All Stores receive ChappieDataStore via DI and never touch ModelContainer directly.
-        let ds = ChappieDataStore(modelContainer: container)
-        self.chappieDataStore = ds
+    let ds = ChappieDataStore(modelContainer: container)
+    self.chappieDataStore = ds
 
-        let store = MemoryStore(dataStore: ds)
-        self.memoryStore = store
+    let store = MemoryStore(dataStore: ds)
+    self.memoryStore = store
 
-        let tStore = ThreadStore(dataStore: ds)
-        self.threadStore = tStore
+    let tStore = ThreadStore(dataStore: ds)
+    self.threadStore = tStore
 
-        let pStore = ProjectStore(dataStore: ds, threadStore: tStore)
-        self.projectStore = pStore
+    let pStore = ProjectStore(dataStore: ds, threadStore: tStore)
+    self.projectStore = pStore
 
-        let provStore = AIProviderStore(dataStore: ds)
-        self.providerStore = provStore
+    let provStore = AIProviderStore(dataStore: ds)
+    self.providerStore = provStore
 
-        let settingsStore = AppSettingsStore(dataStore: ds)
-        self.appSettingsStore = settingsStore
+    let settingsStore = AppSettingsStore(dataStore: ds)
+    self.appSettingsStore = settingsStore
 
-        if let mm = memoryManager { Task { await mm.setMemoryStore(store) } }
-
-        print("[ChappieViewModel] ModelContainer connected, ChappieDataStore initialized")
-
-        if let ts = toolService {
-            registerProjectToolHandlers(toolService: ts)
-        }
-
-        // License check runs in parallel with other startup tasks — no blocking.
-        initializeLicense()
-
-        Task {
-            await preloadLastActiveThreadId()
-            await refreshBalanceCacheIfNeeded()
-
-            // Restore workspace from AppSettingsStore (migrating from UserDefaults if needed).
-            await loadWorkspaceFromStore(settingsStore)
-
-            if let catalog = try? await providersRemoteService.fetchCatalog() {
-                try? await provStore.syncRequiresApiKey(from: catalog.providers)
-                print("[ChappieViewModel] requiresApiKey synced from catalog")
-                try? await provStore.syncIcons(from: catalog.providers)
-                print("[ChappieViewModel] Icons synced from catalog")
-            }
-
-            await loadProvidersAndSetActive(from: provStore)
-            await loadThreadsAndSelectActive(from: tStore)
-        }
+    // Initialize services immediately — even without a workspace URL.
+    // WHY: orchestrator requires toolService/fileSystem/memoryManager to be non-nil.
+    // Previously these were only created in initializeServices(for:) which required
+    // a saved workspace bookmark. After a full reset workspaceURL is nil forever,
+    // blocking orchestrator creation and making send() show "no model" alert.
+    // A placeholder URL is used — file tools will simply fail gracefully on missing path.
+    let placeholderURL = FileManager.default.homeDirectoryForCurrentUser
+    if toolService == nil {
+        initializeServices(for: placeholderURL)
     }
+
+    if let mm = memoryManager { Task { await mm.setMemoryStore(store) } }
+
+    print("[ChappieViewModel] ModelContainer connected, ChappieDataStore initialized")
+
+    if let ts = toolService {
+        registerProjectToolHandlers(toolService: ts)
+    }
+
+    initializeLicense()
+
+    Task {
+        await preloadLastActiveThreadId()
+        await refreshBalanceCacheIfNeeded()
+
+        await loadWorkspaceFromStore(settingsStore)
+
+        if let catalog = try? await providersRemoteService.fetchCatalog() {
+            try? await provStore.syncRequiresApiKey(from: catalog.providers)
+            print("[ChappieViewModel] requiresApiKey synced from catalog")
+            try? await provStore.syncIcons(from: catalog.providers)
+            print("[ChappieViewModel] Icons synced from catalog")
+        }
+
+        await loadProvidersAndSetActive(from: provStore)
+        await loadThreadsAndSelectActive(from: tStore)
+    }
+}
 
     // MARK: - History Management
 

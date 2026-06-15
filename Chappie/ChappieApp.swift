@@ -57,8 +57,6 @@ struct ChappieApp: App {
 
     // MARK: - Sparkle
 
-    // Sparkle updater controller — lives for the entire app lifetime.
-    // WHY @State: ensures single instance across SwiftUI re-renders.
     private let updaterController: SPUStandardUpdaterController
 
     init() {
@@ -71,9 +69,6 @@ struct ChappieApp: App {
 
     // MARK: - SwiftData Container
 
-    /// StoredRecord is the only @Model. Schema is frozen.
-    /// ERROR HANDLING: if the container cannot be created (corrupted DB) — recreate from scratch.
-    /// Data loss is acceptable here; better than a full app crash.
     let modelContainer: ModelContainer = {
         let schema = Schema(versionedSchema: AppSettingsSchema.self)
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
@@ -102,12 +97,12 @@ struct ChappieApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            // viewModel passed directly — ContentView owns it via @Bindable.
+            // .environment(viewModel) still provided for child views that use
+            // @Environment(ChappieViewModel.self) (e.g. subviews injected deeper).
+            ContentView(viewModel: viewModel)
                 .environment(viewModel)
                 .environment(\.sparkleUpdater, updaterController.updater)
-                .onAppear {
-                    viewModel.setModelContainer(modelContainer)
-                }
                 .background(
                     Image("Chappie")
                         .resizable()
@@ -147,9 +142,6 @@ extension EnvironmentValues {
 
 final class ChappieAppDelegate: NSObject, NSApplicationDelegate {
 
-    /// Kill the ChappieMCP child process before the app terminates.
-    /// Without this — the helper stays alive as an orphan and the next launch
-    /// fails with "address already in use" on the Unix socket.
     func applicationWillTerminate(_ notification: Notification) {
         Task { @MainActor in
             MCPHelperLauncher.shared.terminateHelper()

@@ -39,7 +39,16 @@ import ChappieCore
 
 struct ContentView: View {
 
-    @State private var viewModel = ChappieViewModel()
+    // WHY @Bindable + init:
+    // @Environment(ChappieViewModel.self) does not support $ (Binding) syntax.
+    // Solution: receive the value via init from environment, store as @Bindable.
+    // This is the standard Apple-recommended pattern for @Observable + Bindings in SwiftUI.
+    @Bindable var viewModel: ChappieViewModel
+
+    init(viewModel: ChappieViewModel) {
+        self.viewModel = viewModel
+    }
+
     @State private var prompt: String = ""
     @State private var showSettings: Bool = false
     @State private var isSidebarVisible: Bool = false
@@ -73,16 +82,12 @@ struct ContentView: View {
                 ProgressView(String(localized: "content.loading"))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if appState.shouldShowEULA {
-                // Step 1: EULA — must be accepted before anything else
                 EULAView()
             } else if appState.shouldShowOnboarding {
-                // Step 2: Onboarding — configure first provider
                 OnboardingView(viewModel: viewModel)
             } else if viewModel.shouldShowPaywall {
-                // Step 3: Paywall — license expired or not present
                 paywallContent
             } else {
-                // Step 4: Main app
                 mainContent
             }
         }
@@ -98,8 +103,6 @@ struct ContentView: View {
 
     // MARK: - Paywall
 
-    /// Shown when licenseState is .noLicense or .expired.
-    /// User must activate a license to proceed — no way to dismiss.
     private var paywallContent: some View {
         VStack(spacing: 24) {
             Spacer()
@@ -131,7 +134,6 @@ struct ContentView: View {
 
     // MARK: - Thread for Settings
 
-    /// Builds ThreadMetadata with CURRENT activeThreadSettings — not stale thread.settings.
     private func buildThreadForSettings(_ thread: ThreadMetadata) -> ThreadMetadata {
         ThreadMetadata(
             id: thread.id,
@@ -229,7 +231,6 @@ struct ContentView: View {
                     )
                 }
 
-            // UX-SWITCH: dim overlay during thread switch — blocks chat/input, not toolbar
             if viewModel.isLoadingMessages {
                 threadSwitchOverlay
                     .transition(.opacity)
@@ -314,15 +315,12 @@ struct ContentView: View {
 
     // MARK: - Thread Switch Overlay
 
-    /// Full-window dim + spinner during thread switch.
-    /// Blocks all interaction with chat and input, but NOT the toolbar (sidebar / settings buttons).
     private var threadSwitchOverlay: some View {
         ZStack {
             Color.black.opacity(0.35)
                 .ignoresSafeArea()
 
             VStack(spacing: 14) {
-                // High-contrast spinner — white circle on dark background
                 ProgressView()
                     .progressViewStyle(.circular)
                     .scaleEffect(1.1)
@@ -337,7 +335,7 @@ struct ContentView: View {
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
             .shadow(color: .black.opacity(0.3), radius: 16, y: 4)
         }
-        .allowsHitTesting(true)   // blocks clicks on chat/input below
+        .allowsHitTesting(true)
         .ignoresSafeArea()
     }
 
@@ -352,8 +350,6 @@ struct ContentView: View {
                 hasMoreMessages: viewModel.hasMoreMessages,
                 onLoadMore: { viewModel.loadMoreMessages() },
                 streaming: viewModel.streaming,
-                // isLoadingMessages stays true until _syncTask fully completes (messages + session).
-                // This prevents the flash of empty chat during thread switch.
                 isLoadingHistory: viewModel.isLoadingMessages,
                 headerHeight: topPanelHeight + safeAreaTop,
                 footerHeight: currentPanelHeight,
@@ -377,8 +373,7 @@ struct ContentView: View {
 
     private var topPanel: some View {
         VStack(spacing: 6) {
-            
-            // Trial banner — shown only during active trial period
+
             if case .trial(let days) = viewModel.licenseState {
                 TrialBannerView(daysRemaining: days) {
                     showLicenseActivation = true
@@ -386,7 +381,7 @@ struct ContentView: View {
                 .padding(.horizontal, 0)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
-            
+
             if viewModel.activeThread != nil && !viewModel.providers.isEmpty {
                 ModelPickerRow(
                     activeProvider: viewModel.activeProvider,
@@ -447,7 +442,7 @@ struct ContentView: View {
         InputMorphView(
             prompt: $prompt,
             attachments: $attachments,
-            isWorkspaceSelected: viewModel.workspaceURL != nil,
+            isWorkspaceSelected: true, // Input is always enabled — workspace is only needed for file tools
             streaming: viewModel.streaming,
             onSend: { attachedFiles in sendMessage(attachments: attachedFiles) },
             onCancel: { viewModel.cancelCurrentRequest() }
@@ -470,5 +465,5 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView()
+    ContentView(viewModel: ChappieViewModel())
 }
