@@ -103,7 +103,7 @@ macOS may show a security warning on first launch because ChappieAI is distribut
 
 ## Pricing
 
-Visit [chappieai.app](https://chappieai.app) (worldwide) or [chappieai.ru](https://chappieai.ru) (Russia) for current pricing.
+Visit [chappieai.ru](https://chappieai.ru) for current pricing.
 
 All plans include a **7-day free trial** with full access — no credit card required.
 
