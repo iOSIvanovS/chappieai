@@ -178,7 +178,6 @@ final class ChappieViewModel {
     var activeProjectPathMap: [String: String] {
         Dictionary(
             uniqueKeysWithValues: activeProjects
-                .filter { !$0.isUnavailable }
                 .compactMap { project -> (String, String)? in
                     guard let path = project.absolutePath else { return nil }
                     return (project.displayName, path)

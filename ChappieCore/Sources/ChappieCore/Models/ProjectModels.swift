@@ -412,11 +412,8 @@ extension ProjectSettings {
 
 /// Sendable DTO for passing project data across the actor boundary.
 ///
-/// isUnavailable: runtime-only flag, NOT persisted in ChappieDataStore.
-/// Set to true by syncFileSystemForActiveThread() when the folder is missing or in Trash.
-/// Cleared to false when the folder becomes accessible again on next sync.
-/// WHY: ProjectStore is the source of truth for persistent data — transient
-/// availability state lives only in the ViewModel's activeProjects array.
+/// absolutePath is runtime-only — resolved from the stored path at attachment time.
+/// Not re-evaluated on every sync — path is stable as long as the user doesn't move the folder.
 public struct ProjectMetadata: Sendable, Identifiable, Hashable {
 
     public let id: UUID
@@ -424,13 +421,8 @@ public struct ProjectMetadata: Sendable, Identifiable, Hashable {
     public let createdAt: Date
     public let settings: ProjectSettings
 
-    /// Runtime-only: true when the project folder is missing, in Trash, or otherwise inaccessible.
-    /// Not stored — re-evaluated on every syncFileSystemForActiveThread() call.
-    public var isUnavailable: Bool
-
-    /// Runtime-only: absolute path resolved from security-scoped bookmark.
-    /// Set by syncFileSystemForActiveThread() after successful bookmark resolution.
-    /// Not stored — re-evaluated on every sync. Nil until first successful resolution.
+    /// Runtime-only: absolute path resolved from the stored path at attachment time.
+    /// Nil until first successful resolution.
     public var absolutePath: String?
 
     /// Public init for Previews, tests, and direct construction.
@@ -439,14 +431,12 @@ public struct ProjectMetadata: Sendable, Identifiable, Hashable {
         displayName: String,
         createdAt: Date = Date(),
         settings: ProjectSettings = ProjectSettings(),
-        isUnavailable: Bool = false,
         absolutePath: String? = nil
     ) {
         self.id = id
         self.displayName = displayName
         self.createdAt = createdAt
         self.settings = settings
-        self.isUnavailable = isUnavailable
         self.absolutePath = absolutePath
     }
 }

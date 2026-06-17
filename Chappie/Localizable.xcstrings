@@ -12069,6 +12069,7 @@
       }
     },
     "project.chips.unavailable_hint" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {

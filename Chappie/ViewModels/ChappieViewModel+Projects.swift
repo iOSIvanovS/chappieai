@@ -23,7 +23,6 @@ extension ChappieViewModel {
                 displayName: entry.displayName,
                 createdAt: entry.createdAt,
                 settings: entry.settings,
-                isUnavailable: false,
                 absolutePath: entry.absolutePath
             )
         }

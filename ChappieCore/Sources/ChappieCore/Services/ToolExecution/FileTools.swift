@@ -1,7 +1,6 @@
 // FileTools.swift
 // ChappieCore
 //
-// WHY THIS FILE:
 // Execution of file system tools (list_files, read_file, write_file, delete_file),
 // document tools (read_document, write_document), attach_file, and web_fetch.
 // All file ops delegate to FileSystemManager; document ops delegate to MCPToolBridge.
@@ -15,10 +14,6 @@
 // attach_file: validates the file exists at the given absolute path and returns
 // a structured JSON response that AIOrchestrator picks up as an output file.
 //
-// LIVE UNAVAILABILITY (B-05):
-// When a FS tool throws — we use the explicit "project" arg to mark the chip orange.
-// All tools now carry "project" as the unified project identifier — no path heuristics.
-//
 // PROJECT ROUTING:
 // args["project"] is passed explicitly to FileSystemManager for read/write/delete.
 // WHY: AI passes bare path ("readme.md") + project ("MyFolder") as separate args.
@@ -27,8 +22,7 @@
 //
 // list_files project= scoping:
 // list_files accepts an optional "project" arg. When provided — only that project's
-// files are returned and only that project is marked orange on error.
-// Without "project" — falls back to all workspaces, no chip is marked.
+// files are returned. Without "project" — falls back to all workspaces.
 
 import Foundation
 
@@ -40,36 +34,24 @@ extension ToolExecutionService {
         case "list_files":
             let args = (try? JSONDecoder().decode([String: String].self, from: argsData)) ?? [:]
             let projectArg = args["project"]
-            do {
-                let files: [String]
-                if let project = projectArg, !project.isEmpty {
-                    files = try await fileSystem.listFiles(project: project)
-                } else {
-                    files = try await fileSystem.listFiles()
-                }
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = .prettyPrinted
-                let data = try encoder.encode(files)
-                return String(data: data, encoding: .utf8) ?? "[]"
-            } catch {
-                // Only mark the specific project orange — or nothing if project is unknown.
-                // WHY: marking all projects on list_files failure is a false positive cascade.
-                await reportUnavailable(projectArg)
-                throw error
+            let files: [String]
+            if let project = projectArg, !project.isEmpty {
+                files = try await fileSystem.listFiles(project: project)
+            } else {
+                files = try await fileSystem.listFiles()
             }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .prettyPrinted
+            let data = try encoder.encode(files)
+            return String(data: data, encoding: .utf8) ?? "[]"
 
         case "read_file":
             guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                   let path = args["path"] else {
                 return "Error: Invalid arguments for read_file"
             }
-            do {
-                // Pass projectName explicitly — path may be bare ("readme.md") without prefix.
-                return try await fileSystem.readFile(at: path, projectName: args["project"])
-            } catch {
-                await reportUnavailable(args["project"])
-                throw error
-            }
+            // Pass projectName explicitly — path may be bare ("readme.md") without prefix.
+            return try await fileSystem.readFile(at: path, projectName: args["project"])
 
         case "write_file":
             guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
@@ -77,28 +59,18 @@ extension ToolExecutionService {
                   let content = args["content"] else {
                 return "Error: Invalid arguments for write_file"
             }
-            do {
-                // Pass projectName explicitly — path may be bare ("readme.md") without prefix.
-                try await fileSystem.writeFile(at: path, content: content, projectName: args["project"])
-                return "Success: File \(path) written."
-            } catch {
-                await reportUnavailable(args["project"])
-                throw error
-            }
+            // Pass projectName explicitly — path may be bare ("readme.md") without prefix.
+            try await fileSystem.writeFile(at: path, content: content, projectName: args["project"])
+            return "Success: File \(path) written."
 
         case "delete_file":
             guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                   let path = args["path"] else {
                 return "Error: Invalid arguments for delete_file"
             }
-            do {
-                // Pass projectName explicitly — path may be bare ("readme.md") without prefix.
-                try await fileSystem.deleteFile(at: path, projectName: args["project"])
-                return "Success: File \(path) deleted."
-            } catch {
-                await reportUnavailable(args["project"])
-                throw error
-            }
+            // Pass projectName explicitly — path may be bare ("readme.md") without prefix.
+            try await fileSystem.deleteFile(at: path, projectName: args["project"])
+            return "Success: File \(path) deleted."
 
         // Document tools — routed through MCP (ZIPFoundation lives in ChappieMCP target).
         case "read_document":
@@ -159,14 +131,5 @@ extension ToolExecutionService {
         default:
             return "Error: Unknown file tool '\(name)'"
         }
-    }
-
-    // MARK: - Helpers
-
-    /// Calls onProjectUnavailable on MainActor if a project name is known.
-    /// WHY: all tools now carry explicit "project" arg — no path heuristics needed.
-    private func reportUnavailable(_ name: String?) async {
-        guard let name, !name.isEmpty, let callback = onProjectUnavailable else { return }
-        await MainActor.run { callback(name) }
     }
 }

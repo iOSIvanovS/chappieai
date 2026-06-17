@@ -37,24 +37,6 @@
 //   On every selectThread() call, the previous Task is cancelled before a new one starts.
 //   This prevents a slow sync from a previous thread from racing with the new thread's sync.
 //
-// PATH HEALTH-CHECK:
-//   Before using a path, we verify:
-//   (a) path is not empty
-//   (b) folder exists — FileManager.fileExists(atPath:) returns true
-//   (c) not in Trash — path contains "/.Trash/" or "/.Trashes/"
-//   Unavailable projects are marked isUnavailable=true and shown with an orange icon.
-//
-// B-05 UNAVAILABILITY:
-//   Projects that fail health-check are NOT removed from activeProjects — the chip stays
-//   visible so the user can see what broke and decide: restore folder or remove project.
-//   isUnavailable=true → orange folder icon + tooltip in ProjectChipsView.
-//   On next sync (thread switch or app restart), if the folder is back → isUnavailable=false.
-//
-// LIVE UNAVAILABILITY (B-05 LIVE):
-//   After FS is wired, we register onProjectUnavailable callback in ToolExecutionService.
-//   When a file tool fails mid-conversation (folder deleted while chat is open), FileTools
-//   calls the callback → markProjectUnavailable() flips the chip orange in real time.
-//
 // MCP RESTART:
 //   restartMCPIfNeeded() is called ONCE from assembleThreadSession(), after FS paths are resolved.
 //   It is NOT called inside syncFileSystemForActiveThread() — that would cause a double restart
@@ -108,9 +90,6 @@ extension ChappieViewModel {
 
         // Single MCP restart after FS paths are resolved — not inside syncFileSystemForActiveThread().
         restartMCPIfNeeded()
-
-        // B-05 LIVE: register callback so FileTools can flip the chip orange mid-conversation.
-        registerProjectUnavailableCallback()
     }
 
     // MARK: - Rebuild (settings-only — skips FS sync)
@@ -153,10 +132,10 @@ extension ChappieViewModel {
     // MARK: - M-09: Multi-workspace FileSystem sync
 
     /// Resolves absolutePaths for all active projects and wires them into ToolExecutionService.
+    /// Projects with missing paths are silently skipped — no UI indication, no orange chips.
     ///
     /// IMPORTANT: does NOT call restartMCPIfNeeded() or syncActiveMemoryContext() —
     /// those are called exactly once by the caller (assembleThreadSession / addProject / removeProject).
-    /// This avoids double restarts and double memory syncs on every thread switch.
     func syncFileSystemForActiveThread() async {
         guard let ts = toolService else { return }
 
@@ -174,33 +153,24 @@ extension ChappieViewModel {
         self.isFileSystemReady = false
         await ts.setFileSystemReady(false)
 
-        // PRE-RESET: clear stale isUnavailable flags from any previously cancelled sync.
-        for i in activeProjects.indices {
-            activeProjects[i].isUnavailable = false
-        }
-
         var workspaces: [(name: String, url: URL)] = []
 
-        for i in activeProjects.indices {
+        for project in activeProjects {
             guard !Task.isCancelled else { break }
 
-            let project = activeProjects[i]
-
-            // absolutePath is stored at attachment time — read directly, no bookmark needed.
             guard let path = project.absolutePath, !path.isEmpty else {
-                print("[ChappieViewModel] M-09: No absolutePath for '\(project.displayName)' — marked unavailable")
-                activeProjects[i].isUnavailable = true
+                // Path not set — project was added without a valid URL, skip silently.
+                print("[ChappieViewModel] M-09: No absolutePath for '\(project.displayName)' — skipped")
                 continue
             }
 
-            if isPathStale(path) {
-                print("[ChappieViewModel] M-09: ⚠️ Stale path for '\(project.displayName)' — marked unavailable (\(path))")
-                activeProjects[i].isUnavailable = true
+            // Skip folders in Trash — they are intentionally deleted by the user.
+            guard !path.contains("/.Trash/"), !path.contains("/.Trashes/") else {
+                print("[ChappieViewModel] M-09: '\(project.displayName)' is in Trash — skipped")
                 continue
             }
 
             let url = URL(fileURLWithPath: path)
-            activeProjects[i].isUnavailable = false
             workspaces.append((name: project.displayName, url: url))
             print("[ChappieViewModel] M-09: ✅ '\(project.displayName)' → \(path)")
         }
@@ -212,7 +182,7 @@ extension ChappieViewModel {
         }
 
         if workspaces.isEmpty {
-            print("[ChappieViewModel] M-09: No workspaces resolved — all projects unavailable")
+            print("[ChappieViewModel] M-09: No workspaces resolved — all projects skipped")
             self.isFileSystemReady = true
             await ts.setFileSystemReady(true)
             return
@@ -220,7 +190,7 @@ extension ChappieViewModel {
 
         // Always use named multi-workspace init — even for a single project.
         // WHY: single-workspace init(workspaceURL:) assigns name="" which breaks
-        // project= routing when AI calls list_files(project: "Chappie") — name mismatch → orange chip.
+        // project= routing when AI calls list_files(project: "Chappie") — name mismatch.
         let fs = FileSystemManager(workspaces: workspaces)
 
         await ts.setFileSystem(fs)
@@ -235,32 +205,5 @@ extension ChappieViewModel {
 
         let names = workspaces.map(\.name).joined(separator: ", ")
         print("[ChappieViewModel] M-09: FileSystem → [\(names)] (\(workspaces.count) workspaces)")
-    }
-
-    // MARK: - Live unavailability callback (B-05)
-
-    func registerProjectUnavailableCallback() {
-        guard let ts = toolService else { return }
-        Task {
-            await ts.setOnProjectUnavailable { [weak self] projectName in
-                self?.markProjectUnavailable(named: projectName)
-            }
-        }
-    }
-
-    func markProjectUnavailable(named name: String) {
-        guard let idx = activeProjects.firstIndex(where: { $0.displayName == name }) else { return }
-        guard !activeProjects[idx].isUnavailable else { return }
-        activeProjects[idx].isUnavailable = true
-        print("[ChappieViewModel] B-05 LIVE: '\(name)' marked unavailable after FS tool failure")
-    }
-
-    // MARK: - Path health-check
-
-    private func isPathStale(_ path: String) -> Bool {
-        if path.contains("/.Trash/")   { return true }
-        if path.contains("/.Trashes/") { return true }
-        if !FileManager.default.fileExists(atPath: path) { return true }
-        return false
     }
 }

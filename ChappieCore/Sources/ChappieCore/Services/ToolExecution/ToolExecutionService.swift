@@ -54,7 +54,6 @@ public actor ToolExecutionService {
     // list_thread_projects only — add/remove are UI-only, not available to AI.
     var listProjectsHandler: (@Sendable () async -> String)?
 
-    var onProjectUnavailable: (@MainActor (String) -> Void)?
     var onMemoryChanged: (@MainActor () -> Void)?
 
     var projectSettingsCache: [UUID: ProjectSettings] = [:]
@@ -125,10 +124,6 @@ public actor ToolExecutionService {
     public func setLicenseState(_ state: LicenseState) {
         self.licenseState = state
         print("[ToolExecutionService] 🔑 License state updated: \(state)")
-    }
-
-    public func setOnProjectUnavailable(_ callback: @escaping @MainActor (String) -> Void) {
-        self.onProjectUnavailable = callback
     }
 
     public func setOnMemoryChanged(_ callback: @escaping @MainActor () -> Void) {

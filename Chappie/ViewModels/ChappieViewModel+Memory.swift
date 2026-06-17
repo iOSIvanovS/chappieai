@@ -57,11 +57,9 @@ extension ChappieViewModel {
             ActiveMemoryContext.ProjectInfo(id: project.id, name: project.displayName)
         }
 
-        // Build projectPathMap from resolved absolutePaths — populated after bookmark resolution.
-        // Only include projects that are available and have a resolved path.
+        // Build projectPathMap from resolved absolutePaths — populated after FS sync.
         let pathMap: [String: String] = Dictionary(
             uniqueKeysWithValues: activeProjects
-                .filter { !$0.isUnavailable }
                 .compactMap { project -> (String, String)? in
                     guard let path = project.absolutePath else { return nil }
                     return (project.displayName, path)
