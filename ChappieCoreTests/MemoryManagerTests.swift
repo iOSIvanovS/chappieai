@@ -1,25 +1,20 @@
 // MemoryManagerTests.swift
 // ChappieCoreTests
 //
-// Tests for MemoryStore — the DataStore-backed memory layer.
+// Tests for MemoryStore — the SQLite-backed memory layer.
 //
-// STRATEGY: each test creates a fresh in-memory ChappieDataStore + MemoryStore.
-// No file I/O, no global state, no UUID cleanup needed.
-// MemoryManager file-based API was removed in T-05; tests now target MemoryStore directly.
+// STRATEGY: each test creates a fresh in-memory SQLiteStorage via init(inMemory: true).
+// Uses GRDB DatabaseQueue — no file I/O, no global state, discarded after test.
 
 import Testing
 import Foundation
-import SwiftData
 @testable import ChappieCore
 
 // MARK: - Helpers
 
-/// Creates an isolated in-memory ChappieDataStore for tests.
-private func makeTestDataStore() throws -> ChappieDataStore {
-    let schema = Schema([StoredRecord.self])
-    let config = ModelConfiguration(isStoredInMemoryOnly: true)
-    let container = try ModelContainer(for: schema, configurations: config)
-    return ChappieDataStore(modelContainer: container)
+/// Creates an isolated in-memory SQLiteStorage for tests.
+private func makeTestStorage() throws -> SQLiteStorage {
+    try SQLiteStorage(inMemory: true)
 }
 
 @Suite("MemoryManager Tests")
@@ -29,7 +24,7 @@ struct MemoryManagerTests {
 
     @Test("Save and load a single entry")
     func saveAndLoad() async throws {
-        let store = MemoryStore(dataStore: try makeTestDataStore())
+        let store = MemoryStore(dataStore: try makeTestStorage())
 
         try await store.saveEntry(key: "k1", type: "fact", jsonString: "{\"v\":1}", scope: "global")
         let result = try await store.readEntry(key: "k1", scope: "global")
@@ -39,14 +34,14 @@ struct MemoryManagerTests {
 
     @Test("Read missing key returns nil")
     func readMissingKey() async throws {
-        let store = MemoryStore(dataStore: try makeTestDataStore())
+        let store = MemoryStore(dataStore: try makeTestStorage())
         let result = try await store.readEntry(key: "nonexistent", scope: "global")
         #expect(result == nil)
     }
 
     @Test("Overwrite existing entry updates value")
     func overwrite() async throws {
-        let store = MemoryStore(dataStore: try makeTestDataStore())
+        let store = MemoryStore(dataStore: try makeTestStorage())
 
         try await store.saveEntry(key: "k", type: "fact", jsonString: "\"old\"", scope: "global")
         try await store.saveEntry(key: "k", type: "fact", jsonString: "\"new\"", scope: "global")
@@ -59,7 +54,7 @@ struct MemoryManagerTests {
 
     @Test("Delete removes entry, read returns nil")
     func deleteEntry() async throws {
-        let store = MemoryStore(dataStore: try makeTestDataStore())
+        let store = MemoryStore(dataStore: try makeTestStorage())
 
         try await store.saveEntry(key: "k", type: "fact", jsonString: "\"data\"", scope: "global")
         try await store.deleteEntry(key: "k", scope: "global")
@@ -70,7 +65,7 @@ struct MemoryManagerTests {
 
     @Test("Delete non-existent key does not throw")
     func deleteMissingKey() async throws {
-        let store = MemoryStore(dataStore: try makeTestDataStore())
+        let store = MemoryStore(dataStore: try makeTestStorage())
         // Must not throw
         try await store.deleteEntry(key: "ghost", scope: "global")
     }
@@ -79,7 +74,7 @@ struct MemoryManagerTests {
 
     @Test("Search by type returns matching entries only")
     func searchByType() async throws {
-        let store = MemoryStore(dataStore: try makeTestDataStore())
+        let store = MemoryStore(dataStore: try makeTestStorage())
 
         try await store.saveEntry(key: "r1", type: "rule", jsonString: "\"rule1\"", scope: "global")
         try await store.saveEntry(key: "f1", type: "fact", jsonString: "\"fact1\"", scope: "global")
@@ -95,7 +90,7 @@ struct MemoryManagerTests {
 
     @Test("Search missing type returns empty dict")
     func searchMissingType() async throws {
-        let store = MemoryStore(dataStore: try makeTestDataStore())
+        let store = MemoryStore(dataStore: try makeTestStorage())
         let result = try await store.searchEntries(type: "nonexistent", scope: "global")
         #expect(result.isEmpty)
     }
@@ -104,7 +99,7 @@ struct MemoryManagerTests {
 
     @Test("Scopes are isolated — entry in scope A not visible in scope B")
     func scopeIsolation() async throws {
-        let store = MemoryStore(dataStore: try makeTestDataStore())
+        let store = MemoryStore(dataStore: try makeTestStorage())
 
         try await store.saveEntry(key: "k", type: "fact", jsonString: "\"A\"", scope: "scopeA")
         let fromB = try await store.readEntry(key: "k", scope: "scopeB")
@@ -114,7 +109,7 @@ struct MemoryManagerTests {
 
     @Test("Delete scope removes all entries in that scope")
     func deleteScope() async throws {
-        let store = MemoryStore(dataStore: try makeTestDataStore())
+        let store = MemoryStore(dataStore: try makeTestStorage())
 
         try await store.saveEntry(key: "k1", type: "fact", jsonString: "\"v1\"", scope: "s1")
         try await store.saveEntry(key: "k2", type: "fact", jsonString: "\"v2\"", scope: "s1")
@@ -135,7 +130,7 @@ struct MemoryManagerTests {
 
     @Test("readEntriesForScopes returns entries for requested scopes only")
     func bulkRead() async throws {
-        let store = MemoryStore(dataStore: try makeTestDataStore())
+        let store = MemoryStore(dataStore: try makeTestStorage())
 
         try await store.saveEntry(key: "g1", type: "fact", jsonString: "\"gv\"", scope: "global")
         try await store.saveEntry(key: "t1", type: "fact", jsonString: "\"tv\"", scope: "thread1")
@@ -152,7 +147,7 @@ struct MemoryManagerTests {
 
     @Test("Multiple entries stored independently")
     func multipleEntries() async throws {
-        let store = MemoryStore(dataStore: try makeTestDataStore())
+        let store = MemoryStore(dataStore: try makeTestStorage())
 
         for i in 1...5 {
             try await store.saveEntry(key: "key\(i)", type: "fact", jsonString: "\"\(i)\"", scope: "global")
@@ -168,7 +163,7 @@ struct MemoryManagerTests {
 
     @Test("importEntries replaces all entries in scope")
     func importEntries() async throws {
-        let store = MemoryStore(dataStore: try makeTestDataStore())
+        let store = MemoryStore(dataStore: try makeTestStorage())
 
         try await store.saveEntry(key: "old", type: "fact", jsonString: "\"old\"", scope: "s")
 

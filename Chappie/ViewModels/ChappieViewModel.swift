@@ -4,6 +4,11 @@
 // Core @Observable class: state, init, service wiring, pagination, drafts, balance.
 // Business logic is split into extensions:
 //   +Threads, +Providers, +Projects, +Send, +Memory, +AppSettings, +ThreadSession, +License
+//
+// STORAGE:
+// setModelContainer() wires up both backends and runs MigrationService.
+// After migration, chappieDataStore points to SQLiteStorage — all Stores use it.
+// ChappieDataStore (SwiftData) is only kept alive as migration source.
 
 import SwiftUI
 import ChappieCore
@@ -137,18 +142,17 @@ final class ChappieViewModel {
     /// Single shared instance — caches the catalog for the entire app session.
     let providersRemoteService = ProvidersRemoteService()
 
-    // MARK: - SwiftData
+    // MARK: - Storage
 
     var modelContainer: ModelContainer?
 
-    // ChappieDataStore is the single point of contact with SwiftData.
-    // All Stores receive it via dependency injection — no Store touches ModelContainer directly.
-    var chappieDataStore: ChappieDataStore?
+    // Active storage backend — SQLiteStorage after migration, ChappieDataStore before.
+    // All Stores use this reference. Never access ChappieDataStore directly after init.
+    var chappieDataStore: (any ChappieStorage)?
 
     var memoryStore: MemoryStore?
     var threadStore: ThreadStore?
     // ProjectStore is kept for downgradeAllProjectsToAdvisor (license enforcement).
-    // It is NOT used for project attachment — that is now thread-scoped via ThreadStore.
     var projectStore: ProjectStore?
     var providerStore: AIProviderStore?
 
@@ -162,7 +166,6 @@ final class ChappieViewModel {
     // MARK: - Project maps for MCP routing
 
     /// Map of project display name → DevEnvironment rawValue.
-    /// Passed to MCPHelperLauncher so MCP can route build_project/run_tests per project.
     var activeProjectEnvMap: [String: String] {
         Dictionary(
             uniqueKeysWithValues: activeProjects
@@ -172,10 +175,6 @@ final class ChappieViewModel {
     }
 
     /// Map of project display name → absolute path on disk.
-    /// Passed to MCPHelperLauncher so MCP can route git_* tools to the correct directory.
-    /// WHY no isProgrammingProject filter: git works on ANY project with a repo, not just
-    /// programming ones. Filtering by isProgrammingProject caused non-programming projects
-    /// (e.g. landing sites) to be excluded from git routing, breaking git_status/push/etc.
     var activeProjectPathMap: [String: String] {
         Dictionary(
             uniqueKeysWithValues: activeProjects
@@ -254,68 +253,90 @@ final class ChappieViewModel {
         self.currentBalance = loadBalance(for: provider.id)
     }
 
-    // MARK: - Connect SwiftData
+    // MARK: - Connect Storage
 
+    /// Wires up both storage backends, runs one-time migration, then boots all Stores.
+    /// Called from ChappieApp.onAppear — guaranteed to run once on main actor.
     func setModelContainer(_ container: ModelContainer) {
-    guard self.modelContainer == nil else { return }
-    self.modelContainer = container
+        guard self.modelContainer == nil else { return }
+        self.modelContainer = container
 
-    let ds = ChappieDataStore(modelContainer: container)
-    self.chappieDataStore = ds
+        // Legacy SwiftData backend — migration source only.
+        let swiftDataStore = ChappieDataStore(modelContainer: container)
 
-    let store = MemoryStore(dataStore: ds)
-    self.memoryStore = store
-
-    let tStore = ThreadStore(dataStore: ds)
-    self.threadStore = tStore
-
-    let pStore = ProjectStore(dataStore: ds, threadStore: tStore)
-    self.projectStore = pStore
-
-    let provStore = AIProviderStore(dataStore: ds)
-    self.providerStore = provStore
-
-    let settingsStore = AppSettingsStore(dataStore: ds)
-    self.appSettingsStore = settingsStore
-
-    // Initialize services immediately — even without a workspace URL.
-    // WHY: orchestrator requires toolService/fileSystem/memoryManager to be non-nil.
-    // Previously these were only created in initializeServices(for:) which required
-    // a saved workspace bookmark. After a full reset workspaceURL is nil forever,
-    // blocking orchestrator creation and making send() show "no model" alert.
-    // A placeholder URL is used — file tools will simply fail gracefully on missing path.
-    let placeholderURL = FileManager.default.homeDirectoryForCurrentUser
-    if toolService == nil {
-        initializeServices(for: placeholderURL)
-    }
-
-    if let mm = memoryManager { Task { await mm.setMemoryStore(store) } }
-
-    print("[ChappieViewModel] ModelContainer connected, ChappieDataStore initialized")
-
-    if let ts = toolService {
-        registerProjectToolHandlers(toolService: ts)
-    }
-
-    initializeLicense()
-
-    Task {
-        await preloadLastActiveThreadId()
-        await refreshBalanceCacheIfNeeded()
-
-        await loadWorkspaceFromStore(settingsStore)
-
-        if let catalog = try? await providersRemoteService.fetchCatalog() {
-            try? await provStore.syncRequiresApiKey(from: catalog.providers)
-            print("[ChappieViewModel] requiresApiKey synced from catalog")
-            try? await provStore.syncIcons(from: catalog.providers)
-            print("[ChappieViewModel] Icons synced from catalog")
+        // Production SQLite backend.
+        guard let sqliteURL = try? SQLiteStorage.defaultURL,
+              let sqliteStore = try? SQLiteStorage(url: sqliteURL) else {
+            // Fallback: if SQLite init fails (disk full, permissions) — keep SwiftData running.
+            print("[ChappieViewModel] ⚠️ SQLiteStorage init failed — falling back to SwiftData")
+            bootStores(with: swiftDataStore)
+            return
         }
 
-        await loadProvidersAndSetActive(from: provStore)
-        await loadThreadsAndSelectActive(from: tStore)
+        // Run migration in background — Stores start on SQLite immediately.
+        // Migration is safe to run while SQLite is already in use (upserts are idempotent).
+        Task {
+            let migration = MigrationService(source: swiftDataStore, target: sqliteStore)
+            await migration.migrateIfNeeded()
+        }
+
+        // All Stores use SQLite from this point forward.
+        bootStores(with: sqliteStore)
     }
-}
+
+    /// Initializes all Stores with the given backend and starts the app boot sequence.
+    private func bootStores(with storage: any ChappieStorage) {
+        self.chappieDataStore = storage
+
+        let store = MemoryStore(dataStore: storage)
+        self.memoryStore = store
+
+        let tStore = ThreadStore(dataStore: storage)
+        self.threadStore = tStore
+
+        let pStore = ProjectStore(dataStore: storage, threadStore: tStore)
+        self.projectStore = pStore
+
+        let provStore = AIProviderStore(dataStore: storage)
+        self.providerStore = provStore
+
+        let settingsStore = AppSettingsStore(dataStore: storage)
+        self.appSettingsStore = settingsStore
+
+        // Initialize services immediately — even without a workspace URL.
+        // WHY: orchestrator requires toolService/fileSystem/memoryManager to be non-nil.
+        let placeholderURL = FileManager.default.homeDirectoryForCurrentUser
+        if toolService == nil {
+            initializeServices(for: placeholderURL)
+        }
+
+        if let mm = memoryManager { Task { await mm.setMemoryStore(store) } }
+
+        print("[ChappieViewModel] Storage connected: \(type(of: storage))")
+
+        if let ts = toolService {
+            registerProjectToolHandlers(toolService: ts)
+        }
+
+        initializeLicense()
+
+        Task {
+            await preloadLastActiveThreadId()
+            await refreshBalanceCacheIfNeeded()
+
+            await loadWorkspaceFromStore(settingsStore)
+
+            if let catalog = try? await providersRemoteService.fetchCatalog() {
+                try? await provStore.syncRequiresApiKey(from: catalog.providers)
+                print("[ChappieViewModel] requiresApiKey synced from catalog")
+                try? await provStore.syncIcons(from: catalog.providers)
+                print("[ChappieViewModel] Icons synced from catalog")
+            }
+
+            await loadProvidersAndSetActive(from: provStore)
+            await loadThreadsAndSelectActive(from: tStore)
+        }
+    }
 
     // MARK: - History Management
 

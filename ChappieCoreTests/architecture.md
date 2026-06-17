@@ -12,7 +12,7 @@ Unit Test Bundle for `ChappieCore` business logic.
 Uses Swift Testing framework (`import Testing`, `@Suite`, `@Test`, `#expect`).
 
 **Key principles:**
-- Each test creates its own temp directory — no shared state
+- Each test creates its own isolated storage — no shared state
 - `scope: .global` in tests is forbidden — writes to real memory
 - UUID suffixes in keys/types to avoid cross-test conflicts
 
@@ -27,7 +27,7 @@ ChappieCoreTests/
 ├── AITunnelModelsTests.swift           # Codable roundtrip for AI wire models
 ├── ChappieErrorTests.swift             # ChappieError enum coverage
 ├── FileSystemManagerTests.swift        # FS ops + path traversal protection
-├── MemoryManagerTests.swift            # Semantic memory CRUD via DataStore
+├── MemoryManagerTests.swift            # Semantic memory CRUD via SQLiteStorage
 ├── ThreadIsolationTests.swift          # Thread/project isolation rules
 └── WebFetchServiceTests.swift          # WebFetchService HTTP + parsing
 
@@ -56,7 +56,7 @@ graph TD
         ATM["AITunnelModels"]
         CE["ChappieError"]
         FSM["FileSystemManager"]
-        MemM["MemoryManager + MemoryStore"]
+        MemM["MemoryStore + SQLiteStorage"]
         TS["ThreadSession + ToolAccessController"]
         WFS["WebFetchService"]
     end
@@ -71,10 +71,10 @@ graph TD
 
     subgraph Isolation["Test Isolation"]
         TmpDir["FileManager.temporaryDirectory + UUID subfolder"]
-        InMemDS["In-memory ChappieDataStore (no SwiftData file)"]
+        InMemDB["In-memory SQLiteStorage (GRDB :memory: path)"]
     end
 
-    MMT --> InMemDS
+    MMT --> InMemDB
     FSMT --> TmpDir
 ```
 
@@ -96,8 +96,9 @@ graph TD
 1. **Never use `scope: .global`** — writes to real memory
 2. **UUID suffixes for types/keys** — `"testType_\(UUID().uuidString)"`
 3. **Temp directory** — `FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)`
-4. **Swift Testing only** — no `XCTestCase`
-5. **Comments in English**
+4. **In-memory SQLite** — `SQLiteStorage(url: URL(fileURLWithPath: ":memory:"))` — no file created
+5. **Swift Testing only** — no `XCTestCase`
+6. **Comments in English**
 
 ---
 

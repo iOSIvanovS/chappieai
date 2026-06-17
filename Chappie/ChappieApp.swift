@@ -17,9 +17,13 @@
 //   Without explicit termination the helper remains as an orphan process,
 //   and the next bind() on the same socket fails with "address already in use".
 //
-// SWIFTDATA SCHEMA:
-// AppSettingsSchema — StoredRecord is the only @Model. Schema is frozen.
-// No migrations needed — domain structs evolve as Codable, not as @Model.
+// STORAGE ARCHITECTURE:
+// Two backends exist simultaneously during migration:
+//   - ChappieDataStore (SwiftData) — legacy, read-only after migration
+//   - SQLiteStorage (GRDB) — production target
+// MigrationService runs once on first launch, copies all data, sets a UserDefaults flag.
+// After migration, only SQLiteStorage is used. SwiftData container stays alive until
+// we confirm all users have migrated (next major version removes it entirely).
 //
 // WINDOW SIZE:
 // .defaultSize(width:height:) sets the initial window size on first launch (EULA screen).
@@ -67,7 +71,7 @@ struct ChappieApp: App {
         )
     }
 
-    // MARK: - SwiftData Container
+    // MARK: - SwiftData Container (legacy — kept for MigrationService)
 
     let modelContainer: ModelContainer = {
         let schema = Schema(versionedSchema: AppSettingsSchema.self)
@@ -97,9 +101,6 @@ struct ChappieApp: App {
 
     var body: some Scene {
         WindowGroup {
-            // viewModel passed directly — ContentView owns it via @Bindable.
-            // .environment(viewModel) still provided for child views that use
-            // @Environment(ChappieViewModel.self) (e.g. subviews injected deeper).
             ContentView(viewModel: viewModel)
                 .environment(viewModel)
                 .environment(\.sparkleUpdater, updaterController.updater)
@@ -111,6 +112,9 @@ struct ChappieApp: App {
                         .opacity(0.5)
                         .ignoresSafeArea()
                 )
+                .onAppear {
+                    viewModel.setModelContainer(modelContainer)
+                }
         }
         .modelContainer(modelContainer)
         .defaultSize(width: 480, height: 600)

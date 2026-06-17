@@ -2,12 +2,11 @@
 // ChappieCore
 //
 // Minimal store kept solely for license enforcement.
-// Project attachment is now thread-scoped via ThreadStore — ProjectStore has no role there.
+// Project attachment is thread-scoped via ThreadStore — ProjectStore has no role there.
 //
 // WHY STILL EXISTS:
 // downgradeAllProjectsToAdvisor() is called when a Starter license is activated.
-// It must iterate all threads and downgrade any Executor project to Advisor.
-// This operation lives here to keep license logic out of ThreadStore.
+// It iterates all threads and downgrades any Executor project to Advisor.
 
 import Foundation
 
@@ -15,10 +14,10 @@ import Foundation
 
 public actor ProjectStore {
 
-    private let dataStore: ChappieDataStore
+    private let dataStore: any ChappieStorage
     private let threadStore: ThreadStore
 
-    public init(dataStore: ChappieDataStore, threadStore: ThreadStore) {
+    public init(dataStore: any ChappieStorage, threadStore: ThreadStore) {
         self.dataStore = dataStore
         self.threadStore = threadStore
     }

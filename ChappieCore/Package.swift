@@ -23,21 +23,26 @@ let package = Package(
     name: "ChappieCore",
     platforms: [
         // macOS 14 — minimum version to cover last 3 major macOS releases.
-        // SwiftData and @Observable are both available since macOS 14.
-        // swift-tools-version 6.0 supports macOS 14 as deployment target.
+        // GRDB 7.x requires macOS 10.13+, so macOS 14 is well within range.
         .macOS(.v14)
     ],
     products: [
-        // Library exported as dynamic/static (Xcode decides)
         .library(
             name: "ChappieCore",
             targets: ["ChappieCore"]
         ),
     ],
+    dependencies: [
+        // GRDB — battle-tested SQLite toolkit. Replaces SwiftData as persistent storage.
+        // Chosen over raw SQLite for type-safe queries and migration support.
+        .package(url: "https://github.com/groue/GRDB.swift", from: "7.0.0"),
+    ],
     targets: [
-        // Main target with source code
         .target(
-            name: "ChappieCore"
+            name: "ChappieCore",
+            dependencies: [
+                .product(name: "GRDB", package: "GRDB.swift"),
+            ]
         ),
         // TEST TARGET INTENTIONALLY REMOVED.
         // All tests live in ChappieCoreTests/ and are managed via Xcode Test Plan.

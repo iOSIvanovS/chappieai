@@ -1,52 +1,38 @@
 // MemoryStore.swift
 // ChappieCore
 //
-// Actor managing the three-level memory system via ChappieDataStore.
+// Actor managing the three-level memory system via ChappieStorage protocol.
 // Scopes: "global", "<projectId>", "<threadId>".
 //
 // STORAGE LAYOUT:
-// All scopes are stored as a single MemoryStorage record under ChappieDataStore.Relation.memory.
+// All scopes are stored as a single MemoryStorage record under .memory relation.
 // MemoryStorage is a Codable struct: { scopes: [String: [MemoryEntry]] }.
-// This means one ChappieDataStore round-trip loads all scopes — efficient for system prompt assembly.
-//
-// WHY ACTOR:
-// Multiple concurrent tool calls may read/write memory simultaneously.
-// Actor serializes access and prevents data races without explicit locking.
-//
-// CODABLE COMPATIBILITY (enforced — see DataStore.swift for full rules):
-// MemoryEntry fields must never be renamed without CodingKeys.
-// Removed fields must become optional with a default value.
-// New fields must have a default value so old records decode cleanly.
+// One storage round-trip loads all scopes — efficient for system prompt assembly.
 
 import Foundation
 
 // MARK: - MemoryStore
 
-/// Actor managing memory entries via ChappieDataStore.
-/// Single source of truth for all memory scopes.
 public actor MemoryStore {
 
-    private let dataStore: ChappieDataStore
+    private let dataStore: any ChappieStorage
 
-    public init(dataStore: ChappieDataStore) {
+    public init(dataStore: any ChappieStorage) {
         self.dataStore = dataStore
     }
 
     // MARK: - Private helpers
 
-    /// Loads the full MemoryStorage from ChappieDataStore. Returns empty storage on miss or decode failure.
     private func loadStorage() async throws -> MemoryStorage {
         return (try await dataStore.load(.memory)) ?? MemoryStorage()
     }
 
-    /// Saves the full MemoryStorage back to ChappieDataStore.
     private func saveStorage(_ storage: MemoryStorage) async throws {
         try await dataStore.save(storage, for: .memory)
     }
 
     // MARK: - Write
 
-    /// Upserts a memory entry by key within the given scope.
     public func saveEntry(
         key: String,
         type: String,
@@ -76,7 +62,6 @@ public actor MemoryStore {
         return storage.scopes[scope]?.first(where: { $0.key == key })?.jsonString
     }
 
-    /// Returns all entries for a scope. Used by buildSystemPrompt().
     public func readAllEntries(scope: String) async throws -> [MemoryEntry] {
         let storage = try await loadStorage()
         return storage.scopes[scope] ?? []
@@ -114,7 +99,6 @@ public actor MemoryStore {
         print("[MemoryStore] 🗑 Deleted '\(key)' from scope='\(scope)'")
     }
 
-    /// Deletes the entire scope — used when a thread or project is deleted.
     public func deleteScope(_ scope: String) async throws {
         var storage = try await loadStorage()
         storage.scopes.removeValue(forKey: scope)
@@ -124,8 +108,7 @@ public actor MemoryStore {
 
     // MARK: - Bulk read for system prompt
 
-    /// Loads entries for multiple scopes in a single ChappieDataStore fetch.
-    /// Used by buildSystemPrompt() to avoid N separate round-trips.
+    /// Loads entries for multiple scopes in a single storage fetch.
     public func readEntriesForScopes(_ scopes: [String]) async throws -> [String: [MemoryEntry]] {
         let storage = try await loadStorage()
         let scopeSet = Set(scopes)
@@ -136,8 +119,7 @@ public actor MemoryStore {
         return result
     }
 
-    /// Bulk-imports entries into a scope (used by MigrationService).
-    /// Replaces all existing entries in the scope.
+    /// Bulk-imports entries into a scope. Replaces all existing entries in the scope.
     public func importEntries(_ entries: [MemoryEntry], intoScope scope: String) async throws {
         var storage = try await loadStorage()
         storage.scopes[scope] = entries

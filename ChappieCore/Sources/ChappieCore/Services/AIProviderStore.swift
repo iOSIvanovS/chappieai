@@ -1,21 +1,15 @@
 // AIProviderStore.swift
 // ChappieCore
 //
-// CRUD service for AI providers via ChappieDataStore. Keychain for API keys.
-// No SwiftData imports here — all persistence goes through ChappieDataStore.Relation.providers.
+// CRUD service for AI providers via ChappieStorage protocol. Keychain for API keys.
 //
 // STORAGE LAYOUT:
-// All providers stored as [AIProvider] under Relation.providers.
+// All providers stored as [AIProvider] under .providers relation.
 // API key secrets live exclusively in Keychain, keyed by apiKey.id.uuidString.
 //
 // CACHING:
 // cachedProviders holds the full list in RAM after first load.
 // All reads return from cache. All writes call refreshCache() after saving.
-//
-// CODABLE COMPATIBILITY (see DataStore.swift for full rules):
-//   AIProvider already has CodingKeys — safe to evolve without breaking stored records.
-//   Never remove fields — mark optional with a default instead.
-//   New fields must have a default value so old records decode cleanly.
 
 import Foundation
 import Security
@@ -24,24 +18,15 @@ import Security
 
 public actor AIProviderStore {
 
-    // MARK: - Dependencies
-
-    private let dataStore: ChappieDataStore
-
-    // MARK: - In-memory cache
-
+    private let dataStore: any ChappieStorage
     private var cachedProviders: [AIProvider]? = nil
     private var cachedDefaultId: UUID? = nil
-
-    // MARK: - Keychain constants
 
     private let keychainService: String = {
         Bundle.main.bundleIdentifier ?? "ru.chappie"
     }()
 
-    // MARK: - Init
-
-    public init(dataStore: ChappieDataStore) {
+    public init(dataStore: any ChappieStorage) {
         self.dataStore = dataStore
     }
 
@@ -50,8 +35,6 @@ public actor AIProviderStore {
     private func refreshCache() async throws {
         let providers: [AIProvider] = (try await dataStore.load(.providers)) ?? []
         cachedProviders = providers
-        // Default is the first provider marked isDefault, or the oldest one
-        // WHY: isDefault is a property on AIProvider — we track it in the array itself
         cachedDefaultId = providers.first(where: { $0.isDefault })?.id ?? providers.first?.id
     }
 
@@ -67,8 +50,7 @@ public actor AIProviderStore {
 
     // MARK: - Load
 
-    /// Returns all stored providers, sorted by creation date (oldest first).
-    /// Runs single-key migration for providers that predate the multi-key schema.
+    /// Returns all stored providers. Runs single-key migration for pre-multi-key records.
     public func loadProviders() async throws -> [AIProvider] {
         var providers = try await getProviders()
         var needsRefresh = false
@@ -116,7 +98,6 @@ public actor AIProviderStore {
             guard providers[idx].requiresApiKey != remote.requiresApiKey else { continue }
             providers[idx].requiresApiKey = remote.requiresApiKey
             changed = true
-            print("[AIProviderStore] Synced requiresApiKey=\(remote.requiresApiKey) for '\(providers[idx].displayName)'")
         }
 
         if changed {
@@ -137,7 +118,6 @@ public actor AIProviderStore {
             providers[idx].iconName = remote.iconName
             providers[idx].iconColor = remote.iconColor
             changed = true
-            print("[AIProviderStore] Synced icon '\(remote.iconName)' for '\(providers[idx].displayName)'")
         }
 
         if changed {
@@ -146,7 +126,7 @@ public actor AIProviderStore {
         }
     }
 
-    // MARK: - Add Provider (Custom / Manual)
+    // MARK: - Add Provider
 
     @discardableResult
     public func addProvider(
@@ -163,10 +143,7 @@ public actor AIProviderStore {
             providerWithKey.keys = [firstKey]
         }
 
-        // First provider becomes default
-        if providers.isEmpty {
-            providerWithKey.isDefault = true
-        }
+        if providers.isEmpty { providerWithKey.isDefault = true }
 
         providers.append(providerWithKey)
         try await saveProviders(providers)
@@ -331,15 +308,12 @@ public actor AIProviderStore {
         return false
     }
 
-    // MARK: - Update Provider
+    // MARK: - Update / Delete Provider
 
     public func updateProvider(_ provider: AIProvider) async throws {
         try await persistProvider(provider)
         try await refreshCache()
-        print("[AIProviderStore] Updated provider '\(provider.displayName)'")
     }
-
-    // MARK: - Delete Provider
 
     public func deleteProvider(id: UUID) async throws {
         var providers = try await getProviders()
@@ -351,11 +325,7 @@ public actor AIProviderStore {
         for key in providers[idx].keys { deleteKeychainEntry(key: key.id.uuidString) }
         providers.remove(at: idx)
 
-        // Reassign default if needed
-        if wasDefault, let first = providers.first {
-            providers[0].isDefault = true
-            _ = first // silence warning
-        }
+        if wasDefault, !providers.isEmpty { providers[0].isDefault = true }
 
         try await saveProviders(providers)
         try await refreshCache()
@@ -381,7 +351,6 @@ public actor AIProviderStore {
 
         try await saveProviders(providers)
         try await refreshCache()
-        print("[AIProviderStore] Added key '\(newKey.name)' to provider '\(providers[idx].displayName)'")
         return newKey
     }
 
@@ -403,7 +372,6 @@ public actor AIProviderStore {
 
         try await saveProviders(providers)
         try await refreshCache()
-        print("[AIProviderStore] Updated key '\(key.name)'")
     }
 
     public func deleteKey(id keyId: UUID, fromProviderId providerId: UUID) async throws {
@@ -417,7 +385,6 @@ public actor AIProviderStore {
 
         try await saveProviders(providers)
         try await refreshCache()
-        print("[AIProviderStore] Deleted key \(keyId)")
     }
 
     // MARK: - Model Management
@@ -434,7 +401,6 @@ public actor AIProviderStore {
         providers[idx].models.append(model)
         try await saveProviders(providers)
         try await refreshCache()
-        print("[AIProviderStore] Added model '\(model.id)' to provider '\(providers[idx].displayName)'")
     }
 
     public func deleteModel(id modelId: String, fromProviderId providerId: UUID) async throws {
@@ -446,7 +412,6 @@ public actor AIProviderStore {
         providers[idx].models.removeAll { $0.id == modelId }
         try await saveProviders(providers)
         try await refreshCache()
-        print("[AIProviderStore] Deleted model '\(modelId)'")
     }
 
     // MARK: - Default
@@ -456,7 +421,6 @@ public actor AIProviderStore {
         for i in providers.indices { providers[i].isDefault = (providers[i].id == id) }
         try await saveProviders(providers)
         try await refreshCache()
-        print("[AIProviderStore] Default provider set to id: \(id)")
     }
 
     // MARK: - API Key (Keychain)

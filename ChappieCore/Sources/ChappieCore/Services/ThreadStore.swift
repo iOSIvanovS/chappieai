@@ -1,35 +1,26 @@
 // ThreadStore.swift
 // ChappieCore
 //
-// Actor for CRUD operations on threads via ChappieDataStore.
-// No SwiftData imports here — all persistence goes through ChappieDataStore.
+// Actor for CRUD operations on threads via ChappieStorage protocol.
+// No SwiftData imports here — all persistence goes through the storage abstraction.
 //
 // STORAGE LAYOUT:
-// - Relation.threads            → [ThreadPayload]  (thread list, metadata, settings)
-// - Relation.threadMessages(id) → raw JSON Data    (per-thread messages, loaded on demand)
+// - .threads                → [ThreadPayload]  (thread list, metadata, settings)
+// - .threadMessages(id)     → raw JSON Data    (per-thread messages, loaded on demand)
 //
 // Messages are stored as raw JSON Data (saveRawData/loadRawData) to avoid double-encoding.
-// The caller encodes [T] → Data via JSONEncoder; DataStore stores Data as-is.
 //
 // CACHING:
 // cachedThreads holds the thread list in RAM after first load.
-// loadThreads() is served from cache — no DataStore hit on warm calls.
-// loadMessages() always hits DataStore — per-thread, accessed only when thread is selected.
+// loadThreads() is served from cache — no storage hit on warm calls.
+// loadMessages() always hits storage — per-thread, accessed only when thread is selected.
 // All writes call refreshCache() to keep the thread list consistent.
-//
-// CODABLE COMPATIBILITY (see DataStore.swift for full rules):
-//   1. Never rename ThreadPayload fields without CodingKeys.
-//   2. Never remove fields — mark optional with a default instead.
-//   3. New fields must have a default value so old records decode cleanly.
 
 import Foundation
 
 // MARK: - ThreadPayload
 
-/// Codable struct stored inside [ThreadPayload] under Relation.threads.
-/// Replaces the legacy @Model ThreadEntity class.
-///
-/// WHY STRUCT, NOT @MODEL: plain Codable — no SwiftData migrations ever needed.
+/// Codable struct stored inside [ThreadPayload] under .threads relation.
 public struct ThreadPayload: Codable, Sendable, Identifiable {
 
     public let id: UUID
@@ -57,7 +48,6 @@ public struct ThreadPayload: Codable, Sendable, Identifiable {
         self.projectsJSON = (try? JSONEncoder().encode(projects)) ?? Data()
     }
 
-    // CodingKeys guard against future renames.
     private enum CodingKeys: String, CodingKey {
         case id
         case title
@@ -75,9 +65,7 @@ public struct ThreadPayload: Codable, Sendable, Identifiable {
         createdAt    = try c.decode(Date.self, forKey: .createdAt)
         updatedAt    = try c.decode(Date.self, forKey: .updatedAt)
         settingsJSON = try c.decodeIfPresent(Data.self, forKey: .settingsJSON) ?? Data()
-        // Legacy field — present in old records, empty in new ones. Never written by new code.
         projectBindingsJSON = try c.decodeIfPresent(Data.self, forKey: .projectBindingsJSON) ?? Data()
-        // New field — default empty so old records decode cleanly.
         projectsJSON = try c.decodeIfPresent(Data.self, forKey: .projectsJSON) ?? Data()
     }
 }
@@ -97,14 +85,13 @@ public struct ThreadMemoryInfo: Sendable, Identifiable {
 
 // MARK: - ThreadStore
 
-/// Actor for managing threads via ChappieDataStore.
-/// All methods are isolated in the actor — safe concurrent access is guaranteed.
+/// Actor for managing threads via ChappieStorage.
 public actor ThreadStore {
 
-    private let dataStore: ChappieDataStore
+    private let dataStore: any ChappieStorage
     private var cachedThreads: [ThreadMetadata]? = nil
 
-    public init(dataStore: ChappieDataStore) {
+    public init(dataStore: any ChappieStorage) {
         self.dataStore = dataStore
     }
 
@@ -118,7 +105,7 @@ public actor ThreadStore {
         try await dataStore.save(payloads, for: .threads)
     }
 
-    private func messagesRelation(for threadId: UUID) -> ChappieDataStore.Relation {
+    private func messagesRelation(for threadId: UUID) -> ChappieStorageRelation {
         .threadMessages(threadId)
     }
 
@@ -155,12 +142,10 @@ public actor ThreadStore {
     // MARK: - Messages (Generic)
 
     /// Saves the full message history for a thread.
-    /// Encodes [T] → Data and stores as raw bytes to avoid double-encoding.
     public func saveMessages<T: Codable>(_ messages: [T], toThreadId threadId: UUID) async throws {
         let data = try JSONEncoder().encode(messages)
         try await dataStore.saveRawData(data, for: messagesRelation(for: threadId))
 
-        // Update updatedAt in the thread payload.
         var payloads = try await loadPayloads()
         if let idx = payloads.firstIndex(where: { $0.id == threadId }) {
             payloads[idx].updatedAt = Date()
@@ -203,7 +188,6 @@ public actor ThreadStore {
 
     // MARK: - Thread-scoped Projects
 
-    /// Loads thread-scoped projects for a thread.
     public func loadProjects(forThreadId threadId: UUID) async throws -> [ThreadProjectEntry] {
         let payloads = try await loadPayloads()
         guard let payload = payloads.first(where: { $0.id == threadId }),
@@ -213,7 +197,6 @@ public actor ThreadStore {
         return projects
     }
 
-    /// Adds a project to a thread. Deduplicates by absolutePath.
     public func addProject(_ entry: ThreadProjectEntry, toThreadId threadId: UUID) async throws {
         var payloads = try await loadPayloads()
         guard let idx = payloads.firstIndex(where: { $0.id == threadId }) else { return }
@@ -223,7 +206,6 @@ public actor ThreadStore {
             projects = (try? JSONDecoder().decode([ThreadProjectEntry].self, from: payloads[idx].projectsJSON)) ?? []
         }
 
-        // Same folder must not appear twice in one thread.
         guard !projects.contains(where: { $0.absolutePath == entry.absolutePath }) else {
             print("[ThreadStore] ℹ️ Project '\(entry.displayName)' already in thread (same path)")
             return
@@ -237,7 +219,6 @@ public actor ThreadStore {
         print("[ThreadStore] ✅ Project '\(entry.displayName)' added to thread \(threadId)")
     }
 
-    /// Removes a project from a thread by its id.
     public func removeProject(id projectId: UUID, fromThreadId threadId: UUID) async throws {
         var payloads = try await loadPayloads()
         guard let idx = payloads.firstIndex(where: { $0.id == threadId }) else { return }
@@ -258,7 +239,6 @@ public actor ThreadStore {
         print("[ThreadStore] ✅ Project \(projectId) removed from thread \(threadId)")
     }
 
-    /// Updates settings for a specific project inside a thread.
     public func updateProjectSettings(
         _ settings: ProjectSettings,
         projectId: UUID,
@@ -300,7 +280,6 @@ public actor ThreadStore {
         let title = payloads[idx].title
         payloads.remove(at: idx)
         try await savePayloads(payloads)
-        // Delete the messages record for this thread too.
         try await dataStore.delete(messagesRelation(for: threadId))
         try await refreshCache()
         print("[ThreadStore] 🗑 Thread '\(title)' deleted")
@@ -369,7 +348,6 @@ extension ThreadMetadata {
         self.createdAt = payload.createdAt
         self.updatedAt = payload.updatedAt
 
-        // Thread-scoped projects — source of truth.
         if !payload.projectsJSON.isEmpty,
            let entries = try? JSONDecoder().decode([ThreadProjectEntry].self, from: payload.projectsJSON) {
             self.projects = entries
