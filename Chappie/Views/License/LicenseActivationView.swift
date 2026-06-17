@@ -1,10 +1,3 @@
-// LicenseActivationView.swift
-// Chappie
-//
-// Plan picker sheet: loads prices from backend, lets user select currency,
-// buy a plan (email → invoice → browser), or enter an existing license key.
-// Called from ContentView (paywall), SettingsView, and TrialBannerView.
-
 import SwiftUI
 import ChappieCore
 
@@ -36,9 +29,6 @@ struct LicenseActivationView: View {
     @State private var activationError: String? = nil
     @State private var didSucceed = false
 
-    // Owner JWT (hidden, triple-tap crown)
-    @State private var showOwnerJWT = false
-
     private let paymentService = PaymentService()
 
     var body: some View {
@@ -48,7 +38,6 @@ struct LicenseActivationView: View {
                     headerSection
                     plansSection
                     activationSection
-                    if showOwnerJWT { ownerJWTSection }
                 }
                 .padding(28)
             }
@@ -90,7 +79,6 @@ struct LicenseActivationView: View {
             Image(systemName: "crown.fill")
                 .font(.system(size: 36))
                 .foregroundStyle(.yellow)
-                .onTapGesture(count: 3) { showOwnerJWT.toggle() }
             Text("license.choose_plan_title")
                 .font(.title2.bold())
             Text("license.choose_plan_subtitle")
@@ -196,12 +184,6 @@ struct LicenseActivationView: View {
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
     }
 
-    // MARK: - Owner JWT
-
-    private var ownerJWTSection: some View {
-        OwnerJWTSectionView(viewModel: viewModel, onSuccess: { dismiss() })
-    }
-
     // MARK: - Actions
 
     private func loadPlans() async {
@@ -301,7 +283,6 @@ private struct PlanRowView: View {
 
             Spacer()
 
-            // Price — shown if available for selected currency
             if let price = plan.price(for: currency) {
                 Text(formattedPrice(price, currency: currency))
                     .font(.subheadline.bold())
@@ -405,66 +386,5 @@ private struct EmailInputSheet: View {
         }
         .padding(28)
         .frame(width: 380)
-    }
-}
-
-// MARK: - OwnerJWTSectionView
-
-private struct OwnerJWTSectionView: View {
-
-    var viewModel: ChappieViewModel
-    var onSuccess: () -> Void
-
-    @State private var jwt = ""
-    @State private var isActivating = false
-    @State private var errorMessage: String? = nil
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("license.jwt_token_label")
-                .font(.caption.bold())
-                .foregroundStyle(.secondary)
-
-            TextEditor(text: $jwt)
-                .font(.system(.caption, design: .monospaced))
-                .frame(height: 80)
-                .scrollContentBackground(.hidden)
-                .padding(8)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-
-            if let error = errorMessage {
-                Text(error).font(.caption).foregroundStyle(.red)
-            }
-
-            Button {
-                activateOwner()
-            } label: {
-                if isActivating {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Text("license.activate_button")
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(jwt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isActivating)
-        }
-        .padding(14)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    private func activateOwner() {
-        let token = jwt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !token.isEmpty else { return }
-        isActivating = true
-        Task {
-            let success = await viewModel.activateOwnerLicense(jwt: token)
-            isActivating = false
-            if success {
-                try? await Task.sleep(nanoseconds: 800_000_000)
-                onSuccess()
-            } else {
-                errorMessage = String(localized: "license.activation_error")
-            }
-        }
     }
 }

@@ -1,26 +1,3 @@
-// SettingsView.swift
-// Chappie
-//
-// General application settings sheet.
-//
-// SECTIONS:
-//   - User name: saved to global memory, used in system prompt.
-//   - AI providers: shortcut to ProvidersSettingsView (the directory).
-//   - Memory: shortcut to MemoryManagementView (per-thread history cleanup).
-//   - Updates: Sparkle "Check for Updates" button + current app version.
-//   - Onboarding: manual re-run trigger (calls AppState.resetOnboarding).
-//   - EULA: manual re-show trigger (calls AppState.resetEULA) — for debug/review.
-//   - Security: Keychain info.
-//   - License: activate owner JWT or view current license state.
-//
-// NOTE: There is no "active provider" concept at the global level.
-// Provider + key + model selection happens per-thread via the "Model" chip in the toolbar.
-// ProvidersSettingsView is purely a directory — add/edit/delete, no selection.
-//
-// SPARKLE:
-// SPUUpdater is received via @Environment(\.sparkleUpdater) — injected in ChappieApp.
-// Sparkle must be explicitly imported here for checkForUpdates() and canCheckForUpdates.
-
 import SwiftUI
 import ChappieCore
 import Sparkle
@@ -29,11 +6,7 @@ import Sparkle
 
 struct SettingsView: View {
 
-    // MARK: - Dependencies
-
     var viewModel: ChappieViewModel
-
-    // MARK: - State
 
     @State private var userName: String = ""
     @State private var showProviders: Bool = false
@@ -43,16 +16,12 @@ struct SettingsView: View {
     @State private var showEULAConfirm: Bool = false
     @State private var showLicenseActivation: Bool = false
 
-    // Sparkle updater passed via environment from ChappieApp.
     @Environment(\.sparkleUpdater) private var sparkleUpdater
     @Environment(\.dismiss) private var dismiss
-
-    // MARK: - Body
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
 
-            // Header
             HStack {
                 Image(systemName: "gear")
                     .font(.title2)
@@ -197,7 +166,6 @@ struct SettingsView: View {
                             .font(.headline)
 
                         HStack(spacing: 12) {
-                            // Current app version badge
                             HStack(spacing: 6) {
                                 Image(systemName: "app.badge.checkmark")
                                     .foregroundStyle(.secondary)
@@ -279,12 +247,9 @@ struct SettingsView: View {
                             .font(.headline)
 
                         HStack(spacing: 12) {
-                            // Status badge: shows state + plan name when available.
                             HStack(spacing: 6) {
                                 Image(systemName: licenseIcon)
                                     .foregroundStyle(licenseColor)
-                                // WHY: plan name (Starter/Pro/Team) shown after status
-                                // so users immediately see which plan they're on.
                                 Text(licenseBadgeText)
                                     .font(.system(size: 13, weight: .medium))
                                     .foregroundStyle(licenseColor)
@@ -295,8 +260,6 @@ struct SettingsView: View {
 
                             Spacer()
 
-                            // WHY: Always show the button so users can upgrade their plan.
-                            // Active/owner users see "Manage Plan", others see "Activate".
                             Button {
                                 showLicenseActivation = true
                             } label: {
@@ -355,8 +318,6 @@ struct SettingsView: View {
 
     // MARK: - License helpers
 
-    // WHY: Plan names (Starter/Pro/Team) are brand names — same in all languages.
-    // Status label is localized, plan name is appended as a fixed suffix.
     private var licenseBadgeText: String {
         let status = licenseLabel
         if let plan = licensePlanName {
@@ -365,7 +326,6 @@ struct SettingsView: View {
         return status
     }
 
-    // Returns the marketing plan name or nil when not applicable (trial/owner/etc).
     private var licensePlanName: String? {
         switch viewModel.licenseState {
         case .active(let plan, _):
@@ -390,7 +350,6 @@ struct SettingsView: View {
     private var licenseLabel: String {
         switch viewModel.licenseState {
         case .loading:     return String(localized: "license.state_checking")
-        case .owner:       return String(localized: "license.state_owner")
         case .active:      return String(localized: "license.state_active")
         case .trial:       return String(localized: "license.state_trial")
         case .gracePeriod: return String(localized: "license.state_grace_period")
@@ -401,7 +360,6 @@ struct SettingsView: View {
 
     private var licenseIcon: String {
         switch viewModel.licenseState {
-        case .owner:       return "crown.fill"
         case .active:      return "checkmark.seal.fill"
         case .trial:       return "clock.fill"
         case .gracePeriod: return "exclamationmark.triangle.fill"
@@ -412,7 +370,6 @@ struct SettingsView: View {
 
     private var licenseColor: Color {
         switch viewModel.licenseState {
-        case .owner:       return .yellow
         case .active:      return .green
         case .trial:       return .blue
         case .gracePeriod: return .orange
@@ -421,23 +378,20 @@ struct SettingsView: View {
         }
     }
 
-    // WHY: Users with an active plan see "Manage Plan" (upgrade path),
-    // everyone else sees "Activate" (primary CTA).
-    private var isLicensed: Bool {
-        switch viewModel.licenseState {
-        case .owner, .active: return true
-        default: return false
-        }
+    // WHY: Active users see "Manage Plan" (upgrade path), others see "Activate".
+    private var isActiveLicense: Bool {
+        if case .active = viewModel.licenseState { return true }
+        return false
     }
 
     private var licenseButtonLabel: String {
-        isLicensed
+        isActiveLicense
             ? String(localized: "license.manage_plan_button")
             : String(localized: "license.activate_button")
     }
 
     private var licenseButtonIcon: String {
-        isLicensed ? "arrow.up.circle" : "key.badge.plus"
+        isActiveLicense ? "arrow.up.circle" : "key.badge.plus"
     }
 
     // MARK: - Helpers
@@ -446,8 +400,6 @@ struct SettingsView: View {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
     }
 
-    // WHY: Russian pluralization has 3 forms (1/2-4/5+), English has 2 (1/other).
-    // Using localized keys so each language can provide its own plural forms.
     private func providersLabel(_ count: Int) -> String {
         switch count {
         case 1: return String(localized: "settings.providers_one")

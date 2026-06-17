@@ -218,15 +218,26 @@ struct HardwareIDTests {
     @Test("Hardware ID is stable across calls")
     func hardwareIdIsStable() async {
         let service = LicenseService()
-        let id1 = await service.getOrCreateHardwareId()
-        let id2 = await service.getOrCreateHardwareId()
+        let id1 = await service.getHardwareId()
+        let id2 = await service.getHardwareId()
         #expect(id1 == id2, "Hardware ID must be stable — same value every call")
     }
 
     @Test("Hardware ID is non-empty")
     func hardwareIdNonEmpty() async {
         let service = LicenseService()
-        let id = await service.getOrCreateHardwareId()
+        let id = await service.getHardwareId()
         #expect(!id.isEmpty)
+    }
+
+    @Test("Hardware ID looks like a real serial number")
+    func hardwareIdLooksLikeSerial() async {
+        let service = LicenseService()
+        let id = await service.getHardwareId()
+        // Mac serial numbers are 11-12 chars, alphanumeric.
+        // UUIDs (fallback) are 36 chars with dashes.
+        // Either is acceptable — just must not be empty.
+        #expect(!id.isEmpty)
+        #expect(id.count >= 11)
     }
 }

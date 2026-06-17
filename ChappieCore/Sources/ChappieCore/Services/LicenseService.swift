@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 import Security
+import IOKit
 
 // MARK: - LicenseState
 
@@ -8,7 +9,6 @@ public enum LicenseState: Sendable, Equatable {
     case loading
     case trial(daysRemaining: Int)
     case active(plan: LicensePlan, expiresAt: Date?)
-    case owner                          // offline, never expires
     case expired(plan: LicensePlan)
     case gracePeriod(daysRemaining: Int)
     case noLicense
@@ -21,21 +21,13 @@ public enum LicensePlan: String, Sendable, Codable {
     case starter = "starter"
     case pro     = "pro"
     case team    = "team"
-    case owner   = "owner"
 }
 
 // MARK: - LicenseService
 
 /// Actor owning all license logic: hardware_id, Keychain storage,
-/// owner JWT verification, trial/activation/validation flows.
+/// trial/activation/validation flows.
 public actor LicenseService {
-
-    // Ed25519 public key embedded in binary — private key never leaves VPS.
-    private static let ownerPublicKeyPEM = """
-    -----BEGIN PUBLIC KEY-----
-    MCowBQYDK2VwAyEA5M+mNqjrVU0nCDaKwd60c8L21QTGG/FG9U1rymYtkQ0=
-    -----END PUBLIC KEY-----
-    """
 
     private let backendURL = "https://api.chappieai.ru"
 
@@ -48,24 +40,9 @@ public actor LicenseService {
 
     /// Call on every app launch. Determines current license state.
     public func initialize() async {
-        // 1. Owner JWT — highest priority, offline.
-        //    Skipped in DEBUG when DebugFlags.ignoreOwnerLicense = true.
-        #if DEBUG
-        let checkOwner = !DebugFlags.ignoreOwnerLicense
-        #else
-        let checkOwner = true
-        #endif
+        let hardwareId = getHardwareId()
 
-        if checkOwner, let jwt = KeychainHelper.read(key: .jwt), !jwt.isEmpty {
-            if verifyOwnerJWT(jwt) {
-                state = .owner
-                return
-            }
-        }
-
-        let hardwareId = getOrCreateHardwareId()
-
-        // 2. Stored license key — try to validate online
+        // 1. Stored license key — try to validate online
         if let licenseKey = KeychainHelper.read(key: .key), !licenseKey.isEmpty {
             let plan = LicensePlan(rawValue: KeychainHelper.read(key: .plan) ?? "") ?? .trial
             do {
@@ -91,7 +68,7 @@ public actor LicenseService {
             return
         }
 
-        // 3. No license at all — register trial automatically
+        // 2. No license at all — register trial automatically
         await registerTrialIfNeeded(hardwareId: hardwareId)
     }
 
@@ -120,7 +97,7 @@ public actor LicenseService {
 
     /// Activate a paid license key. Returns updated LicenseState.
     public func activate(key: String) async throws -> LicenseState {
-        let hardwareId = getOrCreateHardwareId()
+        let hardwareId = getHardwareId()
         let result = try await activateOnline(key: key, hardwareId: hardwareId)
 
         let plan = LicensePlan(rawValue: result.plan) ?? .starter
@@ -136,17 +113,28 @@ public actor LicenseService {
         return newState
     }
 
-    /// Store owner JWT in Keychain and verify it immediately.
-    public func activateOwnerLicense(jwt: String) -> Bool {
-        guard verifyOwnerJWT(jwt) else { return false }
-        KeychainHelper.write(key: .jwt, value: jwt)
-        KeychainHelper.write(key: .plan, value: LicensePlan.owner.rawValue)
-        state = .owner
-        return true
+    /// Returns the real Mac serial number via IOKit.
+    /// Never changes, never stored in Keychain — always read directly from hardware.
+    public func getHardwareId() -> String {
+        let platformExpert = IOServiceGetMatchingService(
+            kIOMainPortDefault,
+            IOServiceMatching("IOPlatformExpertDevice")
+        )
+        defer { IOObjectRelease(platformExpert) }
+
+        guard platformExpert != 0 else { return fallbackHardwareId() }
+
+        let key = "IOPlatformSerialNumber" as CFString
+        guard let serial = IORegistryEntryCreateCFProperty(
+            platformExpert, key, kCFAllocatorDefault, 0
+        )?.takeRetainedValue() as? String, !serial.isEmpty else {
+            return fallbackHardwareId()
+        }
+        return serial
     }
 
-    /// Stable hardware ID — generated once, stored in Keychain forever.
-    public func getOrCreateHardwareId() -> String {
+    /// Fallback: UUID stored in Keychain. Used only if IOKit fails (VM, rare edge case).
+    private func fallbackHardwareId() -> String {
         if let existing = KeychainHelper.read(key: .hardwareId) { return existing }
         let new = UUID().uuidString
         KeychainHelper.write(key: .hardwareId, value: new)
@@ -158,17 +146,14 @@ public actor LicenseService {
     /// Tolerant ISO8601 parser — handles both "2026-06-15T22:11:31Z" (new backend)
     /// and legacy "2026-06-15T22:11:31.034478" (old rows without timezone suffix).
     private func parseDate(_ string: String) -> Date? {
-        // Standard ISO8601 with Z or +offset — covers new backend output
         let strict = ISO8601DateFormatter()
         strict.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         if let date = strict.date(from: string) { return date }
 
-        // Without fractional seconds
         let plain = ISO8601DateFormatter()
         plain.formatOptions = [.withInternetDateTime]
         if let date = plain.date(from: string) { return date }
 
-        // Legacy: naive datetime without timezone (old DB rows) — treat as UTC
         let legacy = DateFormatter()
         legacy.locale = Locale(identifier: "en_US_POSIX")
         legacy.timeZone = TimeZone(identifier: "UTC")
@@ -177,56 +162,6 @@ public actor LicenseService {
 
         legacy.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
         return legacy.date(from: string)
-    }
-
-    // MARK: - Owner JWT Verification
-
-    /// Verifies Ed25519 JWT signature offline using the embedded public key.
-    private func verifyOwnerJWT(_ jwt: String) -> Bool {
-        let parts = jwt.split(separator: ".").map(String.init)
-        guard parts.count == 3 else { return false }
-
-        guard
-            let headerData   = base64URLDecode(parts[0]),
-            let payloadData  = base64URLDecode(parts[1]),
-            let sigData      = base64URLDecode(parts[2])
-        else { return false }
-
-        guard
-            let header = try? JSONDecoder().decode([String: String].self, from: headerData),
-            header["alg"] == "EdDSA"
-        else { return false }
-
-        guard
-            let payload = try? JSONDecoder().decode(OwnerJWTPayload.self, from: payloadData),
-            payload.plan == "owner"
-        else { return false }
-
-        guard let publicKey = loadOwnerPublicKey() else { return false }
-        let message = Data("\(parts[0]).\(parts[1])".utf8)
-        guard let signature = try? Curve25519.Signing.PublicKey(rawRepresentation: publicKey) else { return false }
-        return (try? signature.isValidSignature(sigData, for: message)) ?? false
-    }
-
-    private func loadOwnerPublicKey() -> Data? {
-        let pem = Self.ownerPublicKeyPEM
-            .replacingOccurrences(of: "-----BEGIN PUBLIC KEY-----", with: "")
-            .replacingOccurrences(of: "-----END PUBLIC KEY-----", with: "")
-            .replacingOccurrences(of: "\n", with: "")
-            .trimmingCharacters(in: .whitespaces)
-
-        guard let derData = Data(base64Encoded: pem) else { return nil }
-        guard derData.count == 44 else { return nil }
-        return derData.suffix(32)
-    }
-
-    private func base64URLDecode(_ string: String) -> Data? {
-        var base64 = string
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-        let remainder = base64.count % 4
-        if remainder > 0 { base64 += String(repeating: "=", count: 4 - remainder) }
-        return Data(base64Encoded: base64)
     }
 
     // MARK: - Helpers
@@ -348,32 +283,22 @@ public enum LicenseError: Error, LocalizedError {
     case networkError
     case licenseInvalid
     case deviceLimitReached
-    case jwtVerificationFailed
 
     public var errorDescription: String? {
         switch self {
-        case .networkError:          return "Cannot reach license server"
-        case .licenseInvalid:        return "License key is invalid or revoked"
-        case .deviceLimitReached:    return "Device limit reached for this license"
-        case .jwtVerificationFailed: return "Owner license verification failed"
+        case .networkError:       return "Cannot reach license server"
+        case .licenseInvalid:     return "License key is invalid or revoked"
+        case .deviceLimitReached: return "Device limit reached for this license"
         }
     }
-}
-
-// MARK: - OwnerJWTPayload
-
-private struct OwnerJWTPayload: Codable {
-    let plan: String
-    let email: String?
-    let hardware_id: String?
-    let issued_at: String?
-    let expires_at: String?
 }
 
 // MARK: - KeychainHelper
 
 /// Minimal Keychain read/write for license data.
 /// All keys prefixed with "license." — see licensing.md §5.
+/// kSecAttrService scopes entries to this app. kSecAttrAccessibleAfterFirstUnlock
+/// allows silent reads after boot without prompting the user for a password.
 enum KeychainHelper {
 
     enum Key: String {
@@ -381,16 +306,19 @@ enum KeychainHelper {
         case plan            = "license.plan"
         case expiresAt       = "license.expires_at"
         case lastValidatedAt = "license.last_validated_at"
-        case hardwareId      = "license.hardware_id"
-        case jwt             = "license.jwt"
+        case hardwareId      = "license.hardware_id"   // fallback only (VM/edge cases)
     }
+
+    // Scopes all license entries to this app bundle — prevents cross-app collisions.
+    private static let service: String = Bundle.main.bundleIdentifier ?? "ru.chappie"
 
     static func read(key: Key) -> String? {
         let query: [CFString: Any] = [
-            kSecClass:            kSecClassGenericPassword,
-            kSecAttrAccount:      key.rawValue,
-            kSecReturnData:       true,
-            kSecMatchLimit:       kSecMatchLimitOne
+            kSecClass:       kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: key.rawValue,
+            kSecReturnData:  true,
+            kSecMatchLimit:  kSecMatchLimitOne
         ]
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
@@ -404,8 +332,10 @@ enum KeychainHelper {
     @discardableResult
     static func write(key: Key, value: String) -> Bool {
         let data = Data(value.utf8)
+
         let query: [CFString: Any] = [
             kSecClass:       kSecClassGenericPassword,
+            kSecAttrService: service,
             kSecAttrAccount: key.rawValue
         ]
         let update: [CFString: Any] = [kSecValueData: data]
@@ -413,7 +343,9 @@ enum KeychainHelper {
 
         if status == errSecItemNotFound {
             var newItem = query
-            newItem[kSecValueData] = data
+            newItem[kSecValueData]      = data
+            // AfterFirstUnlock: readable silently after first boot unlock, survives sleep/wake.
+            newItem[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlock
             return SecItemAdd(newItem as CFDictionary, nil) == errSecSuccess
         }
         return status == errSecSuccess
@@ -423,6 +355,7 @@ enum KeychainHelper {
     static func delete(key: Key) -> Bool {
         let query: [CFString: Any] = [
             kSecClass:       kSecClassGenericPassword,
+            kSecAttrService: service,
             kSecAttrAccount: key.rawValue
         ]
         return SecItemDelete(query as CFDictionary) == errSecSuccess

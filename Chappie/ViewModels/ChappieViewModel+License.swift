@@ -1,9 +1,3 @@
-// ChappieViewModel+License.swift
-// Chappie
-//
-// License lifecycle: initialization, owner JWT activation, state observation.
-// LicenseService runs as an actor in ChappieCore — all calls are async.
-
 import SwiftUI
 import ChappieCore
 
@@ -27,7 +21,6 @@ extension ChappieViewModel {
         licenseState = newState
         print("[License] State: \(newState)")
 
-        // Propagate to ToolExecutionService so Starter plan blocks execution tools.
         if let ts = toolService {
             await ts.setLicenseState(newState)
         }
@@ -36,7 +29,6 @@ extension ChappieViewModel {
         if case .active(let plan, _) = newState, plan == .starter {
             if let pStore = projectStore {
                 try? await pStore.downgradeAllProjectsToAdvisor()
-                // Reload active projects so UI reflects the change immediately.
                 if let thread = activeThread {
                     await loadProjectsForThread(thread)
                     buildAndSyncMemoryContext()
@@ -44,15 +36,6 @@ extension ChappieViewModel {
                 }
             }
         }
-    }
-
-    // MARK: - Owner JWT Activation
-
-    @discardableResult
-    func activateOwnerLicense(jwt: String) async -> Bool {
-        let success = await licenseService.activateOwnerLicense(jwt: jwt)
-        if success { await syncLicenseState() }
-        return success
     }
 
     // MARK: - Paid License Activation
@@ -64,14 +47,9 @@ extension ChappieViewModel {
 
     // MARK: - Access Checks
 
-    var isOwner: Bool {
-        if case .owner = licenseState { return true }
-        return false
-    }
-
     var isLicensed: Bool {
         switch licenseState {
-        case .owner, .active, .gracePeriod, .trial: return true
+        case .active, .gracePeriod, .trial: return true
         default: return false
         }
     }
@@ -79,7 +57,6 @@ extension ChappieViewModel {
     /// True if the current plan allows full Executor tools (not Starter).
     var canExecuteTools: Bool {
         switch licenseState {
-        case .owner: return true
         case .trial: return true
         case .gracePeriod: return true
         case .active(let plan, _): return plan != .starter
