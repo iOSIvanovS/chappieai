@@ -1,9 +1,14 @@
 // FileTools.swift
 // ChappieCore
 //
-// Execution of file system tools (list_files, read_file, write_file, delete_file),
+// Execution of file system tools (list_files, read_file, write_file, delete_file,
+// get_file_info, move_file, rename_file), search tools (search_in_file, search_in_project),
 // document tools (read_document, write_document), attachment tools (fetch_attachment,
-// send_attachment, attach_file), and web_fetch.
+// send_attachment), and web_fetch.
+//
+// EXECUTOR-ONLY TOOLS:
+// move_file / rename_file — file mutations, require Executor role (checked in ToolAccessControl).
+// get_file_info — read-only metadata, always allowed.
 //
 // ATTACHMENT TOOLS:
 // fetch_attachment(uuid) — resolves UUID via resolveAttachment closure, returns file content:
@@ -107,6 +112,55 @@ extension ToolExecutionService {
             try await fileSystem.deleteFile(at: path, projectName: args["project"])
             return "Success: File \(path) deleted."
 
+        // MARK: - File info (read-only, always allowed)
+
+        case "get_file_info":
+            guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
+                  let path = args["path"], !path.isEmpty else {
+                return "Error: Argument 'path' is required for get_file_info"
+            }
+            return try await fileSystem.getFileInfo(at: path, projectName: args["project"])
+
+        // MARK: - Move / Rename (Executor-only, checked in ToolAccessControl)
+
+        case "move_file", "rename_file":
+            guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
+                  let from = args["from"], !from.isEmpty,
+                  let to = args["to"], !to.isEmpty else {
+                return "Error: Arguments 'from' and 'to' are required for \(name)"
+            }
+            try await fileSystem.moveFile(from: from, to: to, projectName: args["project"])
+            return "Success: '\(from)' → '\(to)'"
+
+        // MARK: - Search tools
+
+        case "search_in_file":
+            guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
+                  let path = args["path"], !path.isEmpty,
+                  let query = args["query"], !query.isEmpty else {
+                return "Error: Arguments 'path' and 'query' are required for search_in_file"
+            }
+            let contextLines = Int(args["context_lines"] ?? "2") ?? 2
+            return try await fileSystem.searchInFile(
+                path: path,
+                projectName: args["project"],
+                query: query,
+                contextLines: contextLines
+            )
+
+        case "search_in_project":
+            guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
+                  let query = args["query"], !query.isEmpty else {
+                return "Error: Argument 'query' is required for search_in_project"
+            }
+            let contextLines = Int(args["context_lines"] ?? "2") ?? 2
+            return try await fileSystem.searchInProject(
+                query: query,
+                projectName: args["project"],
+                filePattern: args["file_pattern"],
+                contextLines: contextLines
+            )
+
         // Document tools — routed through MCP (ZIPFoundation lives in ChappieMCP target).
         case "read_document":
             guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
@@ -152,30 +206,6 @@ extension ToolExecutionService {
                 mimeTypeString: mimeTypeString,
                 sourceUUID: sourceUUID
             )
-
-        // MARK: - attach_file (legacy — kept for backward compat)
-
-        case "attach_file":
-            guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
-                  let path = args["path"], !path.isEmpty else {
-                return "Error: Argument 'path' is required for attach_file"
-            }
-            guard FileManager.default.fileExists(atPath: path) else {
-                return "Error: File not found at path: \(path)"
-            }
-            let url = URL(fileURLWithPath: path)
-            let filename = url.lastPathComponent
-            let response: [String: String] = [
-                "status": "ok",
-                "saved_path": path,
-                "filename": filename
-            ]
-            if let data = try? JSONSerialization.data(withJSONObject: response),
-               let json = String(data: data, encoding: .utf8) {
-                print("[FileTools] attach_file: \(path)")
-                return json
-            }
-            return "Error: Failed to build response for attach_file"
 
         case "web_fetch":
             guard let service = webFetch else {
@@ -309,8 +339,6 @@ extension ToolExecutionService {
                 return "Error: Failed to save attachment \(filename)"
             }
 
-            savedURL = result.url
-            // Use the UUID returned by saveAttachment (it generated it internally).
             let response: [String: String] = [
                 "status": "ok",
                 "saved_path": result.url.path,

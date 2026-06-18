@@ -6,7 +6,7 @@
 //   ToolDefinitions.swift   — availableTools array
 //   ToolAccessControl.swift — IT-09 access check (role, git, tests, terminal, license plan)
 //   MemoryTools.swift       — IT-08 scope resolution + memory execution cases
-//   FileTools.swift         — file system + document tools + attachment tools + web_fetch
+//   FileTools.swift         — file system + search + document tools + attachment tools + web_fetch
 //   GitBuildTools.swift     — git + build/test execution
 //   TerminalTools.swift     — persistent bash session (run_terminal) + stateless SSH (run_ssh)
 //
@@ -208,7 +208,9 @@ public actor ToolExecutionService {
 
         let projectRequiredTools: Set<String> = [
             "list_files", "read_file", "write_file", "delete_file",
+            "get_file_info", "move_file", "rename_file",
             "read_document", "write_document",
+            "search_in_file", "search_in_project",
             "git_status", "git_diff", "git_add", "git_commit", "git_push",
             "git_log", "git_reset", "git_revert", "git_checkout",
             "build_project", "run_tests", "read_build_log",
@@ -251,7 +253,9 @@ public actor ToolExecutionService {
         do {
             switch name {
             case "list_files", "read_file", "write_file", "delete_file",
+                 "get_file_info", "move_file", "rename_file",
                  "read_document", "write_document",
+                 "search_in_file", "search_in_project",
                  "fetch_attachment", "send_attachment", "attach_file",
                  "web_fetch":
                 return try await executeFileTool(name: name, argsData: argsData)

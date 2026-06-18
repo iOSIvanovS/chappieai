@@ -19,13 +19,15 @@
 // ATTACHMENT TOOLS:
 // fetch_attachment — reads a user/AI attachment by UUID. No project scope.
 // send_attachment  — saves AI-generated file to AttachmentStore, attaches to AI message. No project scope.
-// attach_file      — legacy, kept for backward compat. Use send_attachment for new work.
 //
 // INJECTION RULES:
 // - Universal tools (file, memory, web, project mgmt) — always injected.
 // - read_document / write_document — always injected (work for any project type).
 // - fetch_attachment / send_attachment — always injected (thread-level, no project needed).
-// - attach_file — always injected (legacy).
+// - get_file_info — always injected when projects are attached (read-only metadata).
+// - search_in_file / search_in_project — always injected when projects are attached.
+//   Cheaper than read_file: returns only matching lines + context, not the whole file.
+// - move_file / rename_file — injected when projects are attached (Executor-only, blocked at access control).
 // - Git tools — only if any attached project has isProgrammingProject = true.
 // - build_project, run_tests, read_build_log — if any programming project is attached.
 //   Each call carries a "project" arg; MCP routes to the correct env per project.
@@ -138,6 +140,123 @@ extension ToolExecutionService {
             )
         )))
 
+        // MARK: - File info & move/rename (when projects are attached)
+        // get_file_info — read-only, always allowed (size, lines, modification date).
+        // move_file / rename_file — Executor-only mutations; blocked at access control for Advisor/Starter.
+
+        if !allProjectInfos.isEmpty {
+            tools.append(AITool(function: AIFunctionDefinition(
+                name: "get_file_info",
+                description: """
+                Get metadata for a file: size, line count, and last modification date.
+                Use instead of read_file when you only need to know if a file is large or when it was changed.
+                Much cheaper than read_file — returns only metadata, not the file content.
+                """,
+                parameters: AIToolParameters(
+                    properties: [
+                        "path": AIToolProperty(type: "string", description: "Relative path to the file"),
+                        "project": AIToolProperty(
+                            type: "string",
+                            description: fileToolProjectArgDescription(for: allProjectInfos)
+                        )
+                    ],
+                    required: allProjectInfos.count > 1 ? ["path", "project"] : ["path"]
+                )
+            )))
+
+            tools.append(AITool(function: AIFunctionDefinition(
+                name: "move_file",
+                description: """
+                Move a file to a new location within the same project.
+                Use for reorganizing files or moving them between folders.
+                Much cheaper than read_file → write_file → delete_file — no file content in context.
+                Requires Executor role. Fails if the destination already exists.
+                """,
+                parameters: AIToolParameters(
+                    properties: [
+                        "from": AIToolProperty(type: "string", description: "Current relative path of the file"),
+                        "to": AIToolProperty(type: "string", description: "New relative path (destination). Subdirectories are created automatically."),
+                        "project": AIToolProperty(
+                            type: "string",
+                            description: fileToolProjectArgDescription(for: allProjectInfos)
+                        )
+                    ],
+                    required: allProjectInfos.count > 1 ? ["from", "to", "project"] : ["from", "to"]
+                )
+            )))
+
+            tools.append(AITool(function: AIFunctionDefinition(
+                name: "rename_file",
+                description: """
+                Rename a file in place (same directory, new name).
+                Use for renaming files during refactoring.
+                Same as move_file but semantically clearer when only the name changes.
+                Requires Executor role. Fails if a file with the new name already exists.
+                """,
+                parameters: AIToolParameters(
+                    properties: [
+                        "from": AIToolProperty(type: "string", description: "Current relative path of the file"),
+                        "to": AIToolProperty(type: "string", description: "New relative path with the new filename"),
+                        "project": AIToolProperty(
+                            type: "string",
+                            description: fileToolProjectArgDescription(for: allProjectInfos)
+                        )
+                    ],
+                    required: allProjectInfos.count > 1 ? ["from", "to", "project"] : ["from", "to"]
+                )
+            )))
+        }
+
+        // MARK: - Search tools (when projects are attached)
+        // Cheaper than read_file: returns only matching lines + context, not the whole file.
+        // search_in_file — target a known file, find a specific symbol or string.
+        // search_in_project — grep-like navigation across all files.
+
+        if !allProjectInfos.isEmpty {
+            tools.append(AITool(function: AIFunctionDefinition(
+                name: "search_in_file",
+                description: """
+                Search for a string inside a single file. Returns matching lines with surrounding context.
+                Use instead of read_file when the file is large and you only need to find a specific symbol, function, or value.
+                Much cheaper than read_file — returns only relevant lines, not the whole file.
+                """,
+                parameters: AIToolParameters(
+                    properties: [
+                        "path": AIToolProperty(type: "string", description: "Relative path to the file to search in"),
+                        "query": AIToolProperty(type: "string", description: "String to search for (case-insensitive)"),
+                        "context_lines": AIToolProperty(type: "string", description: "Number of lines to show before and after each match (default: 2)"),
+                        "project": AIToolProperty(
+                            type: "string",
+                            description: fileToolProjectArgDescription(for: allProjectInfos)
+                        )
+                    ],
+                    required: allProjectInfos.count > 1 ? ["path", "query", "project"] : ["path", "query"]
+                )
+            )))
+
+            tools.append(AITool(function: AIFunctionDefinition(
+                name: "search_in_project",
+                description: """
+                Search for a string across all files in the project (like grep -r).
+                Returns a list of matching files with line numbers and surrounding context.
+                Use to find where a function is called, where a symbol is defined, or where a string appears.
+                Use file_pattern to narrow results (e.g. '*.swift', '*.ts').
+                """,
+                parameters: AIToolParameters(
+                    properties: [
+                        "query": AIToolProperty(type: "string", description: "String to search for (case-insensitive)"),
+                        "file_pattern": AIToolProperty(type: "string", description: "Optional file extension filter (e.g. '*.swift', '*.ts'). Omit to search all text files."),
+                        "context_lines": AIToolProperty(type: "string", description: "Number of lines to show before and after each match (default: 2)"),
+                        "project": AIToolProperty(
+                            type: "string",
+                            description: fileToolProjectArgDescription(for: allProjectInfos)
+                        )
+                    ],
+                    required: ["query"]
+                )
+            )))
+        }
+
         // MARK: - Office document tools (always)
 
         tools.append(AITool(function: AIFunctionDefinition(
@@ -226,23 +345,6 @@ extension ToolExecutionService {
                     "source_uuid": AIToolProperty(type: "string", description: "Optional: UUID of the original attachment to patch (required for Office documents to preserve ZIP structure)")
                 ],
                 required: ["filename", "content", "mime_type"]
-            )
-        )))
-
-        // attach_file: legacy — kept for backward compat. Prefer send_attachment for new work.
-        tools.append(AITool(function: AIFunctionDefinition(
-            name: "attach_file",
-            description: """
-            Attach a file to the current AI message so the user receives it as a downloadable bubble.
-            Use after write_document (or any file creation) to deliver the result to the user.
-            The file must already exist on disk at the given absolute path.
-            The user will see a chip with the filename and can save it anywhere via Save As.
-            """,
-            parameters: AIToolParameters(
-                properties: [
-                    "path": AIToolProperty(type: "string", description: "Absolute path to the file on disk (e.g. '/Users/me/Downloads/plan.docx')")
-                ],
-                required: ["path"]
             )
         )))
 
@@ -805,7 +907,8 @@ extension ToolExecutionService {
         return "Project display name — required when multiple projects are attached. Available: \(list)."
     }
 
-    /// Used for read_file, write_file, delete_file, read_document, write_document.
+    /// Used for read_file, write_file, delete_file, get_file_info, move_file, rename_file,
+    /// read_document, write_document, search_in_file, search_in_project.
     private func fileToolProjectArgDescription(for infos: [ActiveMemoryContext.ProjectInfo]) -> String {
         guard !infos.isEmpty else {
             return "Project display name — identifies which project this file belongs to."

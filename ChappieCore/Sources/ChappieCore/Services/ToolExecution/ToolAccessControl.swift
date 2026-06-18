@@ -18,6 +18,7 @@
 //    e. write_document — requires Executor role (document writes = mutations).
 //    f. run_terminal — requires isProgrammingProject + TerminalAccessLevel.isEnabled.
 //    g. run_ssh — requires isProgrammingProject + TerminalAccessLevel.isEnabled.
+//    h. move_file / rename_file — require Executor role (file mutations).
 //
 // PROJECT RESOLUTION:
 // All tools carry a "project" display name arg — single source of truth for access control.
@@ -66,7 +67,7 @@ extension ToolExecutionService {
 
         // Read-only tools — always allowed regardless of role or plan.
         let alwaysAllowedTools: Set<String> = [
-            "list_files", "read_file", "read_document", "read_build_log"
+            "list_files", "read_file", "read_document", "read_build_log", "get_file_info"
         ]
 
         // STARTER plan — read-only access.
@@ -87,7 +88,7 @@ extension ToolExecutionService {
             if !alwaysAllowedTools.contains(toolName) {
                 return .denied("""
                 ❌ Tool '\(toolName)' is blocked: current role is ADVISOR (read-only).
-                ADVISOR can only use: list_files, read_file, read_document, read_build_log.
+                ADVISOR can only use: list_files, read_file, read_document, read_build_log, get_file_info.
                 To enable this tool: open project settings → change role to EXECUTOR.
                 """)
             }
@@ -152,6 +153,11 @@ extension ToolExecutionService {
         // EXECUTOR: write_document — mutation of documents, requires executor (already checked).
         // read_document is in alwaysAllowedTools above — no check needed here.
         if toolName == "write_document" {
+            return .allowed
+        }
+
+        // EXECUTOR: move_file / rename_file — file mutations, require executor (already checked above).
+        if toolName == "move_file" || toolName == "rename_file" {
             return .allowed
         }
 
