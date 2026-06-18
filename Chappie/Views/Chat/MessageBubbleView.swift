@@ -4,11 +4,10 @@
 // WHY THIS FILE EXISTS:
 // Renders individual chat message bubbles in the conversation scroll view.
 //
-// ATTACHMENTS STRATEGY (simplified, IT-14 rev2):
-// Replaced FlowLayout thumbnails with a plain vertical list (AttachmentRowView).
+// ATTACHMENTS STRATEGY:
 // Each attachment is one row: icon + filename + file size.
-// All files (images, docs, AI-generated) open via QuickLook on click.
-// QuickLook provides native preview + built-in Share button for saving anywhere.
+// All files open via QuickLook on click — native preview + built-in Share button.
+// File size is read from disk via localURL (no bytes stored in AttachedFile).
 //
 // TERMINAL CONFIRMATION (TERMINAL-CONFIRM):
 // .terminalConfirmation case renders an inline Run/Cancel prompt.
@@ -246,21 +245,12 @@ private struct AttachmentListView: View {
     }
 
     private func handleTap(file: AttachedFile) {
-        // All files go through QuickLook — native preview + built-in Share button.
-        // For AI-generated files with a permanent localURL, use it directly.
-        // For user-attached files, write to temp first.
-        if let localURL = file.localURL, FileManager.default.fileExists(atPath: localURL.path) {
-            previewURL = localURL
-        } else {
-            previewURL = writeTempFile(file)
+        // localURL is always set — resolve through AttachmentStore if file exists.
+        guard FileManager.default.fileExists(atPath: file.localURL.path) else {
+            print("[MessageBubbleView] File not found at: \(file.localURL.path)")
+            return
         }
-    }
-
-    private func writeTempFile(_ file: AttachedFile) -> URL? {
-        let dir = FileManager.default.temporaryDirectory
-        let url = dir.appendingPathComponent(file.filename)
-        try? file.data.write(to: url)
-        return url
+        previewURL = file.localURL
     }
 }
 
@@ -284,7 +274,7 @@ private struct AttachmentRowView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
 
-                Text(fileSizeString(file.data.count))
+                Text(fileSizeString(for: file.localURL))
                     .font(.system(size: 11))
                     .opacity(0.65)
             }
@@ -302,7 +292,9 @@ private struct AttachmentRowView: View {
         .help("Preview \(file.filename)")
     }
 
-    private func fileSizeString(_ bytes: Int) -> String {
+    /// Reads file size from disk — no bytes stored in AttachedFile.
+    private func fileSizeString(for url: URL) -> String {
+        let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         if bytes < 1024 {
             return "\(bytes) B"
         } else if bytes < 1024 * 1024 {
@@ -311,28 +303,4 @@ private struct AttachmentRowView: View {
             return String(format: "%.1f MB", Double(bytes) / (1024 * 1024))
         }
     }
-}
-
-// MARK: - Preview
-
-#Preview("Messages with attachments") {
-    let sampleImage = AttachedFile(
-        filename: "screenshot.png",
-        mimeType: .imagePng,
-        data: Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwADhQGAWjR9awAAAABJRU5ErkJggg==")!
-    )
-    let samplePDF  = AttachedFile(filename: "requirements.pdf", mimeType: .pdf, data: Data(count: 204800))
-    let sampleDocx = AttachedFile(filename: "plan.docx", mimeType: .docx, data: Data(count: 21300), localURL: URL(fileURLWithPath: "/tmp/plan.docx"))
-
-    return ScrollView {
-        VStack(spacing: 16) {
-            MessageBubbleView(msg: .message(isUser: true, text: "Translate this document to English", attachments: [samplePDF]), availableWidth: 618)
-            MessageBubbleView(msg: .message(isUser: false, text: "Done! Here is the translated document:", cost: 12.5, attachments: [sampleDocx]), availableWidth: 618)
-            MessageBubbleView(msg: .message(isUser: true, text: "Here's the screenshot", attachments: [sampleImage]), availableWidth: 618)
-            MessageBubbleView(msg: .terminalConfirmation(command: "swift test --filter ToolExecutionServiceTests", threadId: UUID()), availableWidth: 618)
-        }
-        .padding()
-    }
-    .frame(width: 650, height: 600)
-    .background(Color(NSColor.windowBackgroundColor))
 }

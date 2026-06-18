@@ -32,10 +32,9 @@ extension ChappieViewModel {
 
         let userMessageId = UUID()
 
-        // Persist Office attachments to Application Support before appending to history.
-        let persistedAttachments = persistAttachments(attachments, forMessageId: userMessageId)
-
-        let userMessage = ChatMessage.message(id: userMessageId, isUser: true, text: prompt, attachments: persistedAttachments)
+        // Attachments are already saved to disk by AttachedFile.load(from:) at pick time.
+        // No extra persist step needed — localURL is always set.
+        let userMessage = ChatMessage.message(id: userMessageId, isUser: true, text: prompt, attachments: attachments)
         messages.append(userMessage)
         appendToDisplayed(userMessage)
 
@@ -52,7 +51,7 @@ extension ChappieViewModel {
         let activeProviderId = activeProvider?.id
 
         currentRequestTask = Task {
-            let currentAIMessage = await buildCurrentAIMessage(text: prompt, attachments: persistedAttachments)
+            let currentAIMessage = await buildCurrentAIMessage(text: prompt, attachments: attachments)
 
             let systemPromptOverride = await v2SystemPrompt()
             let toolPermissionsOverride = await v2ToolPermissions()
@@ -102,7 +101,7 @@ extension ChappieViewModel {
                     return
                 }
 
-                // Build output file attachments from write_document results.
+                // Build output file attachments from write_document / send_attachment results.
                 let aiMessageId = UUID()
                 let outputAttachments = buildOutputAttachments(from: result.outputFiles, forMessageId: aiMessageId)
 
@@ -175,34 +174,17 @@ extension ChappieViewModel {
         task.cancel()
     }
 
-    // MARK: - Persist Attachments
-
-    private func persistAttachments(_ attachments: [AttachedFile], forMessageId messageId: UUID) -> [AttachedFile] {
-        attachments.map { file in
-            guard file.mimeType.isOfficeDocument, file.localURL == nil else { return file }
-            if let url = AttachmentStore.shared.save(data: file.data, filename: file.filename, forMessageId: messageId) {
-                return file.withLocalURL(url)
-            }
-            return file
-        }
-    }
-
     // MARK: - Output File Attachments
 
+    /// Builds AttachedFile list from paths collected by AIOrchestrator (write_document / send_attachment).
     private func buildOutputAttachments(from paths: [String], forMessageId messageId: UUID) -> [AttachedFile] {
         paths.compactMap { path in
             let url = URL(fileURLWithPath: path)
-            guard let data = try? Data(contentsOf: url) else {
-                print("[ChappieViewModel] Output file not readable at: \(path)")
+            guard FileManager.default.fileExists(atPath: path) else {
+                print("[ChappieViewModel] Output file not found at: \(path)")
                 return nil
             }
-            let mime = AttachmentMimeType.from(url: url)
-            return AttachedFile(
-                filename: url.lastPathComponent,
-                mimeType: mime,
-                data: data,
-                localURL: url
-            )
+            return AttachedFile.fromOutputFile(at: url)
         }
     }
 
@@ -273,13 +255,23 @@ extension ChappieViewModel {
             let role = isUser ? "user" : "assistant"
 
             if !isUser {
+                // AI messages: append attachment reference blocks so the model knows what files exist.
+                // Actual bytes are never sent — AI uses fetch_attachment(uuid) to read on demand.
+                if !attachments.isEmpty {
+                    let refs = attachments.map { "[\(attachmentReferenceText(for: $0))]" }.joined(separator: "\n")
+                    let combined = text.isEmpty ? refs : "\(text)\n\n\(refs)"
+                    return AIMessage(role: role, content: combined)
+                }
                 return AIMessage(role: role, content: text)
             }
 
+            // User messages: build multimodal content for images; text refs for everything else.
             if !attachments.isEmpty {
                 var parts: [AIMultimodalPart] = []
                 if !text.isEmpty { parts.append(.text(text)) }
-                for attachment in attachments { parts.append(multimodalPartSync(for: attachment)) }
+                for attachment in attachments {
+                    parts.append(multimodalPartSync(for: attachment))
+                }
                 return AIMessage(role: role, multimodalParts: parts)
             }
 
@@ -302,42 +294,64 @@ extension ChappieViewModel {
     func multimodalPart(for attachment: AttachedFile) async -> AIMultimodalPart {
         switch attachment.mimeType {
         case .imageJpeg, .imagePng, .imageGif, .imageWebp:
-            return .imageURL(attachment.dataURI)
+            // Images are sent inline as base64 — small enough to be worth it.
+            guard let data = try? Data(contentsOf: attachment.localURL) else {
+                return .text(attachmentReferenceText(for: attachment))
+            }
+            let dataURI = "data:\(attachment.mimeType.rawValue);base64,\(data.base64EncodedString())"
+            return .imageURL(dataURI)
 
         case .plainText:
-            let content = String(data: attachment.data, encoding: .utf8)
-                ?? String(data: attachment.data, encoding: .isoLatin1)
+            guard let data = try? Data(contentsOf: attachment.localURL) else {
+                return .text(attachmentReferenceText(for: attachment))
+            }
+            let content = String(data: data, encoding: .utf8)
+                ?? String(data: data, encoding: .isoLatin1)
                 ?? "[Could not decode text content]"
             return .text("File: \(attachment.filename)\n\n\(content)")
 
         case .pdf:
-            if let text = String(data: attachment.data, encoding: .utf8), !text.isEmpty {
+            guard let data = try? Data(contentsOf: attachment.localURL) else {
+                return .text(attachmentReferenceText(for: attachment))
+            }
+            if let text = String(data: data, encoding: .utf8), !text.isEmpty {
                 return .text("File: \(attachment.filename)\n\n\(text)")
             }
-            return .text("File: \(attachment.filename) (PDF, \(attachment.data.count / 1024)KB) — binary content, cannot extract text inline.")
+            let size = (try? attachment.localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            return .text("File: \(attachment.filename) (PDF, \(size / 1024)KB) — binary content, cannot extract text inline.")
 
         case .docx, .xlsx, .pptx, .rtf:
             return await extractOfficeDocument(attachment)
 
         case .other:
-            return .text("File: \(attachment.filename) (\(attachment.mimeType.rawValue), \(attachment.data.count / 1024)KB)")
+            let size = (try? attachment.localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            return .text("File: \(attachment.filename) (\(attachment.mimeType.rawValue), \(size / 1024)KB)")
         }
     }
 
     private func multimodalPartSync(for attachment: AttachedFile) -> AIMultimodalPart {
         switch attachment.mimeType {
         case .imageJpeg, .imagePng, .imageGif, .imageWebp:
-            return .imageURL(attachment.dataURI)
+            guard let data = try? Data(contentsOf: attachment.localURL) else {
+                return .text(attachmentReferenceText(for: attachment))
+            }
+            let dataURI = "data:\(attachment.mimeType.rawValue);base64,\(data.base64EncodedString())"
+            return .imageURL(dataURI)
         case .plainText:
-            let content = String(data: attachment.data, encoding: .utf8)
-                ?? "[Could not decode text content]"
+            guard let data = try? Data(contentsOf: attachment.localURL),
+                  let content = String(data: data, encoding: .utf8) else {
+                return .text(attachmentReferenceText(for: attachment))
+            }
             return .text("File: \(attachment.filename)\n\n\(content)")
         case .pdf:
-            return .text("File: \(attachment.filename) (PDF, \(attachment.data.count / 1024)KB)")
+            let size = (try? attachment.localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            return .text("File: \(attachment.filename) (PDF, \(size / 1024)KB)")
         case .docx, .xlsx, .pptx, .rtf:
-            return .text("File: \(attachment.filename) [\(attachment.mimeType.rawValue), previously extracted]")
+            // Sync path: reference only. Full extraction happens in buildCurrentAIMessage (async).
+            return .text(attachmentReferenceText(for: attachment))
         case .other:
-            return .text("File: \(attachment.filename) (\(attachment.mimeType.rawValue), \(attachment.data.count / 1024)KB)")
+            let size = (try? attachment.localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            return .text("File: \(attachment.filename) (\(attachment.mimeType.rawValue), \(size / 1024)KB)")
         }
     }
 
@@ -345,23 +359,7 @@ extension ChappieViewModel {
         guard let toolService else {
             return .text("File: \(attachment.filename) — tool service unavailable")
         }
-
-        if let localURL = attachment.localURL {
-            return await callReadDocument(path: localURL.path, filename: attachment.filename, toolService: toolService)
-        }
-
-        let ext = attachment.filename.split(separator: ".").last.map(String.init) ?? "docx"
-        let tempURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ChappieDoc-\(UUID().uuidString).\(ext)")
-
-        do {
-            try attachment.data.write(to: tempURL)
-        } catch {
-            return .text("File: \(attachment.filename) — could not write temp file: \(error.localizedDescription)")
-        }
-
-        defer { try? FileManager.default.removeItem(at: tempURL) }
-        return await callReadDocument(path: tempURL.path, filename: attachment.filename, toolService: toolService)
+        return await callReadDocument(path: attachment.localURL.path, filename: attachment.filename, toolService: toolService)
     }
 
     private func callReadDocument(path: String, filename: String, toolService: ToolExecutionService) async -> AIMultimodalPart {
@@ -373,6 +371,12 @@ extension ChappieViewModel {
         )
         let result = await toolService.execute(call: fakeCall)
         return .text("File: \(filename)\n\n\(result)")
+    }
+
+    /// Text reference block for an attachment in AI history.
+    /// Format: "Attachment: Plan.docx | uuid: 550e8400-..."
+    private func attachmentReferenceText(for attachment: AttachedFile) -> String {
+        "Attachment: \(attachment.filename) | uuid: \(attachment.id.uuidString)"
     }
 
     // MARK: - Response Cleanup

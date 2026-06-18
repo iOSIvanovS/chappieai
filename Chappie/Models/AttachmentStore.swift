@@ -2,19 +2,13 @@
 // Chappie
 //
 // WHY THIS EXISTS:
-// Office documents (and any non-image attachments) need to survive beyond the send() call.
-// Previously files were written to /tmp and deleted immediately after extraction — making
-// repeat access (e.g. re-reading, writing back) impossible.
+// Single source of truth for all attachment I/O.
+// Files are stored at: Application Support/Chappie/Attachments/{attachmentId}/{filename}
+// Using attachmentId (not messageId) as the folder key allows resolve(uuid:) to find
+// any file by UUID alone — which is what the AI tools fetch_attachment/send_attachment need.
 //
-// AttachmentStore copies incoming files to:
-//   Application Support/Chappie/Attachments/{messageID}/{filename}
-// and saves outgoing AI-generated files to the same structure under the AI message ID.
-// Files live as long as the app data — no stale references.
-//
-// WHY NOT STORE DATA IN AttachedFile:
-// Storing raw bytes inline works for images (small, no re-use needed).
-// For Office docs it wastes memory and prevents write_document from knowing where to save.
-// localURL is the source of truth; data field is kept for backward compat with images.
+// AttachmentStore is the only place that knows where files live on disk.
+// Everything else works with UUID + metadata.
 
 import Foundation
 
@@ -33,16 +27,16 @@ final class AttachmentStore {
         return appSupport.appendingPathComponent("Chappie/Attachments", isDirectory: true)
     }
 
-    // MARK: - Save Incoming Attachment
+    // MARK: - Save
 
-    /// Copies a file from its source URL into a permanent per-message folder.
+    /// Copies a file from its source URL into a permanent per-attachment folder.
+    /// Folder: Attachments/{attachmentId}/{filename}
     /// Returns the permanent URL, or nil if the copy failed.
-    func save(fileAt sourceURL: URL, forMessageId messageId: UUID) -> URL? {
-        let folder = folderURL(for: messageId)
+    func save(fileAt sourceURL: URL, forAttachmentId attachmentId: UUID) -> URL? {
+        let folder = folderURL(for: attachmentId)
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let dest = folder.appendingPathComponent(sourceURL.lastPathComponent)
-            // Overwrite if re-saving the same file (idempotent)
             if FileManager.default.fileExists(atPath: dest.path) {
                 try FileManager.default.removeItem(at: dest)
             }
@@ -54,10 +48,11 @@ final class AttachmentStore {
         }
     }
 
-    /// Writes raw Data to a permanent per-message folder with the given filename.
-    /// Used when the attachment arrives as Data (from AttachedFile.data) rather than a URL.
-    func save(data: Data, filename: String, forMessageId messageId: UUID) -> URL? {
-        let folder = folderURL(for: messageId)
+    /// Writes raw Data to a permanent per-attachment folder with the given filename.
+    /// Used by send_attachment when the AI delivers file content directly.
+    /// Returns the permanent URL, or nil if the write failed.
+    func save(data: Data, filename: String, forAttachmentId attachmentId: UUID) -> URL? {
+        let folder = folderURL(for: attachmentId)
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let dest = folder.appendingPathComponent(filename)
@@ -69,19 +64,27 @@ final class AttachmentStore {
         }
     }
 
-    // MARK: - Reserve Output URL
+    // MARK: - Resolve
 
-    /// Returns a URL where an AI-generated file should be saved for a given message.
-    /// Creates the folder. The caller (write_document) writes the file to this URL.
-    func outputURL(filename: String, forMessageId messageId: UUID) -> URL {
-        let folder = folderURL(for: messageId)
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        return folder.appendingPathComponent(filename)
+    /// Resolves a UUID to the file URL on disk.
+    /// Looks for the first file inside Attachments/{uuid}/.
+    /// Returns nil if the folder doesn't exist or is empty.
+    func resolve(uuid: UUID) -> URL? {
+        let folder = folderURL(for: uuid)
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: folder,
+            includingPropertiesForKeys: nil,
+            options: .skipsHiddenFiles
+        ), let file = contents.first else {
+            print("[AttachmentStore] resolve(uuid:) — not found: \(uuid)")
+            return nil
+        }
+        return file
     }
 
     // MARK: - Folder
 
-    func folderURL(for messageId: UUID) -> URL {
-        rootURL.appendingPathComponent(messageId.uuidString, isDirectory: true)
+    func folderURL(for attachmentId: UUID) -> URL {
+        rootURL.appendingPathComponent(attachmentId.uuidString, isDirectory: true)
     }
 }

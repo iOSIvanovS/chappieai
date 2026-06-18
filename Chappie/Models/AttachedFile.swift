@@ -3,17 +3,18 @@
 //
 // WHY THIS FILE EXISTS:
 // Multimodal support requires a first-class model for file attachments.
-// AttachedFile is a value type that carries everything needed to:
-//   a) render a preview in the UI (thumbnail for images, icon for others)
-//   b) serialize to disk (base64 in ChatMessage JSON)
-//   c) build the API content block (base64 data URI for images, raw data for PDFs)
+// AttachedFile is a lightweight value type that carries identity and metadata only.
+// Actual file bytes are NEVER stored here — they live on disk at localURL.
 //
-// DESIGN DECISION — localURL for Office documents:
-// Images are stored inline as base64 (small, self-contained).
-// Office documents get a localURL pointing to Application Support/Chappie/Attachments/.
-// localURL enables: re-reading without re-extraction, write_document knowing where to save,
-// and opening the file directly from the AI bubble without a temp-file dance.
-// localURL is optional — nil for images and legacy attachments (backward compat).
+// DESIGN DECISION — no data:Data:
+// Previously AttachedFile stored raw bytes inline, which caused them to be
+// serialized into ChatMessage JSON and sent to the API on every request (P0-2).
+// Now only localURL is stored. Bytes are read from disk on demand.
+//
+// DESIGN DECISION — folder structure:
+// Files are stored at: Application Support/Chappie/Attachments/{attachedFile.id}/{filename}
+// This allows AttachmentStore.resolve(uuid:) to find any file by UUID alone,
+// without needing the messageId.
 //
 // DESIGN DECISION — MimeType enum:
 // Using a typed enum instead of a raw string prevents typos and makes
@@ -63,12 +64,12 @@ public enum AttachmentMimeType: String, Codable, Sendable, Hashable {
     /// SF Symbol name for non-image file chips.
     public var systemIcon: String {
         switch self {
-        case .pdf:       return "doc.fill"
-        case .plainText: return "doc.text.fill"
+        case .pdf:        return "doc.fill"
+        case .plainText:  return "doc.text.fill"
         case .docx, .rtf: return "doc.richtext.fill"
-        case .xlsx:      return "tablecells.fill"
-        case .pptx:      return "rectangle.on.rectangle.fill"
-        default:         return "paperclip"
+        case .xlsx:       return "tablecells.fill"
+        case .pptx:       return "rectangle.on.rectangle.fill"
+        default:          return "paperclip"
         }
     }
 
@@ -94,11 +95,15 @@ public enum AttachmentMimeType: String, Codable, Sendable, Hashable {
 
 /// A single file attached to a chat message.
 ///
+/// Lightweight metadata only — no bytes stored.
+/// All file I/O goes through localURL → AttachmentStore.
+///
 /// Lifecycle:
-///   1. User picks file via NSOpenPanel → AttachedFile.load(from:)
+///   1. User picks file → AttachedFile.load(from:) saves to disk, returns metadata
 ///   2. Stored in InputMorphView state as [AttachedFile] (pending)
 ///   3. On send → passed to ViewModel → saved in ChatMessage.message(attachments:)
-///   4. On API request → AIOrchestrator builds content blocks from attachments
+///   4. On API request → AIOrchestrator builds text reference block [Attachment: name | uuid]
+///   5. AI reads file on demand via fetch_attachment(uuid)
 public struct AttachedFile: Identifiable, Codable, Hashable, Sendable {
 
     // MARK: - Stored Properties
@@ -108,71 +113,52 @@ public struct AttachedFile: Identifiable, Codable, Hashable, Sendable {
     public let filename: String
     /// MIME type — drives rendering and API encoding.
     public let mimeType: AttachmentMimeType
-    /// Raw file bytes. For images: original data (NSImage handles all formats).
-    /// For Office docs: kept for Codable round-trip; localURL is preferred for disk access.
-    /// Stored as base64 in JSON via custom Codable.
-    public let data: Data
-    /// Permanent path in Application Support/Chappie/Attachments/{messageID}/.
-    /// Set after the message is sent and the file is copied to permanent storage.
-    /// nil for images (stored inline) and legacy attachments.
-    public let localURL: URL?
+    /// Permanent path in Application Support/Chappie/Attachments/{id}/{filename}.
+    /// Always set — there is no valid AttachedFile without a file on disk.
+    public let localURL: URL
 
     // MARK: - Init
 
-    public init(id: UUID = UUID(), filename: String, mimeType: AttachmentMimeType, data: Data, localURL: URL? = nil) {
+    public init(id: UUID = UUID(), filename: String, mimeType: AttachmentMimeType, localURL: URL) {
         self.id = id
         self.filename = filename
         self.mimeType = mimeType
-        self.data = data
         self.localURL = localURL
-    }
-
-    /// Returns a copy of this attachment with localURL set.
-    public func withLocalURL(_ url: URL) -> AttachedFile {
-        AttachedFile(id: id, filename: filename, mimeType: mimeType, data: data, localURL: url)
     }
 
     // MARK: - Factory
 
     /// Load an AttachedFile from a file URL picked by the user.
-    ///
-    /// Returns nil if the file cannot be read (permissions, missing, etc.).
-    /// The caller should show an error in that case.
+    /// Saves the file to AttachmentStore under a new UUID folder.
+    /// Returns nil if the file cannot be read or saved.
     public static func load(from url: URL) -> AttachedFile? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
+        let id = UUID()
         let mime = AttachmentMimeType.from(url: url)
-        return AttachedFile(filename: url.lastPathComponent, mimeType: mime, data: data)
+        guard let destURL = AttachmentStore.shared.save(fileAt: url, forAttachmentId: id) else { return nil }
+        return AttachedFile(id: id, filename: url.lastPathComponent, mimeType: mime, localURL: destURL)
     }
 
     /// Creates an AttachedFile for an AI-generated output file that already exists on disk.
-    /// data is read from the file; localURL points to its permanent location.
+    /// Moves the file into AttachmentStore under a new UUID folder.
     public static func fromOutputFile(at url: URL) -> AttachedFile? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
+        let id = UUID()
         let mime = AttachmentMimeType.from(url: url)
-        return AttachedFile(filename: url.lastPathComponent, mimeType: mime, data: data, localURL: url)
+        guard let destURL = AttachmentStore.shared.save(fileAt: url, forAttachmentId: id) else { return nil }
+        return AttachedFile(id: id, filename: url.lastPathComponent, mimeType: mime, localURL: destURL)
     }
 
     // MARK: - Convenience
 
-    /// Base64 data URI string for use in OpenAI-compatible image_url content blocks.
-    /// Example: "data:image/jpeg;base64,/9j/4AAQ..."
-    public var dataURI: String {
-        "data:\(mimeType.rawValue);base64,\(data.base64EncodedString())"
-    }
-
-    /// NSImage for image attachments. nil for non-image types.
+    /// NSImage for image attachments. Reads from disk. nil for non-image types or read errors.
     public var nsImage: NSImage? {
         guard mimeType.isImage else { return nil }
-        return NSImage(data: data)
+        return NSImage(contentsOf: localURL)
     }
 
-    // MARK: - Codable (manual — Data as base64 string)
-
-    // WHY MANUAL: Swift's default Codable encodes Data as a base64 string automatically,
-    // but we want explicit control over the key names for forward compatibility.
+    // MARK: - Codable
 
     private enum CodingKeys: String, CodingKey {
-        case id, filename, mimeType, dataBase64, localURL
+        case id, filename, mimeType, localURL
     }
 
     public init(from decoder: Decoder) throws {
@@ -180,22 +166,15 @@ public struct AttachedFile: Identifiable, Codable, Hashable, Sendable {
         id       = try c.decode(UUID.self, forKey: .id)
         filename = try c.decode(String.self, forKey: .filename)
         mimeType = try c.decodeIfPresent(AttachmentMimeType.self, forKey: .mimeType) ?? .other
-        let b64  = try c.decode(String.self, forKey: .dataBase64)
-        data     = Data(base64Encoded: b64) ?? Data()
-        // localURL stored as absolute path string for portability
-        if let path = try c.decodeIfPresent(String.self, forKey: .localURL) {
-            localURL = URL(fileURLWithPath: path)
-        } else {
-            localURL = nil
-        }
+        let path = try c.decode(String.self, forKey: .localURL)
+        localURL = URL(fileURLWithPath: path)
     }
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(id,                          forKey: .id)
-        try c.encode(filename,                    forKey: .filename)
-        try c.encode(mimeType,                    forKey: .mimeType)
-        try c.encode(data.base64EncodedString(),  forKey: .dataBase64)
-        try c.encodeIfPresent(localURL?.path,     forKey: .localURL)
+        try c.encode(id,              forKey: .id)
+        try c.encode(filename,        forKey: .filename)
+        try c.encode(mimeType,        forKey: .mimeType)
+        try c.encode(localURL.path,   forKey: .localURL)
     }
 }
