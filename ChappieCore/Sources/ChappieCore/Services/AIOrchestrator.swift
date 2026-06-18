@@ -37,7 +37,7 @@ public struct AIOrchestratorResult: Sendable {
     public let totalCost: Double?
     public let newBalance: Double?
     /// Absolute paths to files the AI wants to deliver to the user.
-    /// Collected from write_document JSON responses and explicit attach_file calls.
+    /// Collected from send_attachment / write_document / attach_file responses.
     /// ViewModel uses these to attach output files as bubbles in the AI message.
     public let outputFiles: [String]
 
@@ -129,7 +129,7 @@ public actor AIOrchestrator {
         var latestBalance: Double? = nil
         var stepCount = 0
         var lastToolSignature: String? = nil
-        // Accumulates absolute paths from write_document and attach_file responses.
+        // Accumulates absolute paths from send_attachment / write_document / attach_file responses.
         var collectedOutputFiles: [String] = []
 
         let maxSteps = config.maxOrchestratorSteps
@@ -435,11 +435,12 @@ public actor AIOrchestrator {
                 resultString = await toolService.execute(call: toolCall)
             }
 
-            // Both write_document and attach_file return the same JSON structure with saved_path.
+            // send_attachment / write_document / attach_file all return JSON with saved_path.
             // Collect the path so ViewModel can attach the file as a bubble in the AI message.
-            if toolName == "write_document" || toolName == "attach_file" {
+            // send_attachment is the primary path; write_document and attach_file are legacy.
+            if toolName == "send_attachment" || toolName == "write_document" || toolName == "attach_file" {
                 if let path = parseOutputFilePath(from: resultString) {
-                    // Deduplicate: don't add the same path twice (e.g. write_document + attach_file).
+                    // Deduplicate: don't add the same path twice.
                     if !collectedOutputFiles.contains(path) {
                         collectedOutputFiles.append(path)
                         print("[AIOrchestrator] Output file collected via \(toolName): \(path)")
@@ -456,7 +457,7 @@ public actor AIOrchestrator {
         }
     }
 
-    /// Parses the structured JSON response from write_document or attach_file to extract saved_path.
+    /// Parses the structured JSON response from send_attachment / write_document / attach_file.
     /// Expected format: {"status":"ok","saved_path":"/absolute/path/file.docx","filename":"..."}
     private func parseOutputFilePath(from result: String) -> String? {
         guard let data = result.data(using: .utf8),

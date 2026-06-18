@@ -9,20 +9,27 @@
 //
 // AttachmentStore is the only place that knows where files live on disk.
 // Everything else works with UUID + metadata.
+//
+// WHY nonisolated methods:
+// AttachmentStore only calls FileManager — no UI, no @MainActor state.
+// All methods are nonisolated so Sendable closures in ToolExecutionService
+// (a Swift actor) can call them directly without hopping to the main actor.
+// FileManager file ops are thread-safe for concurrent reads/writes to different paths.
 
 import Foundation
 
-final class AttachmentStore {
+final class AttachmentStore: @unchecked Sendable {
 
     // MARK: - Singleton
 
     static let shared = AttachmentStore()
-    private init() {}
+
+    nonisolated private init() {}
 
     // MARK: - Root Directory
 
     /// ~/Library/Application Support/Chappie/Attachments/
-    private var rootURL: URL {
+    private nonisolated var rootURL: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return appSupport.appendingPathComponent("Chappie/Attachments", isDirectory: true)
     }
@@ -32,7 +39,7 @@ final class AttachmentStore {
     /// Copies a file from its source URL into a permanent per-attachment folder.
     /// Folder: Attachments/{attachmentId}/{filename}
     /// Returns the permanent URL, or nil if the copy failed.
-    func save(fileAt sourceURL: URL, forAttachmentId attachmentId: UUID) -> URL? {
+    nonisolated func save(fileAt sourceURL: URL, forAttachmentId attachmentId: UUID) -> URL? {
         let folder = folderURL(for: attachmentId)
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -51,7 +58,7 @@ final class AttachmentStore {
     /// Writes raw Data to a permanent per-attachment folder with the given filename.
     /// Used by send_attachment when the AI delivers file content directly.
     /// Returns the permanent URL, or nil if the write failed.
-    func save(data: Data, filename: String, forAttachmentId attachmentId: UUID) -> URL? {
+    nonisolated func save(data: Data, filename: String, forAttachmentId attachmentId: UUID) -> URL? {
         let folder = folderURL(for: attachmentId)
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -64,12 +71,20 @@ final class AttachmentStore {
         }
     }
 
+    /// Reserves a URL for a file that will be written externally (e.g. by MCP write_document).
+    /// Creates the folder. The caller writes the file to the returned URL.
+    nonisolated func reserveURL(filename: String, forAttachmentId attachmentId: UUID) -> URL {
+        let folder = folderURL(for: attachmentId)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.appendingPathComponent(filename)
+    }
+
     // MARK: - Resolve
 
     /// Resolves a UUID to the file URL on disk.
     /// Looks for the first file inside Attachments/{uuid}/.
     /// Returns nil if the folder doesn't exist or is empty.
-    func resolve(uuid: UUID) -> URL? {
+    nonisolated func resolve(uuid: UUID) -> URL? {
         let folder = folderURL(for: uuid)
         guard let contents = try? FileManager.default.contentsOfDirectory(
             at: folder,
@@ -84,7 +99,7 @@ final class AttachmentStore {
 
     // MARK: - Folder
 
-    func folderURL(for attachmentId: UUID) -> URL {
+    nonisolated func folderURL(for attachmentId: UUID) -> URL {
         rootURL.appendingPathComponent(attachmentId.uuidString, isDirectory: true)
     }
 }

@@ -401,8 +401,40 @@ final class ChappieViewModel {
         }
 
         registerProjectToolHandlers(toolService: ts)
+        registerAttachmentHandlers(toolService: ts)
 
         Task { await syncActiveMemoryContext() }
+    }
+
+    // MARK: - Attachment Handler Registration
+
+    /// Bridges AttachmentStore (app target) into ToolExecutionService (ChappieCore target)
+    /// via closures — avoids cross-target dependency.
+    ///
+    /// WHY local capture of AttachmentStore.shared:
+    /// ChappieViewModel is @MainActor. Sendable closures passed to ToolExecutionService
+    /// (an actor) cannot reference @MainActor-isolated state. We capture a local reference
+    /// to AttachmentStore.shared (which is @unchecked Sendable) before entering the Task,
+    /// so the closures are fully nonisolated.
+    private func registerAttachmentHandlers(toolService: ToolExecutionService) {
+        let store = AttachmentStore.shared
+        Task {
+            await toolService.registerAttachmentHandlers(
+                resolve: { uuid in
+                    store.resolve(uuid: uuid)
+                },
+                save: { data, filename in
+                    let attachmentId = UUID()
+                    guard let url = store.save(data: data, filename: filename, forAttachmentId: attachmentId) else {
+                        return nil
+                    }
+                    return AttachmentSaveResult(url: url, uuid: attachmentId)
+                },
+                reserve: { filename, uuid in
+                    store.reserveURL(filename: filename, forAttachmentId: uuid)
+                }
+            )
+        }
     }
 
     // MARK: - Security-Scoped Bookmarks

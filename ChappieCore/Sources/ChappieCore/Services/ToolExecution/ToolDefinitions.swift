@@ -13,12 +13,19 @@
 // Every tool that operates within a project scope carries a "project" display name arg.
 // This is the single source of truth for access control — no path heuristics, no guessing.
 // Access control in ToolAccessControl.swift resolves settings via args["project"] only.
-// Exceptions: attach_file (absolute path, no project scope), run_ssh (remote host).
+// Exceptions: fetch_attachment / send_attachment (work with thread attachments, no project scope),
+//             run_ssh (remote host).
+//
+// ATTACHMENT TOOLS:
+// fetch_attachment — reads a user/AI attachment by UUID. No project scope.
+// send_attachment  — saves AI-generated file to AttachmentStore, attaches to AI message. No project scope.
+// attach_file      — legacy, kept for backward compat. Use send_attachment for new work.
 //
 // INJECTION RULES:
 // - Universal tools (file, memory, web, project mgmt) — always injected.
 // - read_document / write_document — always injected (work for any project type).
-// - attach_file — always injected. Attaches any file by absolute path to the AI message.
+// - fetch_attachment / send_attachment — always injected (thread-level, no project needed).
+// - attach_file — always injected (legacy).
 // - Git tools — only if any attached project has isProgrammingProject = true.
 // - build_project, run_tests, read_build_log — if any programming project is attached.
 //   Each call carries a "project" arg; MCP routes to the correct env per project.
@@ -164,7 +171,7 @@ extension ToolExecutionService {
             For text formats (.rtf, .csv): overwrites the file directly.
             If output_path is provided — saves as a new file, original is untouched.
             If output_path is omitted — overwrites the original document.
-            After saving — call attach_file with the saved path to deliver the file to the user.
+            After saving — call send_attachment with the saved path to deliver the file to the user.
             """,
             parameters: AIToolParameters(
                 properties: [
@@ -181,8 +188,48 @@ extension ToolExecutionService {
             )
         )))
 
-        // MARK: - attach_file (always, no "project" — takes absolute path)
+        // MARK: - Attachment tools (always, no "project" — thread-level scope)
 
+        tools.append(AITool(function: AIFunctionDefinition(
+            name: "fetch_attachment",
+            description: """
+            Read a file attachment from the current thread by its UUID.
+            Use when the user has sent you a file and you want to read its contents.
+            Returns: base64 data URI for images, XML for Office documents (docx/xlsx/pptx),
+            extracted text for PDFs, UTF-8 string for plain text files.
+            The UUID is shown in the attachment reference block: [Attachment: filename | uuid: ...]
+            """,
+            parameters: AIToolParameters(
+                properties: [
+                    "uuid": AIToolProperty(type: "string", description: "UUID of the attachment to fetch (from the attachment reference block)")
+                ],
+                required: ["uuid"]
+            )
+        )))
+
+        tools.append(AITool(function: AIFunctionDefinition(
+            name: "send_attachment",
+            description: """
+            Save a file and attach it to the current AI message so the user receives it as a downloadable bubble.
+            Use after preparing file content (e.g. modifying a document) to deliver the result to the user.
+            For Office documents (docx/xlsx/pptx): provide source_uuid of the original file — the tool patches
+            the existing ZIP (preserving styles, images, relationships) and saves as a new file.
+            For images: provide base64-encoded content (with or without data URI prefix).
+            For text files: provide plain UTF-8 content.
+            The user will see a chip with the filename and can open or save the file.
+            """,
+            parameters: AIToolParameters(
+                properties: [
+                    "filename": AIToolProperty(type: "string", description: "Filename with extension (e.g. 'Plan_updated.docx', 'report.xlsx')"),
+                    "content": AIToolProperty(type: "string", description: "File content: XML for Office docs, base64 for images, UTF-8 for text"),
+                    "mime_type": AIToolProperty(type: "string", description: "MIME type of the file (e.g. 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'image/png', 'text/plain')"),
+                    "source_uuid": AIToolProperty(type: "string", description: "Optional: UUID of the original attachment to patch (required for Office documents to preserve ZIP structure)")
+                ],
+                required: ["filename", "content", "mime_type"]
+            )
+        )))
+
+        // attach_file: legacy — kept for backward compat. Prefer send_attachment for new work.
         tools.append(AITool(function: AIFunctionDefinition(
             name: "attach_file",
             description: """

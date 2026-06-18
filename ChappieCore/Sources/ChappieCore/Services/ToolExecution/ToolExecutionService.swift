@@ -6,16 +6,37 @@
 //   ToolDefinitions.swift   — availableTools array
 //   ToolAccessControl.swift — IT-09 access check (role, git, tests, terminal, license plan)
 //   MemoryTools.swift       — IT-08 scope resolution + memory execution cases
-//   FileTools.swift         — file system + document tools + attach_file + web_fetch
+//   FileTools.swift         — file system + document tools + attachment tools + web_fetch
 //   GitBuildTools.swift     — git + build/test execution
 //   TerminalTools.swift     — persistent bash session (run_terminal) + stateless SSH (run_ssh)
 //
 // UNIFIED PROJECT ARG:
 // Every tool that operates within a project scope carries an explicit "project" display name arg.
 // Access control resolves settings via args["project"] — no path heuristics, no guessing.
-// Exceptions: attach_file (absolute path, no project scope), run_ssh (remote host).
+// Exceptions: fetch_attachment / send_attachment (thread-level, no project scope),
+//             run_ssh (remote host).
+//
+// ATTACHMENT BRIDGE:
+// AttachmentStore lives in the Chappie app target, not in ChappieCore.
+// fetch_attachment / send_attachment bridge into it via injected closures:
+//   resolveAttachment(uuid) -> URL?  — resolves UUID to file URL on disk
+//   saveAttachment(data, filename, mimeType) -> (URL, UUID)?  — saves file, returns (url, uuid)
+//   reserveAttachmentURL(filename, uuid) -> URL  — reserves URL for MCP write_document to write into
+// These are registered by ChappieViewModel at startup.
 
 import Foundation
+
+// MARK: - AttachmentSaveResult
+
+public struct AttachmentSaveResult: Sendable {
+    public let url: URL
+    public let uuid: UUID
+
+    public init(url: URL, uuid: UUID) {
+        self.url = url
+        self.uuid = uuid
+    }
+}
 
 // MARK: - ScopeResolution (IT-08)
 
@@ -57,6 +78,19 @@ public actor ToolExecutionService {
     var onMemoryChanged: (@MainActor () -> Void)?
 
     var projectSettingsCache: [UUID: ProjectSettings] = [:]
+
+    // MARK: - Attachment bridge closures
+    // AttachmentStore lives in the app target — injected here to avoid cross-target dependency.
+
+    /// Resolves an attachment UUID to its file URL on disk.
+    var resolveAttachment: (@Sendable (UUID) -> URL?)?
+
+    /// Saves raw data as an attachment. Returns (permanentURL, attachmentUUID) or nil on failure.
+    var saveAttachment: (@Sendable (Data, String) -> AttachmentSaveResult?)?
+
+    /// Reserves a URL in AttachmentStore for a given (filename, uuid) — used by Office doc patching.
+    /// The caller (MCP write_document) writes the file to the returned URL.
+    var reserveAttachmentURL: (@Sendable (String, UUID) -> URL)?
 
     public init(
         fileSystem: FileSystemManager,
@@ -131,6 +165,20 @@ public actor ToolExecutionService {
         print("[ToolExecutionService] ✅ Memory change callback registered")
     }
 
+    // MARK: - Attachment bridge registration
+
+    /// Registers closures that bridge fetch_attachment / send_attachment to AttachmentStore in the app target.
+    public func registerAttachmentHandlers(
+        resolve: @escaping @Sendable (UUID) -> URL?,
+        save: @escaping @Sendable (Data, String) -> AttachmentSaveResult?,
+        reserve: @escaping @Sendable (String, UUID) -> URL
+    ) {
+        self.resolveAttachment = resolve
+        self.saveAttachment = save
+        self.reserveAttachmentURL = reserve
+        print("[ToolExecutionService] ✅ Attachment handlers registered")
+    }
+
     // MARK: - Project handler registration (list only)
 
     public func registerProjectHandlers(
@@ -203,7 +251,9 @@ public actor ToolExecutionService {
         do {
             switch name {
             case "list_files", "read_file", "write_file", "delete_file",
-                 "read_document", "write_document", "attach_file", "web_fetch":
+                 "read_document", "write_document",
+                 "fetch_attachment", "send_attachment", "attach_file",
+                 "web_fetch":
                 return try await executeFileTool(name: name, argsData: argsData)
 
             case "memorize", "recall", "search_memory", "delete_memory":
