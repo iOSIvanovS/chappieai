@@ -7121,6 +7121,7 @@
       }
     },
     "license.jwt_token_label" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -8673,6 +8674,7 @@
       }
     },
     "license.state_owner" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
