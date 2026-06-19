@@ -388,8 +388,11 @@ final class BuildTools: Sendable {
             let summary = extractSummary(from: fullOutput)
             return .success("✅ Success (\(elapsed)s)\n\(summary)\n\nFull log: read_build_log")
         } else {
+            // WHY full log inline: AI should not need a second tool call to diagnose failures.
+            // Errors are embedded directly so the cause is immediately visible in context.
             let errors = extractErrors(from: fullOutput)
-            return .failure("❌ Failed (exit \(exitCode), \(elapsed)s)\n\n\(errors)\n\nFull log: read_build_log")
+            let logSnippet = fullOutput.components(separatedBy: "\n").suffix(100).joined(separator: "\n")
+            return .failure("❌ Failed (exit \(exitCode), \(elapsed)s)\n\n--- Errors ---\n\(errors)\n\n--- Last 100 lines ---\n\(logSnippet)")
         }
     }
 

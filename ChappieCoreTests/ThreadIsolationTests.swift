@@ -32,6 +32,31 @@ struct SystemPromptBuilderTests {
         SystemPromptBuilder(personaBlock: persona)
     }
 
+    /// Creates a project context with executor role + programming project enabled by default,
+    /// then overlays the provided settings on top (terminalAccess, etc.).
+    private func makeProject(settings: ProjectSettings) -> PromptContext.ProjectContext {
+        var base = ProjectSettings(agentRole: .executor, isProgrammingProject: true)
+        base.terminalAccess = settings.terminalAccess
+        return PromptContext.ProjectContext(name: "TestProject", settings: base, memory: [])
+    }
+
+    /// Extracts the project settings block from the full prompt for a given project name.
+    private func extractProjectSection(from prompt: String, projectName: String) -> String {
+        let header = "## Project Settings: \(projectName)"
+        let lines = prompt.components(separatedBy: "\n")
+        guard let startIdx = lines.firstIndex(where: { $0.hasPrefix(header) }) else { return "" }
+        // collect lines until the next "##" section or end
+        var result: [String] = []
+        for line in lines[startIdx...] {
+            if result.isEmpty || !line.hasPrefix("##") || line.hasPrefix(header) {
+                result.append(line)
+            } else {
+                break
+            }
+        }
+        return result.joined(separator: "\n")
+    }
+
     // MARK: - Basic structure
 
     @Test("Empty context contains persona block and terminal section")
@@ -191,6 +216,72 @@ struct SystemPromptBuilderTests {
         #expect(!prompt1.contains("Bob"), "Thread 1 prompt must not contain thread 2 userName")
         #expect(!prompt2.contains("thread1_key"), "Thread 2 prompt must not contain thread 1 memory")
         #expect(!prompt2.contains("Alice"), "Thread 2 prompt must not contain thread 1 userName")
+    }
+
+    // MARK: - Thread terminal access
+
+    @Test("Terminal BLOCKED → prompt contains BLOCKED message")
+    func terminalBlockedIsInjected() {
+        let ctx = PromptContext(threadTerminalAccess: .none)
+        let prompt = makeBuilder().build(context: ctx)
+        #expect(prompt.contains("Terminal: BLOCKED"))
+    }
+
+    @Test("Terminal confirm → prompt contains confirmation requirement")
+    func terminalConfirmIsInjected() {
+        let ctx = PromptContext(threadTerminalAccess: .confirm)
+        let prompt = makeBuilder().build(context: ctx)
+        #expect(prompt.contains("enabled with confirmation"))
+        #expect(prompt.contains("ask the user for explicit approval"))
+    }
+
+    @Test("Terminal auto → prompt contains auto-execute message")
+    func terminalAutoIsInjected() {
+        let ctx = PromptContext(threadTerminalAccess: .auto)
+        let prompt = makeBuilder().build(context: ctx)
+        #expect(prompt.contains("auto-execute"))
+    }
+
+    @Test("Terminal section always present — even for empty context")
+    func terminalSectionAlwaysPresent() {
+        let prompt = makeBuilder().build(context: .empty)
+        #expect(prompt.contains("## Thread Settings: Terminal"))
+    }
+
+    // MARK: - Project-level terminal access
+
+    @Test("Project terminal .none → BLOCKED not injected into project settings")
+    func projectTerminalNoneNotInjected() {
+        // WHY: thread-level terminal takes precedence; project should stay silent when blocked
+        var settings = ProjectSettings()
+        settings.terminalAccess = .none
+        let project = makeProject(settings: settings)
+        let ctx = PromptContext(projects: [project])
+        let prompt = makeBuilder().build(context: ctx)
+        // thread section may say BLOCKED, but project section must not repeat it
+        let projectSection = extractProjectSection(from: prompt, projectName: project.name)
+        #expect(!projectSection.contains("Terminal: BLOCKED"))
+    }
+
+    @Test("Project terminal .confirm → confirmation message in project settings")
+    func projectTerminalConfirmIsInjected() {
+        var settings = ProjectSettings()
+        settings.terminalAccess = .confirm
+        let project = makeProject(settings: settings)
+        let ctx = PromptContext(projects: [project])
+        let prompt = makeBuilder().build(context: ctx)
+        #expect(prompt.contains("enabled with confirmation"))
+    }
+
+    @Test("Project terminal .auto → auto-execute message in project settings")
+    func projectTerminalAutoIsInjected() {
+        var settings = ProjectSettings()
+        settings.terminalAccess = .auto
+        let project = makeProject(settings: settings)
+        let ctx = PromptContext(projects: [project])
+        let prompt = makeBuilder().build(context: ctx)
+        let projectSection = extractProjectSection(from: prompt, projectName: project.name)
+        #expect(projectSection.contains("auto-execute"))
     }
 
     // MARK: - Tool permissions
@@ -440,6 +531,32 @@ struct ToolAccessControllerTests {
             gitLevel: .none, canRunTests: false, canWriteTests: false, canReadBuildLog: true
         )
         #expect(ToolAccessController.check(toolName: "read_build_log", permissions: perms).isAllowed)
+    }
+
+    // MARK: - patch_file / rename_file / move_file (write-file tools)
+
+    @Test("patch_file denied when canWriteFiles = false")
+    func patchFileDeniedWithoutWriteAccess() {
+        #expect(!ToolAccessController.check(toolName: "patch_file", permissions: .readOnly).isAllowed)
+    }
+
+    @Test("patch_file allowed when canWriteFiles = true")
+    func patchFileAllowedWithWriteAccess() {
+        let perms = ToolPermissions(
+            canReadFiles: true, canWriteFiles: true,
+            gitLevel: .none, canRunTests: false, canWriteTests: false, canReadBuildLog: false
+        )
+        #expect(ToolAccessController.check(toolName: "patch_file", permissions: perms).isAllowed)
+    }
+
+    @Test("rename_file denied when canWriteFiles = false")
+    func renameFileDeniedWithoutWriteAccess() {
+        #expect(!ToolAccessController.check(toolName: "rename_file", permissions: .readOnly).isAllowed)
+    }
+
+    @Test("move_file denied when canWriteFiles = false")
+    func moveFileDeniedWithoutWriteAccess() {
+        #expect(!ToolAccessController.check(toolName: "move_file", permissions: .readOnly).isAllowed)
     }
 
     // MARK: - Forward compatibility

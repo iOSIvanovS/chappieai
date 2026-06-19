@@ -394,7 +394,7 @@ extension ProjectSettings {
 
             switch terminalAccess {
             case .none:
-                lines.append("- Terminal: BLOCKED (enable in project settings)")
+                break // terminal not mentioned — thread-level setting takes precedence if set
             case .confirm:
                 lines.append("- Terminal: enabled with confirmation. BEFORE running any command you MUST ask the user for explicit approval in chat. Do NOT call run_terminal until user says 'yes', 'go ahead', or equivalent.")
             case .auto:

@@ -49,7 +49,8 @@ public struct ToolAccessController {
 
     // Tools that require write-file access.
     private static let writeTools: Set<String> = [
-        "write_file", "delete_file"
+        "write_file", "delete_file", "patch_file",
+        "rename_file", "move_file"
     ]
 
     // Tools that require build/test access.

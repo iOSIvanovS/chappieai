@@ -41,10 +41,16 @@ ChappieCore/
         ├── AIClientFactory.swift       # Factory: picks AIClient or AnthropicClient by protocol
         ├── AnthropicClient.swift       # Anthropic native API (/v1/messages)
         ├── AnthropicModels.swift       # Anthropic-specific request/response models
-        ├── AIOrchestrator.swift        # Reasoning loop: prompt → tools → response
+        ├── AIOrchestrator.swift                  # Reasoning loop: core + process()
+        ├── AIOrchestrator+Retry.swift            # streamWithRetry, stall/timeout logic
+        ├── AIOrchestrator+ContextWindow.swift    # buildContextWindow, estimateTokens
+        ├── AIOrchestrator+ToolExecution.swift    # executeToolCalls, parseOutputFilePath
         ├── AIProviderStore.swift       # CRUD for AI providers + Keychain (multi-key)
         ├── AppSettingsStore.swift      # Actor-based CRUD for singleton AppSettings
-        ├── FileSystemManager.swift     # Secure file system access (sandbox)
+        ├── FileSystemManager.swift             # Secure FS: init, routing, read/write/delete/move
+        ├── FileSystemManager+Listing.swift     # listFiles (single + multi-workspace)
+        ├── FileSystemManager+Search.swift      # searchInFile, searchInProject, grep helpers
+        ├── FileSystemManager+Patch.swift       # patchFile (exactlyOne policy), getFileInfo
         ├── MCPToolBridge.swift         # Bridge to ChappieMCP via Unix socket
         ├── MemoryManager.swift         # Semantic memory (read/write/search) via DataStore
         ├── MemoryStore.swift           # Persistence CRUD for memory scopes
@@ -54,17 +60,25 @@ ChappieCore/
         ├── StallWatchdog.swift         # Cancels stalled AI streams after timeout
         ├── SystemPromptBuilder.swift   # Deterministic system prompt assembler
         ├── ThreadSession.swift         # Runtime container for an active thread
-        ├── ThreadStore.swift           # CRUD for threads + chunked message storage
+        ├── ThreadStore.swift               # Core: init, create/rename/delete, payload cache
+        ├── ThreadStore+Chunks.swift        # Chunked message storage: read/write/lazy-load/pagination
+        ├── ThreadStore+Projects.swift      # Thread-scoped project CRUD
+        ├── ThreadStore+Settings.swift      # Settings CRUD, Starter plan enforcement, memory footprint
         ├── ToolAccessController.swift  # Hard gate before every tool execution
         ├── WebFetchService.swift       # Fetches web pages and extracts clean text
         └── ToolExecution/
-            ├── ToolAccessControl.swift     # Access control rules per tool category
-            ├── ToolDefinitions.swift       # Tool schema definitions (JSON for AI)
-            ├── ToolExecutionService.swift  # Dispatches tool calls from AIOrchestrator
-            ├── FileTools.swift             # File tool implementations
-            ├── GitBuildTools.swift         # Git/build tool implementations
-            ├── MemoryTools.swift           # Memory tool implementations
-            └── TerminalTools.swift         # run_terminal implementation (ShellSession)
+            ├── ToolAccessControl.swift              # Access control rules per tool category
+            ├── ToolDefinitions.swift                # Orchestrator: assembles availableTools from extensions
+            ├── ToolDefinitions+FileTools.swift      # File system, search, document, attachment tool defs
+            ├── ToolDefinitions+MemoryTools.swift    # Memory tool definitions (IT-08)
+            ├── ToolDefinitions+GitTools.swift       # Git tool definitions
+            ├── ToolDefinitions+BuildTools.swift     # Build, test, terminal, project mgmt tool defs
+            ├── ToolDefinitions+LocalizationTools.swift # loc_* tool definitions (Xcode only)
+            ├── ToolExecutionService.swift           # Dispatches tool calls from AIOrchestrator
+            ├── FileTools.swift                      # File tool implementations
+            ├── GitBuildTools.swift                  # Git/build tool implementations
+            ├── MemoryTools.swift                    # Memory tool implementations
+            └── TerminalTools.swift                  # run_terminal implementation (ShellSession)
 ```
 
 ---
@@ -325,15 +339,20 @@ AIClientFactory.make(for:apiKey:model:) → AIClient | AnthropicClient
 
 ## 10. AIOrchestrator — Reasoning Loop
 
+Split across 4 files:
+- `AIOrchestrator.swift` — core actor, init, `process()` agentic loop
+- `AIOrchestrator+Retry.swift` — `streamWithRetry`, stall/timeout logic, diagnostic request
+- `AIOrchestrator+ContextWindow.swift` — `buildContextWindow`, `estimateTokens`
+- `AIOrchestrator+ToolExecution.swift` — `executeToolCalls`, `parseOutputFilePath`
+
 ```
 process(prompt, history, config, memoryContext)
   → systemPrompt (via ThreadSession)
   → buildContextWindow(history, config)
   → loop (maxOrchestratorSteps = 500):
-      → aiClient.streamChat()
+      → streamWithRetry() → aiClient.streamRequestWithTools()
       → if tool_use → ToolAccessController.check() → toolService.execute()
-      → if text → accumulate tokens
-      → if stop → return result
+      → if text → return AIOrchestratorResult
 ```
 
 ---
@@ -388,3 +407,5 @@ public enum AccessResult: Sendable {
 | 2026-07 | Projects refactor: removed ProjectPayload, DataStore.Relation.projects, bookmark logic. Projects now live in ThreadPayload as [ThreadProjectEntry] with absolutePath. ThreadStore owns project CRUD. ProjectStore reduced to downgradeAllProjectsToAdvisor() only. |
 | 2026-07 | SwiftData removal: deleted DataStore.swift (ChappieDataStore), MigrationService.swift, AppSettingsMigration.swift. SQLiteStorage (GRDB) is now the sole persistence backend. |
 | 2026-07 | Chunk system: messages split into 500-message chunks per row. Lazy loading (last chunk on open). Auto-migration from legacy single-blob on first access. deleteByPrefix + keys(withPrefix:) added to ChappieStorage protocol. |
+| 2026-07 | ToolDefinitions.swift split into 6 files: orchestrator + FileTools, MemoryTools, GitTools, BuildTools, LocalizationTools extensions. 825 lines → 143 lines orchestrator. |
+| 2026-07 | ThreadStore.swift split into 4 files: core + Chunks, Projects, Settings extensions. 513 lines → ~150 lines core. |
