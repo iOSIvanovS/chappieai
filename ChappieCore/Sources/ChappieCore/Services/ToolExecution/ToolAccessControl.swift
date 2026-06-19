@@ -18,7 +18,7 @@
 //    e. write_document — requires Executor role (document writes = mutations).
 //    f. run_terminal / run_ssh — require thread-level TerminalAccessLevel.isEnabled.
 //       No project required — terminal is now thread-scoped, not project-scoped.
-//    g. move_file / rename_file — require Executor role (file mutations).
+//    g. move_file / rename_file / patch_file — require Executor role (file mutations).
 //
 // PROJECT RESOLUTION:
 // All tools carry a "project" display name arg — single source of truth for access control.
@@ -173,8 +173,8 @@ extension ToolExecutionService {
             return .allowed
         }
 
-        // EXECUTOR: move_file / rename_file — file mutations, require executor (already checked above).
-        if toolName == "move_file" || toolName == "rename_file" {
+        // EXECUTOR: move_file / rename_file / patch_file — file mutations, require executor (already checked above).
+        if toolName == "move_file" || toolName == "rename_file" || toolName == "patch_file" {
             return .allowed
         }
 

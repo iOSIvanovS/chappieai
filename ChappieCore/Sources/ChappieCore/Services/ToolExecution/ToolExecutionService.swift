@@ -207,7 +207,7 @@ public actor ToolExecutionService {
         let projectName = args["project"]
 
         let projectRequiredTools: Set<String> = [
-            "list_files", "read_file", "write_file", "delete_file",
+            "list_files", "read_file", "write_file", "patch_file", "delete_file",
             "get_file_info", "move_file", "rename_file",
             "read_document", "write_document",
             "search_in_file", "search_in_project",
@@ -252,7 +252,7 @@ public actor ToolExecutionService {
 
         do {
             switch name {
-            case "list_files", "read_file", "write_file", "delete_file",
+            case "list_files", "read_file", "write_file", "patch_file", "delete_file",
                  "get_file_info", "move_file", "rename_file",
                  "read_document", "write_document",
                  "search_in_file", "search_in_project",

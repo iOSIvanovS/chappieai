@@ -27,6 +27,8 @@
 // - get_file_info — always injected when projects are attached (read-only metadata).
 // - search_in_file / search_in_project — always injected when projects are attached.
 //   Cheaper than read_file: returns only matching lines + context, not the whole file.
+// - patch_file — injected when projects are attached (Executor-only, blocked at access control).
+//   Cheapest write: no file content in context, surgical find→replace.
 // - move_file / rename_file — injected when projects are attached (Executor-only, blocked at access control).
 // - Git tools — only if any attached project has isProgrammingProject = true.
 // - build_project, run_tests, read_build_log — if any programming project is attached.
@@ -93,7 +95,13 @@ extension ToolExecutionService {
 
         tools.append(AITool(function: AIFunctionDefinition(
             name: "read_file",
-            description: "Read the contents of a file in the project.",
+            description: """
+            Read the entire contents of a file.
+            Use when: you don't know what to change yet, need to understand the full file structure, \
+            or plan to rewrite more than 40% of the file.
+            Do NOT use if you already know where the change is — use search_in_file → patch_file instead. \
+            Reading the whole file is expensive.
+            """,
             parameters: AIToolParameters(
                 properties: [
                     "path": AIToolProperty(type: "string", description: "Relative path to the file"),
@@ -108,7 +116,13 @@ extension ToolExecutionService {
 
         tools.append(AITool(function: AIFunctionDefinition(
             name: "write_file",
-            description: "Create a new file or fully overwrite an existing one (subdirectories are created automatically).",
+            description: """
+            Create a new file or fully overwrite an existing one (subdirectories are created automatically).
+            Use when: creating a new file, or rewriting more than 40% of an existing file after read_file.
+            NEVER write partial content — always provide the complete final file.
+            Do NOT use for small edits to an existing file — use patch_file instead. \
+            It is much cheaper: no file content in context.
+            """,
             parameters: AIToolParameters(
                 properties: [
                     "path": AIToolProperty(type: "string", description: "Relative path to the file"),
@@ -137,7 +151,7 @@ extension ToolExecutionService {
             )
         )))
 
-        // MARK: - File info & move/rename (when projects are attached)
+        // MARK: - File info & move/rename/patch (when projects are attached)
 
         if !allProjectInfos.isEmpty {
             tools.append(AITool(function: AIFunctionDefinition(
@@ -149,6 +163,29 @@ extension ToolExecutionService {
                         "project": AIToolProperty(type: "string", description: fileToolProjectArgDescription(for: allProjectInfos))
                     ],
                     required: allProjectInfos.count > 1 ? ["path", "project"] : ["path"]
+                )
+            )))
+
+            tools.append(AITool(function: AIFunctionDefinition(
+                name: "patch_file",
+                description: """
+                Replace an exact block of text in a file without reading the whole file.
+                Use when: you already know exactly what to change (found via search_in_file), \
+                the edit is localized, and you don't need to understand the full file.
+                PREFER this over read_file → write_file for small edits — ~94% cheaper.
+                The 'find' block must be unique in the file (3–5 lines minimum). \
+                Safety policy: if 0 or 2+ matches are found — the tool refuses and returns an error. Nothing is changed.
+                For multiple separate edits in one file — call patch_file once per location.
+                Requires Executor role.
+                """,
+                parameters: AIToolParameters(
+                    properties: [
+                        "path": AIToolProperty(type: "string", description: "Relative path to the file"),
+                        "find": AIToolProperty(type: "string", description: "Exact block of text to find (must be unique in the file — use 3–5 lines minimum for safety)"),
+                        "replace": AIToolProperty(type: "string", description: "Text to replace the found block with. Can be empty string to delete the block."),
+                        "project": AIToolProperty(type: "string", description: fileToolProjectArgDescription(for: allProjectInfos))
+                    ],
+                    required: allProjectInfos.count > 1 ? ["path", "find", "replace", "project"] : ["path", "find", "replace"]
                 )
             )))
 
@@ -184,7 +221,15 @@ extension ToolExecutionService {
         if !allProjectInfos.isEmpty {
             tools.append(AITool(function: AIFunctionDefinition(
                 name: "search_in_file",
-                description: "Search for a string inside a single file. Returns matching lines with surrounding context.\nUse instead of read_file when the file is large and you only need to find a specific symbol, function, or value.\nMuch cheaper than read_file — returns only relevant lines, not the whole file.",
+                description: """
+                Search for a string inside a single file. Returns matching lines with surrounding context.
+                Use when: you know which file to edit but don't know the exact location. \
+                The context_lines parameter shows N lines around each match — use it to verify \
+                the surrounding code before calling patch_file.
+                After search_in_file — go directly to patch_file if the context is sufficient. \
+                Do NOT call read_file in between — that wastes tokens on content you don't need.
+                Much cheaper than read_file — returns only relevant lines, not the whole file.
+                """,
                 parameters: AIToolParameters(
                     properties: [
                         "path": AIToolProperty(type: "string", description: "Relative path to the file to search in"),

@@ -1,13 +1,14 @@
 // FileTools.swift
 // ChappieCore
 //
-// Execution of file system tools (list_files, read_file, write_file, delete_file,
+// Execution of file system tools (list_files, read_file, write_file, patch_file, delete_file,
 // get_file_info, move_file, rename_file), search tools (search_in_file, search_in_project),
 // document tools (read_document, write_document), attachment tools (fetch_attachment,
 // send_attachment), and web_fetch.
 //
 // EXECUTOR-ONLY TOOLS:
 // move_file / rename_file — file mutations, require Executor role (checked in ToolAccessControl).
+// patch_file — file mutation, requires Executor role.
 // get_file_info — read-only metadata, always allowed.
 //
 // ATTACHMENT TOOLS:
@@ -103,6 +104,20 @@ extension ToolExecutionService {
             }
             try await fileSystem.writeFile(at: path, content: content, projectName: args["project"])
             return "Success: File \(path) written."
+
+        case "patch_file":
+            guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
+                  let path = args["path"], !path.isEmpty,
+                  let find = args["find"], !find.isEmpty,
+                  let replace = args["replace"] else {
+                return "Error: Arguments 'path', 'find', and 'replace' are required for patch_file"
+            }
+            return try await fileSystem.patchFile(
+                at: path,
+                find: find,
+                replace: replace,
+                projectName: args["project"]
+            )
 
         case "delete_file":
             guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
