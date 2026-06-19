@@ -34,10 +34,12 @@ struct SystemPromptBuilderTests {
 
     // MARK: - Basic structure
 
-    @Test("Empty context returns only persona block")
-    func emptyContextReturnsOnlyPersona() {
+    @Test("Empty context contains persona block and terminal section")
+    func emptyContextContainsPersonaAndTerminal() {
         let prompt = makeBuilder().build(context: .empty)
-        #expect(prompt == persona)
+        // Terminal block is always injected (even for .none) — persona must be first
+        #expect(prompt.hasPrefix(persona))
+        #expect(prompt.contains("Terminal:"))
     }
 
     @Test("userName is injected when present")

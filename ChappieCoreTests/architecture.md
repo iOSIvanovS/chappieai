@@ -28,7 +28,8 @@ ChappieCoreTests/
 ├── ChappieErrorTests.swift             # ChappieError enum coverage
 ├── FileSystemManagerTests.swift        # FS ops + path traversal protection
 ├── MemoryManagerTests.swift            # Semantic memory CRUD via SQLiteStorage
-├── ThreadIsolationTests.swift          # Thread/project isolation rules
+├── ThreadIsolationTests.swift          # SystemPromptBuilder + ToolAccessController rules
+├── ThreadStoreTests.swift              # Chunk system: roundtrip, lazy load, pagination, boundary, delete
 └── WebFetchServiceTests.swift          # WebFetchService HTTP + parsing
 
 Project root:
@@ -48,6 +49,7 @@ graph TD
         FSMT["FileSystemManagerTests"]
         MMT["MemoryManagerTests"]
         TIT["ThreadIsolationTests"]
+        TSTT["ThreadStoreTests"]
         WFST["WebFetchServiceTests"]
     end
 
@@ -58,6 +60,7 @@ graph TD
         FSM["FileSystemManager"]
         MemM["MemoryStore + SQLiteStorage"]
         TS["ThreadSession + ToolAccessController"]
+        TST["ThreadStore + SQLiteStorage (chunk system)"]
         WFS["WebFetchService"]
     end
 
@@ -67,6 +70,7 @@ graph TD
     FSMT --> FSM
     MMT --> MemM
     TIT --> TS
+    TSTT --> TST
     WFST --> WFS
 
     subgraph Isolation["Test Isolation"]
