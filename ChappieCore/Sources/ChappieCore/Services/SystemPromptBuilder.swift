@@ -16,6 +16,10 @@
 //   [6] (Tool manifest injected separately by AIOrchestrator, not here)
 //
 // Empty sections are omitted — no wasted tokens.
+//
+// TERMINAL:
+// Thread-level terminal access is injected as a standalone line in the Memory Context block.
+// It is independent of any project settings — the AI reads it from the thread context.
 
 import Foundation
 
@@ -28,6 +32,8 @@ public struct PromptContext: Sendable {
     public let globalMemory: [MemoryEntry]
     public let threadMemory: [MemoryEntry]
     public let projects: [ProjectContext]
+    /// Thread-level terminal access — independent of project roles.
+    public let threadTerminalAccess: TerminalAccessLevel
 
     public struct ProjectContext: Sendable {
         public let name: String
@@ -49,12 +55,14 @@ public struct PromptContext: Sendable {
         userName: String? = nil,
         globalMemory: [MemoryEntry] = [],
         threadMemory: [MemoryEntry] = [],
-        projects: [ProjectContext] = []
+        projects: [ProjectContext] = [],
+        threadTerminalAccess: TerminalAccessLevel = .none
     ) {
         self.userName = userName
         self.globalMemory = globalMemory
         self.threadMemory = threadMemory
         self.projects = projects
+        self.threadTerminalAccess = threadTerminalAccess
     }
 
     public static let empty = PromptContext()
@@ -149,6 +157,12 @@ public struct SystemPromptBuilder {
             sections.append(block)
         }
 
+        // [4b] Thread-level terminal access — injected as a standalone line.
+        // WHY HERE: terminal is thread-scoped, not project-scoped.
+        // The AI must know the terminal mode before deciding whether to call run_terminal.
+        let terminalLine = threadTerminalLine(context.threadTerminalAccess)
+        sections.append(terminalLine)
+
         // [5] Per-project blocks
         for project in context.projects {
             var projectSections: [String] = []
@@ -230,6 +244,17 @@ public struct SystemPromptBuilder {
     }
 
     // MARK: - Private helpers
+
+    private func threadTerminalLine(_ access: TerminalAccessLevel) -> String {
+        switch access {
+        case .none:
+            return "## Thread Settings: Terminal\n- Terminal: BLOCKED (enable in thread settings)"
+        case .confirm:
+            return "## Thread Settings: Terminal\n- Terminal: enabled with confirmation. BEFORE running any command you MUST ask the user for explicit approval in chat. Do NOT call run_terminal until user says 'yes', 'go ahead', or equivalent."
+        case .auto:
+            return "## Thread Settings: Terminal\n- Terminal: enabled, auto-execute (no confirmation needed). Use responsibly."
+        }
+    }
 
     private func memoryBlock(title: String, entries: [MemoryEntry]) -> String? {
         guard !entries.isEmpty else { return nil }

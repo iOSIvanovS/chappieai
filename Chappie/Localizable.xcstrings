@@ -14446,6 +14446,7 @@
       }
     },
     "project.settings.terminal_auto_warning" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -14510,6 +14511,7 @@
       }
     },
     "project.settings.terminal_picker" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -14574,6 +14576,7 @@
       }
     },
     "project.settings.terminal_safe_hint" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -14638,6 +14641,7 @@
       }
     },
     "project.settings.terminal_section" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -26252,6 +26256,33 @@
           }
         }
       }
+    },
+    "thread.settings.starter_terminal_alert_cancel" : {
+
+    },
+    "thread.settings.starter_terminal_alert_change_plan" : {
+
+    },
+    "thread.settings.starter_terminal_alert_message" : {
+
+    },
+    "thread.settings.starter_terminal_alert_title" : {
+
+    },
+    "thread.settings.terminal_auto_warning" : {
+
+    },
+    "thread.settings.terminal_picker" : {
+
+    },
+    "thread.settings.terminal_safe_hint" : {
+
+    },
+    "thread.settings.terminal_section" : {
+
+    },
+    "thread.settings.terminal_superpower_warning" : {
+
     },
     "thread.settings.title" : {
       "localizations" : {

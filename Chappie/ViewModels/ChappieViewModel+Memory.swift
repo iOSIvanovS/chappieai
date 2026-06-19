@@ -26,6 +26,10 @@
 //   run_terminal can prefix commands with `cd /path && ` for deterministic execution.
 //   Populated from activeProjects.absolutePath — available after bookmark resolution.
 //
+// TERMINAL ACCESS:
+//   threadTerminalAccess is passed from activeThreadSettings to ActiveMemoryContext
+//   so ToolDefinitions and ToolAccessControl can read it without touching project settings.
+//
 // ATOMIC CONTEXT+SETTINGS UPDATE:
 //   setMemoryContextAndSettings() writes both ActiveMemoryContext and projectSettingsCache
 //   in a single actor hop — eliminating the race window where availableTools was computed
@@ -69,7 +73,8 @@ extension ChappieViewModel {
         let context = ActiveMemoryContext(
             threadId: activeThread?.id,
             projects: projectInfos,
-            projectPathMap: pathMap
+            projectPathMap: pathMap,
+            threadTerminalAccess: activeThreadSettings.terminalAccess
         )
 
         // Project settings for ToolAccessControl — must arrive together with context.

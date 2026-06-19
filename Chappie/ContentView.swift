@@ -175,6 +175,7 @@ struct ContentView: View {
                 ThreadSettingsSheet(
                     thread: thread,
                     providers: viewModel.providers,
+                    canExecuteTools: viewModel.canExecuteTools,
                     onSave: { newTitle, newSettings, newProviderId, newKeyId, newModelName in
                         viewModel.updateThreadSettings(
                             newSettings,
@@ -186,7 +187,8 @@ struct ContentView: View {
                         )
                         selectedThreadForSettings = nil
                     },
-                    onDismiss: { selectedThreadForSettings = nil }
+                    onDismiss: { selectedThreadForSettings = nil },
+                    onChangePlan: { showLicenseActivation = true }
                 )
             }
             .sheet(isPresented: $viewModel.showNewThreadProviderPicker) {

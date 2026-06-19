@@ -20,7 +20,11 @@ extension AIClient {
             temperature: 0.7,
             tools: tools.isEmpty ? nil : tools,
             stream: true,
-            cacheControl: nil
+            // AITunnel (Anthropic): top-level cache_control caches everything automatically —
+            // system prompt, full chat history, and all tool results in one shot.
+            // Anthropic slides the breakpoint forward as the dialogue grows.
+            // Other providers: supportsCaching=false → cacheControl=nil, no effect.
+            cacheControl: supportsCaching ? .oneHour : nil
         )
 
         let request = try buildURLRequest(body: body)

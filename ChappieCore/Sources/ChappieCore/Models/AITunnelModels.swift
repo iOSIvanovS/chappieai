@@ -4,8 +4,10 @@ import Foundation
 
 /// POST request body for the AI provider API.
 ///
-/// cache_control at top level is kept for compatibility but no longer used for caching.
-/// Actual caching is done via per-block cache_control in the system message content array.
+/// AITunnel (Anthropic): top-level cache_control enables automatic caching of the entire
+/// conversation history — Anthropic slides the breakpoint forward as the dialogue grows.
+/// This covers system prompt + all tool results + full chat history in one shot.
+/// Other providers: cache_control is always nil — they handle caching automatically.
 /// stream=true → SSE chunks; stream=false → single blocking response.
 public struct AITunnelRequest: Encodable, Sendable {
     public let model: String

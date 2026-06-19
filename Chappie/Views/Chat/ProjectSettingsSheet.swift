@@ -19,6 +19,10 @@
 // STARTER PLAN GUARD:
 // If canExecuteTools == false (Starter license), switching to Executor shows an alert
 // explaining the restriction and offering "Change Plan" → opens LicenseActivationView.
+//
+// TERMINAL:
+// Terminal settings have moved to ThreadSettingsSheet (thread-level).
+// ProjectSettings.terminalAccess is kept for Codable compatibility but not shown here.
 
 import SwiftUI
 import ChappieCore
@@ -82,8 +86,6 @@ struct ProjectSettingsSheet: View {
                             testsSection
                             architectureSection
                             commentsSection
-                            Divider().padding(.vertical, 4)
-                            terminalSection
                         }
                     }
                 }
@@ -361,7 +363,6 @@ struct ProjectSettingsSheet: View {
             .toggleStyle(.switch)
 
             if draft.architectureEnabled {
-                // No left label — picker title is self-explanatory
                 Picker("project.settings.arch_language_picker", selection: $draft.architectureLanguage) {
                     ForEach(ProjectLanguage.allCases, id: \.self) { lang in
                         Text(lang.displayName).tag(lang)
@@ -391,7 +392,6 @@ struct ProjectSettingsSheet: View {
             .toggleStyle(.switch)
 
             if draft.commentsEnabled {
-                // No left label — picker title is self-explanatory
                 Picker("project.settings.comments_language_picker", selection: $draft.commentsLanguage) {
                     ForEach(ProjectLanguage.allCases, id: \.self) { lang in
                         Text(lang.displayName).tag(lang)
@@ -401,61 +401,6 @@ struct ProjectSettingsSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-    }
-
-    // MARK: - Terminal section
-
-    private var terminalSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("project.settings.terminal_section", systemImage: "terminal.fill")
-
-            Picker("project.settings.terminal_picker", selection: $draft.terminalAccess) {
-                ForEach(TerminalAccessLevel.allCases, id: \.self) { level in
-                    Text(level.displayName).tag(level)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-
-            Text(draft.terminalAccess.description)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if draft.terminalAccess == .auto {
-                autoTerminalWarningView
-            }
-
-            if draft.terminalAccess != .none {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "shield.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.green)
-                        .padding(.top, 1)
-                    Text("project.settings.terminal_safe_hint")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-
-    private var autoTerminalWarningView: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 12))
-                .foregroundStyle(.orange)
-                .padding(.top, 1)
-
-            Text("project.settings.terminal_auto_warning")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(10)
-        .background(Color.orange.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - Footer
@@ -517,24 +462,7 @@ struct ProjectSettingsSheet: View {
                 architectureEnabled: true,
                 architectureLanguage: .english,
                 commentsEnabled: true,
-                commentsLanguage: .english,
-                terminalAccess: .confirm
-            )
-        ),
-        onSave: { settings in print("Saved: \(settings)") },
-        onDismiss: {}
-    )
-}
-
-#Preview("Terminal — auto") {
-    ProjectSettingsSheet(
-        project: ProjectMetadata(
-            id: UUID(),
-            displayName: "Chappie",
-            settings: ProjectSettings(
-                agentRole: .executor,
-                isProgrammingProject: true,
-                terminalAccess: .auto
+                commentsLanguage: .english
             )
         ),
         onSave: { settings in print("Saved: \(settings)") },

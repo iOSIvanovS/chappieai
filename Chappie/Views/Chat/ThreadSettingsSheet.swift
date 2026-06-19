@@ -13,9 +13,14 @@
 // - API key selection (hidden for providers with requiresApiKey=false, e.g. Ollama)
 // - Context depth: slider 10...1000, step 10, default 30
 // - Unlimited context toggle
+// - Terminal access: thread-level, independent of project roles
 //
 // NOTE: Provider + model selection happens ONLY via the "Model" chip in the chat toolbar.
 // Adding/editing/deleting providers happens ONLY in the provider directory (SettingsView).
+//
+// TERMINAL:
+// Terminal is now thread-scoped — no project required. canExecuteTools gates Starter plan.
+// Starter plan shows an alert explaining the restriction instead of allowing the change.
 
 import SwiftUI
 import ChappieCore
@@ -30,12 +35,17 @@ struct ThreadSettingsSheet: View {
     let providers: [AIProvider]
     let onSave: (String, ThreadSettings, UUID?, UUID?, String?) -> Void
     let onDismiss: () -> Void
+    /// True when the current license plan allows terminal access (not Starter).
+    let canExecuteTools: Bool
+    /// Called when user taps "Change Plan" in the Starter restriction alert.
+    let onChangePlan: () -> Void
 
     // MARK: - Local draft state
 
     @State private var draftTitle: String
     @State private var draftSettings: ThreadSettings
     @State private var draftKeyId: UUID?
+    @State private var showingStarterAlert = false
 
     // MARK: - Active provider (resolved from draftSettings)
 
@@ -49,18 +59,22 @@ struct ThreadSettingsSheet: View {
     init(
         thread: ThreadMetadata,
         providers: [AIProvider],
+        canExecuteTools: Bool = true,
         onSave: @escaping (String, ThreadSettings, UUID?, UUID?, String?) -> Void,
-        onDismiss: @escaping () -> Void
+        onDismiss: @escaping () -> Void,
+        onChangePlan: @escaping () -> Void = {}
     ) {
         self.thread = thread
         self.providers = providers
+        self.canExecuteTools = canExecuteTools
         self.onSave = onSave
         self.onDismiss = onDismiss
+        self.onChangePlan = onChangePlan
         self._draftTitle = State(initialValue: thread.title)
         self._draftSettings = State(initialValue: thread.settings)
         self._draftKeyId = State(initialValue: thread.settings.activeKeyId)
 
-        print("[ThreadSettingsSheet] init: providerId=\(thread.settings.activeProviderId?.uuidString ?? "nil") keyId=\(thread.settings.activeKeyId?.uuidString ?? "nil") maxMsgs=\(thread.settings.maxMessagesInContext)")
+        print("[ThreadSettingsSheet] init: providerId=\(thread.settings.activeProviderId?.uuidString ?? "nil") keyId=\(thread.settings.activeKeyId?.uuidString ?? "nil") maxMsgs=\(thread.settings.maxMessagesInContext) terminal=\(thread.settings.terminalAccess.rawValue)")
     }
 
     // MARK: - Body
@@ -79,6 +93,8 @@ struct ThreadSettingsSheet: View {
                         Divider().padding(.vertical, 2)
                     }
                     contextSection
+                    Divider().padding(.vertical, 2)
+                    terminalSection
                 }
                 .padding(20)
             }
@@ -87,7 +103,17 @@ struct ThreadSettingsSheet: View {
             footerView
         }
         .frame(width: 480)
-        .frame(minHeight: 320)
+        .frame(minHeight: 360)
+        // Starter plan restriction alert — shown when trying to enable terminal on Starter
+        .alert("thread.settings.starter_terminal_alert_title", isPresented: $showingStarterAlert) {
+            Button("thread.settings.starter_terminal_alert_cancel", role: .cancel) {}
+            Button("thread.settings.starter_terminal_alert_change_plan") {
+                onDismiss()
+                onChangePlan()
+            }
+        } message: {
+            Text("thread.settings.starter_terminal_alert_message")
+        }
     }
 
     // MARK: - Header
@@ -261,6 +287,93 @@ struct ThreadSettingsSheet: View {
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
+    // MARK: - Terminal Section
+
+    private var terminalSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionLabel("thread.settings.terminal_section", systemImage: "terminal.fill")
+
+            Picker("thread.settings.terminal_picker", selection: Binding(
+                get: { draftSettings.terminalAccess },
+                set: { newLevel in
+                    if newLevel != .none && !canExecuteTools {
+                        // Starter plan blocks terminal access
+                        showingStarterAlert = true
+                    } else {
+                        draftSettings.terminalAccess = newLevel
+                    }
+                }
+            )) {
+                ForEach(TerminalAccessLevel.allCases, id: \.self) { level in
+                    Text(level.displayName).tag(level)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            Text(draftSettings.terminalAccess.description)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if draftSettings.terminalAccess == .auto {
+                autoTerminalWarningView
+            }
+
+            if draftSettings.terminalAccess != .none {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "shield.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.green)
+                        .padding(.top, 1)
+                    Text("thread.settings.terminal_safe_hint")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            // Super-power warning — shown when terminal is enabled at any level
+            if draftSettings.terminalAccess != .none {
+                superPowerWarningView
+            }
+        }
+    }
+
+    private var autoTerminalWarningView: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(.orange)
+                .padding(.top, 1)
+
+            Text("thread.settings.terminal_auto_warning")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var superPowerWarningView: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "bolt.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(.purple)
+                .padding(.top, 1)
+
+            Text("thread.settings.terminal_superpower_warning")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .background(Color.purple.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
     // MARK: - Footer
 
     private var footerView: some View {
@@ -289,7 +402,7 @@ struct ThreadSettingsSheet: View {
 
                 updatedSettings.activeKeyId = effectiveKeyId
 
-                print("[ThreadSettingsSheet] onSave: title='\(finalTitle)' maxMsgs=\(updatedSettings.maxMessagesInContext) keyId=\(effectiveKeyId?.uuidString ?? "nil") providerId=\(updatedSettings.activeProviderId?.uuidString ?? "nil") activeProvider=\(activeProvider?.displayName ?? "nil")")
+                print("[ThreadSettingsSheet] onSave: title='\(finalTitle)' maxMsgs=\(updatedSettings.maxMessagesInContext) keyId=\(effectiveKeyId?.uuidString ?? "nil") terminal=\(updatedSettings.terminalAccess.rawValue)")
 
                 onSave(finalTitle, updatedSettings, nil, effectiveKeyId, nil)
             }
@@ -399,6 +512,23 @@ private struct KeySelectRow: View {
         providers: [],
         onSave: { title, settings, _, _, _ in
             print("Save: \(title)")
+        },
+        onDismiss: {}
+    )
+}
+
+#Preview("Terminal — confirm") {
+    ThreadSettingsSheet(
+        thread: ThreadMetadata(
+            id: UUID(),
+            title: "Server Ops",
+            settings: ThreadSettings(terminalAccess: .confirm),
+            createdAt: Date(),
+            updatedAt: Date()
+        ),
+        providers: [],
+        onSave: { title, settings, _, _, _ in
+            print("Save: \(title), terminal: \(settings.terminalAccess.rawValue)")
         },
         onDismiss: {}
     )

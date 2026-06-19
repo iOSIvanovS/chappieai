@@ -92,12 +92,18 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
     /// If the model is deleted from the provider, the thread shows a warning banner.
     public var activeModelName: String?
 
+    /// Terminal access level for this thread.
+    /// Thread-level setting — independent of any attached project role.
+    /// Starter plan forces this to .none across all threads.
+    public var terminalAccess: TerminalAccessLevel
+
     public init(
         maxMessagesInContext: Int = 30,
         isUnlimitedContext: Bool = false,
         activeProviderId: UUID? = nil,
         activeKeyId: UUID? = nil,
-        activeModelName: String? = nil
+        activeModelName: String? = nil,
+        terminalAccess: TerminalAccessLevel = .none
     ) {
         // Clamp to valid range 10...1000 — guard against corrupted JSON values
         self.maxMessagesInContext = max(10, min(1000, maxMessagesInContext))
@@ -105,6 +111,7 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
         self.activeProviderId = activeProviderId
         self.activeKeyId = activeKeyId
         self.activeModelName = activeModelName
+        self.terminalAccess = terminalAccess
     }
 }
 

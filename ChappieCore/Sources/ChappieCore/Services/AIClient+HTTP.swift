@@ -22,19 +22,12 @@ extension AIClient {
 
     /// Builds the final message array for the provider.
     ///
-    /// AITunnel (supportsCaching=true): system prompt sent as content block array with
-    /// cache_control — explicit breakpoint that works on Bedrock/Vertex too.
+    /// AITunnel: system prompt sent as plain string — top-level cache_control on the request
+    /// covers everything automatically (system + history + tool results).
     /// Strict providers (supportsCaching=false): all messages normalized to plain strings.
     func buildMessages(systemPrompt: String, chatHistory: [AIMessage]) -> [AIMessage] {
-        let systemMessage: AIMessage
-        if supportsCaching {
-            systemMessage = AIMessage(
-                role: "system",
-                contentBlocks: [AIContentBlock(text: systemPrompt, cacheControl: .oneHour)]
-            )
-        } else {
-            systemMessage = AIMessage(role: "system", content: systemPrompt)
-        }
+        // Plain system message for all providers — AITunnel uses top-level cache_control instead.
+        let systemMessage = AIMessage(role: "system", content: systemPrompt)
 
         var messages: [AIMessage] = [systemMessage]
 

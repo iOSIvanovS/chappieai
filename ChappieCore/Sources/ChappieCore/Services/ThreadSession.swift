@@ -113,7 +113,8 @@ public actor ThreadSession {
             userName: userName,
             globalMemory: globalMemory,
             threadMemory: threadMemory,
-            projects: projectContexts
+            projects: projectContexts,
+            threadTerminalAccess: thread.settings.terminalAccess
         )
     }
 }

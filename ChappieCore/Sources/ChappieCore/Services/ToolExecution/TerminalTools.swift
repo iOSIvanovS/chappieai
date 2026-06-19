@@ -17,19 +17,23 @@
 // No interactive input supported — use for remote diagnostics and server commands only.
 //
 // CONFIRMATION MODE (run_terminal only):
-// When terminalAccess == .confirm, the tool does NOT execute the command.
+// When threadTerminalAccess == .confirm, the tool does NOT execute the command.
 // Instead it returns a special PENDING_CONFIRMATION marker that the ViewModel
 // intercepts and renders as an inline confirmation UI in the chat.
 //
 // SESSION LIFECYCLE:
 // Sessions are created lazily on first use per thread.
 // Sessions are cleared when a thread is deactivated (clearSession called from ViewModel).
+//
+// ACCESS CONTROL:
+// Terminal access is thread-level — read from activeMemoryContext.threadTerminalAccess.
+// No project role required. checkToolAccess() handles the gate before this code runs.
 
 import Foundation
 
 // MARK: - PendingTerminalCommand
 
-/// Marker returned when terminalAccess == .confirm.
+/// Marker returned when threadTerminalAccess == .confirm.
 /// ViewModel parses this to show inline confirmation UI.
 public struct PendingTerminalCommand: Codable, Sendable {
     public static let markerPrefix = "CHAPPIE_TERMINAL_CONFIRM:"
@@ -131,13 +135,10 @@ extension ToolExecutionService {
             """
         }
 
-        // Resolve settings for the specific project being targeted — fixes multi-project bug.
-        let settings = resolveProjectSettings(for: args.project)
-        guard settings.terminalAccess.isEnabled else {
-            return "❌ Terminal is disabled for this project. Enable it in project settings → Terminal."
-        }
-
-        if settings.terminalAccess.requiresConfirmation {
+        // Thread-level access gate — access control already passed in checkToolAccess(),
+        // but confirmation mode is determined here from threadTerminalAccess.
+        let terminalAccess = activeMemoryContext.threadTerminalAccess
+        if terminalAccess.requiresConfirmation {
             let pending = PendingTerminalCommand(
                 command: command,
                 threadId: activeMemoryContext.threadId ?? UUID()

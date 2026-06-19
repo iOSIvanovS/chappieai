@@ -186,6 +186,31 @@ public actor ThreadStore {
         return settings
     }
 
+    // MARK: - Starter plan enforcement
+
+    /// Resets terminal access to .none across ALL threads.
+    /// Called when a Starter license is activated — Starter plan forbids terminal access.
+    public func downgradeTerminalInAllThreads() async throws {
+        var payloads = try await loadPayloads()
+        var changed = false
+
+        for idx in payloads.indices {
+            guard !payloads[idx].settingsJSON.isEmpty,
+                  var settings = try? JSONDecoder().decode(ThreadSettings.self, from: payloads[idx].settingsJSON),
+                  settings.terminalAccess != .none
+            else { continue }
+
+            settings.terminalAccess = .none
+            payloads[idx].settingsJSON = (try? JSONEncoder().encode(settings)) ?? payloads[idx].settingsJSON
+            changed = true
+        }
+
+        guard changed else { return }
+        try await savePayloads(payloads)
+        try await refreshCache()
+        print("[ThreadStore] ✅ Terminal access reset to .none in all threads (Starter plan)")
+    }
+
     // MARK: - Thread-scoped Projects
 
     public func loadProjects(forThreadId threadId: UUID) async throws -> [ThreadProjectEntry] {

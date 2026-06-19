@@ -9,21 +9,25 @@
 // 1. git_diff — iron prohibition, always blocked regardless of settings.
 // 2. Starter plan — read-only: list_files, read_file, read_document, read_build_log only.
 //    WHY: Starter is "Advisor only" per monetization plan — no execution, no writes.
-// 3. ADVISOR role — same read-only gate as Starter.
+// 3. ADVISOR role — same read-only gate as Starter (project-level check).
 // 4. EXECUTOR role:
 //    a. Git tools — require isProgrammingProject + GitAccessLevel.allowedTools.
 //    b. build_project — requires isProgrammingProject + Executor role.
 //    c. run_tests — requires isProgrammingProject + TestsAccessLevel.canRun.
 //    d. read_build_log — always allowed for Executor (read-only diagnostic tool).
 //    e. write_document — requires Executor role (document writes = mutations).
-//    f. run_terminal — requires isProgrammingProject + TerminalAccessLevel.isEnabled.
-//    g. run_ssh — requires isProgrammingProject + TerminalAccessLevel.isEnabled.
-//    h. move_file / rename_file — require Executor role (file mutations).
+//    f. run_terminal / run_ssh — require thread-level TerminalAccessLevel.isEnabled.
+//       No project required — terminal is now thread-scoped, not project-scoped.
+//    g. move_file / rename_file — require Executor role (file mutations).
 //
 // PROJECT RESOLUTION:
 // All tools carry a "project" display name arg — single source of truth for access control.
 // resolveProjectSettings(for:) matches by name; falls back to projects.first for single-project threads.
 // No path heuristics. No guessing. One rule: args["project"] → settings.
+//
+// TERMINAL:
+// run_terminal and run_ssh are checked against activeMemoryContext.threadTerminalAccess —
+// not against any project settings. This allows terminal use even without attached projects.
 
 import Foundation
 
@@ -78,6 +82,19 @@ extension ToolExecutionService {
                 ❌ Tool '\(toolName)' requires a Pro or Team license.
                 Your current plan (Starter) provides read-only access only.
                 Upgrade to Pro or Team to unlock full execution capabilities.
+                """)
+            }
+            return .allowed
+        }
+
+        // run_terminal and run_ssh: thread-level gate — no project role check.
+        // WHY: terminal is now thread-scoped. It works even without attached projects.
+        if toolName == "run_terminal" || toolName == "run_ssh" {
+            let terminalAccess = activeMemoryContext.threadTerminalAccess
+            if !terminalAccess.isEnabled {
+                return .denied("""
+                ❌ Tool '\(toolName)' is blocked: terminal access is disabled for this thread.
+                Open thread settings → Terminal → choose 'With confirmation' or 'Automatically'.
                 """)
             }
             return .allowed
@@ -158,24 +175,6 @@ extension ToolExecutionService {
 
         // EXECUTOR: move_file / rename_file — file mutations, require executor (already checked above).
         if toolName == "move_file" || toolName == "rename_file" {
-            return .allowed
-        }
-
-        // run_terminal and run_ssh share the same access gate.
-        // WHY: SSH to a remote server carries the same risk as local terminal execution.
-        if toolName == "run_terminal" || toolName == "run_ssh" {
-            if !settings.isProgrammingProject {
-                return .denied("""
-                ❌ Tool '\(toolName)' requires 'Programming project' flag.
-                Open project settings → enable 'Programming project'.
-                """)
-            }
-            if !settings.terminalAccess.isEnabled {
-                return .denied("""
-                ❌ Tool '\(toolName)' is blocked: terminal access is disabled.
-                Open project settings → Terminal → choose 'С подтверждением' or 'Автоматически'.
-                """)
-            }
             return .allowed
         }
 
