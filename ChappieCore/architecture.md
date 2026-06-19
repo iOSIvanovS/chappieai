@@ -4,7 +4,7 @@
 
 All business logic of Chappie. Completely independent of SwiftUI — testable without UI.
 
-**Dependency rule:** ChappieCore → Foundation, SwiftData only. No SwiftUI or AppKit.
+**Dependency rule:** ChappieCore → Foundation only. No SwiftUI, AppKit, or SwiftData.
 
 ---
 
@@ -14,9 +14,10 @@ All business logic of Chappie. Completely independent of SwiftUI — testable wi
 ChappieCore/
 ├── Package.swift
 └── Sources/ChappieCore/
-    ├── ChappieCore.swift               # Public API re-exports
+    ├── ChappieCore.swift               # Public API table of contents
     ├── DataStore/
-    │   └── DataStore.swift             # THE ONLY file that imports SwiftData. StoredRecord @Model lives here.
+    │   ├── ChappieStorage.swift        # Protocol + ChappieStorageRelation (typesafe keys)
+    │   └── SQLiteStorage.swift         # GRDB-based backend — sole production implementor
     ├── Models/
     │   ├── AIProviderModels.swift       # AIProvider, APIKey, AIModel, ProviderProtocol
     │   ├── AITunnelModels.swift         # AIMessage, AIUsage, AIMessageContent
@@ -53,10 +54,9 @@ ChappieCore/
         ├── StallWatchdog.swift         # Cancels stalled AI streams after timeout
         ├── SystemPromptBuilder.swift   # Deterministic system prompt assembler
         ├── ThreadSession.swift         # Runtime container for an active thread
-        ├── ThreadStore.swift           # CRUD for threads + project management within threads
+        ├── ThreadStore.swift           # CRUD for threads + chunked message storage
         ├── ToolAccessController.swift  # Hard gate before every tool execution
         ├── WebFetchService.swift       # Fetches web pages and extracts clean text
-        ├── WelcomeService.swift        # Generates AI welcome message for new threads
         └── ToolExecution/
             ├── ToolAccessControl.swift     # Access control rules per tool category
             ├── ToolDefinitions.swift       # Tool schema definitions (JSON for AI)
@@ -71,58 +71,109 @@ ChappieCore/
 
 ## 3. DataStore — The Persistence Foundation
 
-**Rule: DataStore.swift is the ONLY file in the project that imports SwiftData.**
-No other file may declare `@Model` or import SwiftData.
+### Storage Architecture
 
-### StoredRecord — The Only @Model
+SQLiteStorage (GRDB) is the **sole** persistence backend. No SwiftData anywhere.
+
+### ChappieStorage Protocol
 
 ```swift
-@Model final class StoredRecord {
-    @Attribute(.unique) var relation: String  // DataStore.Relation.rawValue
-    var payload: Data                          // JSONEncoder output of any Codable
+public protocol ChappieStorage: Actor {
+    func load<T: Codable & Sendable>(_ relation: ChappieStorageRelation) async throws -> T?
+    func loadRawData(_ relation: ChappieStorageRelation) async throws -> Data?
+    func save<T: Codable & Sendable>(_ value: T, for relation: ChappieStorageRelation) async throws
+    func saveRawData(_ data: Data, for relation: ChappieStorageRelation) async throws
+    func delete(_ relation: ChappieStorageRelation) async throws
+    func deleteByPrefix(_ prefix: String) async throws   // atomic bulk delete — used by chunk system
+    func exists(_ relation: ChappieStorageRelation) async throws -> Bool
+    func keys(withPrefix prefix: String) async throws -> [String]
 }
 ```
 
-The schema is frozen. It will never change. No SwiftData migrations are ever needed.
+### SQLiteStorage Schema
 
-### DataStore.Relation
-
-```swift
-enum Relation: String {
-    case threads      = "threads"
-    case memory       = "memory"
-    case providers    = "providers"
-    case appSettings  = "app_settings"
-}
+```sql
+CREATE TABLE stored_records (
+    relation TEXT PRIMARY KEY,
+    payload  BLOB NOT NULL
+)
 ```
 
 One row per relation. The payload is a JSON-encoded domain collection.
 
-> **Note:** `case projects` was removed. Projects now live inside `ThreadPayload.projects`.
-
-### DataStore API
+### ChappieStorageRelation Keys
 
 ```swift
-public actor ChappieDataStore {
-    func load<T: Codable>(_ relation: Relation) throws -> T?
-    func save<T: Codable>(_ value: T, for relation: Relation) throws
-    func delete(_ relation: Relation) throws
-    func exists(_ relation: Relation) throws -> Bool
+enum ChappieStorageRelation {
+    case threads                            // "threads"
+    case projects                           // "projects"
+    case memory                             // "memory"
+    case providers                          // "providers"
+    case appSettings                        // "app_settings"
+    case threadMessages(UUID)               // "thread_messages.<uuid>"  ← legacy, migration-only
+    case threadMessagesChunk(UUID, Int)     // "thread_messages_chunk.<uuid>.<index>"
 }
 ```
 
 ### Data Flow
 
 ```
-Write:  DomainStruct (Codable) → JSONEncoder → Data → StoredRecord.payload → SwiftData
-Read:   SwiftData → StoredRecord.payload → Data → JSONDecoder → DomainStruct (Codable)
+Write:  DomainStruct (Codable) → JSONEncoder → Data → SQLite BLOB
+Read:   SQLite BLOB → Data → JSONDecoder → DomainStruct (Codable)
 ```
 
 Decode failure is non-fatal. Callers receive `nil` or `[]` and recover gracefully.
 
 ---
 
-## 4. Codable Compatibility Rules
+## 4. Message Chunk System
+
+### Why Chunks
+
+A single JSON blob for a thread with 1000+ messages can reach 50–150 MB.
+Loading it all at once causes UI freezes and high memory pressure.
+
+### Strategy
+
+Messages are split into chunks of **500** per row.
+
+```
+thread_messages_chunk.<UUID>.0   → messages   0–499
+thread_messages_chunk.<UUID>.1   → messages 500–999
+thread_messages_chunk.<UUID>.2   → messages 1000–1499
+...
+```
+
+Integer index (not zero-padded) — sorted numerically by `chunkIndices()`.
+
+### Lazy Loading
+
+- **Thread open** → only the **last chunk** is loaded into memory (O(1), fast).
+- **Scroll to top** → `loadMoreMessages()` loads the previous chunk on demand.
+- `hasMoreChunks` / `oldestLoadedChunkIndex` track pagination state in ViewModel.
+
+### Auto-Migration
+
+On first access to any thread, `ThreadStore` checks for a legacy single-blob key
+(`thread_messages.<UUID>`). If found, it is split into chunks and the legacy key deleted.
+This is **transparent** — callers see no difference.
+
+### API
+
+```swift
+// Fast open — returns last chunk + hasMore flag
+loadMessages(fromThreadId:as:) → (messages: [T], hasMore: Bool)
+
+// Full history — for AI context building, export, deleteOldMessages
+loadAllMessages(fromThreadId:as:) → [T]
+
+// Scroll-up pagination — returns previous chunk
+loadMoreMessages(fromThreadId:currentOldestChunkIndex:as:) → (messages, hasMore, newOldestChunkIndex)
+```
+
+---
+
+## 5. Codable Compatibility Rules
 
 **Violation = silent data corruption.**
 
@@ -134,18 +185,19 @@ Structs that must follow these rules:
 
 | Struct | Stored under |
 |---|---|
-| `[ThreadPayload]` | `DataStore.Relation.threads` |
-| `[MemoryScope]` | `DataStore.Relation.memory` |
-| `[AIProvider]` | `DataStore.Relation.providers` |
-| `AppSettingsPayload` | `DataStore.Relation.appSettings` |
+| `[ThreadPayload]` | `.threads` |
+| `[MemoryScope]` | `.memory` |
+| `[AIProvider]` | `.providers` |
+| `AppSettingsPayload` | `.appSettings` |
 | `ThreadSettings` | inside `ThreadPayload` |
 | `[ThreadProjectEntry]` | inside `ThreadPayload` |
 | `ProjectSettings` | inside `ThreadProjectEntry` |
 | `[MemoryEntry]` | inside `MemoryScope` |
+| `[ChatMessage]` | `.threadMessagesChunk(id, n)` |
 
 ---
 
-## 5. Project Model
+## 6. Project Model
 
 Projects are **thread-local** — no global registry, no bookmarks.
 
@@ -166,28 +218,28 @@ struct ThreadProjectEntry: Codable, Identifiable, Sendable {
 
 ---
 
-## 6. Architecture Diagram
+## 7. Architecture Diagram
 
 ```mermaid
 graph TD
     subgraph Foundation["Persistence Foundation"]
-        DS["DataStore (actor)\nThe ONLY SwiftData gateway"]
-        SR["StoredRecord (@Model)\nThe ONLY @Model in the app"]
-        DS --> SR
+        SQL["SQLiteStorage (actor)\nGRDB backend — sole implementor"]
+        Proto["ChappieStorage protocol\nAll Stores depend on this"]
+        SQL --> Proto
     end
 
     subgraph Stores["Domain Stores (actors)"]
-        TS["ThreadStore\n(owns project CRUD within threads)"]
+        TS["ThreadStore\n(chunked messages + project CRUD)"]
         MS["MemoryStore"]
         APS["AIProviderStore"]
         ASS["AppSettingsStore"]
         PS["ProjectStore\n(downgradeAllProjectsToAdvisor only)"]
     end
 
-    TS --> DS
-    MS --> DS
-    APS --> DS
-    ASS --> DS
+    TS --> Proto
+    MS --> Proto
+    APS --> Proto
+    ASS --> Proto
     PS --> TS
 
     subgraph Services["Services (actors)"]
@@ -196,19 +248,17 @@ graph TD
         SPB["SystemPromptBuilder\nDeterministic prompt assembly"]
         TAC["ToolAccessController\nHard gate per tool call"]
         TSess["ThreadSession\nRuntime thread container"]
-        MemM["MemoryManager\nSemantic memory (DataStore only)"]
+        MemM["MemoryManager\nSemantic memory"]
         FSM["FileSystemManager\nSecure FS access (absolutePath)"]
         SSH["ShellSession\nPersistent bash (per thread)"]
         MCP["MCPToolBridge\nUnix Socket client"]
         WFS["WebFetchService\nHTTP page fetch"]
-        WS["WelcomeService\nAI greeting"]
         PRS["ProvidersRemoteService\nGitHub catalog fetch"]
         AICF["AIClientFactory\npicks client by protocol"]
         AIC["AIClient\nOpenAI-compatible HTTP"]
         AnthC["AnthropicClient\nAnthropic native HTTP"]
     end
 
-    DS --> SR
     APS --> KC["Keychain\n(API key secrets)"]
 
     Orch --> AICF
@@ -230,7 +280,7 @@ graph TD
 
 ---
 
-## 7. Key Models
+## 8. Key Models
 
 ### ThreadSettings (default: 30 messages)
 
@@ -253,31 +303,14 @@ struct AppConfig: Codable {
     let maxMessagesInContext: Int              // 10...1000
     let tokenBudget: Int                       // maxMessagesInContext × 500
     let isUnlimitedContext: Bool
-    let maxOrchestratorSteps: Int             // 100, hardcoded
+    let maxOrchestratorSteps: Int             // 500, hardcoded
     let stallTimeoutSeconds: TimeInterval     // 300s, hardcoded
-}
-```
-
-**Note:** `AppConfig.shared` uses 100 messages. `ThreadSettings` default is 30.
-When a thread has no custom settings — `AppConfig.shared` (100) is used.
-
-### AIProvider / APIKey / AIModel
-
-```swift
-struct AIProvider: Codable {
-    var id: UUID
-    var name: String
-    var baseURL: String
-    var catalogId: String?
-    var providerProtocol: ProviderProtocol
-    var keys: [APIKey]
-    var models: [AIModel]
 }
 ```
 
 ---
 
-## 8. AI Client Architecture
+## 9. AI Client Architecture
 
 ```
 AIClientProtocol
@@ -290,13 +323,13 @@ AIClientFactory.make(for:apiKey:model:) → AIClient | AnthropicClient
 
 ---
 
-## 9. AIOrchestrator — Reasoning Loop
+## 10. AIOrchestrator — Reasoning Loop
 
 ```
 process(prompt, history, config, memoryContext)
   → systemPrompt (via ThreadSession)
   → buildContextWindow(history, config)
-  → loop (maxOrchestratorSteps = 100):
+  → loop (maxOrchestratorSteps = 500):
       → aiClient.streamChat()
       → if tool_use → ToolAccessController.check() → toolService.execute()
       → if text → accumulate tokens
@@ -305,9 +338,9 @@ process(prompt, history, config, memoryContext)
 
 ---
 
-## 10. SystemPromptBuilder — Injection Order
+## 11. SystemPromptBuilder — Injection Order
 
-Pure value transformer — no async, no SwiftData, no side effects.
+Pure value transformer — no async, no storage, no side effects.
 
 1. Persona block
 2. `userName` if set
@@ -320,7 +353,7 @@ Empty sections are omitted — no wasted tokens.
 
 ---
 
-## 11. ToolAccessController
+## 12. ToolAccessController
 
 Hard gate before every tool execution.
 
@@ -332,11 +365,10 @@ public enum AccessResult: Sendable {
 ```
 
 `git_diff` is permanently blocked — cannot be overridden by any settings.
-`add_project_to_thread` and `remove_project_from_thread` are permanently removed — user-only operations.
 
 ---
 
-## 12. ShellSession + TerminalTools
+## 13. ShellSession + TerminalTools
 
 `ShellSession` — persistent bash process per thread ID.
 
@@ -353,4 +385,6 @@ public enum AccessResult: Sendable {
 |------|--------|
 | 2025-07 | Initial architecture |
 | 2026-06 | Storage cleanup: removed DataStoreMigration, V2/V3 schema stubs |
-| 2026-07 | Projects refactor: removed ProjectPayload, DataStore.Relation.projects, bookmark logic. Projects now live in ThreadPayload as [ThreadProjectEntry] with absolutePath. ThreadStore owns project CRUD. ProjectStore reduced to downgradeAllProjectsToAdvisor() only. AI tools add/remove_project_to_thread removed from ToolDefinitions. |
+| 2026-07 | Projects refactor: removed ProjectPayload, DataStore.Relation.projects, bookmark logic. Projects now live in ThreadPayload as [ThreadProjectEntry] with absolutePath. ThreadStore owns project CRUD. ProjectStore reduced to downgradeAllProjectsToAdvisor() only. |
+| 2026-07 | SwiftData removal: deleted DataStore.swift (ChappieDataStore), MigrationService.swift, AppSettingsMigration.swift. SQLiteStorage (GRDB) is now the sole persistence backend. |
+| 2026-07 | Chunk system: messages split into 500-message chunks per row. Lazy loading (last chunk on open). Auto-migration from legacy single-blob on first access. deleteByPrefix + keys(withPrefix:) added to ChappieStorage protocol. |

@@ -6,13 +6,11 @@
 //   +Threads, +Providers, +Projects, +Send, +Memory, +AppSettings, +ThreadSession, +License
 //
 // STORAGE:
-// setModelContainer() wires up both backends and runs MigrationService.
-// After migration, chappieDataStore points to SQLiteStorage — all Stores use it.
-// ChappieDataStore (SwiftData) is only kept alive as migration source.
+// bootStorage() initializes SQLiteStorage and wires all Stores.
+// SQLiteStorage (GRDB) is the sole persistence backend.
 
 import SwiftUI
 import ChappieCore
-import SwiftData
 
 @Observable
 @MainActor
@@ -70,6 +68,12 @@ final class ChappieViewModel {
     var displayedStart: Int = 0
     var scrollToBottomTrigger: Int = 0
     var loadMoreAnchorId: UUID? = nil
+
+    /// True when older storage chunks exist for the active thread (not yet loaded into memory).
+    /// Distinct from hasMoreMessages — that controls UI pagination within already-loaded messages.
+    var hasMoreChunks: Bool = false
+    /// The chunk index of the oldest chunk currently loaded. Used by loadOlderMessages().
+    var oldestLoadedChunkIndex: Int? = nil
 
     var visibleMessages: [ChatMessage] {
         let onlyMessages = messages.filter { if case .message = $0 { return true }; return false }
@@ -144,10 +148,6 @@ final class ChappieViewModel {
 
     // MARK: - Storage
 
-    var modelContainer: ModelContainer?
-
-    // Active storage backend — SQLiteStorage after migration, ChappieDataStore before.
-    // All Stores use this reference. Never access ChappieDataStore directly after init.
     var chappieDataStore: (any ChappieStorage)?
 
     var memoryStore: MemoryStore?
@@ -199,7 +199,7 @@ final class ChappieViewModel {
         }
     }
 
-    // MARK: - Pagination
+    // MARK: - Pagination (within loaded messages)
 
     func resetPagination(fireScrollTrigger: Bool = false) {
         let count = messages.count
@@ -252,34 +252,18 @@ final class ChappieViewModel {
         self.currentBalance = loadBalance(for: provider.id)
     }
 
-    // MARK: - Connect Storage
+    // MARK: - Boot Storage
 
-    /// Wires up both storage backends, runs one-time migration, then boots all Stores.
-    /// Called from ChappieApp.onAppear — guaranteed to run once on main actor.
-    func setModelContainer(_ container: ModelContainer) {
-        guard self.modelContainer == nil else { return }
-        self.modelContainer = container
+    /// Initializes SQLiteStorage and wires all Stores. Called once from ChappieApp.onAppear.
+    func bootStorage() {
+        guard chappieDataStore == nil else { return }
 
-        // Legacy SwiftData backend — migration source only.
-        let swiftDataStore = ChappieDataStore(modelContainer: container)
-
-        // Production SQLite backend.
         guard let sqliteURL = try? SQLiteStorage.defaultURL,
               let sqliteStore = try? SQLiteStorage(url: sqliteURL) else {
-            // Fallback: if SQLite init fails (disk full, permissions) — keep SwiftData running.
-            print("[ChappieViewModel] ⚠️ SQLiteStorage init failed — falling back to SwiftData")
-            bootStores(with: swiftDataStore)
+            print("[ChappieViewModel] ❌ SQLiteStorage init failed — cannot start")
             return
         }
 
-        // Run migration in background — Stores start on SQLite immediately.
-        // Migration is safe to run while SQLite is already in use (upserts are idempotent).
-        Task {
-            let migration = MigrationService(source: swiftDataStore, target: sqliteStore)
-            await migration.migrateIfNeeded()
-        }
-
-        // All Stores use SQLite from this point forward.
         bootStores(with: sqliteStore)
     }
 

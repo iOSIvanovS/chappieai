@@ -33,7 +33,6 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
-import SwiftData
 import AppKit
 import ChappieCore
 
@@ -71,8 +70,6 @@ struct ContentView: View {
 
     @State private var appState = AppState.shared
 
-    @Environment(\.modelContext) private var modelContext
-
     private var orphanedThreadIds: Set<UUID> { [] }
     private let sidebarWidth: CGFloat = 260
 
@@ -92,7 +89,6 @@ struct ContentView: View {
             }
         }
         .onAppear {
-            viewModel.setModelContainer(modelContext.container)
             dropDelegate.isThinkingGetter = { [self] in viewModel.streaming.isThinking }
             dropDelegate.onFilesDropped   = { [self] providers in resolveDroppedFiles(providers, attachments: $attachments) }
             dropDelegate.onFoldersDropped = { [self] providers in resolveFolderDrop(providers, addProject: { viewModel.addProject(url: $0) }) }
@@ -444,7 +440,7 @@ struct ContentView: View {
         InputMorphView(
             prompt: $prompt,
             attachments: $attachments,
-            isWorkspaceSelected: true, // Input is always enabled — workspace is only needed for file tools
+            isWorkspaceSelected: true,
             streaming: viewModel.streaming,
             onSend: { attachedFiles in sendMessage(attachments: attachedFiles) },
             onCancel: { viewModel.cancelCurrentRequest() }

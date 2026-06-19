@@ -2,21 +2,26 @@
 // ChappieCore
 //
 // Actor for CRUD operations on threads via ChappieStorage protocol.
-// No SwiftData imports here — all persistence goes through the storage abstraction.
 //
 // STORAGE LAYOUT:
-// - .threads                → [ThreadPayload]  (thread list, metadata, settings)
-// - .threadMessages(id)     → raw JSON Data    (per-thread messages, loaded on demand)
+// - .threads                              → [ThreadPayload]  (thread list, metadata, settings)
+// - .threadMessagesChunk(id, index)       → [ChatMessage]    (500-message chunks, zero-padded index)
 //
-// Messages are stored as raw JSON Data (saveRawData/loadRawData) to avoid double-encoding.
+// CHUNKING STRATEGY:
+// Messages are split into chunks of CHUNK_SIZE (500) messages each.
+// Key format: "thread_messages_chunk.<UUID>.000000", ".000001", etc.
+// Zero-padding ensures lexicographic sort == chronological sort.
 //
-// CACHING:
-// cachedThreads holds the thread list in RAM after first load.
-// loadThreads() is served from cache — no storage hit on warm calls.
-// loadMessages() always hits storage — per-thread, accessed only when thread is selected.
-// All writes call refreshCache() to keep the thread list consistent.
+// LAZY LOADING:
+// loadMessages() returns only the LAST chunk — what the user sees immediately.
+// loadMoreMessages() loads the previous chunk — called when user scrolls to top.
+// This keeps thread open time O(1) regardless of total history size.
 
 import Foundation
+
+// MARK: - Constants
+
+private let CHUNK_SIZE = 500
 
 // MARK: - ThreadPayload
 
@@ -79,6 +84,7 @@ public struct ThreadMemoryInfo: Sendable, Identifiable {
     public let title: String
     public let messageCount: Int
     public let sizeBytes: Int
+    public let chunkCount: Int
 
     public var sizeMB: Double { Double(sizeBytes) / 1_048_576 }
 }
@@ -95,7 +101,7 @@ public actor ThreadStore {
         self.dataStore = dataStore
     }
 
-    // MARK: - Private helpers
+    // MARK: - Private: Thread list helpers
 
     private func loadPayloads() async throws -> [ThreadPayload] {
         return (try await dataStore.load(.threads)) ?? []
@@ -105,15 +111,74 @@ public actor ThreadStore {
         try await dataStore.save(payloads, for: .threads)
     }
 
-    private func messagesRelation(for threadId: UUID) -> ChappieStorageRelation {
-        .threadMessages(threadId)
-    }
-
     private func refreshCache() async throws {
         let payloads = try await loadPayloads()
         cachedThreads = payloads
             .sorted { $0.updatedAt > $1.updatedAt }
             .map { ThreadMetadata(from: $0) }
+    }
+
+    // MARK: - Private: Chunk key helpers
+
+    private func chunkRelation(_ threadId: UUID, _ index: Int) -> ChappieStorageRelation {
+        .threadMessagesChunk(threadId, index)
+    }
+
+    /// Returns sorted chunk indices currently stored for a thread.
+    private func chunkIndices(for threadId: UUID) async throws -> [Int] {
+        let prefix = ChappieStorageRelation.chunkPrefix(for: threadId)
+        let allKeys = try await dataStore.keys(withPrefix: prefix)
+        return allKeys.compactMap { key -> Int? in
+            guard let lastDot = key.lastIndex(of: ".") else { return nil }
+            let indexStr = String(key[key.index(after: lastDot)...])
+            return Int(indexStr)
+        }.sorted()
+    }
+
+    // MARK: - Private: Chunk read/write
+
+    /// Writes all messages as chunks, replacing any existing chunks.
+    private func writeChunks<T: Codable>(_ messages: [T], toThreadId threadId: UUID) async throws {
+        let prefix = ChappieStorageRelation.chunkPrefix(for: threadId)
+        try await dataStore.deleteByPrefix(prefix)
+
+        let chunks = messages.chunked(into: CHUNK_SIZE)
+        for (index, chunk) in chunks.enumerated() {
+            let data = try JSONEncoder().encode(chunk)
+            try await dataStore.saveRawData(data, for: chunkRelation(threadId, index))
+        }
+    }
+
+    /// Reads all chunks and assembles the full message array.
+    private func readAllChunks<T: Codable>(threadId: UUID, as type: T.Type) async throws -> [T] {
+        let indices = try await chunkIndices(for: threadId)
+        guard !indices.isEmpty else { return [] }
+
+        var result: [T] = []
+        result.reserveCapacity(indices.count * CHUNK_SIZE)
+
+        for index in indices {
+            guard let data = try await dataStore.loadRawData(chunkRelation(threadId, index)) else { continue }
+            let chunk = try JSONDecoder().decode([T].self, from: data)
+            result.append(contentsOf: chunk)
+        }
+        return result
+    }
+
+    /// Reads only the last N chunks — for lazy loading on thread open.
+    private func readLastChunks<T: Codable>(threadId: UUID, count: Int, as type: T.Type) async throws -> [T] {
+        let indices = try await chunkIndices(for: threadId)
+        guard !indices.isEmpty else { return [] }
+
+        let lastIndices = Array(indices.suffix(count))
+        var result: [T] = []
+
+        for index in lastIndices {
+            guard let data = try await dataStore.loadRawData(chunkRelation(threadId, index)) else { continue }
+            let chunk = try JSONDecoder().decode([T].self, from: data)
+            result.append(contentsOf: chunk)
+        }
+        return result
     }
 
     // MARK: - Create
@@ -139,12 +204,11 @@ public actor ThreadStore {
         return cachedThreads ?? []
     }
 
-    // MARK: - Messages (Generic)
+    // MARK: - Messages: Save
 
-    /// Saves the full message history for a thread.
+    /// Saves the full message history for a thread as chunks.
     public func saveMessages<T: Codable>(_ messages: [T], toThreadId threadId: UUID) async throws {
-        let data = try JSONEncoder().encode(messages)
-        try await dataStore.saveRawData(data, for: messagesRelation(for: threadId))
+        try await writeChunks(messages, toThreadId: threadId)
 
         var payloads = try await loadPayloads()
         if let idx = payloads.firstIndex(where: { $0.id == threadId }) {
@@ -154,17 +218,58 @@ public actor ThreadStore {
         try await refreshCache()
     }
 
-    /// Loads messages for a thread. Returns [] if not found or decode fails.
-    public func loadMessages<T: Codable>(fromThreadId threadId: UUID, as type: T.Type) async throws -> [T] {
-        guard let data = try await dataStore.loadRawData(messagesRelation(for: threadId)) else {
-            return []
+    // MARK: - Messages: Load (lazy — last chunk only)
+
+    /// Loads the last chunk of messages for a thread (fast O(1) open regardless of history size).
+    /// Returns (messages, hasMore) — hasMore = true means older chunks exist.
+    public func loadMessages<T: Codable>(
+        fromThreadId threadId: UUID,
+        as type: T.Type
+    ) async throws -> (messages: [T], hasMore: Bool) {
+        let indices = try await chunkIndices(for: threadId)
+        guard !indices.isEmpty else { return ([], false) }
+
+        let hasMore = indices.count > 1
+        let lastMessages = try await readLastChunks(threadId: threadId, count: 1, as: type)
+        return (lastMessages, hasMore)
+    }
+
+    /// Loads ALL messages for a thread — used for AI context building and export.
+    public func loadAllMessages<T: Codable>(
+        fromThreadId threadId: UUID,
+        as type: T.Type
+    ) async throws -> [T] {
+        let indices = try await chunkIndices(for: threadId)
+        guard !indices.isEmpty else { return [] }
+        return try await readAllChunks(threadId: threadId, as: type)
+    }
+
+    /// Loads the previous chunk for a thread — called when user scrolls to top.
+    /// Returns (olderMessages, hasMore, newOldestChunkIndex).
+    public func loadMoreMessages<T: Codable>(
+        fromThreadId threadId: UUID,
+        currentOldestChunkIndex: Int,
+        as type: T.Type
+    ) async throws -> (messages: [T], hasMore: Bool, newOldestChunkIndex: Int) {
+        let indices = try await chunkIndices(for: threadId)
+        guard let pos = indices.firstIndex(of: currentOldestChunkIndex), pos > 0 else {
+            return ([], false, currentOldestChunkIndex)
         }
-        do {
-            return try JSONDecoder().decode([T].self, from: data)
-        } catch {
-            print("[ThreadStore] ⚠️ Failed to decode messages for thread \(threadId): \(error)")
-            return []
+
+        let prevIndex = indices[pos - 1]
+        guard let data = try await dataStore.loadRawData(chunkRelation(threadId, prevIndex)) else {
+            return ([], false, currentOldestChunkIndex)
         }
+
+        let chunk = try JSONDecoder().decode([T].self, from: data)
+        let hasMore = pos - 1 > 0
+        return (chunk, hasMore, prevIndex)
+    }
+
+    /// Returns the chunk index of the last (most recent) chunk, or nil if no chunks exist.
+    public func lastChunkIndex(forThreadId threadId: UUID) async throws -> Int? {
+        let indices = try await chunkIndices(for: threadId)
+        return indices.last
     }
 
     // MARK: - Settings
@@ -189,7 +294,6 @@ public actor ThreadStore {
     // MARK: - Starter plan enforcement
 
     /// Resets terminal access to .none across ALL threads.
-    /// Called when a Starter license is activated — Starter plan forbids terminal access.
     public func downgradeTerminalInAllThreads() async throws {
         var payloads = try await loadPayloads()
         var changed = false
@@ -305,7 +409,11 @@ public actor ThreadStore {
         let title = payloads[idx].title
         payloads.remove(at: idx)
         try await savePayloads(payloads)
-        try await dataStore.delete(messagesRelation(for: threadId))
+
+        // Delete all chunks atomically
+        let prefix = ChappieStorageRelation.chunkPrefix(for: threadId)
+        try await dataStore.deleteByPrefix(prefix)
+
         try await refreshCache()
         print("[ThreadStore] 🗑 Thread '\(title)' deleted")
     }
@@ -317,22 +425,25 @@ public actor ThreadStore {
         var result: [ThreadMemoryInfo] = []
 
         for payload in payloads.sorted(by: { $0.updatedAt > $1.updatedAt }) {
-            let rawData = try await dataStore.loadRawData(messagesRelation(for: payload.id))
-            let sizeBytes = rawData?.count ?? 0
+            let indices = try await chunkIndices(for: payload.id)
 
-            let count: Int
-            if let data = rawData,
-               let array = try? JSONSerialization.jsonObject(with: data) as? [Any] {
-                count = array.count
-            } else {
-                count = 0
+            var totalSize = 0
+            var totalCount = 0
+
+            for index in indices {
+                guard let data = try await dataStore.loadRawData(chunkRelation(payload.id, index)) else { continue }
+                totalSize += data.count
+                if let arr = try? JSONSerialization.jsonObject(with: data) as? [Any] {
+                    totalCount += arr.count
+                }
             }
 
             result.append(ThreadMemoryInfo(
                 threadId: payload.id,
                 title: payload.title,
-                messageCount: count,
-                sizeBytes: sizeBytes
+                messageCount: totalCount,
+                sizeBytes: totalSize,
+                chunkCount: max(1, indices.count)
             ))
         }
 
@@ -346,7 +457,7 @@ public actor ThreadStore {
     ) async throws {
         guard count > 0 else { return }
 
-        var messages: [T] = try await loadMessages(fromThreadId: threadId, as: type)
+        var messages: [T] = try await loadAllMessages(fromThreadId: threadId, as: type)
         guard !messages.isEmpty else { return }
 
         let toDelete = min(count, messages.count)
@@ -360,6 +471,17 @@ public actor ThreadStore {
 
     public func loadDefaultProvider() async throws -> AIProvider? {
         return nil
+    }
+}
+
+// MARK: - Array chunking helper
+
+private extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        guard size > 0 else { return [self] }
+        return stride(from: 0, to: count, by: size).map {
+            Array(self[$0..<Swift.min($0 + size, count)])
+        }
     }
 }
 

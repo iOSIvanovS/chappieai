@@ -21,15 +21,14 @@ All business logic lives in ChappieCore. The UI target is responsible only for:
 
 ```
 Chappie/
-├── ChappieApp.swift                    # @main, ModelContainer (AppSettingsSchema), AppDelegate
+├── ChappieApp.swift                    # @main, bootStorage(), AppDelegate
 ├── ContentView.swift                   # Conductor: assembles components, manages sheets
 ├── DropHandler.swift                   # Drag-and-drop: files AND project folders
 ├── MCPHelperLauncher.swift             # Launches ChappieMCP child process
 ├── Models/
 │   ├── AppState.swift                  # @Observable singleton: onboarding state
 │   ├── ChatMessage.swift               # UI message model (enum: .message / .toolCall / .terminalConfirmation)
-│   ├── AttachedFile.swift              # Attached file model for input
-│   └── AppSettingsMigration.swift      # SwiftData schema: AppSettingsSchema (StoredRecord only)
+│   └── AttachedFile.swift              # Attached file model for input
 ├── ViewModels/
 │   ├── ChappieViewModel.swift          # @Observable @MainActor ViewModel (core state)
 │   ├── ChappieViewModel+Send.swift     # send() — AI request pipeline
@@ -97,7 +96,7 @@ Chappie/
 ```mermaid
 graph TD
     subgraph Entry["App Entry"]
-        App["ChappieApp\n@main, ModelContainer\nAppSettingsSchema"]
+        App["ChappieApp\n@main, bootStorage()"]
         AS["AppState\n@Observable singleton\nonboarding flag"]
     end
 
@@ -172,22 +171,9 @@ graph TD
 
 ## 4. ChappieApp — Entry Point
 
-`@main struct ChappieApp` owns the single `ModelContainer` for the entire app lifetime.
-
-**SwiftData schema:**
-```swift
-// AppSettingsSchema — StoredRecord is the only @Model. Schema is frozen.
-// No migrations needed — domain structs evolve as Codable, not as @Model.
-let schema = Schema(versionedSchema: AppSettingsSchema.self)
-```
+`@main struct ChappieApp` boots SQLite storage and initialises the ViewModel.
 
 **AppDelegate:** `applicationWillTerminate` → `MCPHelperLauncher.shared.terminateHelper()`.
-
-**Critical rule:** every window that uses the main ViewModel MUST have:
-```swift
-.environment(viewModel)
-viewModel.setModelContainer(modelContainer)  // called once in .onAppear
-```
 
 ---
 
@@ -206,7 +192,7 @@ viewModel.setModelContainer(modelContainer)  // called once in .onAppear
 
 | File | Responsibility |
 |------|----------------|
-| `ChappieViewModel.swift` | Core state, init, `setModelContainer()` |
+| `ChappieViewModel.swift` | Core state, init, `bootStorage()` |
 | `+Send.swift` | `send()` — AI request pipeline |
 | `+Threads.swift` | Thread CRUD, `selectThread()`, `loadThreadsAndSelectActive()` |
 | `+ThreadSession.swift` | `ThreadSession` lifecycle — activate, invalidate |
@@ -292,7 +278,7 @@ Auto-select: if provider has exactly one key → pre-selected automatically.
 
 ## 10. ProjectSettingsSheet
 
-**Pattern:** "dumb component" — knows nothing about SwiftData.
+**Pattern:** "dumb component" — knows nothing about SQLite.
 - Receives `ProjectMetadata` and `onSave: (ProjectSettings) -> Void`
 - Edits `@State draft: ProjectSettings` (copy, not original)
 - On "Save" → `onSave(draft)` → `viewModel.updateProjectSettings()`
@@ -319,4 +305,6 @@ Auto-select: if provider has exactly one key → pre-selected automatically.
 | 2026-06 | Storage cleanup: removed DataStoreMigration, V2/V3 schema stubs |
 | 2026-06 | Onboarding: skip provider step if provider already exists |
 | 2026-07 | T-06: architecture files actualized (added DropHandler, EULAView, MemoryManagementView, ProviderIconView) |
-| 2026-07 | Projects refactor: removed ProjectStore CRUD, bookmark logic, AI add/remove tools. Projects now thread-local via ThreadProjectEntry.absolutePath. ChappieViewModel+Projects uses ThreadStore only. |
+| 2026-07 | Projects refactor: removed ProjectStore CRUD, bookmark logic, AI add/remove tools. |
+| 2026-07 | SwiftData removal: AppSettingsMigration.swift deleted. ChappieApp uses bootStorage(). |
+| 2026-07 | Legacy migration removed: ThreadStore no longer contains migrateIfNeeded logic. |

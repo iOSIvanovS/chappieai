@@ -18,12 +18,8 @@
 //   and the next bind() on the same socket fails with "address already in use".
 //
 // STORAGE ARCHITECTURE:
-// Two backends exist simultaneously during migration:
-//   - ChappieDataStore (SwiftData) — legacy, read-only after migration
-//   - SQLiteStorage (GRDB) — production target
-// MigrationService runs once on first launch, copies all data, sets a UserDefaults flag.
-// After migration, only SQLiteStorage is used. SwiftData container stays alive until
-// we confirm all users have migrated (next major version removes it entirely).
+// SQLiteStorage (GRDB) is the sole persistence backend.
+// ChappieDataStore (SwiftData) and MigrationService have been removed.
 //
 // WINDOW SIZE:
 // .defaultSize(width:height:) sets the initial window size on first launch (EULA screen).
@@ -45,7 +41,6 @@
 import SwiftUI
 import AppKit
 import ChappieCore
-import SwiftData
 import Sparkle
 
 @main
@@ -71,32 +66,6 @@ struct ChappieApp: App {
         )
     }
 
-    // MARK: - SwiftData Container (legacy — kept for MigrationService)
-
-    let modelContainer: ModelContainer = {
-        let schema = Schema(versionedSchema: AppSettingsSchema.self)
-        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-
-        do {
-            return try ModelContainer(for: schema, configurations: [config])
-        } catch {
-            print("[ChappieApp] Failed to create ModelContainer: \(error)")
-            print("[ChappieApp] Attempting to recreate database...")
-
-            let recoveryConfig = ModelConfiguration(
-                schema: schema,
-                isStoredInMemoryOnly: false,
-                allowsSave: true
-            )
-
-            do {
-                return try ModelContainer(for: schema, configurations: [recoveryConfig])
-            } catch {
-                fatalError("[ChappieApp] Critical: cannot create ModelContainer: \(error)")
-            }
-        }
-    }()
-
     // MARK: - Body
 
     var body: some Scene {
@@ -113,10 +82,9 @@ struct ChappieApp: App {
                         .ignoresSafeArea()
                 )
                 .onAppear {
-                    viewModel.setModelContainer(modelContainer)
+                    viewModel.bootStorage()
                 }
         }
-        .modelContainer(modelContainer)
         .defaultSize(width: 480, height: 600)
         .defaultPosition(.center)
         .commands {

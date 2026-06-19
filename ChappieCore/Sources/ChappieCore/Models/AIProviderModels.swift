@@ -4,12 +4,11 @@
 // Domain models for AI providers.
 //
 // ARCHITECTURE: JSON-SERIALIZATION PATTERN
-// AIProvider is a plain Codable struct stored directly in ChappieDataStore as [AIProvider].
-// No SwiftData @Model needed — schema never changes, no migrations ever.
-// ChappieDataStore is the ONLY place that knows about SwiftData — see DataStore.swift.
+// AIProvider is a plain Codable struct stored as [AIProvider] in SQLiteStorage.
+// No schema migrations needed — domain structs evolve freely as Codable.
 //
 // KEYCHAIN STORAGE:
-// API keys are stored in Keychain, NOT in SwiftData.
+// API keys are stored in Keychain, NOT in SQLite.
 // Each APIKey is stored under its own apiKey.id.uuidString — not under provider.id.
 //
 // CATALOG INTEGRATION:
@@ -115,7 +114,7 @@ public struct APIKey: Codable, Sendable, Identifiable, Equatable, Hashable {
 
 // MARK: - AIProvider
 
-/// A single AI provider configuration — stored directly as Codable in ChappieDataStore.
+/// A single AI provider configuration — stored directly as Codable in SQLiteStorage.
 /// isDefault is stored inline — no separate entity needed.
 public struct AIProvider: Codable, Sendable, Identifiable, Equatable, Hashable {
 

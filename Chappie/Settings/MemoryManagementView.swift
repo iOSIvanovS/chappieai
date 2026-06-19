@@ -176,10 +176,13 @@ struct MemoryManagementView: View {
                 fromThreadId: info.threadId,
                 as: ChatMessage.self
             )
-            // Reload active thread messages if it's the one being cleaned
+            // Reload active thread messages if it's the one being cleaned.
+            // Use loadAllMessages — we need the full set to rebuild the in-memory state.
             if viewModel.activeThread?.id == info.threadId {
-                if let loaded = try? await store.loadMessages(fromThreadId: info.threadId, as: ChatMessage.self) {
+                if let loaded = try? await store.loadAllMessages(fromThreadId: info.threadId, as: ChatMessage.self) {
                     viewModel.messages = loaded
+                    viewModel.hasMoreChunks = false
+                    viewModel.oldestLoadedChunkIndex = nil
                     viewModel.resetPagination(fireScrollTrigger: true)
                 }
             }

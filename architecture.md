@@ -54,7 +54,7 @@ graph TD
     App -->|embeds in Contents/Helpers/| MCP
 
     subgraph Storage["Persistence"]
-        DS["DataStore (actor)\nSingle SwiftData gateway\nStoredRecord — the only @Model"]
+        DS["SQLiteStorage (GRDB)\nWAL mode, DatabasePool\nstored_records table"]
         KC["Keychain\n(API keys + license data)"]
     end
 
@@ -93,7 +93,7 @@ ChappieMCP
 |---|---|
 | Swift 6 (Full Concurrency) | Entire project |
 | SwiftUI macOS 26+ | UI layer |
-| SwiftData macOS 26+ | Single-model persistence via DataStore |
+| GRDB (SQLite) | Persistence via SQLiteStorage |
 | @Observable | ViewModel |
 | Actors | ChappieCore services |
 | OpenAI-compatible API | Default wire protocol (AIClient) |
@@ -110,16 +110,16 @@ ChappieMCP
 
 | What | Where | Key/Format |
 |---|---|---|
-| Threads, messages, projects, settings | `DataStore.Relation.threads` | `[ThreadPayload]` JSON |
-| Memory (3 levels) | `DataStore.Relation.memory` | `[MemoryScope]` JSON |
-| AI providers | `DataStore.Relation.providers` | `[AIProvider]` JSON |
-| App settings | `DataStore.Relation.appSettings` | `AppSettingsPayload` JSON |
+| Thread list + metadata | `stored_records` → key `"threads"` | `[ThreadPayload]` JSON |
+| Thread messages | `stored_records` → key `"thread_messages_chunk.<UUID>.<index>"` | `[ChatMessage]` JSON chunks (500 msgs each) |
+| Memory (3 levels) | `stored_records` → key `"memory"` | `[MemoryScope]` JSON |
+| AI providers | `stored_records` → key `"providers"` | `[AIProvider]` JSON |
+| App settings | `stored_records` → key `"app_settings"` | `AppSettingsPayload` JSON |
 | API keys | Keychain | `apiKey.id.uuidString` |
 | License data | Keychain | `license.*` keys — see licensing.md §5 |
 
-**Rule: DataStore.swift is the ONLY file in the project that imports SwiftData.**
-**StoredRecord is the ONLY @Model. Its schema never changes. No migrations ever needed.**
-**License data lives in Keychain ONLY — never in SwiftData.**
+**Rule: SQLiteStorage (GRDB) is the ONLY persistence backend. No SwiftData anywhere.**
+**License data lives in Keychain ONLY — never in SQLite.**
 
 > **Projects are stored inside ThreadPayload** — no separate global project registry.
 > Each thread owns its own `[ThreadProjectEntry]` with `id`, `displayName`, `absolutePath`.
@@ -180,13 +180,13 @@ Empty sections are omitted entirely — no wasted tokens.
 ## 9. DataStore Pattern — Deterministic Data Flow
 
 ```
-Write:  DomainStruct (Codable) → JSONEncoder → Data → StoredRecord.payload → SwiftData
-Read:   SwiftData → StoredRecord.payload → Data → JSONDecoder → DomainStruct (Codable)
+Write:  DomainStruct (Codable) → JSONEncoder → Data → stored_records.payload → SQLite
+Read:   SQLite → stored_records.payload → Data → JSONDecoder → DomainStruct (Codable)
 ```
 
 **Why this works:**
-- SwiftData schema is frozen at one model (`StoredRecord`). No migrations ever.
-- Domain structs evolve freely as `Codable` — no SwiftData involvement.
+- SQLite schema is frozen at one table (`stored_records`). No migrations ever.
+- Domain structs evolve freely as `Codable` — no schema involvement.
 - Decode failure is non-fatal. Callers receive `nil`/`[]` and recover gracefully.
 - The entire persistence layer is replaceable without touching domain logic.
 
@@ -198,7 +198,17 @@ Read:   SwiftData → StoredRecord.payload → Data → JSONDecoder → DomainSt
 
 ---
 
-## 10. Provider Catalog Pipeline
+## 10. Message Chunking
+
+Messages are stored in chunks of 500 per SQLite row:
+- Key format: `thread_messages_chunk.<UUID>.<index>` (zero-padded for lexicographic sort)
+- `loadMessages()` loads only the **last chunk** — O(1) open time regardless of history size
+- `loadMoreMessages()` loads previous chunks on scroll — lazy pagination
+- `deleteByPrefix()` deletes all chunks atomically in one SQL query
+
+---
+
+## 11. Provider Catalog Pipeline
 
 `providers.json` hosted at:
 `https://raw.githubusercontent.com/iOSIvanovS/chappieai/main/docs/providers.json`
@@ -212,7 +222,7 @@ Supported providers (10): OpenAI, Anthropic, Google Gemini, DeepSeek, Groq, Mist
 
 ---
 
-## 11. Licensing System
+## 12. Licensing System
 
 See **`licensing.md`** for the full specification:
 - Plans: trial / starter / pro / team / owner
@@ -224,7 +234,7 @@ See **`licensing.md`** for the full specification:
 
 ---
 
-## 12. 📚 Docs Group in Xcode Navigator
+## 13. 📚 Docs Group in Xcode Navigator
 
 `📚 Docs` group in `project.pbxproj` — navigation only, not included in build.
 Contains root `architecture.md` + `licensing.md` + references to 4 target architecture files.
@@ -232,7 +242,7 @@ Contains root `architecture.md` + `licensing.md` + references to 4 target archit
 
 ---
 
-## 13. Work Pipeline
+## 14. Work Pipeline
 
 1. `git_status` — check for uncommitted changes
 2. Implement (one task per pass)
@@ -245,7 +255,7 @@ Contains root `architecture.md` + `licensing.md` + references to 4 target archit
 
 ---
 
-## 14. Inviolable Agent Rules
+## 15. Inviolable Agent Rules
 
 **RULE-01: One task per pass** — decompose into backlog, execute one item, commit, repeat.
 
@@ -268,3 +278,5 @@ Contains root `architecture.md` + `licensing.md` + references to 4 target archit
 | 2025-07 | Initial architecture |
 | 2026-06 | Storage cleanup: removed DataStoreMigration, V2/V3 schema stubs |
 | 2026-07 | Projects refactor: removed global ProjectPayload registry + bookmarks. Projects now live inside ThreadPayload as [ThreadProjectEntry] with absolutePath. AI tools add/remove_project_to_thread removed. |
+| 2026-07 | SwiftData removal: SQLiteStorage (GRDB) is now the sole persistence backend. |
+| 2026-07 | Chunk system: messages split into 500-msg chunks. Lazy loading. Legacy migration removed after all data migrated. |

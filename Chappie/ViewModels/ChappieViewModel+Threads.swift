@@ -70,12 +70,16 @@ extension ChappieViewModel {
         _syncTask = Task { [weak self] in
             guard let self else { return }
 
-            // Step 1: load messages from SwiftData.
-            if let loaded = try? await store.loadMessages(fromThreadId: thread.id, as: ChatMessage.self) {
+            // Step 1: load last chunk of messages — fast O(1) open regardless of history size.
+            if let result = try? await store.loadMessages(fromThreadId: thread.id, as: ChatMessage.self) {
                 guard !Task.isCancelled else { return }
-                self.messages = loaded
+                self.messages = result.messages
+                self.hasMoreChunks = result.hasMore
+                if result.hasMore {
+                    self.oldestLoadedChunkIndex = try? await store.lastChunkIndex(forThreadId: thread.id)
+                }
                 self.resetPagination(fireScrollTrigger: true)
-                print("[ChappieViewModel] Thread '\(thread.title)' selected (\(loaded.count) messages)")
+                print("[ChappieViewModel] Thread '\(thread.title)' selected (\(result.messages.count) messages, hasMoreChunks=\(result.hasMore))")
             }
 
             // Step 1a: insert greeting for new threads — AFTER loadMessages so it is never overwritten.
@@ -104,6 +108,35 @@ extension ChappieViewModel {
 
             // Step 4: full session assembly (FS sync + MCP restart — once, inside assembleThreadSession).
             await self.assembleThreadSession(for: thread)
+        }
+    }
+
+    // MARK: - Load More Chunks (scroll to top)
+
+    /// Loads the previous chunk when user scrolls to the top of the thread.
+    /// Called from ChatScrollView when hasMoreChunks == true and user hits the top.
+    func loadOlderMessages() {
+        guard hasMoreChunks,
+              let threadId = activeThread?.id,
+              let store = threadStore,
+              let currentOldest = oldestLoadedChunkIndex else { return }
+
+        Task {
+            guard let result = try? await store.loadMoreMessages(
+                fromThreadId: threadId,
+                currentOldestChunkIndex: currentOldest,
+                as: ChatMessage.self
+            ) else { return }
+
+            guard !result.messages.isEmpty else { return }
+
+            // Prepend older messages — preserve scroll anchor via loadMoreAnchorId.
+            self.loadMoreAnchorId = self.displayedMessages.first?.id
+            self.messages = result.messages + self.messages
+            self.displayedMessages = result.messages + self.displayedMessages
+            self.displayedStart += result.messages.count
+            self.hasMoreChunks = result.hasMore
+            self.oldestLoadedChunkIndex = result.newOldestChunkIndex
         }
     }
 
@@ -274,7 +307,7 @@ extension ChappieViewModel {
         let updatedThread = refreshed.first(where: { $0.id == thread.id }) ?? thread
 
         // insertGreeting: true — greeting is inserted inside _syncTask after loadMessages(),
-        // so it is never overwritten by the empty array returned from SwiftData.
+        // so it is never overwritten by the empty array returned from storage.
         await selectThread(updatedThread, insertGreeting: true)
     }
 

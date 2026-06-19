@@ -19,8 +19,9 @@ import Foundation
 
 // MARK: DataStore (DataStore/)
 //
-// • ChappieDataStore       — the ONLY actor that knows about SwiftData. Single point of persistence.
-// • StoredRecord           — the ONLY @Model in the entire app. relation(String) + payload(Data).
+// • SQLiteStorage          — GRDB-based persistence backend. Sole production backend.
+// • ChappieStorage         — protocol abstracted over the backend; all Stores depend on it.
+// • ChappieStorageRelation — typesafe row keys (threads, projects, memory, providers, …)
 
 // MARK: Data Models (Models/)
 //
@@ -55,11 +56,11 @@ import Foundation
 // • ToolExecutionService   — registry and executor of all Chappie tools
 // • FileSystemManager      — safe file system access with path traversal protection
 // • MemoryManager          — long-term memory: write, read, search entries
-// • ThreadStore            — actor, CRUD for threads via ChappieDataStore
-// • ProjectStore           — actor, CRUD for projects via ChappieDataStore
-// • AppSettingsStore       — actor, CRUD for app settings via ChappieDataStore
+// • ThreadStore            — actor, CRUD for threads via ChappieStorage
+// • ProjectStore           — actor, CRUD for projects via ChappieStorage
+// • AppSettingsStore       — actor, CRUD for app settings via ChappieStorage
 
 // MARK: - Package Version
 
 /// Current ChappieCore version.
-public let coreVersion = "4.1.0"
+public let coreVersion = "4.2.0"

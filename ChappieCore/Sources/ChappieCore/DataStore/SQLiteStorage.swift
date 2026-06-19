@@ -2,7 +2,6 @@
 // ChappieCore
 //
 // Production SQLite backend via GRDB.
-// Replaces ChappieDataStore (SwiftData) as the primary persistence layer.
 //
 // SCHEMA:
 // Single table `stored_records` with two columns:
@@ -83,7 +82,7 @@ public actor SQLiteStorage: ChappieStorage {
         try migrator.migrate(writer)
     }
 
-    // MARK: - ChappieStorage
+    // MARK: - ChappieStorage: Read
 
     public func load<T: Codable & Sendable>(_ relation: ChappieStorageRelation) async throws -> T? {
         guard let data = try await loadRawData(relation) else { return nil }
@@ -105,6 +104,8 @@ public actor SQLiteStorage: ChappieStorage {
         }
     }
 
+    // MARK: - ChappieStorage: Write
+
     public func save<T: Codable & Sendable>(_ value: T, for relation: ChappieStorageRelation) async throws {
         let data = try JSONEncoder().encode(value)
         try await saveRawData(data, for: relation)
@@ -118,6 +119,8 @@ public actor SQLiteStorage: ChappieStorage {
         }
     }
 
+    // MARK: - ChappieStorage: Delete
+
     public func delete(_ relation: ChappieStorageRelation) async throws {
         let key = relation.key
         try await db.write { db in
@@ -128,12 +131,39 @@ public actor SQLiteStorage: ChappieStorage {
         print("[SQLiteStorage] 🗑 Deleted relation '\(key)'")
     }
 
+    /// Deletes all rows whose key starts with prefix — atomically in one transaction.
+    /// Used to delete all chunks of a thread at once.
+    public func deleteByPrefix(_ prefix: String) async throws {
+        try await db.write { db in
+            try StoredRow
+                .filter(Column("relation").like("\(prefix)%"))
+                .deleteAll(db)
+        }
+        print("[SQLiteStorage] 🗑 Deleted all rows with prefix '\(prefix)'")
+    }
+
+    // MARK: - ChappieStorage: Existence
+
     public func exists(_ relation: ChappieStorageRelation) async throws -> Bool {
         let key = relation.key
         return try await db.read { db in
             try StoredRow
                 .filter(Column("relation") == key)
                 .fetchCount(db) > 0
+        }
+    }
+
+    // MARK: - ChappieStorage: Enumeration
+
+    /// Returns all keys starting with prefix, sorted ascending.
+    /// Chunk keys sort correctly by index because we zero-pad to 6 digits.
+    public func keys(withPrefix prefix: String) async throws -> [String] {
+        return try await db.read { db in
+            let rows = try StoredRow
+                .filter(Column("relation").like("\(prefix)%"))
+                .order(Column("relation").asc)
+                .fetchAll(db)
+            return rows.map { $0.relation }
         }
     }
 }

@@ -5,13 +5,9 @@
 // All Stores (ThreadStore, MemoryStore, etc.) depend on this — never on a concrete class.
 //
 // WHY A PROTOCOL:
-// SwiftData crashed in production. We're migrating to SQLite via GRDB.
-// The protocol lets us swap implementations without touching any Store.
+// Decouples business logic from storage implementation.
 // DI at the app entry point decides which backend is active.
-//
-// IMPLEMENTORS:
-// - ChappieDataStore  — SwiftData backend (legacy, kept during migration)
-// - SQLiteStorage     — GRDB backend (new, production target)
+// Currently the sole implementor is SQLiteStorage (GRDB).
 
 import Foundation
 
@@ -28,7 +24,6 @@ public protocol ChappieStorage: Actor {
     func load<T: Codable & Sendable>(_ relation: ChappieStorageRelation) async throws -> T?
 
     /// Returns raw payload Data without decoding.
-    /// Used for thread messages that are already valid JSON.
     func loadRawData(_ relation: ChappieStorageRelation) async throws -> Data?
 
     // MARK: Write
@@ -44,33 +39,46 @@ public protocol ChappieStorage: Actor {
     /// Deletes the record for the given relation. No-op if not found.
     func delete(_ relation: ChappieStorageRelation) async throws
 
+    /// Deletes all records whose key starts with the given prefix.
+    /// Used to atomically delete all chunks of a thread.
+    func deleteByPrefix(_ prefix: String) async throws
+
     // MARK: Existence
 
     /// Returns true if a record exists for the given relation.
     func exists(_ relation: ChappieStorageRelation) async throws -> Bool
+
+    // MARK: Enumeration
+
+    /// Returns all relation keys that start with the given prefix, sorted ascending.
+    func keys(withPrefix prefix: String) async throws -> [String]
 }
 
 // MARK: - ChappieStorageRelation
 
 /// Typesafe keys for storage rows.
-/// Extracted from ChappieDataStore.Relation into a standalone type
-/// so it can be used in the protocol without importing SwiftData.
 public enum ChappieStorageRelation: Sendable, Hashable {
     case threads
     case projects
     case memory
     case providers
     case appSettings
-    case threadMessages(UUID)
+    /// Chunked messages: "thread_messages_chunk.<UUID>.<index>" e.g. index = 0, 1, 2...
+    case threadMessagesChunk(UUID, Int)
 
     public var key: String {
         switch self {
-        case .threads:                  return "threads"
-        case .projects:                 return "projects"
-        case .memory:                   return "memory"
-        case .providers:                return "providers"
-        case .appSettings:              return "app_settings"
-        case .threadMessages(let id):   return "thread_messages.\(id.uuidString)"
+        case .threads:                              return "threads"
+        case .projects:                             return "projects"
+        case .memory:                               return "memory"
+        case .providers:                            return "providers"
+        case .appSettings:                          return "app_settings"
+        case .threadMessagesChunk(let id, let i):   return "thread_messages_chunk.\(id.uuidString).\(i)"
         }
+    }
+
+    /// Prefix used to enumerate or delete all chunks for a thread.
+    public static func chunkPrefix(for threadId: UUID) -> String {
+        return "thread_messages_chunk.\(threadId.uuidString)."
     }
 }
