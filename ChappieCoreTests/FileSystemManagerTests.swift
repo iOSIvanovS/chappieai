@@ -290,4 +290,113 @@ struct FileSystemManagerTests {
             try await manager.readFile(at: "Alpha/../../\(dir2.lastPathComponent)/secret.txt")
         }
     }
+
+    // MARK: - Patch file
+
+    @Test("patchFile: success — single match replaced")
+    func patchFileSuccess() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
+
+        let fileURL = workspace.appendingPathComponent("patch_test.swift")
+        try """
+        func greet() {
+            print("Hello, world!")
+        }
+        """.write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let result = try await manager.patchFile(
+            at: "patch_test.swift",
+            find: "func greet() {\n    print(\"Hello, world!\")\n}",
+            replace: "func greet() {\n    print(\"Hello, Chappie!\")\n}"
+        )
+
+        #expect(result.contains("Success"))
+        let patched = try String(contentsOf: fileURL, encoding: .utf8)
+        #expect(patched.contains("Hello, Chappie!"))
+        #expect(!patched.contains("Hello, world!"))
+    }
+
+    @Test("patchFile: zero matches — file unchanged")
+    func patchFileZeroMatches() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
+
+        let fileURL = workspace.appendingPathComponent("patch_zero.swift")
+        let original = "func foo() { return 42 }"
+        try original.write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let result = try await manager.patchFile(
+            at: "patch_zero.swift",
+            find: "func bar() { return 99 }",
+            replace: "func bar() { return 0 }"
+        )
+
+        #expect(result.contains("Error"))
+        #expect(result.contains("not found"))
+        let unchanged = try String(contentsOf: fileURL, encoding: .utf8)
+        #expect(unchanged == original)
+    }
+
+    @Test("patchFile: two matches — file unchanged, ambiguous error")
+    func patchFileTwoMatches() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
+
+        let fileURL = workspace.appendingPathComponent("patch_dup.swift")
+        let original = "return nil\nreturn nil\n"
+        try original.write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let result = try await manager.patchFile(
+            at: "patch_dup.swift",
+            find: "return nil",
+            replace: "return .empty"
+        )
+
+        #expect(result.contains("Error"))
+        #expect(result.contains("matches"))
+        let unchanged = try String(contentsOf: fileURL, encoding: .utf8)
+        #expect(unchanged == original)
+    }
+
+    @Test("patchFile: replace with empty string — deletes block")
+    func patchFileReplaceWithEmpty() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
+
+        let fileURL = workspace.appendingPathComponent("patch_empty.swift")
+        try "let x = 1\nlet y = 2\nlet z = 3\n".write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let result = try await manager.patchFile(
+            at: "patch_empty.swift",
+            find: "let y = 2\n",
+            replace: ""
+        )
+
+        #expect(result.contains("Success"))
+        let patched = try String(contentsOf: fileURL, encoding: .utf8)
+        #expect(!patched.contains("let y = 2"))
+        #expect(patched.contains("let x = 1"))
+        #expect(patched.contains("let z = 3"))
+    }
+
+    @Test("patchFile: file not found throws")
+    func patchFileMissingFileThrows() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
+
+        await #expect(throws: (any Error).self) {
+            try await manager.patchFile(at: "ghost.swift", find: "x", replace: "y")
+        }
+    }
+
+    @Test("🔒 patchFile: path traversal is blocked")
+    func patchFilePathTraversalBlocked() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
+
+        await #expect(throws: (any Error).self) {
+            try await manager.patchFile(at: "../../etc/passwd", find: "root", replace: "hacked")
+        }
+    }
 }
