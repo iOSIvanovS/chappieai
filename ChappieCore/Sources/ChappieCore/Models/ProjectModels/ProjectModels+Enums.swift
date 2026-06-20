@@ -1,18 +1,7 @@
-// ProjectModels.swift
+// ProjectModels+Enums.swift
 // ChappieCore
 //
-// Domain models for projects.
-//
-// STORAGE:
-// All project data is stored via ChappieDataStore — the only place that knows about SwiftData.
-// ProjectPayload (defined in ProjectStore.swift) is the persisted Codable struct.
-// Security-scoped bookmarks are stored separately under Relation.projectBookmark(uuid).
-// ChappieDataStore is the ONLY place that knows about SwiftData — see DataStore.swift.
-//
-// CODABLE COMPATIBILITY CONTRACT (never violate — stored JSON must always decode cleanly):
-//   1. Never rename a stored property without adding/updating CodingKeys.
-//   2. Never remove a stored property — mark optional with a default instead.
-//   3. Always give new properties a default value so old records decode cleanly.
+// All project-related enums: roles, access levels, language, dev environment.
 
 import Foundation
 
@@ -146,16 +135,16 @@ public enum TerminalAccessLevel: String, Codable, Sendable, CaseIterable {
 public enum ProjectLanguage: String, Codable, Sendable, CaseIterable {
     // Legacy cases — kept for backward Codable compatibility.
     // "english" maps to English, "native" was "user's native language" (now deprecated).
-    case english = "english"
-    case russian = "ru"
-    case german  = "de"
-    case spanish = "es"
-    case french  = "fr"
-    case hindi   = "hi"
-    case japanese = "ja"
+    case english    = "english"
+    case russian    = "ru"
+    case german     = "de"
+    case spanish    = "es"
+    case french     = "fr"
+    case hindi      = "hi"
+    case japanese   = "ja"
     case portuguese = "pt-BR"
-    case arabic  = "ar"
-    case chinese = "zh-Hans"
+    case arabic     = "ar"
+    case chinese    = "zh-Hans"
 
     // "native" stored in old records decodes to nil → falls back to default (.english) via migration.
     public init(from decoder: Decoder) throws {
@@ -271,172 +260,5 @@ public enum DevEnvironment: String, Codable, Sendable, CaseIterable {
         case .dotnet:          return ["build_project", "run_tests", "read_build_log"]
         case .html:            return []
         }
-    }
-}
-
-// MARK: - ProjectSettings
-
-/// Agent rights and configuration for a project. Serialized to JSON inside ProjectPayload.settingsJSON.
-/// Safe defaults: agentRole = .advisor, everything else = off/none.
-public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
-
-    public var agentRole: AgentRole
-
-    // Unlocks git/tests/architecture/comments/terminal settings in the UI and prompt.
-    public var isProgrammingProject: Bool
-
-    // Dev environment — controls env-specific tool injection. .unknown = not set.
-    public var devEnvironment: DevEnvironment
-
-    public var gitAccess: GitAccessLevel
-    public var testsAccess: TestsAccessLevel
-    public var architectureEnabled: Bool
-    public var architectureLanguage: ProjectLanguage
-    public var commentsEnabled: Bool
-    public var commentsLanguage: ProjectLanguage
-    public var terminalAccess: TerminalAccessLevel
-
-    public init(
-        agentRole: AgentRole = .advisor,
-        isProgrammingProject: Bool = false,
-        devEnvironment: DevEnvironment = .unknown,
-        gitAccess: GitAccessLevel = .none,
-        testsAccess: TestsAccessLevel = .none,
-        architectureEnabled: Bool = false,
-        architectureLanguage: ProjectLanguage = .english,
-        commentsEnabled: Bool = false,
-        commentsLanguage: ProjectLanguage = .english,
-        terminalAccess: TerminalAccessLevel = .none
-    ) {
-        self.agentRole = agentRole
-        self.isProgrammingProject = isProgrammingProject
-        self.devEnvironment = devEnvironment
-        self.gitAccess = gitAccess
-        self.testsAccess = testsAccess
-        self.architectureEnabled = architectureEnabled
-        self.architectureLanguage = architectureLanguage
-        self.commentsEnabled = commentsEnabled
-        self.commentsLanguage = commentsLanguage
-        self.terminalAccess = terminalAccess
-    }
-
-    /// Resets all access flags when downgrading to advisor role.
-    public mutating func downgradeToAdvisor() {
-        agentRole = .advisor
-        gitAccess = .none
-        testsAccess = .none
-        architectureEnabled = false
-        commentsEnabled = false
-        terminalAccess = .none
-    }
-}
-
-// MARK: - ProjectSettings: System Prompt Formatting
-
-extension ProjectSettings {
-
-    /// absolutePath is passed separately — it's runtime-only, not stored in ProjectSettings.
-    public func formatForSystemPrompt(projectName: String, absolutePath: String? = nil) -> String {
-        var lines: [String] = ["## Project Settings: \(projectName)"]
-
-        // Inject absolute path so AI always knows where the project lives on disk.
-        // This prevents the AI from losing the working directory after context resets.
-        if let path = absolutePath, !path.isEmpty {
-            lines.append("- Absolute path: \(path)")
-        }
-
-        lines.append("- Role: \(agentRole.rawValue.uppercased())")
-
-        if agentRole == .advisor {
-            lines.append("- Access: read-only (list_files, read_file). All write/git/test/terminal tools are BLOCKED.")
-            lines.append("- To unlock tools: go to project settings → change role to Executor.")
-            return lines.joined(separator: "\n")
-        }
-
-        lines.append("- Programming project: \(isProgrammingProject ? "yes" : "no")")
-
-        if isProgrammingProject {
-            if devEnvironment != .unknown {
-                lines.append("- Dev environment: \(devEnvironment.displayName)")
-            }
-
-            if gitAccess == .none {
-                lines.append("- Git: BLOCKED (enable in project settings)")
-            } else {
-                let toolsList = gitAccess.allowedTools.sorted().joined(separator: ", ")
-                lines.append("- Git: \(gitAccess.rawValue) [\(toolsList)] [git_diff: ALWAYS FORBIDDEN]")
-            }
-
-            switch testsAccess {
-            case .none:
-                lines.append("- Tests: BLOCKED (enable in project settings)")
-            case .readOnly:
-                lines.append("- Tests: read logs only (read_build_log). run_tests is BLOCKED.")
-            case .run:
-                lines.append("- Tests: run allowed (build_project, run_tests, read_build_log). Creating new tests: BLOCKED. You are required to run tests after changes when necessary. UI layer tests are low ROI and not required unless explicitly requested.")
-            case .write:
-                lines.append("- Tests: run + create allowed (build_project, run_tests, read_build_log, write test files). You are required to write tests for business logic, services, and non-trivial algorithms when necessary. You are required to run tests after changes when necessary. UI layer tests are low ROI and not required unless explicitly requested.")
-            }
-
-            if architectureEnabled {
-                // Use promptValue so AI gets a clear language name, not a raw code.
-                lines.append("- Architecture files: enabled (\(architectureLanguage.promptValue)). Discuss file paths with user before creating. If architecture files are found, save their paths to project memory and use them as a reference during development when relevant. You are required to keep architecture files up to date after code changes that affect the described structure. Keep architecture files concise: describe structure and decisions, not implementation details. Remove sections that are no longer relevant — dead history belongs in git, not in architecture files.")
-            } else {
-                lines.append("- Architecture files: read-only (enable write in project settings)")
-            }
-
-            if commentsEnabled {
-                // Use promptValue so AI gets a clear language name, not a raw code.
-                lines.append("- Code comments: enabled (\(commentsLanguage.promptValue)). Be concise — explain WHY, not WHAT. Write only when the code is non-obvious. Delete comments that are outdated or describe obvious operations. Never let comments outnumber or outsize the code they describe.")
-            } else {
-                lines.append("- Code comments: DISABLED (enable in project settings)")
-            }
-
-            switch terminalAccess {
-            case .none:
-                break // terminal not mentioned — thread-level setting takes precedence if set
-            case .confirm:
-                lines.append("- Terminal: enabled with confirmation. BEFORE running any command you MUST ask the user for explicit approval in chat. Do NOT call run_terminal until user says 'yes', 'go ahead', or equivalent.")
-            case .auto:
-                lines.append("- Terminal: enabled, auto-execute (no confirmation needed). Use responsibly.")
-            }
-        } else {
-            lines.append("- Advanced settings (git, tests, architecture, comments, terminal): locked. Enable 'Programming project' in settings.")
-        }
-
-        return lines.joined(separator: "\n")
-    }
-}
-
-// MARK: - ProjectMetadata
-
-/// Sendable DTO for passing project data across the actor boundary.
-///
-/// absolutePath is runtime-only — resolved from the stored path at attachment time.
-/// Not re-evaluated on every sync — path is stable as long as the user doesn't move the folder.
-public struct ProjectMetadata: Sendable, Identifiable, Hashable {
-
-    public let id: UUID
-    public let displayName: String
-    public let createdAt: Date
-    public let settings: ProjectSettings
-
-    /// Runtime-only: absolute path resolved from the stored path at attachment time.
-    /// Nil until first successful resolution.
-    public var absolutePath: String?
-
-    /// Public init for Previews, tests, and direct construction.
-    public init(
-        id: UUID = UUID(),
-        displayName: String,
-        createdAt: Date = Date(),
-        settings: ProjectSettings = ProjectSettings(),
-        absolutePath: String? = nil
-    ) {
-        self.id = id
-        self.displayName = displayName
-        self.createdAt = createdAt
-        self.settings = settings
-        self.absolutePath = absolutePath
     }
 }
