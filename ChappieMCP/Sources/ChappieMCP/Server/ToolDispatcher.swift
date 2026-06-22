@@ -19,7 +19,7 @@ final class ToolDispatcher: Sendable {
         // Without it, xcodeProjectName() scans defaultProjectPath and finds the wrong .xcodeproj.
         self.buildTools = BuildTools(projectPath: projectPath, projectEnvMap: projectEnvMap, projectPathMap: projectPathMap)
         self.locTools   = LocalizationTools(projectPath: projectPath, projectPathMap: projectPathMap)
-        self.docTools   = DocumentTools(projectPath: projectPath)
+        self.docTools   = DocumentTools(projectPath: projectPath, projectPathMap: projectPathMap)
     }
 
     func execute(tool: String, args: [String: String]) async -> ToolResult {
@@ -87,7 +87,7 @@ final class ToolDispatcher: Sendable {
             guard let path = args["path"], !path.isEmpty else {
                 return .failure("Argument 'path' is required (e.g. 'contract.docx')")
             }
-            return docTools.readDocument(relativePath: path)
+            return docTools.readDocument(relativePath: path, projectName: args["project"])
 
         case "write_document":
             guard let path = args["path"], !path.isEmpty else {
@@ -100,7 +100,8 @@ final class ToolDispatcher: Sendable {
                 relativePath: path,
                 xmlContent: content,
                 outputPath: args["output_path"],
-                entryName: args["entry_name"]
+                entryName: args["entry_name"],
+                projectName: args["project"]
             )
 
         // MARK: - Localization tools

@@ -16,16 +16,19 @@ import ZIPFoundation
 final class DocumentTools: Sendable {
 
     let projectPath: String
+    // WHY: supports multi-project threads — resolves path by project name, same pattern as GitTools/BuildTools.
+    let projectPathMap: [String: String]
 
-    init(projectPath: String) {
+    init(projectPath: String, projectPathMap: [String: String] = [:]) {
         self.projectPath = projectPath
+        self.projectPathMap = projectPathMap
     }
 
     // MARK: - read_document
 
     /// Routes to the correct reader based on file extension.
-    func readDocument(relativePath: String) -> ToolResult {
-        let fullPath = resolvePath(relativePath)
+    func readDocument(relativePath: String, projectName: String? = nil) -> ToolResult {
+        let fullPath = resolvePath(relativePath, projectName: projectName)
         let ext = URL(fileURLWithPath: fullPath).pathExtension.lowercased()
 
         switch ext {
@@ -52,8 +55,8 @@ final class DocumentTools: Sendable {
 
     /// Routes to ZIP patcher or plain-text writer based on file extension.
     /// Returns structured JSON: {"status":"ok","saved_path":"...","filename":"..."}
-    func writeDocument(relativePath: String, xmlContent: String, outputPath: String?, entryName: String?) -> ToolResult {
-        let fullPath = resolvePath(relativePath)
+    func writeDocument(relativePath: String, xmlContent: String, outputPath: String?, entryName: String?, projectName: String? = nil) -> ToolResult {
+        let fullPath = resolvePath(relativePath, projectName: projectName)
         let ext = URL(fileURLWithPath: fullPath).pathExtension.lowercased()
 
         let primaryEntry: String
@@ -63,19 +66,30 @@ final class DocumentTools: Sendable {
         case "pptx":      primaryEntry = entryName ?? "ppt/slides/slide1.xml"
         case "odt":       primaryEntry = entryName ?? "content.xml"
         case "rtf", "csv":
-            return writePlainText(content: xmlContent, originalPath: fullPath, outputPath: outputPath.map { resolvePath($0) })
+            return writePlainText(content: xmlContent, originalPath: fullPath, outputPath: outputPath.map { resolvePath($0, projectName: projectName) })
         default:
             return .failure("write_document: unsupported format '.\(ext)'. Supported: docx, xlsx, pptx, odt, rtf, csv.")
         }
 
-        let destination = outputPath.map { resolvePath($0) } ?? fullPath
+        let destination = outputPath.map { resolvePath($0, projectName: projectName) } ?? fullPath
         return replaceZipEntry(sourcePath: fullPath, entryName: primaryEntry, newContent: xmlContent, outputPath: destination)
     }
 
     // MARK: - Path helpers
 
-    func resolvePath(_ relativePath: String) -> String {
+    func resolvePath(_ relativePath: String, projectName: String? = nil) -> String {
         if relativePath.hasPrefix("/") { return relativePath }
-        return projectPath + "/" + relativePath
+        // WHY: when a named project is specified, resolve against its root — not the default project.
+        let base: String
+        if let name = projectName, let mapped = projectPathMap[name] {
+            base = mapped
+            // WHY: list_files returns "ProjectName/file.docx" — strip the prefix to avoid double-nesting.
+            let prefix = name + "/"
+            let stripped = relativePath.hasPrefix(prefix) ? String(relativePath.dropFirst(prefix.count)) : relativePath
+            return base + "/" + stripped
+        } else {
+            base = projectPath
+        }
+        return base + "/" + relativePath
     }
 }

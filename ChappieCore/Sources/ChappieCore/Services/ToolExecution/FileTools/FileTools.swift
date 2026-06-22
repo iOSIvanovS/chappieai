@@ -109,12 +109,16 @@ extension ToolExecutionService {
             )
 
         // Document tools — routed through MCP (ZIPFoundation lives in ChappieMCP target).
+        // WHY project is forwarded: MCP's DocumentTools resolves the path via projectPathMap.
+        // Without project arg, it falls back to workspace root — wrong path for non-default projects.
         case "read_document":
             guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                   let path = args["path"], !path.isEmpty else {
                 return "Error: Argument 'path' is required for read_document"
             }
-            return await mcpBridge.execute(tool: "read_document", args: ["path": path])
+            var mcpArgs: [String: String] = ["path": path]
+            if let project = args["project"] { mcpArgs["project"] = project }
+            return await mcpBridge.execute(tool: "read_document", args: mcpArgs)
 
         case "write_document":
             guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
@@ -123,8 +127,9 @@ extension ToolExecutionService {
                 return "Error: Arguments 'path' and 'content' are required for write_document"
             }
             var mcpArgs: [String: String] = ["path": path, "content": content]
+            if let project    = args["project"]     { mcpArgs["project"]     = project }
             if let outputPath = args["output_path"] { mcpArgs["output_path"] = outputPath }
-            if let entryName = args["entry_name"]   { mcpArgs["entry_name"] = entryName }
+            if let entryName  = args["entry_name"]  { mcpArgs["entry_name"]  = entryName }
             return await mcpBridge.execute(tool: "write_document", args: mcpArgs)
 
         case "fetch_attachment":
