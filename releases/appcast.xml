@@ -162,5 +162,18 @@
                 type="application/octet-stream"
             />
         </item>
+
+        <item>
+            <title>Version 1.0.12</title>
+            <pubDate>Mon, 22 Jun 2026 18:09:58 +0000</pubDate>
+            <sparkle:version>13</sparkle:version>
+            <sparkle:shortVersionString>1.0.12</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.12.dmg"
+                sparkle:edSignature="OlHgb8KDpj5qGY9fGHXFBfu/rq23106CpwK7LWt72Q4I+ZMNFqfQh+/wW29IU+SLzjMMy4z3okzcWC0gyA2UDQ=="
+                length="9646383"
+                type="application/octet-stream"
+            />
+        </item>
     </channel>
 </rss>
