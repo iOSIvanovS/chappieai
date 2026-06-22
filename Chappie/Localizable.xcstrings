@@ -2627,7 +2627,6 @@
       }
     },
     "dev.env.unknown" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -5253,7 +5252,6 @@
       }
     },
     "git.access.full" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -5318,7 +5316,6 @@
       }
     },
     "git.access.none" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -5383,7 +5380,6 @@
       }
     },
     "git.access.status_only" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -5448,7 +5444,6 @@
       }
     },
     "git.access.write" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -5512,66 +5507,66 @@
         }
       }
     },
-    "https://..." : {
+    "https:\/\/..." : {
       "localizations" : {
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         }
       }
@@ -6217,7 +6212,6 @@
       }
     },
     "license.activate_title" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -7056,7 +7050,6 @@
       }
     },
     "license.jwt_token_hint" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -7121,7 +7114,6 @@
       }
     },
     "license.jwt_token_label" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -7576,7 +7568,6 @@
       }
     },
     "license.plan_devices_1" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -7641,7 +7632,6 @@
       }
     },
     "license.plan_devices_5" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -7770,7 +7760,6 @@
       }
     },
     "license.plan_pro_desc" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -7835,7 +7824,6 @@
       }
     },
     "license.plan_pro_name" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -7900,7 +7888,6 @@
       }
     },
     "license.plan_starter_desc" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -7965,7 +7952,6 @@
       }
     },
     "license.plan_starter_name" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -8030,7 +8016,6 @@
       }
     },
     "license.plan_team_desc" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -8095,7 +8080,6 @@
       }
     },
     "license.plan_team_name" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -8674,7 +8658,6 @@
       }
     },
     "license.state_owner" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -12071,7 +12054,6 @@
       }
     },
     "project.chips.unavailable_hint" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -12328,7 +12310,6 @@
       }
     },
     "project.settings.arch_language" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -12713,7 +12694,6 @@
       }
     },
     "project.settings.comments_language" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -14446,7 +14426,6 @@
       }
     },
     "project.settings.terminal_auto_warning" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -14511,7 +14490,6 @@
       }
     },
     "project.settings.terminal_picker" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -14576,7 +14554,6 @@
       }
     },
     "project.settings.terminal_safe_hint" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -14641,7 +14618,6 @@
       }
     },
     "project.settings.terminal_section" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -15675,61 +15651,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "بدون مسار، مثال: https://api.openai.com"
+            "value" : "بدون مسار، مثال: https:\/\/api.openai.com"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Kein Pfad, z.B.: https://api.openai.com"
+            "value" : "Kein Pfad, z.B.: https:\/\/api.openai.com"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No path, e.g.: https://api.openai.com"
+            "value" : "No path, e.g.: https:\/\/api.openai.com"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sin ruta, p. ej.: https://api.openai.com"
+            "value" : "Sin ruta, p. ej.: https:\/\/api.openai.com"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sans chemin, ex.: https://api.openai.com"
+            "value" : "Sans chemin, ex.: https:\/\/api.openai.com"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "कोई पाथ नहीं, जैसे: https://api.openai.com"
+            "value" : "कोई पाथ नहीं, जैसे: https:\/\/api.openai.com"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "パスなし、例: https://api.openai.com"
+            "value" : "パスなし、例: https:\/\/api.openai.com"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sem caminho, ex.: https://api.openai.com"
+            "value" : "Sem caminho, ex.: https:\/\/api.openai.com"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Без пути, например: https://api.openai.com"
+            "value" : "Без пути, например: https:\/\/api.openai.com"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "无路径，例如：https://api.openai.com"
+            "value" : "无路径，例如：https:\/\/api.openai.com"
           }
         }
       }
@@ -16674,7 +16650,7 @@
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "(%d / %d)"
+            "value" : "(%d \/ %d)"
           }
         },
         "pt-BR" : {
@@ -16692,7 +16668,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "(%d / %d)"
+            "value" : "(%d \/ %d)"
           }
         }
       }
@@ -18303,61 +18279,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "تنسيق /v1/messages الأصلي. جسم الطلب وفق معيار Anthropic."
+            "value" : "تنسيق \/v1\/messages الأصلي. جسم الطلب وفق معيار Anthropic."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Natives /v1/messages-Format. Anfragekörper nach Anthropic-Standard."
+            "value" : "Natives \/v1\/messages-Format. Anfragekörper nach Anthropic-Standard."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Native /v1/messages format. Request body per Anthropic standard."
+            "value" : "Native \/v1\/messages format. Request body per Anthropic standard."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Formato nativo /v1/messages. Cuerpo de solicitud según estándar Anthropic."
+            "value" : "Formato nativo \/v1\/messages. Cuerpo de solicitud según estándar Anthropic."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Format natif /v1/messages. Corps de requête selon le standard Anthropic."
+            "value" : "Format natif \/v1\/messages. Corps de requête selon le standard Anthropic."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "नेटिव /v1/messages फॉर्मेट। Anthropic मानक के अनुसार अनुरोध बॉडी।"
+            "value" : "नेटिव \/v1\/messages फॉर्मेट। Anthropic मानक के अनुसार अनुरोध बॉडी।"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ネイティブ/v1/messagesフォーマット。Anthropic標準のリクエストボディ。"
+            "value" : "ネイティブ\/v1\/messagesフォーマット。Anthropic標準のリクエストボディ。"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Formato nativo /v1/messages. Corpo de requisição conforme padrão Anthropic."
+            "value" : "Formato nativo \/v1\/messages. Corpo de requisição conforme padrão Anthropic."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Нативный формат /v1/messages. Тело запроса по стандарту Anthropic."
+            "value" : "Нативный формат \/v1\/messages. Тело запроса по стандарту Anthropic."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "原生 /v1/messages 格式。请求体符合 Anthropic 标准。"
+            "value" : "原生 \/v1\/messages 格式。请求体符合 Anthropic 标准。"
           }
         }
       }
@@ -18851,7 +18827,7 @@
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ステップ1/2 — プロバイダー"
+            "value" : "ステップ1\/2 — プロバイダー"
           }
         },
         "pt-BR" : {
@@ -18915,7 +18891,7 @@
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ステップ2/2 — モデル"
+            "value" : "ステップ2\/2 — モデル"
           }
         },
         "pt-BR" : {
@@ -20923,7 +20899,6 @@
       }
     },
     "role.advisor" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -20988,7 +20963,6 @@
       }
     },
     "role.advisor.description" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -21053,7 +21027,6 @@
       }
     },
     "role.executor" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -21118,7 +21091,6 @@
       }
     },
     "role.executor.description" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -24455,7 +24427,6 @@
       }
     },
     "terminal.access.auto" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -24520,7 +24491,6 @@
       }
     },
     "terminal.access.auto.description" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -24585,7 +24555,6 @@
       }
     },
     "terminal.access.confirm" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -24650,7 +24619,6 @@
       }
     },
     "terminal.access.confirm.description" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -24715,7 +24683,6 @@
       }
     },
     "terminal.access.none" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -24780,7 +24747,6 @@
       }
     },
     "terminal.access.none.description" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -24910,7 +24876,6 @@
     },
     "tests.access.none" : {
       "comment" : "Tests access level picker — no access option",
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -24975,7 +24940,6 @@
       }
     },
     "tests.access.read_only" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -25040,7 +25004,6 @@
       }
     },
     "tests.access.run" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -25105,7 +25068,6 @@
       }
     },
     "tests.access.write" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -26258,31 +26220,580 @@
       }
     },
     "thread.settings.starter_terminal_alert_cancel" : {
-
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "إلغاء"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abbrechen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancelar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Annuler"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "रद्द करें"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "キャンセル"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancelar"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отмена"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消"
+          }
+        }
+      }
     },
     "thread.settings.starter_terminal_alert_change_plan" : {
-
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تغيير الخطة"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plan wechseln"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Change Plan"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cambiar plan"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Changer de plan"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "प्लान बदलें"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "プランを変更"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mudar plano"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сменить план"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更改计划"
+          }
+        }
+      }
     },
     "thread.settings.starter_terminal_alert_message" : {
-
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "الوصول إلى الطرفية متاح في خطط Pro وUltra. قم بالترقية لفتح هذه الميزة."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminal-Zugriff ist in Pro- und Ultra-Plänen verfügbar. Upgrade durchführen, um diese Funktion freizuschalten."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminal access is available on Pro and Ultra plans. Upgrade to unlock this feature."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El acceso al terminal está disponible en los planes Pro y Ultra. Actualiza para desbloquear esta función."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L'accès au terminal est disponible dans les plans Pro et Ultra. Mettez à niveau pour débloquer cette fonctionnalité."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "टर्मिनल एक्सेस Pro और Ultra प्लान में उपलब्ध है। इस सुविधा को अनलॉक करने के लिए अपग्रेड करें।"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ターミナルアクセスはProおよびUltraプランで利用できます。この機能を解放するにはアップグレードしてください。"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O acesso ao terminal está disponível nos planos Pro e Ultra. Faça upgrade para desbloquear este recurso."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступ к терминалу доступен в планах Pro и Ultra. Обновите план, чтобы разблокировать эту функцию."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "终端访问在 Pro 和 Ultra 计划中可用。升级以解锁此功能。"
+          }
+        }
+      }
     },
     "thread.settings.starter_terminal_alert_title" : {
-
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "الطرفية تتطلب الاشتراك المميز"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminal erfordert Pro"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminal Requires Pro"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El terminal requiere Pro"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le terminal nécessite Pro"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "टर्मिनल के लिए Pro आवश्यक है"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ターミナルにはProが必要です"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminal requer Pro"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Терминал требует Pro"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "终端需要 Pro"
+          }
+        }
+      }
     },
     "thread.settings.terminal_auto_warning" : {
-
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "سينفذ الوكيل الأوامر دون تأكيد. تأكد من أنك تثق بالنموذج والمزود الحاليين."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Agent führt Befehle ohne Bestätigung aus. Stellen Sie sicher, dass Sie dem aktuellen Modell und Anbieter vertrauen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent will execute commands without confirmation. Make sure you trust the current model and provider."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El agente ejecutará comandos sin confirmación. Asegúrate de confiar en el modelo y proveedor actuales."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L'agent exécutera des commandes sans confirmation. Assurez-vous de faire confiance au modèle et au fournisseur actuels."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "एजेंट बिना पुष्टि के कमांड निष्पादित करेगा। सुनिश्चित करें कि आप वर्तमान मॉडल और प्रदाता पर भरोसा करते हैं।"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エージェントは確認なしにコマンドを実行します。現在のモデルとプロバイダーを信頼していることを確認してください。"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O agente executará comandos sem confirmação. Certifique-se de confiar no modelo e provedor atuais."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агент будет выполнять команды без подтверждения. Убедитесь, что доверяете текущей модели и провайдеру."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "代理将在不确认的情况下执行命令。请确保您信任当前的模型和提供商。"
+          }
+        }
+      }
     },
     "thread.settings.terminal_picker" : {
-
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "الوصول إلى الطرفية"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminal-Zugriff"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminal Access"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Acceso al terminal"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Accès au terminal"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "टर्मिनल एक्सेस"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ターミナルアクセス"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Acesso ao terminal"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступ к терминалу"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "终端访问"
+          }
+        }
+      }
     },
     "thread.settings.terminal_safe_hint" : {
-
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "الأوامر المدمرة محظورة بشكل غير مشروط."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Destruktive Befehle sind bedingungslos gesperrt."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Destructive commands are unconditionally blocked."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Los comandos destructivos están bloqueados incondicionalmente."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les commandes destructives sont inconditionnellement bloquées."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "विनाशकारी कमांड बिना शर्त अवरुद्ध हैं।"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "破壊的なコマンドは無条件にブロックされます。"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Comandos destrutivos são bloqueados incondicionalmente."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Деструктивные команды безусловно заблокированы."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "破坏性命令被无条件阻止。"
+          }
+        }
+      }
     },
     "thread.settings.terminal_section" : {
-
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "الطرفية"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminal"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminal"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminal"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminal"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "टर्मिनल"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ターミナル"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminal"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Терминал"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "终端"
+          }
+        }
+      }
     },
     "thread.settings.terminal_superpower_warning" : {
-
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "الوصول إلى الطرفية قوة استثنائية. استخدمه فقط مع النماذج والمزودين الذين تثق بهم تمامًا."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminal-Zugriff ist eine Superkraft. Verwende ihn nur mit Modellen und Anbietern, denen du vollständig vertraust."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminal access is a superpower. Use it only with models and providers you fully trust."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El acceso al terminal es un superpoder. Úsalo solo con modelos y proveedores en los que confíes plenamente."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L'accès au terminal est un superpouvoir. Utilisez-le uniquement avec des modèles et fournisseurs en qui vous avez entièrement confiance."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "टर्मिनल एक्सेस एक महाशक्ति है। इसका उपयोग केवल उन मॉडलों और प्रदाताओं के साथ करें जिन पर आप पूरी तरह भरोसा करते हैं।"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ターミナルアクセスは強力な機能です。完全に信頼するモデルとプロバイダーのみで使用してください。"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O acesso ao terminal é um superpoder. Use-o apenas com modelos e provedores nos quais você confia totalmente."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступ к терминалу — это суперсила. Используйте его только с моделями и провайдерами, которым полностью доверяете."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "终端访问是一种超能力。仅与您完全信任的模型和提供商一起使用。"
+          }
+        }
+      }
     },
     "thread.settings.title" : {
       "localizations" : {
@@ -26929,61 +27440,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "إظهار / إخفاء الخيوط"
+            "value" : "إظهار \/ إخفاء الخيوط"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Threads anzeigen / ausblenden"
+            "value" : "Threads anzeigen \/ ausblenden"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Show / hide threads"
+            "value" : "Show \/ hide threads"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mostrar / ocultar hilos"
+            "value" : "Mostrar \/ ocultar hilos"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Afficher / masquer les fils"
+            "value" : "Afficher \/ masquer les fils"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "थ्रेड दिखाएं / छुपाएं"
+            "value" : "थ्रेड दिखाएं \/ छुपाएं"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "スレッドを表示 / 非表示"
+            "value" : "スレッドを表示 \/ 非表示"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mostrar / ocultar tópicos"
+            "value" : "Mostrar \/ ocultar tópicos"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Показать / скрыть треды"
+            "value" : "Показать \/ скрыть треды"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "显示/隐藏线程"
+            "value" : "显示\/隐藏线程"
           }
         }
       }

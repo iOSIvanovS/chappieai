@@ -23,7 +23,8 @@ public actor WebFetchService {
     // MARK: - Public API
 
     /// Fetches the page at `urlString`, optionally filters by `selector`, returns clean text.
-    public func fetch(urlString: String, selector: String? = nil) async -> String {
+    /// Custom `headers` are merged on top of the default User-Agent (caller values win on conflict).
+    public func fetch(urlString: String, selector: String? = nil, headers: [String: String]? = nil) async -> String {
         guard let url = URL(string: urlString),
               let scheme = url.scheme,
               scheme == "http" || scheme == "https" else {
@@ -36,9 +37,13 @@ public actor WebFetchService {
         config.httpAdditionalHeaders = ["User-Agent": "Chappie/1.0 (AI assistant; web_fetch tool)"]
         let session = URLSession(configuration: config)
 
+        // Build request with optional custom headers
+        var request = URLRequest(url: url)
+        headers?.forEach { request.setValue($1, forHTTPHeaderField: $0) }
+
         let html: String
         do {
-            let (data, response) = try await session.data(from: url)
+            let (data, response) = try await session.data(for: request)
 
             if let httpResponse = response as? HTTPURLResponse,
                httpResponse.statusCode >= 400 {

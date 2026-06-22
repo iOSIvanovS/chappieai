@@ -62,7 +62,8 @@ extension ToolExecutionService {
             parameters: AIToolParameters(
                 properties: [
                     "url": AIToolProperty(type: "string", description: "Absolute URL of the page (http or https)."),
-                    "selector": AIToolProperty(type: "string", description: "Optional CSS selector to extract a specific block: tag name ('article'), '.class-name', or '#element-id'. If not specified — the entire page is processed.")
+                    "selector": AIToolProperty(type: "string", description: "Optional CSS selector to extract a specific block: tag name ('article'), '.class-name', or '#element-id'. If not specified — the entire page is processed."),
+                    "headers": AIToolProperty(type: "object", description: "Optional HTTP headers to include in the request (e.g. for API authentication). Example: {\"X-Figma-Token\": \"...\", \"Authorization\": \"Bearer ...\"}. Merged on top of default User-Agent — caller values win on conflict.")
                 ],
                 required: ["url"]
             )

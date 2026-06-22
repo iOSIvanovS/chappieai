@@ -154,11 +154,14 @@ extension ToolExecutionService {
             guard let service = webFetch else {
                 return "❌ web_fetch: service not available. WebFetchService was not injected into ToolExecutionService."
             }
-            guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
-                  let url = args["url"], !url.isEmpty else {
+            // Decode via JSONSerialization — args may contain a nested headers object, not just strings.
+            guard let raw = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any],
+                  let url = raw["url"] as? String, !url.isEmpty else {
                 return "❌ web_fetch: missing required argument 'url'."
             }
-            return await service.fetch(urlString: url, selector: args["selector"])
+            let selector = raw["selector"] as? String
+            let headers = raw["headers"] as? [String: String]
+            return await service.fetch(urlString: url, selector: selector, headers: headers)
 
         default:
             return "Error: Unknown file tool '\(name)'"
