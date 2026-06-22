@@ -15,9 +15,23 @@ extension BuildTools {
     /// Each project lives in its own directory. Without the correct path,
     /// this would always find Chappie.xcodeproj regardless of which project was requested.
     func xcodeProjectName(in projectDir: String) -> String {
-        if let items = try? FileManager.default.contentsOfDirectory(atPath: projectDir),
-           let proj = items.first(where: { $0.hasSuffix(".xcodeproj") }) {
-            return proj
+        // WHY Process+ls instead of FileManager.contentsOfDirectory:
+        // MCP runs as a child process and does NOT inherit security-scoped bookmarks
+        // from the parent Chappie app. FileManager cannot read sandbox-gated folders
+        // (e.g. user-attached projects like adept-tracker). Shell `ls` bypasses this
+        // because it runs in the user's shell environment with normal FS access.
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/ls")
+        process.arguments = [projectDir]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe() // suppress errors
+        if (try? process.run()) != nil {
+            process.waitUntilExit()
+            let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            if let proj = output.components(separatedBy: "\n").first(where: { $0.hasSuffix(".xcodeproj") }) {
+                return proj
+            }
         }
         return URL(fileURLWithPath: projectDir).lastPathComponent + ".xcodeproj"
     }
