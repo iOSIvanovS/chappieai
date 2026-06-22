@@ -28,11 +28,17 @@ import Foundation
 final class LocalizationTools: Sendable {
     let projectPath: String
 
+    // WHY: projectPathMap allows loc tools to find .xcstrings files across all
+    // registered projects, not just the workspace root. Without this, files in
+    // project subdirectories (e.g. MyApp/Resources/Localizable.xcstrings) are invisible.
+    let projectPathMap: [String: String]
+
     /// Path to batch state file in /tmp — survives between tool calls.
     let batchStatePath = "/tmp/chappie_loc_batch_state.json"
 
-    init(projectPath: String) {
+    init(projectPath: String, projectPathMap: [String: String] = [:]) {
         self.projectPath = projectPath
+        self.projectPathMap = projectPathMap
     }
 
     // MARK: - loc_info
@@ -52,7 +58,9 @@ final class LocalizationTools: Sendable {
         var report = "📦 Localization files found: \(files.count)\n\n"
 
         for filePath in files {
-            let relativePath = filePath.replacingOccurrences(of: projectPath + "/", with: "")
+            // WHY: file may live in a project-specific path, not workspace root —
+            // strip the longest matching prefix to get the most readable relative path.
+            let relativePath = relativeToAnyRoot(filePath)
             report += "📄 \(relativePath)\n"
 
             guard let xcstrings = loadXCStrings(at: filePath) else {

@@ -163,15 +163,7 @@ extension ChappieViewModel {
         Commit only after the user says the task is accepted (e.g. "looks good", "accepted", "commit").
         WHY: the user is the final judge of quality. A commit before acceptance locks in unreviewed work.
 
-    16. EXECUTION INTEGRITY (NEVER VIOLATE):
-        When implementing code changes — the FIRST action must always be read_file of the target file,
-        then write_file with actual changes. Never report "done" without tool call evidence in the same
-        response. If you wrote no files — you did nothing.
-        WHY: LLMs can generate plausible-looking completion reports without doing any real work.
-        The read_file → write_file chain is the only proof that work actually happened.
-        A response that claims "done" but contains no write_file calls is a hallucination.
-
-    17. TERMINAL DISCIPLINE (CRITICALLY IMPORTANT — NEVER VIOLATE):
+    16. TERMINAL DISCIPLINE (CRITICALLY IMPORTANT — NEVER VIOLATE):
         run_terminal and run_ssh are stateless by design — never rely on previous session state.
         FOUR ABSOLUTE RULES:
         A) Always specify project= parameter OR use an absolute path. Never use bare relative paths.

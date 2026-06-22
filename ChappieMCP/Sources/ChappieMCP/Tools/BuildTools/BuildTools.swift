@@ -76,7 +76,7 @@ final class BuildTools: Sendable {
         case .xcode:
             return await runXcodebuild(
                 args: ["-project", xcodeProjectName(in: path), "-scheme", xcodeAppScheme(in: path),
-                       "-configuration", "Debug", "-destination", "platform=macOS", "build"],
+                       "-configuration", "Debug", "-destination", xcodeDestination(in: path), "build"],
                 label: label,
                 workingDirectory: path,
                 env: env
@@ -114,7 +114,7 @@ final class BuildTools: Sendable {
         switch env {
         case .xcode:
             var args = ["-project", xcodeProjectName(in: path), "-scheme", xcodeTestScheme(in: path),
-                        "-destination", "platform=macOS", "test"]
+                        "-destination", xcodeTestDestination(in: path), "test"]
             if let target, !target.isEmpty {
                 args.append(contentsOf: ["-only-testing", target])
             }

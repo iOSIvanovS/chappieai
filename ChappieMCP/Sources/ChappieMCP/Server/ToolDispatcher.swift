@@ -18,7 +18,7 @@ final class ToolDispatcher: Sendable {
         // WHY projectPathMap here: BuildTools must run xcodebuild in the correct project directory.
         // Without it, xcodeProjectName() scans defaultProjectPath and finds the wrong .xcodeproj.
         self.buildTools = BuildTools(projectPath: projectPath, projectEnvMap: projectEnvMap, projectPathMap: projectPathMap)
-        self.locTools   = LocalizationTools(projectPath: projectPath)
+        self.locTools   = LocalizationTools(projectPath: projectPath, projectPathMap: projectPathMap)
         self.docTools   = DocumentTools(projectPath: projectPath)
     }
 

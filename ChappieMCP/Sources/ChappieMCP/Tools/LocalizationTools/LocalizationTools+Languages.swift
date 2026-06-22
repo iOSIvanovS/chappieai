@@ -12,7 +12,7 @@ extension LocalizationTools {
     func addLanguage(language: String, relativePath: String?) -> ToolResult {
         let files: [String]
         if let relativePath, !relativePath.isEmpty {
-            files = [projectPath + "/" + relativePath]
+            files = [resolveFullPath(relativePath)]
         } else {
             files = findXCStringsFiles()
         }
@@ -24,7 +24,7 @@ extension LocalizationTools {
         var results: [String] = []
 
         for filePath in files {
-            let rel = filePath.replacingOccurrences(of: projectPath + "/", with: "")
+            let rel = relativeToAnyRoot(filePath)
 
             guard var xcstrings = loadXCStrings(at: filePath) else {
                 results.append("⚠️ \(rel): failed to parse")
@@ -60,7 +60,7 @@ extension LocalizationTools {
     func removeLanguage(language: String, relativePath: String?) -> ToolResult {
         let files: [String]
         if let relativePath, !relativePath.isEmpty {
-            files = [projectPath + "/" + relativePath]
+            files = [resolveFullPath(relativePath)]
         } else {
             files = findXCStringsFiles()
         }
@@ -72,7 +72,7 @@ extension LocalizationTools {
         var results: [String] = []
 
         for filePath in files {
-            let rel = filePath.replacingOccurrences(of: projectPath + "/", with: "")
+            let rel = relativeToAnyRoot(filePath)
 
             guard var xcstrings = loadXCStrings(at: filePath) else {
                 results.append("⚠️ \(rel): failed to parse")

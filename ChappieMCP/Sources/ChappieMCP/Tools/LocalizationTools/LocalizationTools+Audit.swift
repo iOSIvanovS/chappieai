@@ -10,7 +10,7 @@ extension LocalizationTools {
 
     /// Finds keys in xcstrings that are not used anywhere in .swift files.
     func deadKeys(relativePath: String) -> ToolResult {
-        let fullPath = projectPath + "/" + relativePath
+        let fullPath = resolveFullPath(relativePath)
 
         guard let xcstrings = loadXCStrings(at: fullPath) else {
             return .failure("Failed to load: \(relativePath)")

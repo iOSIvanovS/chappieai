@@ -31,6 +31,53 @@ extension BuildTools {
     func xcodeTestScheme(in projectDir: String) -> String {
         xcodeAppScheme(in: projectDir) + "CoreTests"
     }
+
+    /// Detects the correct xcodebuild -destination for build_project.
+    ///
+    /// WHY generic/platform=: universal "Any Device" syntax — no specific simulator required.
+    /// Works regardless of which simulators are installed on the machine.
+    func xcodeDestination(in projectDir: String) -> String {
+        xcodeDestinationString(in: projectDir, forTests: false)
+    }
+
+    /// Detects the correct xcodebuild -destination for run_tests.
+    ///
+    /// WHY separate: macOS tests cannot run on "generic/platform=macOS" —
+    /// xcodebuild requires a concrete device for test execution (not just build).
+    /// Simulator platforms use the same generic destination for both build and test.
+    func xcodeTestDestination(in projectDir: String) -> String {
+        xcodeDestinationString(in: projectDir, forTests: true)
+    }
+
+    /// Core platform detection — shared by xcodeDestination and xcodeTestDestination.
+    private func xcodeDestinationString(in projectDir: String, forTests: Bool) -> String {
+        let projName = xcodeProjectName(in: projectDir)
+        let pbxPath = projectDir + "/" + projName + "/project.pbxproj"
+
+        guard let content = try? String(contentsOfFile: pbxPath, encoding: .utf8) else {
+            return forTests ? "platform=macOS,arch=arm64" : "generic/platform=macOS"
+        }
+
+        let lower = content.lowercased()
+
+        if lower.contains("sdkroot = iphoneos") || lower.contains("supported_platforms = iphoneos") {
+            return "generic/platform=iOS Simulator"
+        }
+        if lower.contains("sdkroot = watchos") || lower.contains("supported_platforms = watchos") {
+            return "generic/platform=watchOS Simulator"
+        }
+        if lower.contains("sdkroot = appletvos") || lower.contains("supported_platforms = appletvos") {
+            return "generic/platform=tvOS Simulator"
+        }
+        if lower.contains("sdkroot = xros") || lower.contains("supported_platforms = xros") {
+            return "generic/platform=visionOS Simulator"
+        }
+        // WHY different destinations:
+        // build: generic/platform=macOS — "Any Mac", no arch required
+        // tests: platform=macOS — equivalent to "My Mac" in Xcode, Xcode picks arch automatically
+        //        (see BuildTools+Process.swift DESTINATION HISTORY for rejected alternatives)
+        return forTests ? "platform=macOS" : "generic/platform=macOS"
+    }
 }
 
 // MARK: - Java/Kotlin helpers

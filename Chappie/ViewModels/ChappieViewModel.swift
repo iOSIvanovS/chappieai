@@ -1,13 +1,11 @@
 // ChappieViewModel.swift
 // Chappie
 //
-// Core @Observable class: state, init, service wiring, pagination, drafts, balance.
+// Core @Observable class: state declarations, init, history management, drafts, balance.
 // Business logic is split into extensions:
-//   +Threads, +Providers, +Projects, +Send, +Memory, +AppSettings, +ThreadSession, +License
-//
-// STORAGE:
-// bootStorage() initializes SQLiteStorage and wires all Stores.
-// SQLiteStorage (GRDB) is the sole persistence backend.
+//   +Boot, +Workspace, +Pagination, +Threads, +ThreadProvider, +ThreadGreeting,
+//   +ThreadSettings, +ThreadSession, +Providers, +Projects, +Send,
+//   +Memory, +AppSettings, +License, +Terminal
 
 import SwiftUI
 import ChappieCore
@@ -199,46 +197,6 @@ final class ChappieViewModel {
         }
     }
 
-    // MARK: - Pagination (within loaded messages)
-
-    func resetPagination(fireScrollTrigger: Bool = false) {
-        let count = messages.count
-        if count <= pageSize {
-            displayedStart = 0
-            displayedMessages = messages
-            hasMoreMessages = false
-        } else {
-            displayedStart = count - pageSize
-            displayedMessages = Array(messages[displayedStart...])
-            hasMoreMessages = true
-        }
-        if fireScrollTrigger { scrollToBottomTrigger += 1 }
-    }
-
-    func loadMoreMessages() {
-        guard hasMoreMessages, displayedStart > 0 else { return }
-        let newStart = max(0, displayedStart - pageSizeLoad)
-        let additional = Array(messages[newStart..<displayedStart])
-        guard !additional.isEmpty else { return }
-
-        loadMoreAnchorId = displayedMessages.first?.id
-
-        displayedStart = newStart
-        displayedMessages = additional + displayedMessages
-        hasMoreMessages = displayedStart > 0
-    }
-
-    func appendToDisplayed(_ message: ChatMessage) {
-        displayedMessages.append(message)
-        // Trim oldest from the top to keep memory bounded during long active sessions.
-        if displayedMessages.count > maxDisplayed {
-            let excess = displayedMessages.count - maxDisplayed
-            displayedMessages = Array(displayedMessages.dropFirst(excess))
-            displayedStart += excess
-            hasMoreMessages = displayedStart > 0
-        }
-    }
-
     // MARK: - Draft Management
 
     func getDraft(for threadId: UUID) -> String { threadDrafts[threadId] ?? "" }
@@ -250,75 +208,6 @@ final class ChappieViewModel {
     func refreshBalanceForActiveProvider() {
         guard let provider = activeProvider else { return }
         self.currentBalance = loadBalance(for: provider.id)
-    }
-
-    // MARK: - Boot Storage
-
-    /// Initializes SQLiteStorage and wires all Stores. Called once from ChappieApp.onAppear.
-    func bootStorage() {
-        guard chappieDataStore == nil else { return }
-
-        guard let sqliteURL = try? SQLiteStorage.defaultURL,
-              let sqliteStore = try? SQLiteStorage(url: sqliteURL) else {
-            print("[ChappieViewModel] ❌ SQLiteStorage init failed — cannot start")
-            return
-        }
-
-        bootStores(with: sqliteStore)
-    }
-
-    /// Initializes all Stores with the given backend and starts the app boot sequence.
-    private func bootStores(with storage: any ChappieStorage) {
-        self.chappieDataStore = storage
-
-        let store = MemoryStore(dataStore: storage)
-        self.memoryStore = store
-
-        let tStore = ThreadStore(dataStore: storage)
-        self.threadStore = tStore
-
-        let pStore = ProjectStore(dataStore: storage, threadStore: tStore)
-        self.projectStore = pStore
-
-        let provStore = AIProviderStore(dataStore: storage)
-        self.providerStore = provStore
-
-        let settingsStore = AppSettingsStore(dataStore: storage)
-        self.appSettingsStore = settingsStore
-
-        // Initialize services immediately — even without a workspace URL.
-        // WHY: orchestrator requires toolService/fileSystem/memoryManager to be non-nil.
-        let placeholderURL = FileManager.default.homeDirectoryForCurrentUser
-        if toolService == nil {
-            initializeServices(for: placeholderURL)
-        }
-
-        if let mm = memoryManager { Task { await mm.setMemoryStore(store) } }
-
-        print("[ChappieViewModel] Storage connected: \(type(of: storage))")
-
-        if let ts = toolService {
-            registerProjectToolHandlers(toolService: ts)
-        }
-
-        initializeLicense()
-
-        Task {
-            await preloadLastActiveThreadId()
-            await refreshBalanceCacheIfNeeded()
-
-            await loadWorkspaceFromStore(settingsStore)
-
-            if let catalog = try? await providersRemoteService.fetchCatalog() {
-                try? await provStore.syncRequiresApiKey(from: catalog.providers)
-                print("[ChappieViewModel] requiresApiKey synced from catalog")
-                try? await provStore.syncIcons(from: catalog.providers)
-                print("[ChappieViewModel] Icons synced from catalog")
-            }
-
-            await loadProvidersAndSetActive(from: provStore)
-            await loadThreadsAndSelectActive(from: tStore)
-        }
     }
 
     // MARK: - History Management
@@ -339,141 +228,6 @@ final class ChappieViewModel {
 
         if let threadId = activeThread?.id, let store = threadStore {
             Task { try? await store.saveMessages([ChatMessage](), toThreadId: threadId) }
-        }
-    }
-
-    // MARK: - Workspace Management
-
-    func setWorkspace(_ url: URL) {
-        workspaceURL = url
-        initializeServices(for: url)
-        saveWorkspaceWithSecurityScope(url)
-        MCPHelperLauncher.shared.restartWithWorkspace(
-            url,
-            projectEnvMap: activeProjectEnvMap,
-            projectPathMap: activeProjectPathMap
-        )
-
-        if messages.isEmpty {
-            messages.append(.message(isUser: false, text: String(localized: "system.project_connected")))
-        }
-    }
-
-    // MARK: - Service Initialization
-
-    func initializeServices(for url: URL) {
-        let fs = FileSystemManager(workspaceURL: url)
-        self.fileSystem = fs
-
-        let mm = MemoryManager(workspaceURL: url)
-        self.memoryManager = mm
-
-        Task {
-            await mm.initializeWorkspaceMemory()
-            if let store = self.memoryStore { await mm.setMemoryStore(store) }
-        }
-
-        let wf = WebFetchService()
-        self.webFetchService = wf
-
-        let socketPath = MCPHelperLauncher.shared.socketPath
-        let ts = ToolExecutionService(fileSystem: fs, memoryManager: mm, socketPath: socketPath, webFetch: wf)
-        self.toolService = ts
-
-        if let client = aiClient {
-            self.orchestrator = AIOrchestrator(aiClient: client, toolService: ts, fileSystem: fs, memoryManager: mm)
-        }
-
-        registerProjectToolHandlers(toolService: ts)
-        registerAttachmentHandlers(toolService: ts)
-
-        Task { await syncActiveMemoryContext() }
-    }
-
-    // MARK: - Attachment Handler Registration
-
-    /// Bridges AttachmentStore (app target) into ToolExecutionService (ChappieCore target)
-    /// via closures — avoids cross-target dependency.
-    ///
-    /// WHY local capture of AttachmentStore.shared:
-    /// ChappieViewModel is @MainActor. Sendable closures passed to ToolExecutionService
-    /// (an actor) cannot reference @MainActor-isolated state. We capture a local reference
-    /// to AttachmentStore.shared (which is @unchecked Sendable) before entering the Task,
-    /// so the closures are fully nonisolated.
-    private func registerAttachmentHandlers(toolService: ToolExecutionService) {
-        let store = AttachmentStore.shared
-        Task {
-            await toolService.registerAttachmentHandlers(
-                resolve: { uuid in
-                    store.resolve(uuid: uuid)
-                },
-                save: { data, filename in
-                    let attachmentId = UUID()
-                    guard let url = store.save(data: data, filename: filename, forAttachmentId: attachmentId) else {
-                        return nil
-                    }
-                    return AttachmentSaveResult(url: url, uuid: attachmentId)
-                },
-                reserve: { filename, uuid in
-                    store.reserveURL(filename: filename, forAttachmentId: uuid)
-                }
-            )
-        }
-    }
-
-    // MARK: - Security-Scoped Bookmarks
-
-    func saveWorkspaceWithSecurityScope(_ url: URL) {
-        do {
-            let data = try url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
-            saveWorkspaceBookmark(data)
-        } catch {
-            if let data = try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) {
-                saveWorkspaceBookmark(data)
-            }
-        }
-    }
-
-    /// Loads workspace from AppSettingsStore after store is ready.
-    /// Migrates legacy UserDefaults bookmark on first run, then removes it.
-    func loadWorkspaceFromStore(_ store: AppSettingsStore) async {
-        guard workspaceURL == nil else { return }
-
-        var bookmarkData: Data? = try? await store.loadWorkspaceBookmark()
-
-        // One-time migration: if store has no bookmark but UserDefaults does — migrate and clean up.
-        if bookmarkData == nil, let legacyData = UserDefaults.standard.data(forKey: "workspaceBookmark") {
-            bookmarkData = legacyData
-            try? await store.save(workspaceBookmark: legacyData)
-            UserDefaults.standard.removeObject(forKey: "workspaceBookmark")
-            print("[ChappieViewModel] Workspace bookmark migrated from UserDefaults to AppSettingsStore")
-        }
-
-        guard let data = bookmarkData else { return }
-
-        var isStale = false
-        if let url = try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale) {
-            _ = url.startAccessingSecurityScopedResource()
-            await MainActor.run {
-                self.workspaceURL = url
-                self.initializeServices(for: url)
-            }
-            if isStale { saveWorkspaceWithSecurityScope(url) }
-            MCPHelperLauncher.shared.launch(
-                workspacePath: url.path,
-                projectEnvMap: activeProjectEnvMap,
-                projectPathMap: activeProjectPathMap
-            )
-        } else if let url = try? URL(resolvingBookmarkData: data, options: [], relativeTo: nil, bookmarkDataIsStale: &isStale) {
-            await MainActor.run {
-                self.workspaceURL = url
-                self.initializeServices(for: url)
-            }
-            MCPHelperLauncher.shared.launch(
-                workspacePath: url.path,
-                projectEnvMap: activeProjectEnvMap,
-                projectPathMap: activeProjectPathMap
-            )
         }
     }
 }

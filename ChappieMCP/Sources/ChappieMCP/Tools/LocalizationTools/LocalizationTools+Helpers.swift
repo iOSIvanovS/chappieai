@@ -8,20 +8,32 @@ import Foundation
 
 extension LocalizationTools {
 
-    /// Recursively finds all .xcstrings files in the project directory.
+    /// Recursively finds all .xcstrings files across all registered project paths.
+    /// WHY: projectPathMap may contain project-specific paths that differ from
+    /// the workspace root. We must scan all of them to find every .xcstrings file.
     func findXCStringsFiles() -> [String] {
-        var result: [String] = []
+        var result: Set<String> = []
         let fm = FileManager.default
 
-        guard let enumerator = fm.enumerator(
-            at: URL(fileURLWithPath: projectPath),
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles, .skipsPackageDescendants]
-        ) else { return [] }
+        // Build list of search roots: workspace root + all project-specific paths
+        var searchRoots = [projectPath]
+        for (_, path) in projectPathMap {
+            if !searchRoots.contains(path) {
+                searchRoots.append(path)
+            }
+        }
 
-        for case let url as URL in enumerator {
-            if url.pathExtension == "xcstrings" {
-                result.append(url.path)
+        for root in searchRoots {
+            guard let enumerator = fm.enumerator(
+                at: URL(fileURLWithPath: root),
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            ) else { continue }
+
+            for case let url as URL in enumerator {
+                if url.pathExtension == "xcstrings" {
+                    result.insert(url.path)
+                }
             }
         }
 
@@ -46,6 +58,38 @@ extension LocalizationTools {
         }
 
         return result
+    }
+
+    /// Resolves a relative path to an absolute path by trying all known project roots.
+    /// WHY: .xcstrings files may live in project-specific directories, not just the workspace root.
+    /// Tries workspace root first, then each projectPathMap entry — returns the first match that exists.
+    func resolveFullPath(_ relativePath: String) -> String {
+        var roots = [projectPath]
+        for (_, path) in projectPathMap { roots.append(path) }
+        for root in roots {
+            let candidate = root + "/" + relativePath
+            if FileManager.default.fileExists(atPath: candidate) {
+                return candidate
+            }
+        }
+        // Fallback: workspace root (caller will handle missing file)
+        return projectPath + "/" + relativePath
+    }
+
+    /// Returns the shortest relative path by stripping the longest matching root prefix.
+    /// WHY: files may live in project-specific paths outside the workspace root.
+    func relativeToAnyRoot(_ absolutePath: String) -> String {
+        var roots = [projectPath]
+        for (_, path) in projectPathMap { roots.append(path) }
+        // Sort descending by length so the most specific root wins
+        let sorted = roots.sorted { $0.count > $1.count }
+        for root in sorted {
+            let prefix = root.hasSuffix("/") ? root : root + "/"
+            if absolutePath.hasPrefix(prefix) {
+                return String(absolutePath.dropFirst(prefix.count))
+            }
+        }
+        return absolutePath
     }
 
     /// Loads and decodes an .xcstrings file.
