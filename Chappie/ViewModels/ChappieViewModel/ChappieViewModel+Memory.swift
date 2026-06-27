@@ -62,13 +62,14 @@ extension ChappieViewModel {
         }
 
         // Build projectPathMap from resolved absolutePaths — populated after FS sync.
-        let pathMap: [String: String] = Dictionary(
-            uniqueKeysWithValues: activeProjects
-                .compactMap { project -> (String, String)? in
-                    guard let path = project.absolutePath else { return nil }
-                    return (project.displayName, path)
-                }
-        )
+        // WHY merge instead of uniqueKeysWithValues: if two projects share the same displayName
+        // (possible after rename or duplicate add), uniqueKeysWithValues crashes with preconditionFailure.
+        // merge(_:uniquingKeysWith:) is safe — last value wins, no crash.
+        var pathMap: [String: String] = [:]
+        for project in activeProjects {
+            guard let path = project.absolutePath else { continue }
+            pathMap[project.displayName] = path
+        }
 
         let context = ActiveMemoryContext(
             threadId: activeThread?.id,

@@ -164,23 +164,24 @@ final class ChappieViewModel {
     // MARK: - Project maps for MCP routing
 
     /// Map of project display name → DevEnvironment rawValue.
+    /// WHY loop instead of uniqueKeysWithValues: duplicate displayNames crash with preconditionFailure.
     var activeProjectEnvMap: [String: String] {
-        Dictionary(
-            uniqueKeysWithValues: activeProjects
-                .filter { $0.settings.isProgrammingProject && $0.settings.devEnvironment != .unknown }
-                .map { ($0.displayName, $0.settings.devEnvironment.rawValue) }
-        )
+        var map: [String: String] = [:]
+        for project in activeProjects where project.settings.isProgrammingProject && project.settings.devEnvironment != .unknown {
+            map[project.displayName] = project.settings.devEnvironment.rawValue
+        }
+        return map
     }
 
     /// Map of project display name → absolute path on disk.
+    /// WHY loop instead of uniqueKeysWithValues: duplicate displayNames crash with preconditionFailure.
     var activeProjectPathMap: [String: String] {
-        Dictionary(
-            uniqueKeysWithValues: activeProjects
-                .compactMap { project -> (String, String)? in
-                    guard let path = project.absolutePath else { return nil }
-                    return (project.displayName, path)
-                }
-        )
+        var map: [String: String] = [:]
+        for project in activeProjects {
+            guard let path = project.absolutePath else { continue }
+            map[project.displayName] = path
+        }
+        return map
     }
 
     // MARK: - Init
