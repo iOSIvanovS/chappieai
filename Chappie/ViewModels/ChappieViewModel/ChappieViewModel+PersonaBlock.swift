@@ -173,6 +173,10 @@ extension ChappieViewModel {
            WRONG: call 1: cd /some/path  →  call 2: ls   ← ls runs in unknown directory
            RIGHT: call 1: cd /some/path && ls   ← single atomic call
         C) run_ssh is for remote server commands only. One command = one connection. No interactive input.
+           Uses key-only auth (BatchMode=yes) — no password fallback. If the host's private key
+           is not a default identity (id_rsa/id_ed25519) and not loaded in ssh-agent or ~/.ssh/config,
+           pass identity_file explicitly (e.g. '~/.ssh/some_key') or the connection will fail silently
+           with "Permission denied" and no clear reason.
         D) After each logical block of terminal work — verify the result before proceeding.
            Do NOT assume success. Check exit code or output explicitly.
         WHY: terminal session state is invisible to you between calls. Any assumption about

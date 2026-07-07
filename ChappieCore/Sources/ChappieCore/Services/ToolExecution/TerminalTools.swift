@@ -178,6 +178,7 @@ extension ToolExecutionService {
             let command: String
             let user: String?
             let port: String?
+            let identity_file: String?
             let timeout: String?
         }
 
@@ -191,6 +192,7 @@ extension ToolExecutionService {
         let remoteCommand = args.command.trimmingCharacters(in: .whitespacesAndNewlines)
         let user = args.user?.trimmingCharacters(in: .whitespacesAndNewlines)
         let port = args.port?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let identityFile = args.identity_file?.trimmingCharacters(in: .whitespacesAndNewlines)
         let timeoutSeconds = args.timeout.flatMap(Int.init) ?? 30
 
         if let pattern = ShellSession.dangerousPattern(in: remoteCommand) {
@@ -204,6 +206,11 @@ extension ToolExecutionService {
             "-o", "ConnectTimeout=\(timeoutSeconds)",
         ]
         if let p = port, !p.isEmpty { argsList += ["-p", p] }
+        if let identity = identityFile, !identity.isEmpty {
+            // WHY tilde expansion: Process does not go through a shell, so "~" is passed literally to ssh
+            // unless expanded here — NSString.expandingTildeInPath handles the home directory substitution.
+            argsList += ["-i", (identity as NSString).expandingTildeInPath]
+        }
         let target = user.map { "\($0)@\(host)" } ?? host
         argsList.append(target)
         argsList.append(remoteCommand)
@@ -214,7 +221,7 @@ extension ToolExecutionService {
         let finalTarget = target
         let finalTimeout = timeoutSeconds
 
-        print("[SSHTools] 🔌 Connecting to \(finalTarget), command: \(remoteCommand)")
+        print("[SSHTools] 🔌 Connecting to \(finalTarget)\(identityFile.map { " with identity '\($0)'" } ?? "" ), command: \(remoteCommand)")
 
         return await withCheckedContinuation { continuation in
             Task.detached {
