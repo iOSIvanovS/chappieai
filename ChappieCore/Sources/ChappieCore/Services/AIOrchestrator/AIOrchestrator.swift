@@ -104,7 +104,10 @@ public actor AIOrchestrator {
         onToolCall: @escaping @Sendable (String, String) -> Void,
         onToken: (@Sendable (String) -> Void)? = nil,
         onCostUpdate: (@Sendable (Double) -> Void)? = nil,
-        onBalanceUpdate: (@Sendable (Double) -> Void)? = nil
+        onBalanceUpdate: (@Sendable (Double) -> Void)? = nil,
+        onTerminalOutput: (@Sendable (String) -> Void)? = nil,
+        onTerminalStart: (@Sendable (String) -> Void)? = nil,
+        onTerminalFinish: (@Sendable () -> Void)? = nil
     ) async throws -> AIOrchestratorResult {
 
         guard !isInvalidated else {
@@ -174,7 +177,10 @@ public actor AIOrchestrator {
                     lastToolSignature: &lastToolSignature,
                     collectedOutputFiles: &collectedOutputFiles,
                     overrideToolPermissions: overrideToolPermissions,
-                    onToolCall: onToolCall
+                    onToolCall: onToolCall,
+                    onTerminalOutput: onTerminalOutput,
+                    onTerminalStart: onTerminalStart,
+                    onTerminalFinish: onTerminalFinish
                 )
                 continue
             } else {

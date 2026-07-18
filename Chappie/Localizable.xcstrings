@@ -24454,6 +24454,9 @@
         }
       }
     },
+    "Terminal" : {
+
+    },
     "terminal.access.auto" : {
       "extractionState" : "stale",
       "localizations" : {

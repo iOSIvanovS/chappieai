@@ -81,6 +81,7 @@ struct ChappieApp: App {
                         .opacity(0.5)
                         .ignoresSafeArea()
                 )
+                .background(TerminalWindowController(terminal: viewModel.terminal))
                 .onAppear {
                     viewModel.bootStorage()
                 }
@@ -94,6 +95,15 @@ struct ChappieApp: App {
         Settings {
             EmptyView()
         }
+
+        // Live terminal window — opened/closed via TerminalWindowController reacting
+        // to TerminalLiveState.isActive. Separate NSWindow so it floats independently
+        // of the main chat window and doesn't disturb its layout.
+        Window("Terminal", id: "terminal-live") {
+            TerminalLiveView(terminal: viewModel.terminal)
+        }
+        .defaultSize(width: 640, height: 380)
+        .windowResizability(.contentSize)
     }
 }
 

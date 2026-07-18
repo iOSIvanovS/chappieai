@@ -89,8 +89,15 @@ public actor ShellSession {
     /// - Parameters:
     ///   - command: Shell command string (passed to bash -c).
     ///   - timeout: Max seconds to wait for output (default 30).
+    ///   - onOutput: Optional callback invoked with each raw chunk as it arrives,
+    ///     before the command finishes. Used for live terminal UI streaming.
+    ///     Final return value is unaffected — kept for backward compatibility.
     /// - Returns: Combined stdout+stderr output, trimmed.
-    public func run(_ command: String, timeout: TimeInterval = 30) async -> ShellResult {
+    public func run(
+        _ command: String,
+        timeout: TimeInterval = 30,
+        onOutput: (@Sendable (String) -> Void)? = nil
+    ) async -> ShellResult {
         // Ensure session is alive.
         if process == nil || process?.isRunning == false {
             startSession()
@@ -125,7 +132,7 @@ public actor ShellSession {
         let sentinelCopy = sentinel
 
         // Read output until sentinel appears or timeout expires.
-        return await readUntilSentinel(from: stdout, sentinel: sentinelCopy, timeout: timeout)
+        return await readUntilSentinel(from: stdout, sentinel: sentinelCopy, timeout: timeout, onOutput: onOutput)
     }
 
     // MARK: - Session lifecycle
@@ -169,7 +176,8 @@ public actor ShellSession {
     private func readUntilSentinel(
         from handle: FileHandle,
         sentinel: String,
-        timeout: TimeInterval
+        timeout: TimeInterval,
+        onOutput: (@Sendable (String) -> Void)? = nil
     ) async -> ShellResult {
         // Read in a detached task so we can enforce timeout.
         // WHY detached: avoids inheriting the actor's executor — the polling loop
@@ -186,6 +194,11 @@ public actor ShellSession {
                     let chunk = handle.availableData
                     if !chunk.isEmpty {
                         accumulated.append(chunk)
+                        // Stream raw chunk immediately for live UI — sentinel/exit-code
+                        // noise is stripped only from the final parsed result, not here.
+                        if let chunkText = String(data: chunk, encoding: .utf8) {
+                            onOutput?(chunkText)
+                        }
                         if let text = String(data: accumulated, encoding: .utf8),
                            text.contains(sentinel) {
                             // Parse is a free function — no actor isolation needed.

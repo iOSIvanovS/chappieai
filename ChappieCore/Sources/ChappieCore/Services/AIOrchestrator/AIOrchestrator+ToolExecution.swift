@@ -10,13 +10,19 @@ extension AIOrchestrator {
         lastToolSignature: inout String?,
         collectedOutputFiles: inout [String],
         overrideToolPermissions: ToolPermissions?,
-        onToolCall: @Sendable (String, String) -> Void
+        onToolCall: @Sendable (String, String) -> Void,
+        onTerminalOutput: (@Sendable (String) -> Void)? = nil,
+        onTerminalStart: (@Sendable (String) -> Void)? = nil,
+        onTerminalFinish: (@Sendable () -> Void)? = nil
     ) async throws {
+        let terminalToolNames: Set<String> = ["run_terminal", "run_ssh"]
+
         for toolCall in toolCalls {
             let toolName = toolCall.function.name
             let arguments = toolCall.function.arguments
             let targetPath = extractTargetPath(from: arguments)
             let signature = "\(toolName)|\(arguments)"
+            let isTerminalTool = terminalToolNames.contains(toolName)
             let resultString: String
 
             if lastToolSignature == signature {
@@ -34,12 +40,24 @@ extension AIOrchestrator {
                 } else {
                     lastToolSignature = signature
                     onToolCall(toolName, targetPath)
-                    resultString = await toolService.execute(call: toolCall)
+                    if isTerminalTool {
+                        onTerminalStart?(extractCommand(from: arguments))
+                    }
+                    resultString = await toolService.execute(call: toolCall, onOutput: onTerminalOutput)
+                    if isTerminalTool {
+                        onTerminalFinish?()
+                    }
                 }
             } else {
                 lastToolSignature = signature
                 onToolCall(toolName, targetPath)
-                resultString = await toolService.execute(call: toolCall)
+                if isTerminalTool {
+                    onTerminalStart?(extractCommand(from: arguments))
+                }
+                resultString = await toolService.execute(call: toolCall, onOutput: onTerminalOutput)
+                if isTerminalTool {
+                    onTerminalFinish?()
+                }
             }
 
             // send_attachment / write_document return JSON with saved_path.
@@ -80,5 +98,12 @@ extension AIOrchestrator {
         guard let data = arguments.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return "" }
         return json["path"] as? String ?? ""
+    }
+
+    /// Extracts the "command" argument for run_terminal/run_ssh — shown as the live terminal window title.
+    func extractCommand(from arguments: String) -> String {
+        guard let data = arguments.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return "" }
+        return json["command"] as? String ?? ""
     }
 }

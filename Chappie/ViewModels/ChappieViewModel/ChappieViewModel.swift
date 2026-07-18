@@ -28,6 +28,9 @@ final class ChappieViewModel {
     // ContentView, topPanel, or bottomPanel — only ChatScrollView and InputMorphView subscribe.
     let streaming = StreamingState()
 
+    // Live terminal window state — isolated so shell output ticks don't invalidate ContentView.
+    let terminal = TerminalLiveState()
+
     // MARK: - Backward-compat accessors
 
     var isThinking: Bool {

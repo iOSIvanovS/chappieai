@@ -85,7 +85,10 @@ extension ToolExecutionService {
 
     // MARK: - run_terminal
 
-    func executeTerminalTool(argsData: Data) async throws -> String {
+    func executeTerminalTool(
+        argsData: Data,
+        onOutput: (@Sendable (String) -> Void)? = nil
+    ) async throws -> String {
         struct Args: Decodable {
             let command: String
             let timeout: String?
@@ -146,22 +149,30 @@ extension ToolExecutionService {
             return pending.encoded
         }
 
-        return await runLocalCommand(command, timeout: timeout)
+        return await runLocalCommand(command, timeout: timeout, onOutput: onOutput)
     }
 
     /// Executes a confirmed command (called by ViewModel after user approval).
-    public func executeConfirmedCommand(_ command: String, timeout: TimeInterval = 300) async -> String {
+    public func executeConfirmedCommand(
+        _ command: String,
+        timeout: TimeInterval = 300,
+        onOutput: (@Sendable (String) -> Void)? = nil
+    ) async -> String {
         if let pattern = ShellSession.dangerousPattern(in: command) {
             return "🚫 Command blocked: contains dangerous pattern '\(pattern)'."
         }
-        return await runLocalCommand(command, timeout: timeout)
+        return await runLocalCommand(command, timeout: timeout, onOutput: onOutput)
     }
 
-    private func runLocalCommand(_ command: String, timeout: TimeInterval) async -> String {
+    private func runLocalCommand(
+        _ command: String,
+        timeout: TimeInterval,
+        onOutput: (@Sendable (String) -> Void)? = nil
+    ) async -> String {
         let threadId = activeMemoryContext.threadId ?? UUID()
         let shell = session(for: threadId)
         print("[TerminalTools] 🖥️ Running: \(command)")
-        let result = await shell.run(command, timeout: timeout)
+        let result = await shell.run(command, timeout: timeout, onOutput: onOutput)
         print("[TerminalTools] \(result.isSuccess ? "✅" : "❌") Exit \(result.exitCode)")
         return result.formatted
     }
@@ -172,7 +183,10 @@ extension ToolExecutionService {
     /// WHY Process + /usr/bin/ssh: reuses system SSH config and keys, no extra dependencies.
     /// WHY -o StrictHostKeyChecking=accept-new: auto-accepts new host keys without hanging.
     /// WHY -o BatchMode=yes: disables password prompts — fails fast if key auth not configured.
-    func executeSSHTool(argsData: Data) async throws -> String {
+    func executeSSHTool(
+        argsData: Data,
+        onOutput: (@Sendable (String) -> Void)? = nil
+    ) async throws -> String {
         struct Args: Decodable {
             let host: String
             let command: String
@@ -234,9 +248,39 @@ extension ToolExecutionService {
                 process.standardOutput = outPipe
                 process.standardError = errPipe
 
+                // WHY accumulate via lock instead of readDataToEndOfFile: readabilityHandler
+                // fires live as chunks arrive over the SSH pipe, enabling onOutput streaming
+                // for the live terminal UI. Final result is still built from full accumulation.
+                let accumulatedLock = NSLock()
+                nonisolated(unsafe) var outAccumulated = Data()
+                nonisolated(unsafe) var errAccumulated = Data()
+
+                outPipe.fileHandleForReading.readabilityHandler = { handle in
+                    let chunk = handle.availableData
+                    guard !chunk.isEmpty else { return }
+                    accumulatedLock.lock()
+                    outAccumulated.append(chunk)
+                    accumulatedLock.unlock()
+                    if let chunkText = String(data: chunk, encoding: .utf8) {
+                        onOutput?(chunkText)
+                    }
+                }
+                errPipe.fileHandleForReading.readabilityHandler = { handle in
+                    let chunk = handle.availableData
+                    guard !chunk.isEmpty else { return }
+                    accumulatedLock.lock()
+                    errAccumulated.append(chunk)
+                    accumulatedLock.unlock()
+                    if let chunkText = String(data: chunk, encoding: .utf8) {
+                        onOutput?(chunkText)
+                    }
+                }
+
                 do {
                     try process.launch()
                 } catch {
+                    outPipe.fileHandleForReading.readabilityHandler = nil
+                    errPipe.fileHandleForReading.readabilityHandler = nil
                     continuation.resume(returning: "❌ run_ssh: Failed to launch ssh: \(error.localizedDescription)")
                     return
                 }
@@ -249,14 +293,26 @@ extension ToolExecutionService {
 
                 if process.isRunning {
                     process.terminate()
+                    outPipe.fileHandleForReading.readabilityHandler = nil
+                    errPipe.fileHandleForReading.readabilityHandler = nil
                     continuation.resume(returning: "⏱️ run_ssh: Command timed out after \(finalTimeout)s on \(finalTarget).")
                     return
                 }
 
-                let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-                let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-                let stdout = String(data: outData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let stderr = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                outPipe.fileHandleForReading.readabilityHandler = nil
+                errPipe.fileHandleForReading.readabilityHandler = nil
+
+                // WHY a sync helper: NSLock.lock()/unlock() are marked noasync in Swift 6 —
+                // calling them directly inside an async function body is a compile error
+                // regardless of await points. Wrapping in a plain sync closure sidesteps that.
+                func readAccumulated() -> (String, String) {
+                    accumulatedLock.lock()
+                    defer { accumulatedLock.unlock() }
+                    let out = String(data: outAccumulated, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let err = String(data: errAccumulated, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    return (out, err)
+                }
+                let (stdout, stderr) = readAccumulated()
                 let exitCode = process.terminationStatus
 
                 print("[SSHTools] \(exitCode == 0 ? "✅" : "❌") Exit \(exitCode) from \(finalTarget)")

@@ -199,7 +199,10 @@ public actor ToolExecutionService {
 
     // MARK: - Tool execution dispatcher
 
-    public func execute(call: AIToolCall) async -> String {
+    public func execute(
+        call: AIToolCall,
+        onOutput: (@Sendable (String) -> Void)? = nil
+    ) async -> String {
         let name = call.function.name
         let argsData = call.function.arguments.data(using: .utf8) ?? Data()
 
@@ -269,10 +272,10 @@ public actor ToolExecutionService {
                 return try await executeGitBuildTool(name: name, argsData: argsData)
 
             case "run_terminal":
-                return try await executeTerminalTool(argsData: argsData)
+                return try await executeTerminalTool(argsData: argsData, onOutput: onOutput)
 
             case "run_ssh":
-                return try await executeSSHTool(argsData: argsData)
+                return try await executeSSHTool(argsData: argsData, onOutput: onOutput)
 
             case "list_thread_projects":
                 guard let handler = listProjectsHandler else {

@@ -83,6 +83,15 @@ extension ChappieViewModel {
                             self.currentBalance = balance
                             if let pid = activeProviderId { self.saveBalance(balance, for: pid) }
                         }
+                    },
+                    onTerminalOutput: { chunk in
+                        Task { @MainActor in self.terminal.append(chunk) }
+                    },
+                    onTerminalStart: { command in
+                        Task { @MainActor in self.terminal.start(command: command) }
+                    },
+                    onTerminalFinish: {
+                        Task { @MainActor in self.terminal.finish() }
                     }
                 )
 
