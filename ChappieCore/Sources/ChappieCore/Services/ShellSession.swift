@@ -84,6 +84,34 @@ public actor ShellSession {
         return nil
     }
 
+    // MARK: - Find command safety cap
+
+    // WHY: unscoped `find /` (no -maxdepth, no starting directory) can scan network
+    // mounts, Time Machine snapshots, and system volumes for hours without ever finding
+    // anything — this happened in practice and burned real time. This cap is enforced
+    // at the tool level so it applies regardless of what the AI or caller requests,
+    // independent of memory/instructions that can be forgotten across context windows.
+    private static let findCommandPattern = try? NSRegularExpression(pattern: "\\bfind\\b")
+
+    /// True if the command invokes `find` as a standalone word (not `mdfind`, etc).
+    static func containsFindCommand(_ command: String) -> Bool {
+        guard let regex = findCommandPattern else { return false }
+        let range = NSRange(command.startIndex..., in: command)
+        return regex.firstMatch(in: command, range: range) != nil
+    }
+
+    /// Caps the requested timeout to 60s when the command uses `find`.
+    public static func cappedTimeout(for command: String, requested: TimeInterval) -> TimeInterval {
+        guard containsFindCommand(command) else { return requested }
+        return min(requested, 60)
+    }
+
+    /// Int-timeout variant for tools that use whole seconds (e.g. run_ssh).
+    public static func cappedTimeoutSeconds(for command: String, requested: Int) -> Int {
+        guard containsFindCommand(command) else { return requested }
+        return min(requested, 60)
+    }
+
     /// Executes a shell command and returns its output.
     ///
     /// - Parameters:

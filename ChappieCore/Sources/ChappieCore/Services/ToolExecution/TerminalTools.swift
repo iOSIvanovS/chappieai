@@ -101,7 +101,11 @@ extension ToolExecutionService {
         }
 
         let rawCommand = args.command.trimmingCharacters(in: .whitespacesAndNewlines)
-        let timeout = args.timeout.flatMap(Double.init) ?? 300.0
+        let requestedTimeout = args.timeout.flatMap(Double.init) ?? 300.0
+        // WHY capped here, not just documented: unscoped `find` can hang for hours
+        // scanning the whole filesystem — this cap makes it impossible regardless
+        // of what timeout is requested, no reliance on remembering the rule.
+        let timeout = ShellSession.cappedTimeout(for: rawCommand, requested: requestedTimeout)
 
         // Prefix with `cd /path && ` if project is specified — makes every call self-contained.
         let command: String
@@ -161,7 +165,8 @@ extension ToolExecutionService {
         if let pattern = ShellSession.dangerousPattern(in: command) {
             return "🚫 Command blocked: contains dangerous pattern '\(pattern)'."
         }
-        return await runLocalCommand(command, timeout: timeout, onOutput: onOutput)
+        let cappedTimeout = ShellSession.cappedTimeout(for: command, requested: timeout)
+        return await runLocalCommand(command, timeout: cappedTimeout, onOutput: onOutput)
     }
 
     private func runLocalCommand(
@@ -207,7 +212,10 @@ extension ToolExecutionService {
         let user = args.user?.trimmingCharacters(in: .whitespacesAndNewlines)
         let port = args.port?.trimmingCharacters(in: .whitespacesAndNewlines)
         let identityFile = args.identity_file?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let timeoutSeconds = args.timeout.flatMap(Int.init) ?? 30
+        let requestedTimeoutSeconds = args.timeout.flatMap(Int.init) ?? 30
+        // WHY capped here: same rationale as run_terminal — unscoped `find` over SSH
+        // can hang the remote session for hours without ever completing.
+        let timeoutSeconds = ShellSession.cappedTimeoutSeconds(for: remoteCommand, requested: requestedTimeoutSeconds)
 
         if let pattern = ShellSession.dangerousPattern(in: remoteCommand) {
             return "🚫 SSH command blocked: contains dangerous pattern '\(pattern)'."
