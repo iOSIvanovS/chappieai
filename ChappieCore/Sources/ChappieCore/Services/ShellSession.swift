@@ -207,45 +207,55 @@ public actor ShellSession {
         timeout: TimeInterval,
         onOutput: (@Sendable (String) -> Void)? = nil
     ) async -> ShellResult {
-        // Read in a detached task so we can enforce timeout.
-        // WHY detached: avoids inheriting the actor's executor — the polling loop
-        // must not block the actor while waiting for output.
-        return await withCheckedContinuation { continuation in
-            let deadline = Date().addingTimeInterval(timeout)
+        // WHY readabilityHandler instead of polling `handle.availableData` in a loop:
+        // `availableData` BLOCKS synchronously until bytes arrive. If the command hangs
+        // with no output for a long stretch (e.g. `find` piped through `grep`/`head`
+        // buffering), the polling thread gets stuck inside that blocking call and the
+        // `Date() < deadline` check is never re-evaluated — the timeout silently never
+        // fires no matter what value is passed in. This happened in practice: a capped
+        // 60s timeout still hung for ~30 minutes. readabilityHandler is event-driven
+        // (GCD dispatch source under the hood) so it never blocks the watchdog timer.
+        let box = SentinelReadBox()
+        var timedOut = false
 
-            Task.detached {
-                var accumulated = Data()
-
-                // Polling loop — reads available bytes until sentinel or timeout.
-                // 50ms sleep — fast enough for terminal output, low CPU.
-                while Date() < deadline {
-                    let chunk = handle.availableData
-                    if !chunk.isEmpty {
-                        accumulated.append(chunk)
-                        // Stream raw chunk immediately for live UI — sentinel/exit-code
-                        // noise is stripped only from the final parsed result, not here.
-                        if let chunkText = String(data: chunk, encoding: .utf8) {
-                            onOutput?(chunkText)
-                        }
-                        if let text = String(data: accumulated, encoding: .utf8),
-                           text.contains(sentinel) {
-                            // Parse is a free function — no actor isolation needed.
-                            let result = ShellSession.parseOutput(text, sentinel: sentinel)
-                            continuation.resume(returning: result)
-                            return
-                        }
-                    }
-                    try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        let result: ShellResult = await withCheckedContinuation { continuation in
+            handle.readabilityHandler = { fh in
+                let chunk = fh.availableData
+                guard !chunk.isEmpty else { return }
+                let snapshot = box.appendChunk(chunk)
+                // Stream raw chunk immediately for live UI — sentinel/exit-code
+                // noise is stripped only from the final parsed result, not here.
+                if let chunkText = String(data: chunk, encoding: .utf8) {
+                    onOutput?(chunkText)
                 }
+                if let text = String(data: snapshot, encoding: .utf8), text.contains(sentinel) {
+                    guard box.markResumedIfNeeded() else { return }
+                    handle.readabilityHandler = nil
+                    continuation.resume(returning: ShellSession.parseOutput(text, sentinel: sentinel))
+                }
+            }
 
-                // Timeout — session may be hung; caller will kill it on next use.
-                let partial = String(data: accumulated, encoding: .utf8) ?? ""
+            // Watchdog — independent wall-clock timer, never blocked by the read side.
+            Task.detached {
+                try? await Task.sleep(nanoseconds: UInt64(max(timeout, 0) * 1_000_000_000))
+                guard box.markResumedIfNeeded() else { return }
+                handle.readabilityHandler = nil
+                box.markTimedOut()
+                let partial = String(data: box.currentAccumulated(), encoding: .utf8) ?? ""
                 continuation.resume(returning: ShellResult(
-                    output: "⏱️ Command timed out.\nPartial output:\n\(partial)",
+                    output: "⏱️ Command timed out after \(Int(timeout))s.\nPartial output:\n\(partial)",
                     exitCode: -1
                 ))
             }
         }
+
+        timedOut = box.wasTimedOut()
+        if timedOut {
+            // Actually kill the hung session (not just document the intent) so the
+            // next call starts a fresh bash process instead of reusing a stuck one.
+            killSession()
+        }
+        return result
     }
 
     /// Extracts clean output and exit code from sentinel-wrapped output.
@@ -269,6 +279,54 @@ public actor ShellSession {
         let cleanOutput = cleanLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
 
         return ShellResult(output: cleanOutput, exitCode: exitCode)
+    }
+}
+
+// MARK: - SentinelReadBox
+
+/// Thread-safe accumulator shared between the readabilityHandler callback and the
+/// watchdog timer task. A plain class + NSLock (not actor) because readabilityHandler
+/// fires synchronously from a GCD dispatch source, not from an async context.
+private final class SentinelReadBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var accumulated = Data()
+    private var resumed = false
+    private var timedOut = false
+
+    /// Appends a chunk and returns the current full snapshot.
+    func appendChunk(_ chunk: Data) -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        accumulated.append(chunk)
+        return accumulated
+    }
+
+    func currentAccumulated() -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return accumulated
+    }
+
+    /// Returns true only the first time it's called — guards against double-resume
+    /// when both the readabilityHandler and the watchdog race to finish.
+    func markResumedIfNeeded() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if resumed { return false }
+        resumed = true
+        return true
+    }
+
+    func markTimedOut() {
+        lock.lock()
+        defer { lock.unlock() }
+        timedOut = true
+    }
+
+    func wasTimedOut() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return timedOut
     }
 }
 
