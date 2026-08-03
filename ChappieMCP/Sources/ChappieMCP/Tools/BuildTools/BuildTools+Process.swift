@@ -28,8 +28,10 @@
 
 import Foundation
 
-/// Max wait time for build/test processes. 5 minutes is enough for any real build.
-private let kBuildTimeoutSeconds: Double = 300
+/// Max wait time for build/test processes. 5 minutes proved too short for some real
+/// builds (clean builds, large test suites) — raised to 1 hour per user report of a
+/// build that legitimately needed more than 300s and got killed with no data.
+private let kBuildTimeoutSeconds: Double = 3600
 
 // MARK: - DataBox
 
