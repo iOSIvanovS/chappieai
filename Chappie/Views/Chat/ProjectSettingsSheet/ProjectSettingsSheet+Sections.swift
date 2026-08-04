@@ -175,6 +175,38 @@ extension ProjectSettingsSheet {
         }
     }
 
+    // MARK: - Build section
+
+    var buildSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("project.settings.build_section", systemImage: "hammer.circle.fill")
+
+            Toggle(isOn: $draft.buildEnabled) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("project.settings.build_allow")
+                        .font(.callout)
+                    Text("project.settings.build_allow_hint")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .toggleStyle(.switch)
+
+            if !draft.buildEnabled {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                        .padding(.top, 1)
+                    Text("project.settings.build_disabled_hint")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
     // MARK: - Tests section
 
     var testsSection: some View {
@@ -187,8 +219,19 @@ extension ProjectSettingsSheet {
                 }
             }
             .pickerStyle(.menu)
+            .disabled(!draft.buildEnabled)
 
-            if draft.testsAccess == .readOnly {
+            if !draft.buildEnabled {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "hammer.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 1)
+                    Text("project.settings.tests_build_disabled_hint")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else if draft.testsAccess == .readOnly {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "eye.fill")
                         .font(.system(size: 11))

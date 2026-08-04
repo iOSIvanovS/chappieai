@@ -39,15 +39,19 @@ extension ProjectSettings {
                 lines.append("- Git: \(gitAccess.rawValue) [\(toolsList)] [git_diff: ALWAYS FORBIDDEN]")
             }
 
-            switch testsAccess {
-            case .none:
-                lines.append("- Tests: BLOCKED (enable in project settings)")
-            case .readOnly:
-                lines.append("- Tests: read logs only (read_build_log). run_tests is BLOCKED.")
-            case .run:
-                lines.append("- Tests: run allowed (build_project, run_tests, read_build_log). Creating new tests: BLOCKED. You are required to run tests after changes when necessary. UI layer tests are low ROI and not required unless explicitly requested.")
-            case .write:
-                lines.append("- Tests: run + create allowed (build_project, run_tests, read_build_log, write test files). You are required to write tests for business logic, services, and non-trivial algorithms when necessary. You are required to run tests after changes when necessary. UI layer tests are low ROI and not required unless explicitly requested.")
+            if !buildEnabled {
+                lines.append("- Compilation: DISABLED for this project (build_project, run_tests, read_build_log are all UNAVAILABLE — too slow to compile here). After making code changes, ASK THE USER to build and run tests themselves in their IDE, then report the results back to you in chat before you proceed or commit. NEVER use run_terminal (e.g. xcodebuild, swift build, swift test) to bypass this restriction — the user disabled compilation on purpose (usually because the project is too large/slow to build repeatedly), and going around it via terminal defeats that intent.")
+            } else {
+                switch testsAccess {
+                case .none:
+                    lines.append("- Tests: BLOCKED (enable in project settings)")
+                case .readOnly:
+                    lines.append("- Tests: read logs only (read_build_log). run_tests is BLOCKED.")
+                case .run:
+                    lines.append("- Tests: run allowed (build_project, run_tests, read_build_log). Creating new tests: BLOCKED. You are required to run tests after changes when necessary. UI layer tests are low ROI and not required unless explicitly requested.")
+                case .write:
+                    lines.append("- Tests: run + create allowed (build_project, run_tests, read_build_log, write test files). You are required to write tests for business logic, services, and non-trivial algorithms when necessary. You are required to run tests after changes when necessary. UI layer tests are low ROI and not required unless explicitly requested.")
+                }
             }
 
             if architectureEnabled {

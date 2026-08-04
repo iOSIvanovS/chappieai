@@ -12,8 +12,8 @@
 // 3. ADVISOR role — same read-only gate as Starter (project-level check).
 // 4. EXECUTOR role:
 //    a. Git tools — require isProgrammingProject + GitAccessLevel.allowedTools.
-//    b. build_project — requires isProgrammingProject + Executor role.
-//    c. run_tests — requires isProgrammingProject + TestsAccessLevel.canRun.
+//    b. build_project — requires isProgrammingProject + Executor role + buildEnabled.
+//    c. run_tests — requires isProgrammingProject + buildEnabled + TestsAccessLevel.canRun.
 //    d. read_build_log — always allowed for Executor (read-only diagnostic tool).
 //    e. write_document — requires Executor role (document writes = mutations).
 //    f. run_terminal / run_ssh — require thread-level TerminalAccessLevel.isEnabled.
@@ -140,6 +140,12 @@ extension ToolExecutionService {
                 Open project settings → enable 'Programming project'.
                 """)
             }
+            if !settings.buildEnabled {
+                return .denied("""
+                ❌ Tool 'build_project' is disabled for this project (compilation is too slow — user builds manually).
+                Ask the user to build and run tests themselves, then report the results back to you in chat.
+                """)
+            }
             return .allowed
         }
 
@@ -149,6 +155,12 @@ extension ToolExecutionService {
                 return .denied("""
                 ❌ Tool 'run_tests' requires 'Programming project' flag.
                 Open project settings → enable 'Programming project'.
+                """)
+            }
+            if !settings.buildEnabled {
+                return .denied("""
+                ❌ Tool 'run_tests' is disabled for this project (compilation is too slow — user builds/tests manually).
+                Ask the user to build and run tests themselves, then report the results back to you in chat.
                 """)
             }
             if !settings.testsAccess.canRun {

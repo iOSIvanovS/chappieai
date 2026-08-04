@@ -38,6 +38,14 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
     public var commentsLanguage: ProjectLanguage
     public var terminalAccess: TerminalAccessLevel
 
+    /// Controls availability of build_project / run_tests for this specific project.
+    /// Default true — preserves existing behavior for projects created before this setting existed.
+    /// WHY GATE BOTH TOOLS: running tests without a fresh build is unsafe
+    /// (see rule "FORBIDDEN: run_tests before build_project"). Disabling compile must disable testing too.
+    /// Useful for large projects where compilation is too slow for the AI to wait on —
+    /// user builds/tests manually and reports results back in chat instead.
+    public var buildEnabled: Bool
+
     public init(
         agentRole: AgentRole = .advisor,
         isProgrammingProject: Bool = false,
@@ -48,7 +56,8 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         architectureLanguage: ProjectLanguage = .english,
         commentsEnabled: Bool = false,
         commentsLanguage: ProjectLanguage = .english,
-        terminalAccess: TerminalAccessLevel = .none
+        terminalAccess: TerminalAccessLevel = .none,
+        buildEnabled: Bool = true
     ) {
         self.agentRole = agentRole
         self.isProgrammingProject = isProgrammingProject
@@ -60,6 +69,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         self.commentsEnabled = commentsEnabled
         self.commentsLanguage = commentsLanguage
         self.terminalAccess = terminalAccess
+        self.buildEnabled = buildEnabled
     }
 
     /// Resets all access flags when downgrading to advisor role.
@@ -70,6 +80,45 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         architectureEnabled = false
         commentsEnabled = false
         terminalAccess = .none
+    }
+
+    // MARK: - Codable (manual — new fields must decode safely from old stored JSON)
+
+    private enum CodingKeys: String, CodingKey {
+        case agentRole, isProgrammingProject, devEnvironment, gitAccess, testsAccess
+        case architectureEnabled, architectureLanguage, commentsEnabled, commentsLanguage
+        case terminalAccess, buildEnabled
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        agentRole = try c.decodeIfPresent(AgentRole.self, forKey: .agentRole) ?? .advisor
+        isProgrammingProject = try c.decodeIfPresent(Bool.self, forKey: .isProgrammingProject) ?? false
+        devEnvironment = try c.decodeIfPresent(DevEnvironment.self, forKey: .devEnvironment) ?? .unknown
+        gitAccess = try c.decodeIfPresent(GitAccessLevel.self, forKey: .gitAccess) ?? .none
+        testsAccess = try c.decodeIfPresent(TestsAccessLevel.self, forKey: .testsAccess) ?? .none
+        architectureEnabled = try c.decodeIfPresent(Bool.self, forKey: .architectureEnabled) ?? false
+        architectureLanguage = try c.decodeIfPresent(ProjectLanguage.self, forKey: .architectureLanguage) ?? .english
+        commentsEnabled = try c.decodeIfPresent(Bool.self, forKey: .commentsEnabled) ?? false
+        commentsLanguage = try c.decodeIfPresent(ProjectLanguage.self, forKey: .commentsLanguage) ?? .english
+        terminalAccess = try c.decodeIfPresent(TerminalAccessLevel.self, forKey: .terminalAccess) ?? .none
+        // Old records predate this field — default to true (build was always allowed before).
+        buildEnabled = try c.decodeIfPresent(Bool.self, forKey: .buildEnabled) ?? true
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(agentRole, forKey: .agentRole)
+        try c.encode(isProgrammingProject, forKey: .isProgrammingProject)
+        try c.encode(devEnvironment, forKey: .devEnvironment)
+        try c.encode(gitAccess, forKey: .gitAccess)
+        try c.encode(testsAccess, forKey: .testsAccess)
+        try c.encode(architectureEnabled, forKey: .architectureEnabled)
+        try c.encode(architectureLanguage, forKey: .architectureLanguage)
+        try c.encode(commentsEnabled, forKey: .commentsEnabled)
+        try c.encode(commentsLanguage, forKey: .commentsLanguage)
+        try c.encode(terminalAccess, forKey: .terminalAccess)
+        try c.encode(buildEnabled, forKey: .buildEnabled)
     }
 }
 

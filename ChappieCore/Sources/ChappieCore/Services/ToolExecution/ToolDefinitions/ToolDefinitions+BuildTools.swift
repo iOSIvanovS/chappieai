@@ -12,9 +12,16 @@ extension ToolExecutionService {
         allInfos: [ActiveMemoryContext.ProjectInfo]
     ) -> [AITool] {
         var tools: [AITool] = []
-        let projectArgDesc = buildProjectArgDescription(for: progInfos)
 
-        let buildableInfos = progInfos.filter {
+        // Compilation gate: projects with buildEnabled = false are excluded from
+        // build_project/run_tests/read_build_log entirely — too slow to compile,
+        // user builds and tests manually and reports results back in chat.
+        let buildGatedInfos = progInfos.filter {
+            (projectSettingsCache[$0.id] ?? ProjectSettings()).buildEnabled
+        }
+        let projectArgDesc = buildProjectArgDescription(for: buildGatedInfos)
+
+        let buildableInfos = buildGatedInfos.filter {
             (projectSettingsCache[$0.id] ?? ProjectSettings()).devEnvironment.specificTools.contains("build_project")
         }
         if !buildableInfos.isEmpty {
@@ -28,16 +35,16 @@ extension ToolExecutionService {
             )))
         }
 
-        if !progInfos.isEmpty {
+        if !buildGatedInfos.isEmpty {
             tools.append(AITool(function: AIFunctionDefinition(
                 name: "run_tests",
-                description: runTestsDescription(for: progInfos),
+                description: runTestsDescription(for: buildGatedInfos),
                 parameters: AIToolParameters(
                     properties: [
                         "project": AIToolProperty(type: "string", description: projectArgDesc),
                         "target": AIToolProperty(type: "string", description: "Test target name or file/pattern. Empty = all tests.")
                     ],
-                    required: progInfos.count > 1 ? ["project"] : []
+                    required: buildGatedInfos.count > 1 ? ["project"] : []
                 )
             )))
 

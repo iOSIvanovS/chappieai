@@ -83,6 +83,7 @@ struct ProjectSettingsSheet: View {
                             devEnvironmentSection
                             Divider().padding(.vertical, 4)
                             gitSection
+                            buildSection
                             testsSection
                             architectureSection
                             commentsSection
