@@ -70,6 +70,24 @@ extension ToolExecutionService {
             )
         )))
 
+        tools.append(AITool(function: AIFunctionDefinition(
+            name: "view_image",
+            description: """
+            View an image file located inside a project folder (png, jpg, jpeg, gif, webp).
+            Use when the user refers to a screenshot or image they created/saved in the project \
+            (not attached directly to the chat) and you need to actually see its content.
+            Unlike read_file, this returns the image itself for visual inspection, not text.
+            Max file size: 5MB.
+            """,
+            parameters: AIToolParameters(
+                properties: [
+                    "path": AIToolProperty(type: "string", description: "Relative path to the image file"),
+                    "project": projectArg
+                ],
+                required: multiProject ? ["path", "project"] : ["path"]
+            )
+        )))
+
         return tools
     }
 

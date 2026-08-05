@@ -399,4 +399,65 @@ struct FileSystemManagerTests {
             try await manager.patchFile(at: "../../etc/passwd", find: "root", replace: "hacked")
         }
     }
+
+    // MARK: - readImageData (view_image)
+
+    @Test("readImageData: reads PNG bytes and resolves MIME type")
+    func readImageDataReadsPNG() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
+
+        // Minimal but valid content — readImageData does not decode pixels, just reads bytes.
+        let fakeBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        try fakeBytes.write(to: workspace.appendingPathComponent("shot.png"))
+
+        let result = try await manager.readImageData(at: "shot.png")
+        #expect(result.data == fakeBytes)
+        #expect(result.mimeType == "image/png")
+    }
+
+    @Test("readImageData: unsupported extension throws")
+    func readImageDataUnsupportedExtensionThrows() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
+
+        try "not an image".write(to: workspace.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
+
+        await #expect(throws: (any Error).self) {
+            try await manager.readImageData(at: "notes.txt")
+        }
+    }
+
+    @Test("readImageData: missing file throws")
+    func readImageDataMissingFileThrows() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
+
+        await #expect(throws: (any Error).self) {
+            try await manager.readImageData(at: "ghost.png")
+        }
+    }
+
+    @Test("🔒 readImageData: path traversal is blocked")
+    func readImageDataPathTraversalBlocked() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
+
+        await #expect(throws: (any Error).self) {
+            try await manager.readImageData(at: "../../etc/passwd.png")
+        }
+    }
+
+    @Test("readImageData: oversized image throws")
+    func readImageDataOversizedThrows() async throws {
+        let (manager, workspace) = try makeManager()
+        defer { cleanup(workspace) }
+
+        let bigData = Data(repeating: 0x00, count: FileSystemManager.maxImageBytes + 1)
+        try bigData.write(to: workspace.appendingPathComponent("huge.png"))
+
+        await #expect(throws: (any Error).self) {
+            try await manager.readImageData(at: "huge.png")
+        }
+    }
 }

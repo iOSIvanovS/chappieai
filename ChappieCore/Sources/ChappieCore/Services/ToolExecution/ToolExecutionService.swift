@@ -188,6 +188,13 @@ public actor ToolExecutionService {
         print("[ToolExecutionService] ✅ Project list handler registered")
     }
 
+    // MARK: - view_image marker
+
+    /// Prefix marking a view_image result as a data URI, not plain text.
+    /// AIOrchestrator+ToolExecution detects this and injects a synthetic multimodal
+    /// user message — the only way the model actually "sees" the image (see AIOrchestrator+ToolExecution.swift).
+    public static let viewImageMarker = "__CHAPPIE_IMAGE_DATA_URI__:"
+
     // MARK: - loc_* tool names
 
     private static let locToolNames: Set<String> = [
@@ -212,7 +219,7 @@ public actor ToolExecutionService {
         let projectRequiredTools: Set<String> = [
             "list_files", "read_file", "write_file", "patch_file", "delete_file",
             "get_file_info", "move_file", "rename_file",
-            "read_document", "write_document",
+            "read_document", "write_document", "view_image",
             "search_in_file", "search_in_project",
             "git_status", "git_diff", "git_add", "git_commit", "git_push",
             "git_log", "git_reset", "git_revert", "git_checkout",
@@ -260,6 +267,7 @@ public actor ToolExecutionService {
                  "read_document", "write_document",
                  "search_in_file", "search_in_project",
                  "fetch_attachment", "send_attachment", "attach_file",
+                 "view_image",
                  "web_fetch":
                 return try await executeFileTool(name: name, argsData: argsData)
 

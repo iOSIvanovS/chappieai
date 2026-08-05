@@ -81,6 +81,17 @@ extension ToolExecutionService {
             try await fileSystem.moveFile(from: from, to: to, projectName: args["project"])
             return "Success: '\(from)' → '\(to)'"
 
+        case "view_image":
+            guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
+                  let path = args["path"], !path.isEmpty else {
+                return "Error: Argument 'path' is required for view_image"
+            }
+            let (data, mimeType) = try await fileSystem.readImageData(at: path, projectName: args["project"])
+            let dataURI = "data:\(mimeType);base64,\(data.base64EncodedString())"
+            // Marker prefix lets AIOrchestrator+ToolExecution detect this result and inject
+            // a synthetic multimodal user message — plain tool-result strings can't carry images.
+            return "\(ToolExecutionService.viewImageMarker)\(dataURI)"
+
         case "search_in_file":
             guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                   let path = args["path"], !path.isEmpty,

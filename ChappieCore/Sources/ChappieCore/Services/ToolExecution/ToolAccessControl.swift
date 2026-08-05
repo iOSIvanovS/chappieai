@@ -71,7 +71,7 @@ extension ToolExecutionService {
 
         // Read-only tools — always allowed regardless of role or plan.
         let alwaysAllowedTools: Set<String> = [
-            "list_files", "read_file", "read_document", "read_build_log", "get_file_info"
+            "list_files", "read_file", "read_document", "read_build_log", "get_file_info", "view_image"
         ]
 
         // STARTER plan — read-only access.
