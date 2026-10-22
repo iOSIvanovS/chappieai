@@ -126,4 +126,17 @@ public actor MemoryStore {
         try await saveStorage(storage)
         print("[MemoryStore] 📦 Imported \(entries.count) entries into scope='\(scope)'")
     }
+
+    // MARK: - Backup (full-settings export/import, see BackupService)
+
+    /// Returns the entire memory storage (all scopes) — used by BackupService for export.
+    public func exportStorage() async throws -> MemoryStorage {
+        return try await loadStorage()
+    }
+
+    /// Destructively replaces the entire memory storage (all scopes) — full restore, no merge.
+    public func importStorage(_ storage: MemoryStorage) async throws {
+        try await saveStorage(storage)
+        print("[MemoryStore] 📦 Imported full storage (\(storage.scopes.count) scopes)")
+    }
 }

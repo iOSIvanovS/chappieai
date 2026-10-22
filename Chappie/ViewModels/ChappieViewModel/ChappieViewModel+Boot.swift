@@ -40,6 +40,8 @@ extension ChappieViewModel {
         let settingsStore = AppSettingsStore(dataStore: storage)
         self.appSettingsStore = settingsStore
 
+        self.backupService = BackupService(threadStore: tStore, memoryStore: store, providerStore: provStore)
+
         // Initialize services immediately — even without a workspace URL.
         // WHY: orchestrator requires toolService/fileSystem/memoryManager to be non-nil.
         let placeholderURL = FileManager.default.homeDirectoryForCurrentUser

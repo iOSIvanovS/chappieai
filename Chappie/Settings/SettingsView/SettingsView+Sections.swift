@@ -197,6 +197,31 @@ extension SettingsView {
         }
     }
 
+    // MARK: - Backup Section
+
+    var backupSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("settings.backup_section", systemImage: "square.and.arrow.up.on.square")
+                .font(.headline)
+
+            Text("settings.backup_hint")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 12) {
+                Spacer()
+                Button { showBackupImport = true } label: {
+                    Label("settings.backup_import_action", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.bordered)
+                Button { showBackupExport = true } label: {
+                    Label("settings.backup_export_action", systemImage: "square.and.arrow.up")
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+    }
+
     // MARK: - License Section
 
     var licenseSection: some View {

@@ -4,9 +4,57 @@
 // All content sections rendered inside ProjectSettingsSheet's ScrollView.
 
 import SwiftUI
+import AppKit
 import ChappieCore
 
 extension ProjectSettingsSheet {
+
+    // MARK: - Path section
+
+    var pathSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("project.settings.path_section", systemImage: "folder.badge.gearshape")
+
+            HStack(spacing: 8) {
+                TextField("project.settings.path_placeholder", text: $pathDraft)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: .monospaced))
+                    .onSubmit {
+                        onUpdatePath(pathDraft)
+                    }
+
+                Button {
+                    let panel = NSOpenPanel()
+                    panel.canChooseDirectories = true
+                    panel.canChooseFiles = false
+                    panel.allowsMultipleSelection = false
+                    panel.message = String(localized: "project.settings.path_picker_message")
+                    panel.prompt = String(localized: "project.settings.path_picker_button")
+                    if panel.runModal() == .OK, let url = panel.url {
+                        pathDraft = url.path
+                        onUpdatePath(pathDraft)
+                    }
+                } label: {
+                    Image(systemName: "folder")
+                }
+                .buttonStyle(.bordered)
+                .help("project.settings.path_browse_help")
+            }
+
+            if !FileManager.default.fileExists(atPath: pathDraft) {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                        .padding(.top, 1)
+                    Text("project.settings.path_missing_hint")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
 
     // MARK: - Role section
 

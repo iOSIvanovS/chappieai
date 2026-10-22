@@ -43,7 +43,10 @@ Chappie/
 │   └── StreamingState.swift            # Streaming state model (isolated from ViewModel)
 ├── Settings/
 │   ├── SettingsView.swift              # App settings sheet (+ onboarding reset button)
-│   └── MemoryManagementView.swift      # Memory browser/editor sheet
+│   ├── MemoryManagementView.swift      # Memory browser/editor sheet
+│   └── BackupSettingsView/
+│       ├── BackupExportSheet.swift     # Password entry + NSSavePanel → writes encrypted .chappiebackup
+│       └── BackupImportSheet.swift     # NSOpenPanel + password → decrypt/preview → confirm → destructive restore
 └── Views/
     ├── Chat/
     │   ├── ChatScrollView.swift         # Message feed (LazyVStack, anti-jump streaming)
@@ -85,7 +88,7 @@ Chappie/
     │   ├── ShakeEffect.swift            # Shake animation modifier
     │   └── FlowLayout.swift             # Flow layout for chips
     └── Onboarding/
-        ├── OnboardingView.swift         # Onboarding: welcome step + provider setup step
+        ├── OnboardingView.swift         # Onboarding: welcome step (+ "Restore from Backup" shortcut) + provider setup step
         └── EULAView.swift               # EULA/terms sheet
 ```
 
@@ -216,6 +219,41 @@ User picks folder (NSOpenPanel or drop)
   → syncFileSystemForActiveThread() — reads absolutePath directly, no bookmark
 ```
 
+`absolutePath` is also manually editable in `ProjectSettingsSheet` (text field + Browse button) —
+useful for repairing a path after migrating the whole app data to a new machine (see Backup Export
+below) or after a folder moved on disk. Flow: `ThreadStore.updateProjectPath(_:displayName:projectId:threadId:)`
+→ same reload chain as `updateProjectSettings`. Kept separate from `ProjectSettings` because the path
+lives in `ThreadProjectEntry`, not inside the settings struct.
+
+### Backup Export / Import (Settings → Backup & Migration)
+
+**Export:** `SettingsView.backupSection` → `BackupExportSheet` (password + confirm password) →
+`ChappieViewModel.exportBackup(password:)` → `BackupService.exportEncrypted(password:)` (ChappieCore)
+→ `NSSavePanel` writes the resulting encrypted `Data` to a `.chappiebackup` file.
+
+**Import (full restore, no merge — see `ChappieCore/architecture.md` BackupService section):**
+`BackupImportSheet` — two-step confirmation since the action is destructive:
+1. `NSOpenPanel` picks the `.chappiebackup` file + password entered → "Decrypt & Preview" →
+   `ChappieViewModel.previewBackup(data:password:)` → `BackupService.decryptBundle` — decrypts and
+   parses only, nothing is applied yet.
+2. Preview shows `exportedAt` date + provider/thread counts, plus a loud red warning that ALL
+   current data will be erased. User explicitly taps "Restore Now" →
+   `ChappieViewModel.importBackup(_:)` → `BackupService.applyImport` (wipes + restores) →
+   `reloadAfterImport()` tears down the active AI session (client/orchestrator/provider — almost
+   certainly stale after the wipe) and re-runs the same load sequence `bootStores` uses
+   (`loadProvidersAndSetActive` + `loadThreadsAndSelectActive` + `memoryManager.setMemoryStore`)
+   so the running app reflects the restored data without requiring a relaunch.
+
+Reachable from two places: `SettingsView` (regular restore) and `OnboardingView` welcome step
+("Restore from Backup" link button) — the latter lets a user on a freshly migrated machine skip
+the entire provider setup wizard and land directly in their restored workspace. Both call sites
+share the same `BackupImportSheet`; `onImported` closure differs (dismiss vs. `completeOnboarding()`).
+
+Scope: providers (incl. Keychain secrets), all threads (incl. attached projects + settings +
+`absolutePath`), all messages, full memory (global/thread/project). Excluded: project artifact
+files and chat attachments on disk — user reconnects project folders manually after import (via
+the editable `absolutePath` field above).
+
 ### Provider / Key / Model Selection
 
 `switchProvider(_ provider:, keyId:, modelName:)` is the single entry point for all provider changes.
@@ -308,3 +346,4 @@ Auto-select: if provider has exactly one key → pre-selected automatically.
 | 2026-07 | Projects refactor: removed ProjectStore CRUD, bookmark logic, AI add/remove tools. |
 | 2026-07 | SwiftData removal: AppSettingsMigration.swift deleted. ChappieApp uses bootStorage(). |
 | 2026-07 | Legacy migration removed: ThreadStore no longer contains migrateIfNeeded logic. |
+| 2026-08 | Backup Import UI: BackupImportSheet (decrypt/preview → destructive confirm → restore), wired into both SettingsView and OnboardingView welcome step ("Restore from Backup" shortcut skips the wizard entirely). ChappieViewModel+Backup gained previewBackup/importBackup/reloadAfterImport. |

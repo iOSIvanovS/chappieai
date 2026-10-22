@@ -40,8 +40,12 @@ struct ProjectSettingsSheet: View {
     let canExecuteTools: Bool
     /// Called when user taps "Change Plan" in the Starter restriction alert.
     let onChangePlan: () -> Void
+    /// Called when user updates the project path (manual edit or Browse picker).
+    /// Separate from onSave — path lives in ThreadProjectEntry, not ProjectSettings.
+    let onUpdatePath: (String) -> Void
 
     @State var draft: ProjectSettings
+    @State var pathDraft: String
     @State var showingDowngradeAlert = false
     @State var pendingRoleChange: AgentRole? = nil
     @State var isDetecting = false
@@ -53,7 +57,8 @@ struct ProjectSettingsSheet: View {
         onSave: @escaping (ProjectSettings) -> Void,
         onDismiss: @escaping () -> Void,
         onChangePlan: @escaping () -> Void = {},
-        onDetectEnvironment: @escaping (@Sendable @escaping (DevEnvironment) -> Void) -> Void = { _ in }
+        onDetectEnvironment: @escaping (@Sendable @escaping (DevEnvironment) -> Void) -> Void = { _ in },
+        onUpdatePath: @escaping (String) -> Void = { _ in }
     ) {
         self.project = project
         self.canExecuteTools = canExecuteTools
@@ -61,7 +66,9 @@ struct ProjectSettingsSheet: View {
         self.onDismiss = onDismiss
         self.onChangePlan = onChangePlan
         self.onDetectEnvironment = onDetectEnvironment
+        self.onUpdatePath = onUpdatePath
         self._draft = State(initialValue: project.settings)
+        self._pathDraft = State(initialValue: project.absolutePath ?? "")
     }
 
     var body: some View {
@@ -72,6 +79,10 @@ struct ProjectSettingsSheet: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    pathSection
+
+                    Divider().padding(.vertical, 4)
+
                     roleSection
 
                     if draft.agentRole == .executor {

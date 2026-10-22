@@ -126,6 +126,35 @@ extension ChappieViewModel {
         }
     }
 
+    // MARK: - Update Project Path
+
+    /// Manual path repair — e.g. after migrating to a new machine or moving a folder on disk.
+    /// Separate from updateProjectSettings since absolutePath lives in ThreadProjectEntry, not ProjectSettings.
+    func updateProjectPath(_ newPath: String, forProjectId projectId: UUID) {
+        guard let tStore = threadStore, let thread = activeThread else { return }
+
+        Task {
+            do {
+                try await tStore.updateProjectPath(newPath, projectId: projectId, threadId: thread.id)
+
+                let refreshed = try await tStore.loadThreads()
+                self.threads = refreshed
+
+                if let updatedThread = refreshed.first(where: { $0.id == thread.id }) {
+                    self.activeThread = updatedThread
+                    await loadProjectsForThread(updatedThread)
+                    buildAndSyncMemoryContext()
+                    await syncActiveMemoryContext()
+                    await syncFileSystemForActiveThread()
+                    restartMCPIfNeeded()
+                }
+                print("[ChappieViewModel] Project path updated (id: \(projectId)) -> \(newPath)")
+            } catch {
+                print("[ChappieViewModel] Error updating project path: \(error)")
+            }
+        }
+    }
+
     // MARK: - MCP Restart
 
     /// Restarts MCP helper with the current workspace, env map, and path map.

@@ -65,6 +65,11 @@ ChappieCore/
         ├── ThreadStore+Chunks.swift        # Chunked message storage: read/write/lazy-load/pagination
         ├── ThreadStore+Projects.swift      # Thread-scoped project CRUD
         ├── ThreadStore+Settings.swift      # Settings CRUD, Starter plan enforcement, memory footprint
+        ├── ThreadStore+Backup.swift        # exportAllPayloads/exportChunks — read-only, for BackupService
+        ├── BackupService/
+        │   ├── BackupModels.swift          # ChappieExportBundle, ExportedProvider, ExportedChunk
+        │   ├── BackupCrypto.swift          # PBKDF2 + AES-256-GCM whole-file encryption
+        │   └── BackupService.swift         # Assembles bundle from Stores (incl. Keychain secrets), encrypts
         ├── ToolAccessController.swift  # Hard gate before every tool execution
         ├── WebFetchService.swift       # Fetches web pages and extracts clean text
         └── ToolExecution/
@@ -256,6 +261,9 @@ graph TD
     APS --> Proto
     ASS --> Proto
     PS --> TS
+    BKP["BackupService\nExport bundle + encryption"] --> TS
+    BKP --> MS
+    BKP --> APS
 
     subgraph Services["Services (actors)"]
         Orch["AIOrchestrator\nReasoning loop"]
@@ -411,3 +419,7 @@ public enum AccessResult: Sendable {
 | 2026-07 | ToolDefinitions.swift split into 6 files: orchestrator + FileTools, MemoryTools, GitTools, BuildTools, LocalizationTools extensions. 825 lines → 143 lines orchestrator. |
 | 2026-07 | ThreadStore.swift split into 4 files: core + Chunks, Projects, Settings extensions. 513 lines → ~150 lines core. |
 | 2026-08 | view_image tool: AI can now view images saved inside project folders (not just chat attachments). FileSystemManager+Image.swift reads raw bytes (readFile can't — it decodes UTF-8, corrupting binary data). Tool result is a marker-prefixed data URI; AIOrchestrator+ToolExecution detects the marker and injects a synthetic user-role multimodal message right after the tool-result message — this is required because tool-role messages cannot carry image_url content per OpenAI/Anthropic wire format, only user-role messages can. |
+| 2026-08 | Project path editable: ThreadStore.updateProjectPath() lets the user manually fix absolutePath in Settings (e.g. after a machine migration) without re-picking the folder via NSOpenPanel. |
+| 2026-08 | BackupService (export/import foundation): ChappieExportBundle carries providers (+ Keychain secrets pulled out explicitly), full ThreadPayload list, all message chunks (opaque Data — ChappieCore stays decoupled from app-layer ChatMessage), and the full MemoryStorage blob. Attachments on disk are intentionally excluded (app already degrades gracefully for missing attachment files — no crash). BackupCrypto encrypts the whole serialized bundle with PBKDF2-HMAC-SHA256 (310k iterations) + AES-256-GCM — one password unlocks everything, including secrets. Export wired end-to-end (BackupService.exportEncrypted → ChappieViewModel.exportBackup). |
+| 2026-08 | BackupService import (full restore, no merge — agreed with user): ThreadStore.importAll/AIProviderStore.importAll/MemoryStore.importStorage each destructively wipe existing data before writing the imported set (threads+chunks, providers+Keychain secrets, all memory scopes respectively) — matches the "migration/full restore" scenario, selective merge is an explicit non-goal. BackupService.decryptBundle + applyImport orchestrate the full flow. Project folder paths and attachments are NOT part of the bundle — user reconnects project paths manually after import via the editable absolutePath field (ProjectSettingsSheet). Covered by BackupServiceTests (8 tests: export completeness, provider/thread/memory restore + wipe-before-restore, encrypted end-to-end flow, wrong password). |
+| 2026-08 | Backup import UI shipped in app layer (Chappie/architecture.md): BackupImportSheet two-step confirmation (decrypt/preview, then explicit destructive "Restore Now"), reachable from SettingsView and from OnboardingView welcome step as a "Restore from Backup" shortcut that skips the whole provider setup wizard. |

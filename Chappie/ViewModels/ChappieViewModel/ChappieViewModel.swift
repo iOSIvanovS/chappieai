@@ -164,6 +164,10 @@ final class ChappieViewModel {
     var cachedLastActiveThreadId: UUID?
     var _activeThreadSession: ThreadSession?
 
+    // MARK: - Backup (export/import for machine migration)
+
+    var backupService: BackupService?
+
     // MARK: - Project maps for MCP routing
 
     /// Map of project display name → DevEnvironment rawValue.

@@ -82,4 +82,31 @@ extension ThreadStore {
         try await refreshCache()
         print("[ThreadStore] ✅ Settings updated for project \(projectId) in thread \(threadId)")
     }
+
+    /// Updates absolutePath for a project — used for manual repair (e.g. after migrating
+    /// to a new machine, or when a folder moved on disk) via a text field in settings.
+    /// displayName is updated too only if the caller passes a non-nil value.
+    public func updateProjectPath(
+        _ absolutePath: String,
+        displayName: String? = nil,
+        projectId: UUID,
+        threadId: UUID
+    ) async throws {
+        var payloads = try await loadPayloads()
+        guard let tIdx = payloads.firstIndex(where: { $0.id == threadId }) else { return }
+
+        var projects: [ThreadProjectEntry] = []
+        if !payloads[tIdx].projectsJSON.isEmpty {
+            projects = (try? JSONDecoder().decode([ThreadProjectEntry].self, from: payloads[tIdx].projectsJSON)) ?? []
+        }
+
+        guard let pIdx = projects.firstIndex(where: { $0.id == projectId }) else { return }
+        projects[pIdx].absolutePath = absolutePath
+        if let displayName { projects[pIdx].displayName = displayName }
+        payloads[tIdx].projectsJSON = (try? JSONEncoder().encode(projects)) ?? payloads[tIdx].projectsJSON
+        payloads[tIdx].updatedAt = Date()
+        try await savePayloads(payloads)
+        try await refreshCache()
+        print("[ThreadStore] ✅ Path updated for project \(projectId) in thread \(threadId)")
+    }
 }

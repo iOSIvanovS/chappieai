@@ -5,6 +5,8 @@
 //
 // FLOW:
 // Step 1: User name (optional) — saved directly to global memory via viewModel.saveUserName()
+//         Also offers "Restore from Backup" — skips the entire wizard by importing a
+//         previously exported .chappiebackup file (machine migration shortcut).
 // Step 2: First AI provider setup — uses CatalogPickerSheet in onboarding mode.
 //         If at least one provider already exists, user can skip this step.
 //         CatalogPickerSheet → AddProviderSheet (catalog or custom).
@@ -40,6 +42,7 @@ struct OnboardingView: View {
     @State private var step: OnboardingStep = .welcome
     @State private var userName: String = ""
     @State private var showAddProvider: Bool = false
+    @State private var showBackupImport: Bool = false
 
     private enum OnboardingStep {
         case welcome
@@ -85,6 +88,14 @@ struct OnboardingView: View {
                     showAddProvider = false
                 }
             )
+        }
+        // Restore from a backup file instead of walking the wizard — e.g. right after
+        // a machine migration. Jumps straight past onboarding on success.
+        .sheet(isPresented: $showBackupImport) {
+            BackupImportSheet(viewModel: viewModel) {
+                showBackupImport = false
+                AppState.shared.completeOnboarding()
+            }
         }
     }
 
@@ -140,6 +151,19 @@ struct OnboardingView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .keyboardShortcut(.return)
+
+            // Escape hatch for machine migration — skips the whole wizard if a backup exists.
+            Button {
+                showBackupImport = true
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "square.and.arrow.down.on.square")
+                    Text("onboarding.restore_from_backup")
+                }
+                .font(.system(size: 13))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
         }
         .padding(40)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
