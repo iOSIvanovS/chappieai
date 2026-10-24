@@ -32,7 +32,8 @@ ChappieMCP/
 └── Sources/ChappieMCP/
     ├── DevEnvironment.swift           # Mirrors ChappieCore.DevEnvironment (rawValues must stay in sync)
     ├── Server/
-    │   └── MCPHTTPServer.swift        # Unix Domain Socket server + ToolDispatcher
+    │   ├── MCPHTTPServer.swift        # Unix Domain Socket server + ToolDispatcher; socket I/O on a private GCD queue
+    │   └── SocketIO.swift             # poll()-based read/write with one overall deadline per transfer
     └── Tools/
         ├── GitTools.swift             # git_status, git_add, git_commit, git_log, git_reset, git_revert, git_checkout
         ├── BuildTools.swift           # build_project, run_tests, read_build_log (env-aware routing)
@@ -105,6 +106,15 @@ Response: [4 bytes UInt32 BE length] [JSON: {"result": "...", "error": null}]
 - **Self-heal on call:** when `MCPToolBridge` cannot connect (ENOENT / ECONNREFUSED — the request never reached a helper) it asks the launcher to restart the helper once and retries once. Parallel callers share one recovery.
 - **Exit with the app:** the helper polls `getppid()` once a second and exits (removing its socket) when its parent changes — a killed app (Xcode Stop = SIGKILL) leaves no orphan. SIGTERM also cleans up. The socket file is unlinked only if its inode is still the one the helper bound, so a restart on the same path cannot delete the new helper's socket.
 - **Not automatic:** helpers left over from before this change are not killed by code.
+
+### Misbehaving clients
+
+A client that connects and goes silent must not starve real calls (24 silent clients used to pin every cooperative-pool thread).
+- **Own queue.** Socket reads and writes run on a private concurrent GCD queue, never on Swift's cooperative pool. Only the tool run itself is `async`.
+- **One deadline per transfer** (`SocketIO`, `poll()`): 10 s to deliver the whole request, 10 s to take the whole response. A client dripping one byte at a time cannot extend it. The deadline bounds only the transfer, never the tool run (a build may take minutes).
+- **Pending cap:** at most 32 connections still delivering their request; extra ones are closed at once.
+- **`accept()` errors:** EINTR/ECONNABORTED/EAGAIN/EPROTO retry at once; EMFILE/ENFILE/ENOMEM/ENOBUFS back off 100 ms (logged once); anything else is fatal, so the helper exits and the launcher restarts it.
+- A connection that closes without sending a byte is the app's readiness probe and is not logged as an error.
 
 ---
 
