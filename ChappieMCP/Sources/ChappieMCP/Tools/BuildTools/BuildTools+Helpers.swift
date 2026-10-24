@@ -14,31 +14,28 @@ extension BuildTools {
     /// WHY `in path` instead of self.defaultProjectPath:
     /// Each project lives in its own directory. Without the correct path,
     /// this would always find Chappie.xcodeproj regardless of which project was requested.
-    func xcodeProjectName(in projectDir: String) -> String {
+    func xcodeProjectName(in projectDir: String) async -> String {
         // WHY Process+ls instead of FileManager.contentsOfDirectory:
         // MCP runs as a child process and does NOT inherit security-scoped bookmarks
         // from the parent Chappie app. FileManager cannot read sandbox-gated folders
         // (e.g. user-attached projects like adept-tracker). Shell `ls` bypasses this
         // because it runs in the user's shell environment with normal FS access.
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/ls")
-        process.arguments = [projectDir]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe() // suppress errors
-        if (try? process.run()) != nil {
-            process.waitUntilExit()
-            let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            if let proj = output.components(separatedBy: "\n").first(where: { $0.hasSuffix(".xcodeproj") }) {
-                return proj
-            }
+        let run = await ProcessRunner.run(
+            executable: "/bin/ls",
+            args: [projectDir],
+            environment: ProcessInfo.processInfo.environment,
+            timeout: BuildTools.listTimeout
+        )
+        if run.launchError == nil, run.stopReason == nil,
+           let proj = run.stdoutText.components(separatedBy: "\n").first(where: { $0.hasSuffix(".xcodeproj") }) {
+            return proj
         }
         return URL(fileURLWithPath: projectDir).lastPathComponent + ".xcodeproj"
     }
 
-    /// Derives the main app scheme name from the project file name.
-    func xcodeAppScheme(in projectDir: String) -> String {
-        xcodeProjectName(in: projectDir).replacingOccurrences(of: ".xcodeproj", with: "")
+    /// Derives the main app scheme name from an already resolved project file name.
+    func xcodeAppScheme(projectName: String) -> String {
+        projectName.replacingOccurrences(of: ".xcodeproj", with: "")
     }
 
     /// Finds the best test scheme for the project.
@@ -49,22 +46,20 @@ extension BuildTools {
     /// 1. Exact "<AppName>CoreTests" — Chappie convention
     /// 2. Any scheme containing "test" (case-insensitive)
     /// 3. Fallback: main app scheme (test targets included in it will still run)
-    func xcodeTestScheme(in projectDir: String) -> String {
-        let appScheme = xcodeAppScheme(in: projectDir)
-        let projName = xcodeProjectName(in: projectDir)
+    func xcodeTestScheme(in projectDir: String, projectName projName: String) async -> String {
+        let appScheme = xcodeAppScheme(projectName: projName)
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcodebuild")
-        process.arguments = ["-project", projName, "-list"]
-        process.currentDirectoryURL = URL(fileURLWithPath: projectDir)
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
+        // `xcodebuild -list` can hang, e.g. while resolving Swift packages over a dead network.
+        let run = await ProcessRunner.run(
+            executable: "/usr/bin/xcodebuild",
+            args: ["-project", projName, "-list"],
+            workingDirectory: projectDir,
+            environment: ProcessInfo.processInfo.environment,
+            timeout: BuildTools.schemeListTimeout
+        )
+        guard run.launchError == nil, run.stopReason == nil else { return appScheme + "CoreTests" }
 
-        guard (try? process.run()) != nil else { return appScheme + "CoreTests" }
-        process.waitUntilExit()
-
-        let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let output = run.stdoutText
         let schemes = output.components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty && !$0.hasSuffix(":") }
@@ -81,8 +76,8 @@ extension BuildTools {
     ///
     /// WHY generic/platform=: universal "Any Device" syntax — no specific simulator required.
     /// Works regardless of which simulators are installed on the machine.
-    func xcodeDestination(in projectDir: String) -> String {
-        xcodeDestinationString(in: projectDir, forTests: false)
+    func xcodeDestination(in projectDir: String, projectName: String) async -> String {
+        await xcodeDestinationString(in: projectDir, projectName: projectName, forTests: false)
     }
 
     /// Detects the correct xcodebuild -destination for run_tests.
@@ -90,24 +85,23 @@ extension BuildTools {
     /// WHY separate: macOS tests cannot run on "generic/platform=macOS" —
     /// xcodebuild requires a concrete device for test execution (not just build).
     /// Simulator platforms use the same generic destination for both build and test.
-    func xcodeTestDestination(in projectDir: String) -> String {
-        xcodeDestinationString(in: projectDir, forTests: true)
+    func xcodeTestDestination(in projectDir: String, projectName: String) async -> String {
+        await xcodeDestinationString(in: projectDir, projectName: projectName, forTests: true)
     }
 
     /// Returns the UDID of the first available simulator for the given platform.
     ///
     /// WHY: xcodebuild test requires a concrete simulator (not generic/platform=).
     /// We query xcrun simctl for available devices and pick the first match.
-    private func firstAvailableSimulatorUDID(platform: String) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        process.arguments = ["simctl", "list", "devices", "available", "--json"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        guard (try? process.run()) != nil else { return nil }
-        process.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    private func firstAvailableSimulatorUDID(platform: String) async -> String? {
+        let run = await ProcessRunner.run(
+            executable: "/usr/bin/xcrun",
+            args: ["simctl", "list", "devices", "available", "--json"],
+            environment: ProcessInfo.processInfo.environment,
+            timeout: BuildTools.simulatorListTimeout
+        )
+        guard run.launchError == nil, run.stopReason == nil else { return nil }
+        let data = run.stdout
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let devices = json["devices"] as? [String: [[String: Any]]] else { return nil }
         // Find the first device matching the requested platform
@@ -122,8 +116,7 @@ extension BuildTools {
     }
 
     /// Core platform detection — shared by xcodeDestination and xcodeTestDestination.
-    private func xcodeDestinationString(in projectDir: String, forTests: Bool) -> String {
-        let projName = xcodeProjectName(in: projectDir)
+    private func xcodeDestinationString(in projectDir: String, projectName projName: String, forTests: Bool) async -> String {
         let pbxPath = projectDir + "/" + projName + "/project.pbxproj"
 
         guard let content = try? String(contentsOfFile: pbxPath, encoding: .utf8) else {
@@ -135,25 +128,25 @@ extension BuildTools {
         if lower.contains("sdkroot = iphoneos") || lower.contains("supported_platforms = iphoneos") {
             // WHY: generic/platform works for build but NOT for tests —
             // xcodebuild requires a concrete simulator UDID when running tests.
-            if forTests, let udid = firstAvailableSimulatorUDID(platform: "iOS") {
+            if forTests, let udid = await firstAvailableSimulatorUDID(platform: "iOS") {
                 return "platform=iOS Simulator,id=\(udid)"
             }
             return "generic/platform=iOS Simulator"
         }
         if lower.contains("sdkroot = watchos") || lower.contains("supported_platforms = watchos") {
-            if forTests, let udid = firstAvailableSimulatorUDID(platform: "watchOS") {
+            if forTests, let udid = await firstAvailableSimulatorUDID(platform: "watchOS") {
                 return "platform=watchOS Simulator,id=\(udid)"
             }
             return "generic/platform=watchOS Simulator"
         }
         if lower.contains("sdkroot = appletvos") || lower.contains("supported_platforms = appletvos") {
-            if forTests, let udid = firstAvailableSimulatorUDID(platform: "tvOS") {
+            if forTests, let udid = await firstAvailableSimulatorUDID(platform: "tvOS") {
                 return "platform=tvOS Simulator,id=\(udid)"
             }
             return "generic/platform=tvOS Simulator"
         }
         if lower.contains("sdkroot = xros") || lower.contains("supported_platforms = xros") {
-            if forTests, let udid = firstAvailableSimulatorUDID(platform: "visionOS") {
+            if forTests, let udid = await firstAvailableSimulatorUDID(platform: "visionOS") {
                 return "platform=visionOS Simulator,id=\(udid)"
             }
             return "generic/platform=visionOS Simulator"

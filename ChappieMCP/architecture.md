@@ -123,7 +123,7 @@ A client that connects and goes silent must not starve real calls (24 silent cli
 The app cancels a call by hanging up. The helper never reads from the client again after the request, so any readability on the socket means "peer gone".
 - `ClientWatcher` (one `poll()` loop per running tool, on the I/O queue) cancels the tool's `Task` when the peer closes. It is stopped and joined before the descriptor is closed.
 - `ProcessRunner` turns Task cancellation into `ProcessTree.terminate`: SIGTERM to the process and all descendants, SIGKILL for survivors after 2 s (pid + start time are checked first, so a recycled pid is never killed). Used by build/test, git and the PDF converter.
-- **Git write commands are not cancellable** (`add`, `commit`, `push`, `reset`, `revert`, `checkout`): killing them halfway can leave `index.lock` or a half-applied state. They run to the end even if the client left; only `status` and `log` stop.
+- **Git write commands are not cancellable** (`add`, `commit`, `push`, `reset`, `revert`, `checkout`): killing them halfway can leave `index.lock` or a half-applied state. They run to the end even if the client left (only their timeout stops them, see below); only `status` and `log` stop.
 - Not cancellable by design: in-process work (loc_*, file/zip document readers) is short and has no child process.
 
 ---
@@ -144,7 +144,23 @@ The app cancels a call by hanging up. The helper never reads from the client aga
 
 **`git_diff` is BANNED FOREVER** — loads entire diff into AI context, costs money.
 
-All git commands run with: `GIT_PAGER=cat`, `GIT_TERMINAL_PROMPT=0`, `GIT_CONFIG_NOSYSTEM=1`, `TERM=dumb`.
+All git commands run with: `GIT_PAGER=cat`, `GIT_TERMINAL_PROMPT=0`, `TERM=dumb`.
+
+**Timeouts (`GitCommandKind`).** Every git call has one; a wrong guess about "hung" is the dangerous part, so the limits follow what the command legitimately does:
+
+| Kind | Commands | Limit |
+|---|---|---|
+| read | `status`, `log` | 60 s (also cancellable by Stop) |
+| local | `add`, `reset`, `checkout` | 120 s |
+| hooked | `commit`, `revert` | 10 min (hooks such as linters may be slow) |
+| push | `push` | 10 min backstop, plus stall detection: `http.lowSpeedLimit/Time` for HTTPS and `ConnectTimeout` / `ServerAliveInterval` in `GIT_SSH_COMMAND` for SSH. The user's own `core.sshCommand` is kept as the base, never replaced |
+
+- **A timeout on a mutating command means "result unknown", not "failed".** It may have finished before it was stopped (a push can land on the remote). The message says so, forbids automatic retry and tells the model to check `git_status` / `git_log` first. It also lists leftovers it can see (`index.lock`, `REVERT_HEAD`, `MERGE_HEAD`, `CHERRY_PICK_HEAD`). They are reported, never deleted: the lock may belong to a git that is still running.
+- The tool has no `--force` / `--delete` variants, so a repeated push after a push that did land only answers "up-to-date" or is rejected as non-fast-forward.
+- The kill uses `ProcessTree` (SIGTERM first, so git removes its own locks, SIGKILL after 2 s), which also takes down hook children.
+- `CHAPPIE_MCP_TIMEOUT_SCALE` (0 to 1) shrinks all git timeouts. It exists only for live checks; the app never sets it.
+
+**Discovery helpers** (`BuildTools+Helpers`: `ls` for the `.xcodeproj`, `xcodebuild -list`, `xcrun simctl`) run through `ProcessRunner` with timeouts of 10 / 60 / 20 s and fall back to defaults on timeout. The project name is resolved once per call instead of about five times.
 
 ### Build (BuildTools.swift) — env-aware routing
 

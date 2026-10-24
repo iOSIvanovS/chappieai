@@ -26,6 +26,12 @@ final class BuildTools: Sendable {
     /// Map of project display name → absolute path on disk.
     let projectPathMap: [String: String]
 
+    /// Timeouts of the discovery helpers. They only look things up, so a hang means a real problem
+    /// (dead network during package resolution, broken simulator service), not a slow build.
+    static let listTimeout: TimeInterval = 10
+    static let schemeListTimeout: TimeInterval = 60
+    static let simulatorListTimeout: TimeInterval = 20
+
     /// Shared log file path — written by build/test, read by read_build_log.
     /// Falls back to the temp folder when the helper has no workspace folder (empty root):
     /// "/" + ".build_log.txt" would target the read-only filesystem root.
@@ -79,9 +85,12 @@ final class BuildTools: Sendable {
 
         switch env {
         case .xcode:
+            // Resolved once per call: each lookup used to rescan the directory (about 5 times per run_tests).
+            let projName = await xcodeProjectName(in: path)
+            let destination = await xcodeDestination(in: path, projectName: projName)
             return await runXcodebuild(
-                args: ["-project", xcodeProjectName(in: path), "-scheme", xcodeAppScheme(in: path),
-                       "-configuration", "Debug", "-destination", xcodeDestination(in: path), "build"],
+                args: ["-project", projName, "-scheme", xcodeAppScheme(projectName: projName),
+                       "-configuration", "Debug", "-destination", destination, "build"],
                 label: label,
                 workingDirectory: path,
                 env: env
@@ -118,8 +127,10 @@ final class BuildTools: Sendable {
 
         switch env {
         case .xcode:
-            var args = ["-project", xcodeProjectName(in: path), "-scheme", xcodeTestScheme(in: path),
-                        "-destination", xcodeTestDestination(in: path), "test"]
+            let projName = await xcodeProjectName(in: path)
+            let scheme = await xcodeTestScheme(in: path, projectName: projName)
+            let destination = await xcodeTestDestination(in: path, projectName: projName)
+            var args = ["-project", projName, "-scheme", scheme, "-destination", destination, "test"]
             if let target, !target.isEmpty {
                 args.append(contentsOf: ["-only-testing", target])
             }

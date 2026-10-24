@@ -45,6 +45,40 @@ private enum GitPathError: Error {
     case emptyMap
 }
 
+// MARK: - GitCommandKind
+
+/// How a git command is supervised. The kind decides the timeout and whether "Stop" may kill it.
+///
+/// WHY NOT ONE TIMEOUT FOR ALL:
+/// status/log are instant, so a hang means a real problem. commit/revert run user hooks (linters,
+/// tests) that legitimately take minutes. push depends on the network and is additionally watched
+/// for a stalled transfer (see pushStallArguments), with the hard limit only as a backstop.
+enum GitCommandKind: Sendable {
+    case read       // status, log
+    case local      // add, reset, checkout
+    case hooked     // commit, revert (hooks may be slow)
+    case push
+
+    var timeout: TimeInterval {
+        switch self {
+        case .read: return 60 * Self.scale
+        case .local: return 120 * Self.scale
+        case .hooked, .push: return 600 * Self.scale
+        }
+    }
+
+    /// Shrinks every timeout so a live check does not have to wait ten minutes. The app never sets
+    /// this variable; an invalid or non-positive value is ignored.
+    private static let scale: Double = {
+        guard let raw = ProcessInfo.processInfo.environment["CHAPPIE_MCP_TIMEOUT_SCALE"],
+              let value = Double(raw), value > 0, value <= 1 else { return 1 }
+        return value
+    }()
+
+    /// Changes the repository or the remote: never killed by "Stop" (half-applied state, index.lock).
+    var isMutating: Bool { self != .read }
+}
+
 // MARK: - GitTools
 
 /// Git repository tools with multi-project routing support.
@@ -133,16 +167,16 @@ final class GitTools: Sendable {
     // MARK: - Public Tools
 
     func status(projectName: String?) async -> ToolResult {
-        return await runGit(["status", "--short", "--branch"], projectName: projectName, cancellable: true)
+        return await runGit(["status", "--short", "--branch"], kind: .read, projectName: projectName)
     }
 
     func add(paths: String, projectName: String?) async -> ToolResult {
         let pathArgs = paths.components(separatedBy: " ").filter { !$0.isEmpty }
-        return await runGit(["add"] + pathArgs, projectName: projectName)
+        return await runGit(["add"] + pathArgs, kind: .local, projectName: projectName)
     }
 
     func commit(message: String, projectName: String?) async -> ToolResult {
-        return await runGit(["commit", "-m", message], projectName: projectName)
+        return await runGit(["commit", "-m", message], kind: .hooked, projectName: projectName)
     }
 
     /// Pushes the current branch to remote.
@@ -152,15 +186,15 @@ final class GitTools: Sendable {
     /// SSH_AUTH_SOCK is forwarded from the parent so the ssh-agent is reachable for SSH remotes.
     /// GIT_TERMINAL_PROMPT=0 prevents hanging if auth fails — returns error instead.
     func push(remote: String = "origin", branch: String = "main", projectName: String?) async -> ToolResult {
-        return await runGit(["push", remote, branch], projectName: projectName)
+        return await runGit(["push", remote, branch], kind: .push, projectName: projectName)
     }
 
     func log(count: Int, projectName: String?) async -> ToolResult {
-        return await runGit(["log", "--oneline", "--decorate", "--graph", "-\(count)"], projectName: projectName, cancellable: true)
+        return await runGit(["log", "--oneline", "--decorate", "--graph", "-\(count)"], kind: .read, projectName: projectName)
     }
 
     func reset(projectName: String?) async -> ToolResult {
-        return await runGit(["reset", "HEAD"], projectName: projectName)
+        return await runGit(["reset", "HEAD"], kind: .local, projectName: projectName)
     }
 
     /// Reverts one or more commits without auto-committing each one.
@@ -174,12 +208,12 @@ final class GitTools: Sendable {
             return .failure("Argument 'hashes' is required for git_revert")
         }
 
-        let revertResult = await runGit(["revert", "--no-commit"] + hashList, projectName: projectName)
+        let revertResult = await runGit(["revert", "--no-commit"] + hashList, kind: .hooked, projectName: projectName)
 
         // If revert failed (e.g. merge conflict) — return immediately, do NOT commit.
         if revertResult.error != nil { return revertResult }
 
-        return await runGit(["commit", "-m", message], projectName: projectName)
+        return await runGit(["commit", "-m", message], kind: .hooked, projectName: projectName)
     }
 
     /// Restores specific files from a given commit or branch.
@@ -193,15 +227,74 @@ final class GitTools: Sendable {
         guard !pathList.isEmpty else {
             return .failure("Argument 'paths' is required for git_checkout (space-separated file paths)")
         }
-        return await runGit(["checkout", ref, "--"] + pathList, projectName: projectName)
+        return await runGit(["checkout", ref, "--"] + pathList, kind: .local, projectName: projectName)
     }
 
     // MARK: - Private Process Runner
 
-    /// `cancellable` is false by default: a git command that changes the repository (add, commit,
-    /// push, reset, revert, checkout) must not be killed halfway, because that can leave
-    /// index.lock or a half-applied state. Only read-only commands opt in.
-    private func runGit(_ args: [String], projectName: String?, cancellable: Bool = false) async -> ToolResult {
+    /// Git's own stall detection for push: abort when the transfer stays below 1000 B/s for 60 s.
+    /// This kills a push whose network really died, while a slow but moving push keeps going.
+    /// (HTTPS remotes; SSH remotes get the equivalent through GIT_SSH_COMMAND, see sshCommand.)
+    private static let pushStallArguments = ["-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=60"]
+
+    /// ssh options that make a dead connection fail in about a minute instead of hanging.
+    private static let sshStallOptions = "-o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+
+    /// The ssh command for push: the user's core.sshCommand (custom key, jump host, ...) when one is
+    /// configured, otherwise plain ssh, plus the stall options. Overriding core.sshCommand blindly
+    /// would silently break pushes for users who rely on it. ~/.ssh/config is read by ssh itself.
+    private func sshCommand(workingDir: String, env: [String: String]) async -> String {
+        let query = await ProcessRunner.run(
+            executable: "/usr/bin/git",
+            args: ["config", "--get", "core.sshCommand"],
+            workingDirectory: workingDir,
+            environment: env,
+            timeout: GitCommandKind.read.timeout
+        )
+        let configured = query.stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = (query.launchError == nil && query.exitCode == 0 && !configured.isEmpty) ? configured : "ssh"
+        return "\(base) \(GitTools.sshStallOptions)"
+    }
+
+    /// Leftovers a killed mutating git may have left behind. Reported, never deleted: the lock may
+    /// belong to another git that is still running, and removing it would corrupt that run.
+    private func leftoverState(in workingDir: String) -> [String] {
+        let gitDir = workingDir + "/.git"
+        let candidates: [(String, String)] = [
+            ("index.lock", "index.lock exists (remove it only if no other git is running)"),
+            ("REVERT_HEAD", "a revert is in progress (git revert --abort to cancel it)"),
+            ("MERGE_HEAD", "a merge is in progress"),
+            ("CHERRY_PICK_HEAD", "a cherry-pick is in progress")
+        ]
+        return candidates
+            .filter { FileManager.default.fileExists(atPath: gitDir + "/" + $0.0) }
+            .map { $0.1 }
+    }
+
+    /// For a mutating command a timeout does NOT mean "it failed": it may have completed on the
+    /// remote or in the repository before we killed it. The message says so, so the model checks
+    /// git_status / git_log instead of retrying blindly or telling the user it did not happen.
+    private func timeoutResult(args: [String], kind: GitCommandKind, workingDir: String) -> ToolResult {
+        let command = "git \(args.joined(separator: " "))"
+        let seconds = Int(kind.timeout)
+        guard kind.isMutating else {
+            return .failure("\(command) timed out after \(seconds)s and was stopped. It only reads, so nothing changed.")
+        }
+        var text = """
+        ⏱ \(command) was stopped after \(seconds)s. The RESULT IS UNKNOWN: it may have completed \
+        before it was stopped. Do NOT retry automatically and do NOT tell the user it failed. \
+        Verify with git_status and git_log first, and decide only after that.
+        """
+        let leftovers = leftoverState(in: workingDir)
+        if !leftovers.isEmpty {
+            text += "\nLeft behind: " + leftovers.joined(separator: "; ") + "."
+        }
+        return .failure(text)
+    }
+
+    /// Mutating commands are never cancelled by "Stop" (kind.isMutating): killing them halfway can
+    /// leave index.lock or a half-applied state. They are only stopped by their timeout.
+    private func runGit(_ args: [String], kind: GitCommandKind, projectName: String?) async -> ToolResult {
         // Resolve path first — return a clear error if project is unknown or map is empty.
         let workingDir: String
         switch resolvePath(for: projectName) {
@@ -236,12 +329,19 @@ final class GitTools: Sendable {
 
         // ProcessRunner reads both pipes in parallel; the old loop read stderr only after exit,
         // which deadlocks when git writes more than a pipe buffer (~64 KB) to stderr.
+        var finalArgs = args
+        if kind == .push {
+            finalArgs = GitTools.pushStallArguments + args
+            env["GIT_SSH_COMMAND"] = await sshCommand(workingDir: workingDir, env: env)
+        }
+
         let run = await ProcessRunner.run(
             executable: "/usr/bin/git",
-            args: args,
+            args: finalArgs,
             workingDirectory: workingDir,
             environment: env,
-            cancellable: cancellable
+            timeout: kind.timeout,
+            cancellable: !kind.isMutating
         )
 
         if let launchError = run.launchError {
@@ -249,6 +349,9 @@ final class GitTools: Sendable {
         }
         if run.stopReason == .cancelled {
             return .failure("🛑 git \(args.joined(separator: " ")) was cancelled.")
+        }
+        if run.stopReason == .timedOut {
+            return timeoutResult(args: args, kind: kind, workingDir: workingDir)
         }
 
         let stdout = run.stdoutText
