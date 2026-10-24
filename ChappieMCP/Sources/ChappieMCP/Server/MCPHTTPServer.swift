@@ -26,8 +26,6 @@ import Foundation
 
 // MARK: - Constants
 
-let kMCPSocketPath = "/tmp/com.chappie.mcp.sock"
-
 // MARK: - MCPUnixServer
 
 final class MCPUnixServer: @unchecked Sendable {
@@ -36,7 +34,7 @@ final class MCPUnixServer: @unchecked Sendable {
     private let projectPath: String
     private let toolDispatcher: ToolDispatcher
 
-    init(socketPath: String = kMCPSocketPath,
+    init(socketPath: String,
          projectPath: String,
          projectEnvMap: [String: String] = [:],
          projectPathMap: [String: String] = [:]) {
@@ -131,6 +129,8 @@ final class MCPUnixServer: @unchecked Sendable {
         var lengthBytes = [UInt8](repeating: 0, count: 4)
         let bytesRead = recv(fd, &lengthBytes, 4, MSG_WAITALL)
         guard bytesRead == 4 else {
+            // 0 = the peer connected and left at once: the app's readiness probe, not an error.
+            if bytesRead == 0 { return }
             print("[ChappieMCP] ⚠️ Failed to read message length (read: \(bytesRead))")
             return
         }

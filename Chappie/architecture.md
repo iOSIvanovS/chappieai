@@ -24,7 +24,7 @@ Chappie/
 ├── ChappieApp.swift                    # @main, bootStorage(), AppDelegate
 ├── ContentView.swift                   # Conductor: assembles components, manages sheets
 ├── DropHandler.swift                   # Drag-and-drop: files AND project folders
-├── MCPHelperLauncher.swift             # Launches ChappieMCP child process
+├── MCPHelperLauncher.swift             # ChappieMCP child process: launch, readiness probe, crash restart, on-demand recovery
 ├── Models/
 │   ├── AppState.swift                  # @Observable singleton: onboarding state
 │   ├── ChatMessage.swift               # UI message model (enum: .message / .toolCall / .terminalConfirmation)

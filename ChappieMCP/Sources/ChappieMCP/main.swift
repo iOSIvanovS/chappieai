@@ -16,7 +16,7 @@
 //           Defaults to "{}" if omitted.
 //
 // MANUAL LAUNCH (for debugging):
-//   .build/debug/ChappieMCP /path/to/workspace /tmp/com.chappie.mcp.sock \
+//   .build/debug/ChappieMCP /path/to/workspace /tmp/com.chappie.mcp.test.sock \
 //     '{"Chappie":"xcode"}' '{"Chappie":"/path/to/Chappie"}'
 
 import Foundation
@@ -35,7 +35,14 @@ let projectPath: String = {
     guard args.count > 1, PathGuard.isUsableRoot(args[1]) else { return "" }
     return args[1]
 }()
-let socketPath: String  = args.count > 2 ? args[2] : "/tmp/com.chappie.mcp.sock"
+
+// The socket path is owned by the launching app instance (it contains the app's PID), so there
+// is deliberately no default: a fixed fallback is what let two instances trample each other.
+guard args.count > 2, !args[2].isEmpty else {
+    print("[ChappieMCP] ❌ Usage: ChappieMCP <workspace> <socketPath> [envMapJSON] [pathMapJSON]")
+    exit(2)
+}
+let socketPath: String = args[2]
 
 // Parse argv[3]: {"ProjectName": "envRawValue", ...}
 let projectEnvMap: [String: String] = {
@@ -71,13 +78,51 @@ let server = MCPUnixServer(
     projectPathMap: projectPathMap
 )
 
+// Identity of the socket file we bound (see shutdown()). Written once before any handler
+// that reads it is installed, so unsynchronised access is safe.
+nonisolated(unsafe) var boundInode: ino_t = 0
+
 do {
     try server.start()
+    var created = stat()
+    if stat(socketPath, &created) == 0 { boundInode = created.st_ino }
     print("[ChappieMCP] ✅ Server started. Waiting for requests...")
 } catch {
     print("[ChappieMCP] ❌ Failed to start server: \(error)")
     exit(1)
 }
+
+// MARK: - Shutdown handling
+
+/// Removes our socket file and exits. Without this a dead helper leaves a socket that accepts
+/// no connections ("Connection refused" for every later call).
+func shutdown(_ reason: String) -> Never {
+    print("[ChappieMCP] 🛑 Exiting: \(reason)")
+    // On a restart the launcher starts the new helper on the same path while this one is still
+    // being stopped. Unlink only the file we created, or we would delete the new helper's socket.
+    var current = stat()
+    if boundInode != 0, stat(socketPath, &current) == 0, current.st_ino == boundInode {
+        unlink(socketPath)
+    }
+    exit(0)
+}
+
+// SIGTERM is how the launcher stops us; default handling would skip the cleanup above.
+signal(SIGTERM, SIG_IGN)
+let termSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+termSource.setEventHandler { shutdown("SIGTERM") }
+termSource.resume()
+
+// The app can vanish without running any cleanup (Xcode "Stop" is SIGKILL), and nothing tells
+// a child its parent is gone except being re-parented to launchd. Poll that once a second —
+// cheap and much simpler than kqueue process monitoring.
+let originalParent = getppid()
+let parentWatch = DispatchSource.makeTimerSource(queue: .main)
+parentWatch.schedule(deadline: .now() + 1, repeating: 1)
+parentWatch.setEventHandler {
+    if getppid() != originalParent { shutdown("parent process \(originalParent) is gone") }
+}
+parentWatch.resume()
 
 // Keep process alive — server runs on a background DispatchQueue.
 RunLoop.main.run()

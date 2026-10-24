@@ -10,9 +10,7 @@
 //
 // Protocol: length-prefixed framing — 4 bytes (UInt32 big-endian) + JSON body.
 //
-// Why no kSocketPath constant: ChappieCore is a public Swift Package. Default
-// arguments in public inits must be accessible to callers, so the path lives
-// directly in the default argument — idiomatic Swift.
+// The default path is per app process (MCPSocket), so two Chappie instances never share a helper.
 
 import Foundation
 
@@ -26,36 +24,67 @@ public actor MCPToolBridge {
     /// Build tasks can take minutes — large timeout is intentional.
     private let timeoutSeconds: Double
 
+    /// Asked to bring the helper back when a call finds nobody listening. The app's launcher
+    /// owns the process, so the bridge only knows "please recover", not how.
+    private var recoveryHandler: (@Sendable () async -> Void)?
+
     public init(
-        socketPath: String = "/tmp/com.chappie.mcp.sock",
+        socketPath: String = MCPSocket.currentProcessPath,
         timeoutSeconds: Double = 600
     ) {
         self.socketPath = socketPath
         self.timeoutSeconds = timeoutSeconds
     }
 
+    public func setRecoveryHandler(_ handler: (@Sendable () async -> Void)?) {
+        recoveryHandler = handler
+    }
+
     // MARK: - Public API
 
     public func execute(tool: String, args: [String: String] = [:]) async -> String {
-        // Socket file absence means the MCP server is not running.
-        guard FileManager.default.fileExists(atPath: socketPath) else {
-            return """
-            ❌ ChappieMCP server unavailable (socket not found: \(socketPath)).
-            
-            The helper should start automatically when Chappie.app launches.
-            If it didn't — restart the app.
-            """
-        }
-        return await sendRequest(tool: tool, args: args)
+        let first = await sendRequest(tool: tool, args: args)
+        guard case .unreachable(let reason) = first else { return first.text }
+
+        // Nobody is listening (helper died, never started, or its socket file is stale).
+        // Safe to retry: the request never reached a helper, so the tool did not run.
+        guard let recoveryHandler else { return Self.unavailableMessage(reason, socketPath) }
+        await recoveryHandler()
+        let second = await sendRequest(tool: tool, args: args)
+        if case .unreachable(let reason) = second { return Self.unavailableMessage(reason, socketPath) }
+        return second.text
+    }
+
+    private static func unavailableMessage(_ reason: String, _ path: String) -> String {
+        """
+        ❌ ChappieMCP server unavailable (\(reason); socket: \(path)).
+
+        The helper starts automatically with Chappie and is restarted after a crash. \
+        If this persists, restart the app.
+        """
     }
 
     // MARK: - Private
 
+    private enum Outcome {
+        /// Connection could not be established — the request was never delivered.
+        case unreachable(String)
+        /// A request was delivered (the answer may still be an error text).
+        case answered(String)
+
+        var text: String {
+            switch self {
+            case .unreachable(let reason): return reason
+            case .answered(let text): return text
+            }
+        }
+    }
+
     /// Wraps blocking POSIX recv() in a continuation to avoid blocking the Swift Concurrency pool.
-    private func sendRequest(tool: String, args: [String: String]) async -> String {
+    private func sendRequest(tool: String, args: [String: String]) async -> Outcome {
         let request = MCPRequestBody(tool: tool, args: args)
         guard let requestData = try? JSONEncoder().encode(request) else {
-            return "❌ Error: failed to serialize request for tool \(tool)"
+            return .answered("❌ Error: failed to serialize request for tool \(tool)")
         }
 
         return await withCheckedContinuation { continuation in
@@ -78,10 +107,10 @@ public actor MCPToolBridge {
         requestData: Data,
         tool: String,
         timeoutSeconds: Double
-    ) -> String {
+    ) -> Outcome {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else {
-            return "❌ Failed to create socket: \(String(cString: strerror(errno)))"
+            return .answered("❌ Failed to create socket: \(String(cString: strerror(errno)))")
         }
         defer { close(fd) }
 
@@ -110,7 +139,11 @@ public actor MCPToolBridge {
             }
         }
         guard connectResult == 0 else {
-            return "❌ Failed to connect to ChappieMCP (\(socketPath)): \(String(cString: strerror(errno)))"
+            // ENOENT / ECONNREFUSED: no helper behind the socket — recoverable by a restart.
+            let code = errno
+            let reason = "connect failed: \(String(cString: strerror(code)))"
+            if code == ENOENT || code == ECONNREFUSED { return .unreachable(reason) }
+            return .answered("❌ Failed to connect to ChappieMCP (\(socketPath)): \(String(cString: strerror(code)))")
         }
 
         // Send: 4-byte big-endian length header + JSON body
@@ -123,12 +156,12 @@ public actor MCPToolBridge {
 
         let headerSent = header.withUnsafeBytes { send(fd, $0.baseAddress!, 4, 0) }
         guard headerSent == 4 else {
-            return "❌ Header send error: \(String(cString: strerror(errno)))"
+            return .answered("❌ Header send error: \(String(cString: strerror(errno)))")
         }
 
         let bodySent = requestData.withUnsafeBytes { send(fd, $0.baseAddress!, requestData.count, 0) }
         guard bodySent == requestData.count else {
-            return "❌ Request body send error: \(String(cString: strerror(errno)))"
+            return .answered("❌ Request body send error: \(String(cString: strerror(errno)))")
         }
 
         // Read response: 4-byte length header first
@@ -136,9 +169,9 @@ public actor MCPToolBridge {
         let headerRead = recv(fd, &responseHeader, 4, MSG_WAITALL)
         guard headerRead == 4 else {
             if errno == EAGAIN || errno == EWOULDBLOCK {
-                return "⏱️ Timeout: tool \(tool) took too long (>\(Int(timeoutSeconds)) sec)"
+                return .answered("⏱️ Timeout: tool \(tool) took too long (>\(Int(timeoutSeconds)) sec)")
             }
-            return "❌ Response header read error: \(String(cString: strerror(errno)))"
+            return .answered("❌ Response header read error: \(String(cString: strerror(errno)))")
         }
 
         let responseLength = UInt32(responseHeader[0]) << 24
@@ -147,25 +180,25 @@ public actor MCPToolBridge {
                            | UInt32(responseHeader[3])
 
         guard responseLength > 0, responseLength < 10_000_000 else {
-            return "❌ Invalid response length from server: \(responseLength)"
+            return .answered("❌ Invalid response length from server: \(responseLength)")
         }
 
         var responseBytes = [UInt8](repeating: 0, count: Int(responseLength))
         let bodyRead = recv(fd, &responseBytes, Int(responseLength), MSG_WAITALL)
         guard bodyRead == Int(responseLength) else {
-            return "❌ Incomplete response from server (expected \(responseLength), got \(bodyRead))"
+            return .answered("❌ Incomplete response from server (expected \(responseLength), got \(bodyRead))")
         }
 
         let responseData = Data(responseBytes)
         guard let response = try? JSONDecoder().decode(MCPResponseBody.self, from: responseData) else {
             let raw = String(data: responseData, encoding: .utf8) ?? "unreadable response"
-            return "❌ Failed to decode MCP server response: \(raw)"
+            return .answered("❌ Failed to decode MCP server response: \(raw)")
         }
 
         if let error = response.error {
-            return "❌ Tool \(tool) error: \(error)"
+            return .answered("❌ Tool \(tool) error: \(error)")
         }
-        return response.result ?? "(empty result)"
+        return .answered(response.result ?? "(empty result)")
     }
 }
 

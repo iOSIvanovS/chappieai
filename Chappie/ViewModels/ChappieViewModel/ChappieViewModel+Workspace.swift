@@ -46,6 +46,9 @@ extension ChappieViewModel {
         let socketPath = MCPHelperLauncher.shared.socketPath
         let ts = ToolExecutionService(fileSystem: fs, memoryManager: mm, socketPath: socketPath, webFetch: wf)
         self.toolService = ts
+        Task {
+            await ts.setHelperRecoveryHandler { await MCPHelperLauncher.shared.recoverForToolCall() }
+        }
 
         if let client = aiClient {
             self.orchestrator = AIOrchestrator(aiClient: client, toolService: ts, fileSystem: fs, memoryManager: mm)

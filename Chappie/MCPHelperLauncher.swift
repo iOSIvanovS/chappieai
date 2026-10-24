@@ -2,39 +2,33 @@
 // Chappie
 //
 // WHY THIS FILE:
-// Manages the lifecycle of the ChappieMCP child process.
+// Owns the lifecycle of the ChappieMCP child process.
 //
 // CLI ARGUMENTS PASSED TO ChappieMCP:
-// argv[1] = workspacePath  — workspace root (fallback path for git/build)
-// argv[2] = socketPath     — Unix Domain Socket file path
+// argv[1] = workspacePath  — workspace root (may be empty: no folder chosen)
+// argv[2] = socketPath     — Unix Domain Socket path, one per app instance (MCPSocket)
 // argv[3] = projectEnvMap  — JSON {"ProjectName": "envRawValue"} for build/test routing
-// argv[4] = projectPathMap — JSON {"ProjectName": "/absolute/path"} for git routing
-//
-// WHY TWO MAPS:
-// projectEnvMap routes build_project/run_tests to the correct dev environment.
-// projectPathMap routes git_* tools to the correct working directory.
-// Both are needed when multiple projects with different paths are attached.
+// argv[4] = projectPathMap — JSON {"ProjectName": "/absolute/path"} for git routing and path roots
 //
 // LIFECYCLE:
-// 1. ChappieApp.onAppear → MCPHelperLauncher.shared.launch(workspacePath:projectEnvMap:projectPathMap:)
-// 2. Launcher starts Process with arguments: [workspacePath, socketPath, envMapJSON, pathMapJSON]
-// 3. MCPToolBridge uses the same socketPath to connect
-// 4. On Chappie.app exit → terminateHelper() kills child process
+// - launch() starts the helper; "running" is only reported once the socket accepts connections.
+// - Unexpected exit → restart with growing pauses (MCPRestartPolicy); after repeated quick
+//   failures it gives up and reports `.failed` instead of looping silently.
+// - A tool call that finds nobody listening asks recoverForToolCall() for an immediate restart.
+// - The helper exits by itself when this app dies (it watches its parent), so a killed app
+//   (Xcode "Stop") does not leave orphans. Sockets of dead app instances are removed at start-up.
 //
-// RESTART POLICY:
-// Helper restarts whenever workspacePath, projectEnvMap, or projectPathMap changes.
+// RESTART TRIGGERS: workspacePath, projectEnvMap or projectPathMap changed.
 //
 // PIPE LEAK PREVENTION:
-// readabilityHandler must be explicitly set to nil on both pipes before the process
-// is terminated — otherwise the GCD read sources are never cancelled and the Pipe
-// file descriptors remain open, leaking one FD pair per restart.
+// readabilityHandler must be set to nil on both pipes before the process goes away —
+// otherwise the GCD read sources are never cancelled and one FD pair leaks per restart.
 
 import Foundation
 import AppKit
 import ChappieCore
 import Observation
 
-/// Singleton for managing the ChappieMCP child process.
 @MainActor
 @Observable
 final class MCPHelperLauncher {
@@ -47,33 +41,43 @@ final class MCPHelperLauncher {
 
     var status: HelperStatus = .notStarted
 
-    private(set) var socketPath: String = ""
+    private(set) var socketPath: String
 
     private var helperProcess: Process?
+    private var helperStartedAt: Date?
     private var stdoutPipe: Pipe?
     private var stderrPipe: Pipe?
-    private var currentWorkspacePath: String?
+    private var currentWorkspacePath: String = ""
     private var currentProjectEnvMap: [String: String] = [:]
     private var currentProjectPathMap: [String: String] = [:]
+
+    /// False after terminateHelper(): an exit is then expected, not a crash to recover from.
+    private var wantsRunning = false
+    private var restartPolicy = MCPRestartPolicy()
+    private var pendingRestart: Task<Void, Never>?
+    private var recoveryTask: Task<Void, Never>?
 
     // MARK: - Init
 
     private init() {
-        socketPath = "/tmp/com.chappie.mcp.sock"
+        socketPath = MCPSocket.currentProcessPath
+        let removed = MCPSocket.removeStaleSockets()
+        if !removed.isEmpty {
+            print("[MCPHelperLauncher] 🧹 Removed \(removed.count) stale socket(s): \(removed.joined(separator: ", "))")
+        }
     }
 
     // MARK: - Public Interface
 
-    /// Launches ChappieMCP helper with the given workspace path, env map, and path map.
-    ///
-    /// If helper is already running with identical arguments — does nothing.
-    /// If any argument changed — restarts.
+    /// Launches ChappieMCP with the given workspace path, env map, and path map.
+    /// Does nothing if a helper with identical arguments is already running; restarts otherwise.
     func launch(workspacePath: String? = nil,
                 projectEnvMap: [String: String] = [:],
                 projectPathMap: [String: String] = [:]) {
-        // No workspace chosen → pass an empty root. The launch directory used to be substituted here,
+        // No workspace chosen → empty root. The launch directory used to be substituted here,
         // which is "/" under Xcode and turned the helper's path guard into a no-op.
         let path = workspacePath ?? ""
+        wantsRunning = true
 
         if let process = helperProcess, process.isRunning,
            currentWorkspacePath == path,
@@ -83,15 +87,20 @@ final class MCPHelperLauncher {
             return
         }
 
+        pendingRestart?.cancel()
+        pendingRestart = nil
         if helperProcess != nil {
             print("[MCPHelperLauncher] 🔄 Restarting helper: \(path)")
             teardownCurrentProcess()
         }
 
-        startHelper(workspacePath: path, projectEnvMap: projectEnvMap, projectPathMap: projectPathMap)
+        restartPolicy.reset()
+        currentWorkspacePath = path
+        currentProjectEnvMap = projectEnvMap
+        currentProjectPathMap = projectPathMap
+        startHelper()
     }
 
-    /// Restarts helper with a new workspace URL, env map, and path map.
     func restartWithWorkspace(_ url: URL,
                               projectEnvMap: [String: String] = [:],
                               projectPathMap: [String: String] = [:]) {
@@ -99,6 +108,9 @@ final class MCPHelperLauncher {
     }
 
     func terminateHelper() {
+        wantsRunning = false
+        pendingRestart?.cancel()
+        pendingRestart = nil
         guard helperProcess != nil else { return }
         print("[MCPHelperLauncher] 🛑 Terminating ChappieMCP helper")
         teardownCurrentProcess()
@@ -106,113 +118,170 @@ final class MCPHelperLauncher {
         try? FileManager.default.removeItem(atPath: socketPath)
     }
 
-    // MARK: - Private Teardown
+    /// Called by the tool bridge when a call found nobody listening. Concurrent callers share
+    /// one recovery so five parallel tool calls do not restart the helper five times.
+    func recoverForToolCall() async {
+        if let running = recoveryTask {
+            await running.value
+            return
+        }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performRecovery()
+        }
+        recoveryTask = task
+        await task.value
+        recoveryTask = nil
+    }
 
-    /// Cancels pipe handlers FIRST, then terminates — prevents FD leaks.
+    // MARK: - Recovery
+
+    private func performRecovery() async {
+        if let process = helperProcess, process.isRunning, MCPSocket.canConnect(socketPath) { return }
+
+        print("[MCPHelperLauncher] 🩹 Helper unreachable — restarting on demand")
+        wantsRunning = true
+        pendingRestart?.cancel()
+        pendingRestart = nil
+        if helperProcess != nil { teardownCurrentProcess() }
+        restartPolicy.reset()
+        startHelper()
+        if helperProcess != nil { _ = await Self.waitForSocket(socketPath) }
+    }
+
+    // MARK: - Teardown
+
+    /// Cancels pipe handlers FIRST, then terminates — prevents FD leaks. Clearing
+    /// `helperProcess` before terminate() is what marks the coming exit as intentional.
     private func teardownCurrentProcess() {
+        detachPipes()
+        let process = helperProcess
+        helperProcess = nil
+        process?.terminate()
+    }
+
+    private func detachPipes() {
         stdoutPipe?.fileHandleForReading.readabilityHandler = nil
         stderrPipe?.fileHandleForReading.readabilityHandler = nil
         stdoutPipe = nil
         stderrPipe = nil
-
-        helperProcess?.terminate()
-        helperProcess = nil
     }
 
-    // MARK: - Private Launch Logic
+    // MARK: - Launch Logic
 
-    private func startHelper(workspacePath: String,
-                             projectEnvMap: [String: String],
-                             projectPathMap: [String: String]) {
-        guard let helperURL = Bundle.main.url(forAuxiliaryExecutable: "ChappieMCP") else {
-            let fallbackURL = Bundle.main.bundleURL
-                .appendingPathComponent("Contents")
-                .appendingPathComponent("Helpers")
-                .appendingPathComponent("ChappieMCP")
+    private func startHelper() {
+        let bundled = Bundle.main.url(forAuxiliaryExecutable: "ChappieMCP")
+        let fallback = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Helpers/ChappieMCP")
 
-            if FileManager.default.fileExists(atPath: fallbackURL.path) {
-                startProcess(at: fallbackURL, workspacePath: workspacePath,
-                             projectEnvMap: projectEnvMap, projectPathMap: projectPathMap)
-            } else {
-                print("[MCPHelperLauncher] ❌ ChappieMCP binary not found in bundle!")
-                status = .failed("Binary not found in bundle")
-            }
-            return
+        if let url = bundled {
+            startProcess(at: url)
+        } else if FileManager.default.fileExists(atPath: fallback.path) {
+            startProcess(at: fallback)
+        } else {
+            print("[MCPHelperLauncher] ❌ ChappieMCP binary not found in bundle!")
+            status = .failed("Binary not found in bundle")
         }
-
-        startProcess(at: helperURL, workspacePath: workspacePath,
-                     projectEnvMap: projectEnvMap, projectPathMap: projectPathMap)
     }
 
-    private func startProcess(at url: URL,
-                              workspacePath: String,
-                              projectEnvMap: [String: String],
-                              projectPathMap: [String: String]) {
-        // Serialize both maps to JSON for argv[3] and argv[4].
-        let envMapJSON  = jsonString(from: projectEnvMap)
-        let pathMapJSON = jsonString(from: projectPathMap)
-
+    private func startProcess(at url: URL) {
         let process = Process()
         process.executableURL = url
-        // argv[1]=workspacePath, argv[2]=socketPath, argv[3]=envMap, argv[4]=pathMap
-        process.arguments = [workspacePath, socketPath, envMapJSON, pathMapJSON]
+        process.arguments = [currentWorkspacePath, socketPath,
+                             jsonString(from: currentProjectEnvMap),
+                             jsonString(from: currentProjectPathMap)]
 
         let outPipe = Pipe()
         let errPipe = Pipe()
         process.standardOutput = outPipe
         process.standardError = errPipe
 
-        outPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            let trimmed = text.trimmingCharacters(in: .newlines)
-            if !trimmed.isEmpty { print("[ChappieMCP] \(trimmed)") }
-        }
+        outPipe.fileHandleForReading.readabilityHandler = Self.logHandler(prefix: "[ChappieMCP]")
+        errPipe.fileHandleForReading.readabilityHandler = Self.logHandler(prefix: "[ChappieMCP:err]")
 
-        errPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            let trimmed = text.trimmingCharacters(in: .newlines)
-            if !trimmed.isEmpty { print("[ChappieMCP:err] \(trimmed)") }
-        }
-
-        process.terminationHandler = { [weak self] terminatedProcess in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                let code = terminatedProcess.terminationStatus
-                print("[MCPHelperLauncher] ⚠️ Helper exited with code: \(code)")
-
-                if self.helperProcess === terminatedProcess {
-                    self.helperProcess = nil
-                }
-                // Code 15 = SIGTERM — intentional termination (restart or quit), not a crash.
-                if code != 15 {
-                    self.status = .crashed(code: Int(code))
-                }
-            }
+        process.terminationHandler = { [weak self] terminated in
+            Task { @MainActor [weak self] in self?.helperExited(terminated) }
         }
 
         do {
             try process.run()
-            helperProcess = process
-            stdoutPipe = outPipe
-            stderrPipe = errPipe
-            currentWorkspacePath = workspacePath
-            currentProjectEnvMap = projectEnvMap
-            currentProjectPathMap = projectPathMap
-            status = .running
-            print("[MCPHelperLauncher] ✅ ChappieMCP started (PID: \(process.processIdentifier))")
-            print("[MCPHelperLauncher] 📁 Workspace: \(workspacePath)")
-            print("[MCPHelperLauncher] 🔌 Socket:    \(socketPath)")
-            print("[MCPHelperLauncher] 🗺️  Envs:     \(projectEnvMap.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ", "))")
-            print("[MCPHelperLauncher] 📂 Paths:    \(projectPathMap.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ", "))")
         } catch {
             print("[MCPHelperLauncher] ❌ Failed to start helper: \(error)")
+            outPipe.fileHandleForReading.readabilityHandler = nil
+            errPipe.fileHandleForReading.readabilityHandler = nil
             status = .failed(error.localizedDescription)
+            return
+        }
+
+        helperProcess = process
+        helperStartedAt = Date()
+        stdoutPipe = outPipe
+        stderrPipe = errPipe
+        status = .starting
+        print("[MCPHelperLauncher] ✅ ChappieMCP started (PID: \(process.processIdentifier))")
+        print("[MCPHelperLauncher] 🔌 Socket: \(socketPath)")
+        print("[MCPHelperLauncher] 📁 Workspace: \(currentWorkspacePath.isEmpty ? "(none)" : currentWorkspacePath)")
+
+        // "Running" must mean "accepts connections", not merely "process exists".
+        Task { @MainActor [weak self] in
+            let ready = await Self.waitForSocket(self?.socketPath ?? "")
+            guard let self, self.helperProcess === process else { return }
+            self.status = ready ? .running : .failed("Helper did not open its socket")
+        }
+    }
+
+    // MARK: - Exit Handling
+
+    private func helperExited(_ process: Process) {
+        let code = process.terminationStatus
+        print("[MCPHelperLauncher] ⚠️ Helper exited with code: \(code)")
+
+        // Not the current helper: it was replaced or stopped on purpose.
+        guard helperProcess === process else { return }
+
+        detachPipes()
+        helperProcess = nil
+        // A crashed helper cannot clean up after itself; a stale file would only mislead.
+        try? FileManager.default.removeItem(atPath: socketPath)
+        guard wantsRunning else { return }
+
+        let uptime = Date().timeIntervalSince(helperStartedAt ?? Date())
+        switch restartPolicy.recordExit(uptime: uptime) {
+        case .restart(let delay):
+            status = .crashed(code: Int(code))
+            print("[MCPHelperLauncher] ⏳ Restarting in \(Int(delay)) s")
+            pendingRestart = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled, let self, self.wantsRunning, self.helperProcess == nil else { return }
+                self.pendingRestart = nil
+                self.startHelper()
+            }
+        case .giveUp:
+            status = .failed("Helper keeps crashing (last exit code \(code))")
+            print("[MCPHelperLauncher] ❌ Giving up after repeated crashes; a tool call or relaunch will retry")
         }
     }
 
     // MARK: - Helpers
+
+    private static func logHandler(prefix: String) -> @Sendable (FileHandle) -> Void {
+        { handle in
+            let data = handle.availableData
+            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+            let trimmed = text.trimmingCharacters(in: .newlines)
+            if !trimmed.isEmpty { print("\(prefix) \(trimmed)") }
+        }
+    }
+
+    /// Polls up to `timeout` seconds until something accepts connections on the socket.
+    private static func waitForSocket(_ path: String, timeout: TimeInterval = 3) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if MCPSocket.canConnect(path) { return true }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return MCPSocket.canConnect(path)
+    }
 
     private func jsonString(from map: [String: String]) -> String {
         guard let data = try? JSONEncoder().encode(map),
@@ -225,6 +294,7 @@ final class MCPHelperLauncher {
 
 enum HelperStatus: Equatable {
     case notStarted
+    case starting
     case running
     case stopped
     case failed(String)
@@ -233,6 +303,7 @@ enum HelperStatus: Equatable {
     var description: String {
         switch self {
         case .notStarted:        return "Not started"
+        case .starting:          return "Starting"
         case .running:           return "Running"
         case .stopped:           return "Stopped"
         case .failed(let msg):   return "Error: \(msg)"

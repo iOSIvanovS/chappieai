@@ -28,6 +28,7 @@ ChappieCoreTests/
 ├── ChappieErrorTests.swift             # ChappieError enum coverage
 ├── FileSystemManagerTests.swift        # FS ops + path traversal protection
 ├── PathGuardTests.swift                # "..", absolute, symlink escapes, sibling prefix, unusable roots ("/", empty, symlink to "/"), Core/MCP copy parity
+├── MCPHelperLifecycleTests.swift       # Per-instance socket naming, stale-socket cleanup, restart back-off, bridge recover-and-retry
 ├── MemoryManagerTests.swift            # Semantic memory CRUD via SQLiteStorage
 ├── ThreadIsolationTests.swift          # SystemPromptBuilder: sections, memory isolation, terminal lines
 ├── ToolPolicyTests.swift               # Access table: roles, plans, git/build rules, per-project resolution, exposure completeness

@@ -90,13 +90,18 @@ public actor ToolExecutionService {
     public init(
         fileSystem: FileSystemManager,
         memoryManager: MemoryManager,
-        socketPath: String = "/tmp/com.chappie.mcp.sock",
+        socketPath: String = MCPSocket.currentProcessPath,
         webFetch: WebFetchService? = nil
     ) {
         self.fileSystem = fileSystem
         self.memoryManager = memoryManager
         self.mcpBridge = MCPToolBridge(socketPath: socketPath)
         self.webFetch = webFetch
+    }
+
+    /// Lets the app restart the ChappieMCP helper when a tool call finds it unreachable.
+    public func setHelperRecoveryHandler(_ handler: (@Sendable () async -> Void)?) async {
+        await mcpBridge.setRecoveryHandler(handler)
     }
 
     // MARK: - Context setters

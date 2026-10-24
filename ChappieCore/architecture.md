@@ -54,7 +54,10 @@ ChappieCore/
         ├── FileSystemManager+Patch.swift       # patchFile (exactlyOne policy), getFileInfo
         ├── FileSystemManager+Image.swift       # readImageData (view_image) — raw bytes, no UTF-8 decode
         ├── PathGuard.swift                     # Project containment: rejects "..", absolute paths, symlinks leaving the root
-        ├── MCPToolBridge.swift         # Bridge to ChappieMCP via Unix socket
+        ├── MCPToolBridge.swift         # Bridge to ChappieMCP via Unix socket; asks the app to restart the helper and retries once if nobody listens
+        ├── MCPHelper/
+        │   ├── MCPSocket.swift         # Per-app-instance socket path (PID in name), stale-socket cleanup, connect probe
+        │   └── MCPRestartPolicy.swift  # Crash restart back-off (1/2/4/8 s) and give-up rule
         ├── MemoryManager.swift         # Semantic memory (read/write/search) via DataStore
         ├── MemoryStore.swift           # Persistence CRUD for memory scopes
         ├── ProjectStore.swift          # downgradeAllProjectsToAdvisor() only — no CRUD

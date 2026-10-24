@@ -63,7 +63,7 @@ graph TD
     end
 
     subgraph Transport["Transport"]
-        Socket["/tmp/com.chappie.mcp.sock\nUnix Domain Socket\nlength-prefixed JSON frames"]
+        Socket["/tmp/com.chappie.mcp.&lt;appPID&gt;.sock\nUnix Domain Socket\nlength-prefixed JSON frames"]
     end
 
     TES --> Bridge
@@ -81,7 +81,7 @@ graph TD
 
 ## 4. Transport Protocol
 
-**Unix Domain Socket** — `/tmp/com.chappie.mcp.sock`
+**Unix Domain Socket** — `/tmp/com.chappie.mcp.<appPID>.sock` (per app instance, passed as argv[2])
 
 ```
 Request:  [4 bytes UInt32 BE length] [JSON: {"tool": "git_status", "args": {}}]
@@ -96,6 +96,15 @@ Response: [4 bytes UInt32 BE length] [JSON: {"result": "...", "error": null}]
 
 **MCPHelperLauncher** restarts the helper when workspace or devEnvironment changes.
 **MCPToolBridge** connects per call (no persistent connection). Timeout: 600s.
+
+### Helper lifecycle
+
+- **One socket per app instance:** `/tmp/com.chappie.mcp.<appPID>.sock` (`MCPSocket` in ChappieCore). The path is argv[2]; the helper has no default and exits with code 2 without it. Two Chappie instances can no longer delete each other's socket. At launch the app removes sockets of dead PIDs (the legacy fixed name is never touched).
+- **Readiness:** the launcher reports `running` only once the socket accepts connections (`MCPSocket.canConnect`), not when the process merely exists.
+- **Crash recovery:** an unexpected exit restarts the helper after 1, 2, 4, 8 s (`MCPRestartPolicy`); an uptime of 60 s or more resets the series. After 5 quick failures in a row the launcher stops with `.failed` instead of looping. An explicit launch or a tool call starts a fresh series.
+- **Self-heal on call:** when `MCPToolBridge` cannot connect (ENOENT / ECONNREFUSED — the request never reached a helper) it asks the launcher to restart the helper once and retries once. Parallel callers share one recovery.
+- **Exit with the app:** the helper polls `getppid()` once a second and exits (removing its socket) when its parent changes — a killed app (Xcode Stop = SIGKILL) leaves no orphan. SIGTERM also cleans up. The socket file is unlinked only if its inode is still the one the helper bound, so a restart on the same path cannot delete the new helper's socket.
+- **Not automatic:** helpers left over from before this change are not killed by code.
 
 ---
 
