@@ -33,7 +33,10 @@ import Foundation
 /// to create an "invalid" state. You can't accidentally create a message with
 /// `isToolCall: true` and a `cost` field. The compiler enforces correctness
 /// via exhaustive switch.
-public enum ChatMessage: Identifiable, Hashable, Codable {
+// WHY nonisolated + Sendable: the app target uses default MainActor isolation, which would make
+// the Codable conformance main-actor-isolated. ThreadStore (ChappieCore, nonisolated actor)
+// encodes/decodes ChatMessage off the main actor, which Swift 6.2+ rejects for isolated conformances.
+public nonisolated enum ChatMessage: Identifiable, Hashable, Codable, Sendable {
 
     // MARK: - Cases
 

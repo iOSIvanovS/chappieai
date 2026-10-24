@@ -285,7 +285,7 @@ extension ToolExecutionService {
                 }
 
                 do {
-                    try process.launch()
+                    try process.run()
                 } catch {
                     outPipe.fileHandleForReading.readabilityHandler = nil
                     errPipe.fileHandleForReading.readabilityHandler = nil

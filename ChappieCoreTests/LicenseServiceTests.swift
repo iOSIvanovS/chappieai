@@ -103,11 +103,12 @@ struct HardwareIDTests {
         #expect(!id.isEmpty)
     }
 
-    @Test("Hardware ID looks like a real serial number (min 11 chars)")
+    @Test("Hardware ID looks like a real serial number (min 10 chars)")
     func hardwareIdLooksLikeSerial() async {
         let service = LicenseService()
         let id = await service.getHardwareId()
-        // Mac serial: 11-12 chars. UUID fallback: 36 chars. Either is fine.
-        #expect(id.count >= 11)
+        // Mac serial: 12 chars on older Macs, 10 chars since 2021 (randomized format).
+        // UUID fallback: 36 chars. Any of these is fine.
+        #expect(id.count >= 10)
     }
 }

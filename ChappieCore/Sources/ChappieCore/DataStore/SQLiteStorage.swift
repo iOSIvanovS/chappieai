@@ -123,7 +123,7 @@ public actor SQLiteStorage: ChappieStorage {
 
     public func delete(_ relation: ChappieStorageRelation) async throws {
         let key = relation.key
-        try await db.write { db in
+        _ = try await db.write { db in
             try StoredRow
                 .filter(Column("relation") == key)
                 .deleteAll(db)
@@ -134,7 +134,7 @@ public actor SQLiteStorage: ChappieStorage {
     /// Deletes all rows whose key starts with prefix — atomically in one transaction.
     /// Used to delete all chunks of a thread at once.
     public func deleteByPrefix(_ prefix: String) async throws {
-        try await db.write { db in
+        _ = try await db.write { db in
             try StoredRow
                 .filter(Column("relation").like("\(prefix)%"))
                 .deleteAll(db)

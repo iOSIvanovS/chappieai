@@ -39,7 +39,7 @@ extension ToolExecutionService {
             return await mcpBridge.execute(tool: "git_add", args: addArgs)
 
         case "git_commit":
-            guard let message = args["message"] else {
+            guard args["message"] != nil else {
                 return "Error: Argument 'message' is required for git_commit"
             }
             return await mcpBridge.execute(tool: "git_commit", args: args)

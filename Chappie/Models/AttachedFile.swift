@@ -29,7 +29,7 @@ import AppKit
 ///
 /// "other" is the catch-all for anything we accept but don't know how to
 /// render specially — we still send it to the API and let the model decide.
-public enum AttachmentMimeType: String, Codable, Sendable, Hashable {
+public nonisolated enum AttachmentMimeType: String, Codable, Sendable, Hashable {
     case imageJpeg  = "image/jpeg"
     case imagePng   = "image/png"
     case imageGif   = "image/gif"
@@ -104,7 +104,7 @@ public enum AttachmentMimeType: String, Codable, Sendable, Hashable {
 ///   3. On send → passed to ViewModel → saved in ChatMessage.message(attachments:)
 ///   4. On API request → AIOrchestrator builds text reference block [Attachment: name | uuid]
 ///   5. AI reads file on demand via fetch_attachment(uuid)
-public struct AttachedFile: Identifiable, Codable, Hashable, Sendable {
+public nonisolated struct AttachedFile: Identifiable, Codable, Hashable, Sendable {
 
     // MARK: - Stored Properties
 
@@ -131,6 +131,9 @@ public struct AttachedFile: Identifiable, Codable, Hashable, Sendable {
     /// Load an AttachedFile from a file URL picked by the user.
     /// Saves the file to AttachmentStore under a new UUID folder.
     /// Returns nil if the file cannot be read or saved.
+    // WHY @MainActor: AttachmentStore.shared is main-actor isolated (default isolation),
+    // while the struct itself is nonisolated so its Codable conformance is usable off-main.
+    @MainActor
     public static func load(from url: URL) -> AttachedFile? {
         let id = UUID()
         let mime = AttachmentMimeType.from(url: url)
@@ -140,6 +143,7 @@ public struct AttachedFile: Identifiable, Codable, Hashable, Sendable {
 
     /// Creates an AttachedFile for an AI-generated output file that already exists on disk.
     /// Moves the file into AttachmentStore under a new UUID folder.
+    @MainActor
     public static func fromOutputFile(at url: URL) -> AttachedFile? {
         let id = UUID()
         let mime = AttachmentMimeType.from(url: url)

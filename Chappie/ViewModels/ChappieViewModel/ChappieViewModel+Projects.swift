@@ -171,25 +171,23 @@ extension ChappieViewModel {
     func registerProjectToolHandlers(
         toolService ts: ToolExecutionService
     ) {
-        Task {
+        // Weak capture must sit on the outer Task too — otherwise the Task holds self strongly
+        // and the inner [weak self] is meaningless (compiler: ImplicitStrongCapture).
+        Task { [weak self] in
             await ts.registerProjectHandlers(
                 listProjects: { [weak self] in
-                    return await withCheckedContinuation { continuation in
-                        Task { @MainActor [weak self] in
-                            guard let self else { continuation.resume(returning: "Error: ViewModel released."); return }
-                            let names = self.activeProjects.map { $0.displayName }
-                            if names.isEmpty {
-                                continuation.resume(returning: "No projects in current thread.")
-                            } else {
-                                let list = names.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
-                                continuation.resume(returning: "Projects in current thread:\n\(list)")
-                            }
-                        }
-                    }
+                    await self?.projectsListDescription() ?? "Error: ViewModel released."
                 }
             )
             print("[ChappieViewModel] Project tool handlers registered")
         }
+    }
+
+    private func projectsListDescription() -> String {
+        let names = activeProjects.map { $0.displayName }
+        if names.isEmpty { return "No projects in current thread." }
+        let list = names.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+        return "Projects in current thread:\n\(list)"
     }
 
     // MARK: - Reload After Change

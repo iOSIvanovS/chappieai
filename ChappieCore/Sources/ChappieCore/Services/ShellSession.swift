@@ -178,7 +178,7 @@ public actor ShellSession {
         p.standardError = outPipe      // merge stderr into stdout for simplicity
 
         do {
-            try p.launch()
+            try p.run()
         } catch {
             print("[ShellSession] ❌ Failed to launch bash: \(error)")
             return

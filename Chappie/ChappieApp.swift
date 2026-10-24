@@ -88,9 +88,6 @@ struct ChappieApp: App {
         }
         .defaultSize(width: 480, height: 600)
         .defaultPosition(.center)
-        .commands {
-            // Standard macOS commands (Quit, Minimize, etc.)
-        }
 
         Settings {
             EmptyView()
