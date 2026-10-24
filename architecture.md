@@ -206,6 +206,7 @@ Messages are stored in chunks of 500 per SQLite row:
 - `loadMoreMessages()` loads previous chunks on scroll — lazy pagination
 - `deleteByPrefix()` deletes all chunks atomically in one SQL query
 - Saving: ViewModel calls `saveLoadedMessages(_, toThreadId:, fromChunk: loadedWindowStartChunk)` — only chunks of the loaded window are rewritten (one transaction); older chunks stay untouched. `replaceAllMessages` is reserved for "clear memory" / delete-old-messages.
+- Write path: all message/thread-settings/title writes go through `ChappieViewModel+Persistence` → `SaveQueue` (ChappieCore). A failed write shows a blocking alert (Try Again / Skip) attached to the ContentView root; damage found while loading the thread list shows a non-blocking `StorageIssueBanner` (Views/Shared). Not yet routed through the queue: Memory Management delete-old-messages, app-settings writes (balance, last thread) — tracked in backlog.
 
 ---
 

@@ -19,7 +19,6 @@ extension ChappieViewModel {
     /// WHY CALLED FROM _syncTask: must run after loadMessages() sets self.messages = loaded,
     /// otherwise the loaded empty array would overwrite the greeting.
     func insertStaticWelcomeGreeting(for thread: ThreadMetadata) async {
-        guard let store = threadStore else { return }
         guard activeThread?.id == thread.id, messages.isEmpty else { return }
 
         let greeting = Self.localizedWelcomeGreeting()
@@ -28,7 +27,7 @@ extension ChappieViewModel {
         messages.append(greetingMessage)
         appendToDisplayed(greetingMessage)
 
-        try? await store.saveLoadedMessages(messages, toThreadId: thread.id, fromChunk: loadedWindowStartChunk)
+        persistMessages(messages, threadId: thread.id)
         print("[ChappieViewModel] Static welcome greeting inserted for thread '\(thread.title)'")
     }
 

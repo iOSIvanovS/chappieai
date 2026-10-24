@@ -89,7 +89,15 @@ public actor SQLiteStorage: ChappieStorage {
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
+            // Callers treat nil as "use defaults" and will overwrite the record on the next save,
+            // so keep a copy of the unreadable bytes first. Nothing is lost silently.
             print("[SQLiteStorage] ⚠️ Decode failed for '\(relation.key)': \(error)")
+            do {
+                let backupKey = try await preserveCorruptedRecord(key: relation.key, data: data)
+                print("[SQLiteStorage] 🛟 Unreadable record preserved as '\(backupKey)'")
+            } catch {
+                print("[SQLiteStorage] ❌ Could not preserve unreadable '\(relation.key)': \(error)")
+            }
             return nil
         }
     }
@@ -160,6 +168,34 @@ public actor SQLiteStorage: ChappieStorage {
             for (offset, data) in payloads.enumerated() {
                 try StoredRow(relation: "\(prefix)\(fromIndex + offset)", payload: data).save(db)
             }
+        }
+    }
+
+    public func preserveCorruptedRecord(key: String, data: Data) async throws -> String {
+        let prefix = "\(key).corrupt."
+        return try await db.write { db in
+            let existing = try StoredRow
+                .filter(Column("relation").like("\(prefix)%"))
+                .fetchAll(db)
+            if let same = existing.first(where: { $0.payload == data }) {
+                return same.relation
+            }
+
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "yyyyMMdd'T'HHmmss"
+            let base = prefix + formatter.string(from: Date())
+
+            // Two different corrupt blobs in the same second must not overwrite each other.
+            let taken = Set(existing.map(\.relation))
+            var name = base
+            var counter = 1
+            while taken.contains(name) {
+                counter += 1
+                name = "\(base)-\(counter)"
+            }
+            try StoredRow(relation: name, payload: data).save(db)
+            return name
         }
     }
 

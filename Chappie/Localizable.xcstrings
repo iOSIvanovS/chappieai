@@ -24361,6 +24361,264 @@
         }
       }
     },
+    "save_error.message" : {
+      "comment" : "%@ = system error description",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تعذّر كتابة تغييراتك على القرص: %@\n\nحاول مرة أخرى، مثلاً بعد تحرير مساحة على القرص. إذا تخطّيت، ستبقى البيانات في الذاكرة فقط حتى نجاح الحفظ التالي، فلا تُغلق التطبيق قبل ذلك."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deine Änderungen konnten nicht auf die Festplatte geschrieben werden: %@\n\nVersuche es erneut, zum Beispiel nachdem du Speicherplatz freigegeben hast. Wenn du überspringst, bleiben die Daten nur im Arbeitsspeicher, bis das nächste Speichern gelingt. Beende die App bis dahin nicht."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your changes could not be written to disk: %@\\n\\nTry again, for example after freeing up disk space. If you skip, the data stays only in memory until the next successful save — don't quit the app before then."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudieron escribir tus cambios en el disco: %@\n\nInténtalo de nuevo, por ejemplo después de liberar espacio en el disco. Si omites, los datos permanecen solo en memoria hasta el próximo guardado correcto; no cierres la app antes."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vos modifications n'ont pas pu être écrites sur le disque : %@\n\nRéessayez, par exemple après avoir libéré de l'espace disque. Si vous ignorez, les données restent uniquement en mémoire jusqu'au prochain enregistrement réussi ; ne quittez pas l'app avant."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "आपके बदलाव डिस्क पर नहीं लिखे जा सके: %@\n\nफिर से कोशिश करें, उदाहरण के लिए डिस्क में जगह खाली करने के बाद। यदि आप छोड़ देते हैं, तो अगली सफल सेविंग तक डेटा केवल मेमोरी में रहेगा। तब तक ऐप बंद न करें।"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "変更をディスクに書き込めませんでした: %@\n\nディスクの空き容量を確保するなどして、もう一度お試しください。スキップすると、次に保存が成功するまでデータはメモリ上にのみ残ります。それまでアプリを終了しないでください。"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não foi possível gravar suas alterações no disco: %@\n\nTente novamente, por exemplo depois de liberar espaço no disco. Se você ignorar, os dados ficam apenas na memória até o próximo salvamento bem-sucedido; não feche o app antes disso."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось записать изменения на диск: %@\n\nПопробуйте ещё раз, например, освободив место на диске. Если пропустить, данные останутся только в памяти до следующего успешного сохранения — не закрывайте приложение до этого."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法将您的更改写入磁盘：%@\n\n请重试，例如先释放一些磁盘空间。如果跳过，数据将仅保留在内存中，直到下一次保存成功。在此之前请不要退出应用。"
+          }
+        }
+      }
+    },
+    "save_error.retry" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "حاول مرة أخرى"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erneut versuchen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try Again"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reintentar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Réessayer"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "फिर से कोशिश करें"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "再試行"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tentar novamente"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повторить"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重试"
+          }
+        }
+      }
+    },
+    "save_error.skip" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تخطٍّ"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Überspringen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skip"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Omitir"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ignorer"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "छोड़ें"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スキップ"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ignorar"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пропустить"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跳过"
+          }
+        }
+      }
+    },
+    "save_error.title" : {
+      "comment" : "Alert title when writing chats or settings to disk failed",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تعذّر الحفظ"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Speichern fehlgeschlagen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't Save"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo guardar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Échec de l'enregistrement"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "सहेजा नहीं जा सका"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存できませんでした"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não foi possível salvar"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось сохранить"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法保存"
+          }
+        }
+      }
+    },
     "settings.backup_export_action" : {
       "comment" : "Button that opens the backup export sheet",
       "localizations" : {
@@ -27759,6 +28017,199 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "sk-..."
+          }
+        }
+      }
+    },
+    "storage_issue.dismiss" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "إغلاق"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schließen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dismiss"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cerrar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fermer"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "बंद करें"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "閉じる"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fechar"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Закрыть"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关闭"
+          }
+        }
+      }
+    },
+    "storage_issue.thread_list_partial" : {
+      "comment" : "%d = number of unreadable chats",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تعذّر تحميل %d من المحادثات في القائمة لأنها تالفة. تم الاحتفاظ بالباقي. تم حفظ نسخة احتياطية من البيانات التالفة."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d Chat(s) in der Liste waren beschädigt und konnten nicht geladen werden. Die übrigen wurden beibehalten. Von den beschädigten Daten wurde eine Sicherungskopie angelegt."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d chat(s) in the list were damaged and could not be loaded. The rest were kept. A backup copy of the damaged data was saved."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d chat(s) de la lista estaban dañados y no se pudieron cargar. Los demás se conservaron. Se guardó una copia de seguridad de los datos dañados."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d discussion(s) de la liste étaient endommagées et n'ont pas pu être chargées. Les autres ont été conservées. Une copie de sauvegarde des données endommagées a été conservée."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "सूची में %d चैट क्षतिग्रस्त थीं और लोड नहीं हो सकीं। बाकी सुरक्षित रखी गईं। क्षतिग्रस्त डेटा की बैकअप कॉपी सहेज ली गई है।"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一覧内の %d 件のチャットが破損しており、読み込めませんでした。残りは保持されています。破損したデータのバックアップコピーを保存しました。"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d conversa(s) da lista estavam danificadas e não puderam ser carregadas. As demais foram mantidas. Uma cópia de segurança dos dados danificados foi salva."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чатов в списке повреждено: %d, загрузить их не удалось. Остальные сохранены. Резервная копия повреждённых данных сохранена."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "列表中有 %d 个聊天已损坏，无法加载。其余聊天已保留。已保存损坏数据的备份副本。"
+          }
+        }
+      }
+    },
+    "storage_issue.thread_list_unreadable" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تعذّرت قراءة قائمة المحادثات وتمت إعادة تعيينها. تم حفظ نسخة احتياطية من البيانات التالفة، لذا لم يُحذف شيء."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Chatliste konnte nicht gelesen werden und wurde zurückgesetzt. Von den beschädigten Daten wurde eine Sicherungskopie angelegt, es wurde also nichts gelöscht."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The chat list could not be read and was reset. A backup copy of the damaged data was saved, so nothing was deleted."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo leer la lista de chats y se restableció. Se guardó una copia de seguridad de los datos dañados, así que no se eliminó nada."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La liste des discussions n'a pas pu être lue et a été réinitialisée. Une copie de sauvegarde des données endommagées a été conservée, rien n'a donc été supprimé."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "चैट सूची पढ़ी नहीं जा सकी और रीसेट कर दी गई। क्षतिग्रस्त डेटा की बैकअप कॉपी सहेज ली गई है, इसलिए कुछ भी हटाया नहीं गया।"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "チャット一覧を読み取れなかったため、リセットされました。破損したデータのバックアップコピーを保存したので、何も削除されていません。"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não foi possível ler a lista de conversas e ela foi redefinida. Uma cópia de segurança dos dados danificados foi salva, então nada foi apagado."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Список чатов не удалось прочитать, он был сброшен. Резервная копия повреждённых данных сохранена, так что ничего не удалено."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法读取聊天列表，已将其重置。已保存损坏数据的备份副本，因此没有删除任何内容。"
           }
         }
       }

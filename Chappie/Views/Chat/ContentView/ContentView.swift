@@ -88,6 +88,22 @@ struct ContentView: View {
                 mainContent
             }
         }
+        // Attached to the root, not to mainContent: a write can fail during boot, before the main
+        // screen exists, and the save queue would then wait for a decision nobody can make.
+        .overlay(alignment: .top) {
+            if viewModel.storageIssue != nil {
+                StorageIssueBanner(text: viewModel.storageIssueText) { viewModel.dismissStorageIssue() }
+                    .padding(.top, safeAreaTop)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: viewModel.storageIssue)
+        .alert("save_error.title", isPresented: saveErrorBinding) {
+            Button("save_error.retry") { viewModel.retryFailedSave() }
+            Button("save_error.skip", role: .cancel) { viewModel.skipFailedSave() }
+        } message: {
+            Text(viewModel.saveFailureMessage)
+        }
         .onAppear {
             dropDelegate.isThinkingGetter = { [self] in viewModel.streaming.isThinking }
             dropDelegate.onFilesDropped   = { [self] providers in resolveDroppedFiles(providers, attachments: $attachments) }
@@ -95,6 +111,12 @@ struct ContentView: View {
             dropDelegate.onImageProviders = { [self] providers in resolveImageProviders(providers, attachments: $attachments) }
         }
         .onChange(of: viewModel.providers.count) { _, _ in }
+    }
+
+    /// Only the two alert buttons resolve the failure (the queue clears it itself), so the
+    /// setter is a deliberate no-op.
+    private var saveErrorBinding: Binding<Bool> {
+        Binding(get: { viewModel.saveFailure != nil }, set: { _ in })
     }
 
     // MARK: - Thread for Settings

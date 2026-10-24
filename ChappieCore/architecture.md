@@ -17,7 +17,7 @@ ChappieCore/
     ├── ChappieCore.swift               # Public API table of contents
     ├── DataStore/
     │   ├── ChappieStorage.swift        # Protocol + ChappieStorageRelation (typesafe keys)
-    │   └── SQLiteStorage.swift         # GRDB-based backend — sole production implementor
+    │   └── SQLiteStorage.swift         # GRDB-based backend — sole production implementor (+ corrupt-record backup)
     ├── Models/
     │   ├── AIProviderModels.swift       # AIProvider, APIKey, AIModel, ProviderProtocol
     │   ├── AITunnelModels.swift         # AIMessage, AIUsage, AIMessageContent
@@ -31,6 +31,7 @@ ChappieCore/
     │   ├── ProjectModels.swift         # ProjectSettings, ProjectMetadata, ThreadProjectEntry
     │   ├── RemoteProviderCatalog.swift  # DTOs for providers.json (GitHub-hosted catalog)
     │   ├── RequestLog.swift            # Request/response logging model
+    │   ├── StorageIntegrity.swift      # StorageIntegrityIssue (damaged data report), LossyElement
     │   └── ThreadModels.swift          # ThreadSettings, ThreadMetadata, ThreadPayload (with projects)
     └── Services/
         ├── AIClient.swift              # OpenAI-compatible HTTP client (entry point)
@@ -57,6 +58,7 @@ ChappieCore/
         ├── MemoryStore.swift           # Persistence CRUD for memory scopes
         ├── ProjectStore.swift          # downgradeAllProjectsToAdvisor() only — no CRUD
         ├── ProvidersRemoteService.swift # Fetches + caches providers.json from GitHub
+        ├── SaveQueue.swift             # Ordered write queue; failed write pauses until Retry/Skip
         ├── ShellSession.swift          # Persistent bash session (per-thread, run_terminal)
         ├── StallWatchdog.swift         # Cancels stalled AI streams after timeout
         ├── SystemPromptBuilder.swift   # Deterministic system prompt assembler
@@ -106,6 +108,7 @@ public protocol ChappieStorage: Actor {
     func delete(_ relation: ChappieStorageRelation) async throws
     func deleteByPrefix(_ prefix: String) async throws   // atomic bulk delete — used by chunk system
     func replaceIndexedRecords(prefix: String, fromIndex: Int, payloads: [Data]) async throws // delete tail + insert, ONE transaction
+    func preserveCorruptedRecord(key: String, data: Data) async throws -> String // copy unreadable bytes to "<key>.corrupt.<time>"
     func exists(_ relation: ChappieStorageRelation) async throws -> Bool
     func keys(withPrefix prefix: String) async throws -> [String]
 }
@@ -143,7 +146,23 @@ Write:  DomainStruct (Codable) → JSONEncoder → Data → SQLite BLOB
 Read:   SQLite BLOB → Data → JSONDecoder → DomainStruct (Codable)
 ```
 
-Decode failure is non-fatal. Callers receive `nil` or `[]` and recover gracefully.
+Decode failure is non-fatal, but never silent: `SQLiteStorage.load` copies the unreadable bytes to
+`<key>.corrupt.<time>` (idempotent per identical bytes) BEFORE returning `nil`, because callers
+fall back to defaults and the next save overwrites the original. Applies to memory, providers and
+app settings. The thread list has its own, stricter path (see "Integrity & write queue").
+
+### Integrity & write queue
+
+- **Thread list** (`ThreadStore.loadPayloads`): a missing record is an empty list; an unreadable one
+  is backed up first (if the backup cannot be written, the call throws — nothing gets overwritten),
+  readable elements are salvaged one by one (`LossyElement`), and a `StorageIntegrityIssue` is queued.
+  The app layer drains it via `takeIntegrityIssues()` and shows a non-blocking banner. Each distinct
+  damaged blob is reported once.
+- **`SaveQueue`** (`@MainActor`): serial queue for user-data writes, used by the ViewModel instead of
+  `Task { try? await save }`. Strict order; message snapshots with the same `coalesceKey` collapse into
+  the newest; a failed write pauses the queue and the UI offers Try Again / Skip. Skip is safe for
+  messages because every save writes the whole loaded window — the next save covers the skipped one.
+- Rebuilding lost threads from orphan message chunks is a separate step (backlog 2b).
 
 ---
 
@@ -441,4 +460,5 @@ public enum AccessResult: Sendable {
 | 2026-08 | BackupService (export/import foundation): ChappieExportBundle carries providers (+ Keychain secrets pulled out explicitly), full ThreadPayload list, all message chunks (opaque Data — ChappieCore stays decoupled from app-layer ChatMessage), and the full MemoryStorage blob. Attachments on disk are intentionally excluded (app already degrades gracefully for missing attachment files — no crash). BackupCrypto encrypts the whole serialized bundle with PBKDF2-HMAC-SHA256 (310k iterations) + AES-256-GCM — one password unlocks everything, including secrets. Export wired end-to-end (BackupService.exportEncrypted → ChappieViewModel.exportBackup). |
 | 2026-08 | BackupService import (full restore, no merge — agreed with user): ThreadStore.importAll/AIProviderStore.importAll/MemoryStore.importStorage each destructively wipe existing data before writing the imported set (threads+chunks, providers+Keychain secrets, all memory scopes respectively) — matches the "migration/full restore" scenario, selective merge is an explicit non-goal. BackupService.decryptBundle + applyImport orchestrate the full flow. Project folder paths and attachments are NOT part of the bundle — user reconnects project paths manually after import via the editable absolutePath field (ProjectSettingsSheet). Covered by BackupServiceTests (8 tests: export completeness, provider/thread/memory restore + wipe-before-restore, encrypted end-to-end flow, wrong password). |
 | 2026-10 | Fixed silent history loss: saving a lazily loaded window used to delete all chunks and write only the in-memory part. New `ChappieStorage.replaceIndexedRecords` (atomic delete-tail + insert) and `ThreadStore.saveLoadedMessages(fromChunk:)`; the old `saveMessages` was renamed `replaceAllMessages` to make its destructive meaning explicit. ViewModel resets `oldestLoadedChunkIndex` on thread switch. Covered by ThreadStoreWindowSaveTests. |
+| 2026-10 | Storage integrity (backlog 2a): unreadable thread list is no longer treated as empty-and-overwritten. `ChappieStorage.preserveCorruptedRecord` backs up damaged bytes; `ThreadStore.loadPayloads` salvages threads one by one and queues `StorageIntegrityIssue`; `SQLiteStorage.load` backs up any undecodable record before returning nil. New `SaveQueue` serializes user-data writes and surfaces failures (Retry/Skip) instead of `try?`. Covered by ThreadStoreIntegrityTests (9) and SaveQueueTests (9). |
 | 2026-08 | Backup import UI shipped in app layer (Chappie/architecture.md): BackupImportSheet two-step confirmation (decrypt/preview, then explicit destructive "Restore Now"), reachable from SettingsView and from OnboardingView welcome step as a "Restore from Backup" shortcut that skips the whole provider setup wizard. |

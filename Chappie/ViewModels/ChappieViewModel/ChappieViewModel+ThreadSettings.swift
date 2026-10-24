@@ -27,7 +27,7 @@ extension ChappieViewModel {
 
         Task {
             do {
-                try await store.renameThread(id: threadId, title: newTitle)
+                await persistThreadTitle(newTitle, threadId: threadId)
 
                 // Start from the sheet's draft — it already has correct maxMessagesInContext,
                 // isUnlimitedContext, and activeKeyId set by the sheet's footerView.
@@ -66,7 +66,7 @@ extension ChappieViewModel {
                     }
                 }
 
-                try await store.updateSettings(updatedSettings, forThreadId: threadId)
+                await persistThreadSettings(updatedSettings, threadId: threadId)
                 print("[ChappieViewModel] updateThreadSettings: saved maxMsgs=\(updatedSettings.maxMessagesInContext) keyId=\(updatedSettings.activeKeyId?.uuidString ?? "nil")")
 
                 let refreshed = try await store.loadThreads()

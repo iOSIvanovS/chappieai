@@ -31,6 +31,8 @@ ChappieCoreTests/
 ├── ThreadIsolationTests.swift          # SystemPromptBuilder + ToolAccessController rules
 ├── ThreadStoreTests.swift              # Chunk system: roundtrip, lazy load, pagination, boundary, delete
 ├── ThreadStoreWindowSaveTests.swift    # saveLoadedMessages: older chunks survive, atomic failure, boundaries
+├── ThreadStoreIntegrityTests.swift     # Damaged thread list: backup, per-thread salvage, report-once; corrupt-record backup
+├── SaveQueueTests.swift                # Write order, failure pauses queue, Retry/Skip, coalescing
 └── WebFetchServiceTests.swift          # WebFetchService HTTP + parsing
 
 Project root:

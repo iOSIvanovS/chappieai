@@ -50,12 +50,10 @@ extension ChappieViewModel {
                 let reason = keyMissing ? "Key" : "Model"
                 print("[ChappieViewModel] ⚠️ \(reason) missing for provider '\(provider.displayName)' — blocking orchestrator")
 
-                if let tStore = threadStore {
-                    var healed = settings
-                    if keyMissing { healed.activeKeyId = nil }
-                    if modelMissing { healed.activeModelName = nil }
-                    try? await tStore.updateSettings(healed, forThreadId: thread.id)
-                }
+                var healed = settings
+                if keyMissing { healed.activeKeyId = nil }
+                if modelMissing { healed.activeModelName = nil }
+                await persistThreadSettings(healed, threadId: thread.id)
 
                 await applyProviderWithoutModel(provider, from: provStore)
                 return
@@ -80,13 +78,11 @@ extension ChappieViewModel {
             self.aiClient = nil
             self.orchestrator = nil
             self.activeModelName = nil
-            if let tStore = threadStore {
-                var healed = settings
-                healed.activeProviderId = nil
-                healed.activeKeyId = nil
-                healed.activeModelName = nil
-                try? await tStore.updateSettings(healed, forThreadId: thread.id)
-            }
+            var healed = settings
+            healed.activeProviderId = nil
+            healed.activeKeyId = nil
+            healed.activeModelName = nil
+            await persistThreadSettings(healed, threadId: thread.id)
             return
         }
 

@@ -78,8 +78,8 @@ extension ChappieViewModel {
                 activeThreadSettings = settings
                 // Always sync in-memory threads so sheet gets fresh data
                 updateThreadInMemory(threadId: threadId, settings: settings)
-                if persistSettings, let tStore = threadStore {
-                    try? await tStore.updateSettings(settings, forThreadId: threadId)
+                if persistSettings {
+                    await persistThreadSettings(settings, threadId: threadId)
                 }
             }
             return
@@ -100,8 +100,8 @@ extension ChappieViewModel {
                     activeThreadSettings = settings
                     // Always sync in-memory threads so sheet gets fresh data
                     updateThreadInMemory(threadId: threadId, settings: settings)
-                    if persistSettings, let tStore = threadStore {
-                        try? await tStore.updateSettings(settings, forThreadId: threadId)
+                    if persistSettings {
+                        await persistThreadSettings(settings, threadId: threadId)
                     }
                 }
                 return
@@ -132,8 +132,8 @@ extension ChappieViewModel {
             activeThreadSettings = settings
             // Always sync in-memory threads so sheet gets fresh data
             updateThreadInMemory(threadId: threadId, settings: settings)
-            if persistSettings, let tStore = threadStore {
-                try? await tStore.updateSettings(settings, forThreadId: threadId)
+            if persistSettings {
+                await persistThreadSettings(settings, threadId: threadId)
             }
         }
 

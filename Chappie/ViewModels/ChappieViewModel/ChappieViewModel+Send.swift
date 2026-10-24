@@ -135,13 +135,8 @@ extension ChappieViewModel {
                     if let pid = activeProviderId { self.saveBalance(newBalance, for: pid) }
                 }
 
-                if let threadId = activeThreadId, let store = self.threadStore {
-                    let currentMessages = self.messages
-                    let fromChunk = self.loadedWindowStartChunk
-                    Task { @MainActor in
-                        try? await store.saveLoadedMessages(currentMessages, toThreadId: threadId, fromChunk: fromChunk)
-                        if let refreshed = try? await store.loadThreads() { self.threads = refreshed }
-                    }
+                if let threadId = activeThreadId {
+                    self.persistMessages(self.messages, threadId: threadId, refreshThreadList: true)
                 }
 
             } catch is CancellationError {
@@ -229,12 +224,8 @@ extension ChappieViewModel {
             self.appendToDisplayed(cancelledMessage)
         }
 
-        if let threadId = activeThreadId, let store = self.threadStore {
-            let currentMessages = self.messages
-            let fromChunk = self.loadedWindowStartChunk
-            Task {
-                try? await store.saveLoadedMessages(currentMessages, toThreadId: threadId, fromChunk: fromChunk)
-            }
+        if let threadId = activeThreadId {
+            persistMessages(messages, threadId: threadId)
         }
     }
 

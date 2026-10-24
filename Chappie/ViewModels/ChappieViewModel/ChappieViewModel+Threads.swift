@@ -40,6 +40,7 @@ extension ChappieViewModel {
         } catch {
             print("[ChappieViewModel] Error loading threads: \(error)")
         }
+        await collectStorageIssues()
     }
 
     /// Selects a thread and loads its messages.
@@ -199,13 +200,13 @@ extension ChappieViewModel {
 
         let finalTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedTitle = finalTitle.isEmpty ? String(localized: "new_thread.name_placeholder") : finalTitle
-        try? await store.renameThread(id: thread.id, title: resolvedTitle)
+        await persistThreadTitle(resolvedTitle, threadId: thread.id)
 
         var updatedSettings = settings
         updatedSettings.activeProviderId = providerId
         updatedSettings.activeKeyId = keyId
         updatedSettings.activeModelName = modelName.isEmpty ? nil : modelName
-        try? await store.updateSettings(updatedSettings, forThreadId: thread.id)
+        await persistThreadSettings(updatedSettings, threadId: thread.id)
 
         let refreshed = (try? await store.loadThreads()) ?? []
         self.threads = refreshed
@@ -264,7 +265,7 @@ extension ChappieViewModel {
 
         Task {
             do {
-                try await store.renameThread(id: thread.id, title: newTitle)
+                await persistThreadTitle(newTitle, threadId: thread.id)
                 let refreshed = try await store.loadThreads()
                 self.threads = refreshed
 

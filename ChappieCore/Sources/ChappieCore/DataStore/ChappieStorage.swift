@@ -49,6 +49,11 @@ public protocol ChappieStorage: Actor {
     /// Rows with a lower index are untouched. On failure nothing changes (rollback).
     func replaceIndexedRecords(prefix: String, fromIndex: Int, payloads: [Data]) async throws
 
+    /// Copies an unreadable blob to "<key>.corrupt.<time>" and returns the backup key.
+    /// Idempotent: if a backup with byte-identical content already exists, its key is returned
+    /// and nothing new is written. Never touches the original record.
+    func preserveCorruptedRecord(key: String, data: Data) async throws -> String
+
     // MARK: Existence
 
     /// Returns true if a record exists for the given relation.

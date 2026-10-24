@@ -84,12 +84,8 @@ extension ChappieViewModel {
 
     /// Persists messages to disk, filtering out ephemeral confirmation bubbles.
     private func saveMessagesIfNeeded() {
-        guard let threadId = activeThread?.id, let store = threadStore else { return }
+        guard let threadId = activeThread?.id else { return }
         // Filter out ephemeral .terminalConfirmation cases before saving.
-        let persistable = messages.filter { !$0.isTerminalConfirmation }
-        let fromChunk = loadedWindowStartChunk
-        Task {
-            try? await store.saveLoadedMessages(persistable, toThreadId: threadId, fromChunk: fromChunk)
-        }
+        persistMessages(messages.filter { !$0.isTerminalConfirmation }, threadId: threadId)
     }
 }

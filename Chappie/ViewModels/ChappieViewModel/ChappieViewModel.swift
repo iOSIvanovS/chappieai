@@ -151,6 +151,13 @@ final class ChappieViewModel {
 
     var chappieDataStore: (any ChappieStorage)?
 
+    /// Serial queue for all user-data writes; a failed write pauses it until the user decides.
+    @ObservationIgnored let saveQueue = SaveQueue()
+    /// The write that failed and awaits "Try Again" / "Skip". Drives the save-error alert.
+    var saveFailure: SaveFailure?
+    /// Damage found in storage at load time. Drives the non-blocking banner.
+    var storageIssue: StorageIntegrityIssue?
+
     var memoryStore: MemoryStore?
     var threadStore: ThreadStore?
     // ProjectStore is kept for downgradeAllProjectsToAdvisor (license enforcement).
@@ -194,6 +201,8 @@ final class ChappieViewModel {
     // MARK: - Init
 
     public init() {
+        saveQueue.onFailureChanged = { [weak self] failure in self?.saveFailure = failure }
+
         // Pre-warm catalog cache at startup so CatalogPickerSheet opens instantly.
         Task {
             do {
@@ -239,7 +248,9 @@ final class ChappieViewModel {
         oldestLoadedChunkIndex = nil
 
         if let threadId = activeThread?.id, let store = threadStore {
-            Task { try? await store.replaceAllMessages([ChatMessage](), toThreadId: threadId) }
+            saveQueue.enqueue(label: "clear thread history", coalesceKey: "messages.\(threadId)") {
+                try await store.replaceAllMessages([ChatMessage](), toThreadId: threadId)
+            }
         }
     }
 
