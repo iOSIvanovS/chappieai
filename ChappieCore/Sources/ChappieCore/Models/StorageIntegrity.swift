@@ -21,11 +21,14 @@ public struct StorageIntegrityIssue: Sendable, Identifiable, Equatable {
     public let kind: Kind
     /// Storage key of the backup copy of the damaged data.
     public let backupKey: String
+    /// Threads rebuilt from their stored messages (default settings, no projects).
+    public let recoveredCount: Int
 
-    public init(id: UUID = UUID(), kind: Kind, backupKey: String) {
+    public init(id: UUID = UUID(), kind: Kind, backupKey: String, recoveredCount: Int = 0) {
         self.id = id
         self.kind = kind
         self.backupKey = backupKey
+        self.recoveredCount = recoveredCount
     }
 }
 

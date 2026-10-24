@@ -24037,6 +24037,71 @@
         }
       }
     },
+    "recovered_thread.title" : {
+      "comment" : "Title of a chat rebuilt from stored messages after the chat list was damaged, used when no first user message is available",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "محادثة مستعادة"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wiederhergestellter Chat"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recovered chat"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chat recuperado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Discussion récupérée"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "पुनर्स्थापित चैट"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "復元されたチャット"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversa recuperada"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстановленный чат"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已恢复的聊天"
+          }
+        }
+      }
+    },
     "role.advisor" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -28081,6 +28146,71 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "关闭"
+          }
+        }
+      }
+    },
+    "storage_issue.recovered_suffix" : {
+      "comment" : "Appended to the damaged-chat-list notice. %d = number of rebuilt chats",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تمت إعادة بناء %d من المحادثات من رسائلها؛ تعذّرت استعادة إعداداتها والمشاريع المرفقة بها."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d Chat(s) wurden aus ihren Nachrichten wiederhergestellt; Einstellungen und angehängte Projekte konnten nicht wiederhergestellt werden."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d chat(s) were rebuilt from their messages; their settings and attached projects could not be restored."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se reconstruyeron %d chat(s) a partir de sus mensajes; no se pudieron restaurar sus ajustes ni los proyectos adjuntos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d discussion(s) ont été reconstruites à partir de leurs messages ; leurs réglages et projets associés n'ont pas pu être restaurés."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d चैट उनके संदेशों से दोबारा बनाई गईं; उनकी सेटिंग्स और जुड़े प्रोजेक्ट वापस नहीं लाए जा सके।"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d 件のチャットをメッセージから再構築しました。設定と添付プロジェクトは復元できませんでした。"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d conversa(s) foram reconstruídas a partir das mensagens; as configurações e os projetos anexados não puderam ser restaurados."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чатов восстановлено из сообщений: %d. Их настройки и подключённые проекты восстановить не удалось."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已根据消息重建 %d 个聊天；其设置和关联项目无法恢复。"
           }
         }
       }

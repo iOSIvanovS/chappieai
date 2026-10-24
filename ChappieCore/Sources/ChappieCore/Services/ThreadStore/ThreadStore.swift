@@ -86,46 +86,37 @@ public actor ThreadStore {
 
     /// Damage found while reading the thread list, not yet shown to the user.
     var pendingIntegrityIssues: [StorageIntegrityIssue] = []
-    /// The last damaged blob we already reported — loadPayloads runs often, report once per blob.
-    var lastReportedCorruptBlob: Data? = nil
+    /// Single in-flight repair: actor reentrancy would otherwise let two callers repair (and write) at once.
+    var repairTask: Task<[ThreadPayload], Error>? = nil
+    /// Title for a rebuilt thread that has no user message to take a title from (localized by the app).
+    let recoveredThreadTitle: String
 
-    public init(dataStore: any ChappieStorage) {
+    public init(dataStore: any ChappieStorage, recoveredThreadTitle: String = "Recovered chat") {
         self.dataStore = dataStore
+        self.recoveredThreadTitle = recoveredThreadTitle
     }
 
     // MARK: - Payload helpers (used by all extensions)
 
     /// Reads the thread list. A missing record is an empty list; an unreadable one is NOT silently
-    /// treated as empty: readable threads are salvaged one by one, the damaged blob is copied to a
-    /// backup record, and an issue is queued for the UI (see `takeIntegrityIssues`).
+    /// treated as empty: the damaged blob is backed up, readable threads are salvaged one by one,
+    /// threads that only survive as message chunks are rebuilt (see ThreadStore+Recovery), and an
+    /// issue is queued for the UI (see `takeIntegrityIssues`).
     func loadPayloads() async throws -> [ThreadPayload] {
         guard let raw = try await dataStore.loadRawData(.threads) else { return [] }
-        let decoder = JSONDecoder()
-        if let all = try? decoder.decode([ThreadPayload].self, from: raw) { return all }
+        if let all = try? JSONDecoder().decode([ThreadPayload].self, from: raw) { return all }
 
-        if let elements = try? decoder.decode([LossyElement<ThreadPayload>].self, from: raw) {
-            let readable = elements.compactMap(\.value)
-            try await reportCorruption(raw, kind: .threadListPartial(lostCount: elements.count - readable.count))
-            return readable
-        }
-        try await reportCorruption(raw, kind: .threadListUnreadable)
-        return []
+        if let running = repairTask { return try await running.value }
+        let task = Task { try await self.repairDamagedList(raw) }
+        repairTask = task
+        defer { repairTask = nil }
+        return try await task.value
     }
 
     /// Hands over (and clears) the damage reports collected since the last call.
     public func takeIntegrityIssues() -> [StorageIntegrityIssue] {
         defer { pendingIntegrityIssues.removeAll() }
         return pendingIntegrityIssues
-    }
-
-    /// Backup first, report second. If the backup cannot be written this throws: continuing would
-    /// let the next save overwrite the only copy of the damaged data.
-    private func reportCorruption(_ raw: Data, kind: StorageIntegrityIssue.Kind) async throws {
-        guard lastReportedCorruptBlob != raw else { return }
-        let backupKey = try await dataStore.preserveCorruptedRecord(key: ChappieStorageRelation.threads.key, data: raw)
-        lastReportedCorruptBlob = raw
-        pendingIntegrityIssues.append(StorageIntegrityIssue(kind: kind, backupKey: backupKey))
-        print("[ThreadStore] ⚠️ Thread list damaged (\(kind)); backup stored as '\(backupKey)'")
     }
 
     func savePayloads(_ payloads: [ThreadPayload]) async throws {

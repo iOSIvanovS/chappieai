@@ -28,7 +28,10 @@ extension ChappieViewModel {
         let store = MemoryStore(dataStore: storage)
         self.memoryStore = store
 
-        let tStore = ThreadStore(dataStore: storage)
+        let tStore = ThreadStore(
+            dataStore: storage,
+            recoveredThreadTitle: String(localized: "recovered_thread.title")
+        )
         self.threadStore = tStore
 
         let pStore = ProjectStore(dataStore: storage, threadStore: tStore)

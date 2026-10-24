@@ -68,6 +68,7 @@ ChappieCore/
         ├── ThreadStore+Projects.swift      # Thread-scoped project CRUD
         ├── ThreadStore+Settings.swift      # Settings CRUD, Starter plan enforcement, memory footprint
         ├── ThreadStore+Backup.swift        # exportAllPayloads/exportChunks — read-only, for BackupService
+        ├── ThreadStore+Recovery.swift      # Damaged list repair: rebuild threads from message chunks
         ├── BackupService/
         │   ├── BackupModels.swift          # ChappieExportBundle, ExportedProvider, ExportedChunk
         │   ├── BackupCrypto.swift          # PBKDF2 + AES-256-GCM whole-file encryption
@@ -156,8 +157,15 @@ app settings. The thread list has its own, stricter path (see "Integrity & write
 - **Thread list** (`ThreadStore.loadPayloads`): a missing record is an empty list; an unreadable one
   is backed up first (if the backup cannot be written, the call throws — nothing gets overwritten),
   readable elements are salvaged one by one (`LossyElement`), and a `StorageIntegrityIssue` is queued.
-  The app layer drains it via `takeIntegrityIssues()` and shows a non-blocking banner. Each distinct
-  damaged blob is reported once.
+  The app layer drains it via `takeIntegrityIssues()` and shows a non-blocking banner.
+- **Recovery** (`ThreadStore+Recovery`): chunk keys carry the thread UUID, so threads missing from a
+  damaged list are rebuilt with the SAME id — messages and thread memory (scope key = thread UUID)
+  re-attach automatically. Title: surviving title field of the broken entry, else the first user message
+  (read as raw JSON, no app type needed), else a localized fallback passed to `init`. Lost for good:
+  settings, attached projects (their memory scopes stay orphaned), original timestamps (messages have
+  none). Runs only when the list is damaged — a healthy list never resurrects chunks of deleted threads.
+  The repaired list is written back, so the repair (and the report) happens once; concurrent callers
+  share one in-flight repair.
 - **`SaveQueue`** (`@MainActor`): serial queue for user-data writes, used by the ViewModel instead of
   `Task { try? await save }`. Strict order; message snapshots with the same `coalesceKey` collapse into
   the newest; a failed write pauses the queue and the UI offers Try Again / Skip. Skip is safe for
@@ -461,4 +469,5 @@ public enum AccessResult: Sendable {
 | 2026-08 | BackupService import (full restore, no merge — agreed with user): ThreadStore.importAll/AIProviderStore.importAll/MemoryStore.importStorage each destructively wipe existing data before writing the imported set (threads+chunks, providers+Keychain secrets, all memory scopes respectively) — matches the "migration/full restore" scenario, selective merge is an explicit non-goal. BackupService.decryptBundle + applyImport orchestrate the full flow. Project folder paths and attachments are NOT part of the bundle — user reconnects project paths manually after import via the editable absolutePath field (ProjectSettingsSheet). Covered by BackupServiceTests (8 tests: export completeness, provider/thread/memory restore + wipe-before-restore, encrypted end-to-end flow, wrong password). |
 | 2026-10 | Fixed silent history loss: saving a lazily loaded window used to delete all chunks and write only the in-memory part. New `ChappieStorage.replaceIndexedRecords` (atomic delete-tail + insert) and `ThreadStore.saveLoadedMessages(fromChunk:)`; the old `saveMessages` was renamed `replaceAllMessages` to make its destructive meaning explicit. ViewModel resets `oldestLoadedChunkIndex` on thread switch. Covered by ThreadStoreWindowSaveTests. |
 | 2026-10 | Storage integrity (backlog 2a): unreadable thread list is no longer treated as empty-and-overwritten. `ChappieStorage.preserveCorruptedRecord` backs up damaged bytes; `ThreadStore.loadPayloads` salvages threads one by one and queues `StorageIntegrityIssue`; `SQLiteStorage.load` backs up any undecodable record before returning nil. New `SaveQueue` serializes user-data writes and surfaces failures (Retry/Skip) instead of `try?`. Covered by ThreadStoreIntegrityTests (9) and SaveQueueTests (9). |
+| 2026-10 | Thread list recovery (backlog 2b): a damaged list is repaired on read — readable threads kept, threads known only from message chunks rebuilt with their original ids, repaired list written back. Banner mentions how many were rebuilt. Covered by ThreadStoreRecoveryTests (9). |
 | 2026-08 | Backup import UI shipped in app layer (Chappie/architecture.md): BackupImportSheet two-step confirmation (decrypt/preview, then explicit destructive "Restore Now"), reachable from SettingsView and from OnboardingView welcome step as a "Restore from Backup" shortcut that skips the whole provider setup wizard. |

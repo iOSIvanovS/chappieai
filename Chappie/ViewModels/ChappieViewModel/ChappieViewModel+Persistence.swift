@@ -74,14 +74,18 @@ extension ChappieViewModel {
     }
 
     var storageIssueText: String {
-        switch storageIssue?.kind {
+        guard let issue = storageIssue else { return "" }
+        var text: String
+        switch issue.kind {
         case .threadListUnreadable:
-            return String(localized: "storage_issue.thread_list_unreadable")
+            text = String(localized: "storage_issue.thread_list_unreadable")
         case .threadListPartial(let lost):
-            return String(format: String(localized: "storage_issue.thread_list_partial"), lost)
-        case nil:
-            return ""
+            text = String(format: String(localized: "storage_issue.thread_list_partial"), lost)
         }
+        if issue.recoveredCount > 0 {
+            text += " " + String(format: String(localized: "storage_issue.recovered_suffix"), issue.recoveredCount)
+        }
+        return text
     }
 
     func dismissStorageIssue() { storageIssue = nil }

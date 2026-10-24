@@ -45,8 +45,7 @@ struct ThreadStoreIntegrityTests {
         let keys = try await backups(storage, of: "threads")
         #expect(keys.count == 1)
         #expect(issues.first?.backupKey == keys.first)
-        let saved = try await storage.loadRawData(.threads)
-        #expect(saved == garbage) // loading never overwrites the original
+        // Loading repairs the list (writes the readable result), but the original bytes live on in the backup.
         let again = try await storage.preserveCorruptedRecord(key: "threads", data: garbage)
         #expect(again == keys.first) // the backup holds exactly the damaged bytes
     }

@@ -84,12 +84,15 @@ public enum ChappieStorageRelation: Sendable, Hashable {
         case .memory:                               return "memory"
         case .providers:                            return "providers"
         case .appSettings:                          return "app_settings"
-        case .threadMessagesChunk(let id, let i):   return "thread_messages_chunk.\(id.uuidString).\(i)"
+        case .threadMessagesChunk(let id, let i):   return "\(Self.chunkKeyRoot)\(id.uuidString).\(i)"
         }
     }
 
     /// Prefix used to enumerate or delete all chunks for a thread.
     public static func chunkPrefix(for threadId: UUID) -> String {
-        return "thread_messages_chunk.\(threadId.uuidString)."
+        return "\(chunkKeyRoot)\(threadId.uuidString)."
     }
+
+    /// Common start of every message-chunk key, for scanning chunks of all threads at once.
+    public static let chunkKeyRoot = "thread_messages_chunk."
 }
