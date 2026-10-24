@@ -88,15 +88,22 @@ extension ContentView {
     // MARK: - Navigation
 
     var navigationContent: some View {
-        ZStack(alignment: .topLeading) {
+        // Toolbar inputs are snapshotted into plain values/bindings so the toolbar closure
+        // does not capture the whole ContentView struct (crashed in SwiftUI's copy on macOS 27).
+        let hasProviders = !viewModel.providers.isEmpty
+        let isThinking = viewModel.streaming.isThinking
+        let sidebarBinding = $isSidebarVisible
+        let settingsBinding = $showSettings
+
+        return ZStack(alignment: .topLeading) {
 
             mainChatArea
                 .toolbar {
                     ChappieToolbarContent(
-                        isApiKeyValid: !viewModel.providers.isEmpty,
-                        isSidebarVisible: $isSidebarVisible,
-                        isThinking: viewModel.streaming.isThinking,
-                        onOpenSettings: { showSettings = true }
+                        isApiKeyValid: hasProviders,
+                        isSidebarVisible: sidebarBinding,
+                        isThinking: isThinking,
+                        onOpenSettings: { settingsBinding.wrappedValue = true }
                     )
                 }
 
