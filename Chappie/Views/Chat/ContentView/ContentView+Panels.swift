@@ -62,6 +62,7 @@ extension ContentView {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(WindowDragArea())
         .onDrop(of: [.fileURL, .folder, .data] + officeUTTypes, delegate: dropDelegate)
     }
 
