@@ -21,6 +21,11 @@
 
 import Foundation
 
+// A client may disconnect while a long tool (build, tests) is still running; writing the
+// response to the closed socket then raises SIGPIPE, whose default action kills the whole
+// helper and leaves a stale socket file behind ("Connection refused" for every later call).
+signal(SIGPIPE, SIG_IGN)
+
 let args = CommandLine.arguments
 
 let projectPath: String = args.count > 1 ? args[1] : FileManager.default.currentDirectoryPath

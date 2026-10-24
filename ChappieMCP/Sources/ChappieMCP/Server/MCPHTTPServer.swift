@@ -123,6 +123,11 @@ final class MCPUnixServer: @unchecked Sendable {
     private func handleClient(fd: Int32) async {
         defer { close(fd) }
 
+        // Belt and braces next to the process-wide SIGPIPE ignore: a write to a vanished
+        // client must fail with EPIPE instead of signalling.
+        var noSigPipe: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
+
         var lengthBytes = [UInt8](repeating: 0, count: 4)
         let bytesRead = recv(fd, &lengthBytes, 4, MSG_WAITALL)
         guard bytesRead == 4 else {
