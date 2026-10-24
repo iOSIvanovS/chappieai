@@ -27,7 +27,7 @@ final class DocumentTools: Sendable {
     // MARK: - read_document
 
     /// Routes to the correct reader based on file extension.
-    func readDocument(relativePath: String, projectName: String? = nil) -> ToolResult {
+    func readDocument(relativePath: String, projectName: String? = nil) async -> ToolResult {
         let fullPath: String
         do { fullPath = try resolvePath(relativePath, projectName: projectName) }
         catch { return .failure("read_document: \(error)") }
@@ -47,7 +47,7 @@ final class DocumentTools: Sendable {
         case "csv":
             return readPlainText(at: fullPath, format: "CSV")
         case "pdf":
-            return readPDF(at: fullPath)
+            return await readPDF(at: fullPath)
         default:
             return .failure("read_document: unsupported format '.\(ext)'. Supported: docx, xlsx, pptx, odt, rtf, csv, pdf.")
         }

@@ -45,6 +45,7 @@ public actor MCPToolBridge {
     public func execute(tool: String, args: [String: String] = [:]) async -> String {
         let first = await sendRequest(tool: tool, args: args)
         guard case .unreachable(let reason) = first else { return first.text }
+        if Task.isCancelled { return Self.cancelledMessage(tool) }
 
         // Nobody is listening (helper died, never started, or its socket file is stale).
         // Safe to retry: the request never reached a helper, so the tool did not run.
@@ -53,6 +54,10 @@ public actor MCPToolBridge {
         let second = await sendRequest(tool: tool, args: args)
         if case .unreachable(let reason) = second { return Self.unavailableMessage(reason, socketPath) }
         return second.text
+    }
+
+    static func cancelledMessage(_ tool: String) -> String {
+        "🛑 Tool \(tool) was cancelled by the user. Its processes are being stopped."
     }
 
     private static func unavailableMessage(_ reason: String, _ path: String) -> String {
@@ -87,16 +92,24 @@ public actor MCPToolBridge {
             return .answered("❌ Error: failed to serialize request for tool \(tool)")
         }
 
-        return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async { [socketPath, timeoutSeconds] in
-                let result = Self.performSocketCall(
-                    socketPath: socketPath,
-                    requestData: requestData,
-                    tool: tool,
-                    timeoutSeconds: timeoutSeconds
-                )
-                continuation.resume(returning: result)
+        // Stop must not wait for the helper: cancelling half-closes the socket, which wakes the
+        // blocked recv() at once. The helper notices the hang-up and kills the tool's processes.
+        let call = CancellableCall()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                DispatchQueue.global(qos: .userInitiated).async { [socketPath, timeoutSeconds] in
+                    let result = Self.performSocketCall(
+                        socketPath: socketPath,
+                        requestData: requestData,
+                        tool: tool,
+                        timeoutSeconds: timeoutSeconds,
+                        call: call
+                    )
+                    continuation.resume(returning: result)
+                }
             }
+        } onCancel: {
+            call.cancel()
         }
     }
 
@@ -106,13 +119,17 @@ public actor MCPToolBridge {
         socketPath: String,
         requestData: Data,
         tool: String,
-        timeoutSeconds: Double
+        timeoutSeconds: Double,
+        call: CancellableCall
     ) -> Outcome {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else {
             return .answered("❌ Failed to create socket: \(String(cString: strerror(errno)))")
         }
-        defer { close(fd) }
+        // Detach before closing so a late cancel can never touch a reused descriptor.
+        defer { call.detach(); close(fd) }
+        call.attach(fd: fd)
+        if call.isCancelled { return .answered(cancelledMessage(tool)) }
 
         var timeout = timeval(
             tv_sec: __darwin_time_t(Int(timeoutSeconds)),
@@ -168,6 +185,7 @@ public actor MCPToolBridge {
         var responseHeader = [UInt8](repeating: 0, count: 4)
         let headerRead = recv(fd, &responseHeader, 4, MSG_WAITALL)
         guard headerRead == 4 else {
+            if call.isCancelled { return .answered(cancelledMessage(tool)) }
             if errno == EAGAIN || errno == EWOULDBLOCK {
                 return .answered("⏱️ Timeout: tool \(tool) took too long (>\(Int(timeoutSeconds)) sec)")
             }
@@ -186,6 +204,7 @@ public actor MCPToolBridge {
         var responseBytes = [UInt8](repeating: 0, count: Int(responseLength))
         let bodyRead = recv(fd, &responseBytes, Int(responseLength), MSG_WAITALL)
         guard bodyRead == Int(responseLength) else {
+            if call.isCancelled { return .answered(cancelledMessage(tool)) }
             return .answered("❌ Incomplete response from server (expected \(responseLength), got \(bodyRead))")
         }
 
@@ -199,6 +218,28 @@ public actor MCPToolBridge {
             return .answered("❌ Tool \(tool) error: \(error)")
         }
         return .answered(response.result ?? "(empty result)")
+    }
+}
+
+// MARK: - CancellableCall
+
+/// Lets the task's cancellation handler reach the blocking socket call running on a GCD thread.
+final class CancellableCall: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fd: Int32 = -1
+    private var cancelled = false
+
+    var isCancelled: Bool { lock.withLock { cancelled } }
+
+    func attach(fd: Int32) { lock.withLock { self.fd = fd } }
+    func detach() { lock.withLock { fd = -1 } }
+
+    /// A half-close keeps the descriptor valid for its owner while waking its blocked recv().
+    func cancel() {
+        lock.withLock {
+            cancelled = true
+            if fd >= 0 { Darwin.shutdown(fd, SHUT_RDWR) }
+        }
     }
 }
 

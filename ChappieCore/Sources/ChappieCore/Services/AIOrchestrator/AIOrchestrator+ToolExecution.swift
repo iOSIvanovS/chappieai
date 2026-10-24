@@ -43,6 +43,10 @@ extension AIOrchestrator {
                 if isTerminalTool {
                     onTerminalFinish?()
                 }
+                // Stop was pressed while the tool ran: the tool already stopped its processes and
+                // returned. Leave the loop now instead of sending its "cancelled" text to the model
+                // and paying for another request (and running the remaining tool calls of this step).
+                try Task.checkCancellation()
             }
 
             // send_attachment / write_document return JSON with saved_path.

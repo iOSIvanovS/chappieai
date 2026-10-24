@@ -221,11 +221,27 @@ final class MCPUnixServer: @unchecked Sendable {
         }
         releasePendingSlot()
 
-        Task { [weak self] in
-            guard let self else { close(fd); return }
-            let responseData = await self.processRequest(data: requestData)
-            self.ioQueue.async { [weak self] in
-                self?.writeResponse(fd: fd, data: responseData)
+        // The tool runs in its own Task so the watcher can cancel it when the app hangs up
+        // (Stop button, app quit); cancellation reaches ProcessRunner and kills the process tree.
+        let toolTask = Task { [weak self] () -> Data in
+            guard let self else { return Data() }
+            return await self.processRequest(data: requestData)
+        }
+        let watcher = ClientWatcher(fd: fd) {
+            print("[ChappieMCP] 🛑 Client disconnected while the tool was running; cancelling it")
+            toolTask.cancel()
+        }
+        ioQueue.async { watcher.run() }
+
+        // The server lives as long as the helper process, so a strong capture is fine here and
+        // guarantees the descriptor is always closed.
+        Task {
+            let responseData = await toolTask.value
+            watcher.stop()
+            self.ioQueue.async {
+                // The watcher must be gone before the descriptor is closed (fd reuse).
+                watcher.waitUntilExited()
+                self.writeResponse(fd: fd, data: responseData)
                 close(fd)
             }
         }

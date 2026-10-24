@@ -67,6 +67,8 @@ ChappieCore/
         ├── ProjectStore.swift          # downgradeAllProjectsToAdvisor() only — no CRUD
         ├── ProvidersRemoteService.swift # Fetches + caches providers.json from GitHub
         ├── SaveQueue.swift             # Ordered write queue; failed write pauses until Retry/Skip
+        ├── ProcessControl/
+        │   └── ProcessTree.swift       # Stop a process + descendants (SIGTERM, SIGKILL after grace); ProcessCanceller; copy lives in ChappieMCP
         ├── ShellSession.swift          # Persistent bash session (per-thread, run_terminal)
         ├── StallWatchdog.swift         # Cancels stalled AI streams after timeout
         ├── SystemPromptBuilder.swift   # Deterministic system prompt assembler
@@ -489,6 +491,13 @@ folded into it). Only the model request is repeated; tools run outside the loop.
 - `.none` — terminal unavailable (default)
 - `.confirm` — every command requires user approval
 - `.auto` — commands execute immediately
+
+
+**Cancellation (Stop button).** `cancelCurrentRequest()` cancels the request Task; every long wait honours it:
+- `MCPToolBridge.sendRequest` wraps the socket call in `withTaskCancellationHandler`; cancel half-closes the socket (`CancellableCall`), which wakes the blocked `recv` at once. The helper sees the hang-up and kills the tool's processes (see ChappieMCP/architecture.md). A cancelled call is never recovered/retried.
+- `ShellSession.readUntilSentinel` returns immediately on cancel and then `killSession()` stops bash **and its children** (`ProcessTree`); the next command starts a fresh bash (cwd comes from the `cd` prefix).
+- `run_ssh` stops its ssh process through a `ProcessCanceller` (the detached polling task does not inherit cancellation).
+- `AIOrchestrator.executeToolCalls` calls `Task.checkCancellation()` after each tool, so a cancelled tool's text is never sent back to the model and the rest of the step is skipped.
 
 ---
 

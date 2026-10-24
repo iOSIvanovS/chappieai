@@ -38,28 +38,28 @@ extension DocumentTools {
 
     // MARK: - PDF (read-only)
 
-    func readPDF(at path: String) -> ToolResult {
+    func readPDF(at path: String) async -> ToolResult {
         guard FileManager.default.fileExists(atPath: path) else {
             return .failure("read_document: file not found at '\(path)'")
         }
 
-        // Prefer pdftotext (brew install poppler) for high-quality extraction.
+        // Prefer pdftotext (brew install poppler) for high-quality extraction. Large PDFs can take
+        // a while, so it runs through the shared runner and stops when the app cancels the call.
         let pdftotextPath = "/opt/homebrew/bin/pdftotext"
         if FileManager.default.fileExists(atPath: pdftotextPath) {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: pdftotextPath)
-            process.arguments = [path, "-"]
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = Pipe()
-            do {
-                try process.run()
-                process.waitUntilExit()
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                if let text = String(data: data, encoding: .utf8), !text.isEmpty {
-                    return .success("<!-- PDF document (text extraction): \(URL(fileURLWithPath: path).lastPathComponent) -->\n\(text)")
-                }
-            } catch { /* fall through to raw scan */ }
+            let run = await ProcessRunner.run(
+                executable: pdftotextPath,
+                args: [path, "-"],
+                environment: ["HOME": NSHomeDirectory(), "LANG": "en_US.UTF-8"]
+            )
+            if run.stopReason == .cancelled {
+                return .failure("🛑 read_document was cancelled.")
+            }
+            let text = run.stdoutText
+            if run.launchError == nil, !text.isEmpty {
+                return .success("<!-- PDF document (text extraction): \(URL(fileURLWithPath: path).lastPathComponent) -->\n\(text)")
+            }
+            // Otherwise fall through to the raw scan.
         }
 
         guard let data = FileManager.default.contents(atPath: path) else {

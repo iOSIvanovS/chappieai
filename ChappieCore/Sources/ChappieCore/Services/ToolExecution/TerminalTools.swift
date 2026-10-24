@@ -245,7 +245,11 @@ extension ToolExecutionService {
 
         print("[SSHTools] 🔌 Connecting to \(finalTarget)\(identityFile.map { " with identity '\($0)'" } ?? "" ), command: \(remoteCommand)")
 
-        return await withCheckedContinuation { continuation in
+        // Task.detached does not inherit the caller's cancellation, so Stop reaches the ssh
+        // process through this canceller (the cancellation handler below).
+        let canceller = ProcessCanceller()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
             Task.detached {
                 let process = Process()
                 let outPipe = Pipe()
@@ -293,14 +297,24 @@ extension ToolExecutionService {
                     return
                 }
 
+                // A Stop that arrived before launch finished is applied here.
+                canceller.attach(pid: process.processIdentifier)
+
                 // Wait with deadline — terminate if hung.
                 let deadline = Date().addingTimeInterval(TimeInterval(finalTimeout) + 5)
-                while process.isRunning && Date() < deadline {
+                while process.isRunning && Date() < deadline && canceller.stopReason == nil {
                     try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
                 }
 
+                if canceller.stopReason == .cancelled {
+                    outPipe.fileHandleForReading.readabilityHandler = nil
+                    errPipe.fileHandleForReading.readabilityHandler = nil
+                    continuation.resume(returning: "🛑 run_ssh: Command cancelled by the user; the ssh connection was closed.")
+                    return
+                }
+
                 if process.isRunning {
-                    process.terminate()
+                    canceller.stop(.timedOut)
                     outPipe.fileHandleForReading.readabilityHandler = nil
                     errPipe.fileHandleForReading.readabilityHandler = nil
                     continuation.resume(returning: "⏱️ run_ssh: Command timed out after \(finalTimeout)s on \(finalTarget).")
@@ -335,6 +349,9 @@ extension ToolExecutionService {
                     continuation.resume(returning: parts.joined(separator: "\n"))
                 }
             }
+            }
+        } onCancel: {
+            canceller.stop(.cancelled)
         }
     }
 }

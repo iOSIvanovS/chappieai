@@ -33,8 +33,11 @@ ChappieMCP/
     ├── DevEnvironment.swift           # Mirrors ChappieCore.DevEnvironment (rawValues must stay in sync)
     ├── Server/
     │   ├── MCPHTTPServer.swift        # Unix Domain Socket server + ToolDispatcher; socket I/O on a private GCD queue
+    │   ├── ClientWatcher.swift        # poll()s the client socket while a tool runs; hang-up cancels the tool's Task
     │   └── SocketIO.swift             # poll()-based read/write with one overall deadline per transfer
     └── Tools/
+        ├── ProcessRunner.swift        # Shared child-process runner: parallel pipes, timeout, cancel = stop the whole process tree
+        ├── ProcessTree.swift          # Identical copy of ChappieCore's file (SIGTERM tree, SIGKILL after 2 s); parity is tested
         ├── GitTools.swift             # git_status, git_add, git_commit, git_log, git_reset, git_revert, git_checkout
         ├── BuildTools.swift           # build_project, run_tests, read_build_log (env-aware routing)
         ├── PathGuard.swift            # Byte-identical copy of ChappieCore's PathGuard (parity test) — project containment
@@ -115,6 +118,13 @@ A client that connects and goes silent must not starve real calls (24 silent cli
 - **Pending cap:** at most 32 connections still delivering their request; extra ones are closed at once.
 - **`accept()` errors:** EINTR/ECONNABORTED/EAGAIN/EPROTO retry at once; EMFILE/ENFILE/ENOMEM/ENOBUFS back off 100 ms (logged once); anything else is fatal, so the helper exits and the launcher restarts it.
 - A connection that closes without sending a byte is the app's readiness probe and is not logged as an error.
+
+### Cancellation (Stop button)
+The app cancels a call by hanging up. The helper never reads from the client again after the request, so any readability on the socket means "peer gone".
+- `ClientWatcher` (one `poll()` loop per running tool, on the I/O queue) cancels the tool's `Task` when the peer closes. It is stopped and joined before the descriptor is closed.
+- `ProcessRunner` turns Task cancellation into `ProcessTree.terminate`: SIGTERM to the process and all descendants, SIGKILL for survivors after 2 s (pid + start time are checked first, so a recycled pid is never killed). Used by build/test, git and the PDF converter.
+- **Git write commands are not cancellable** (`add`, `commit`, `push`, `reset`, `revert`, `checkout`): killing them halfway can leave `index.lock` or a half-applied state. They run to the end even if the client left; only `status` and `log` stop.
+- Not cancellable by design: in-process work (loc_*, file/zip document readers) is short and has no child process.
 
 ---
 

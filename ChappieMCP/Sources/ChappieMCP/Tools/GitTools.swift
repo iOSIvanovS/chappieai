@@ -133,7 +133,7 @@ final class GitTools: Sendable {
     // MARK: - Public Tools
 
     func status(projectName: String?) async -> ToolResult {
-        return await runGit(["status", "--short", "--branch"], projectName: projectName)
+        return await runGit(["status", "--short", "--branch"], projectName: projectName, cancellable: true)
     }
 
     func add(paths: String, projectName: String?) async -> ToolResult {
@@ -156,7 +156,7 @@ final class GitTools: Sendable {
     }
 
     func log(count: Int, projectName: String?) async -> ToolResult {
-        return await runGit(["log", "--oneline", "--decorate", "--graph", "-\(count)"], projectName: projectName)
+        return await runGit(["log", "--oneline", "--decorate", "--graph", "-\(count)"], projectName: projectName, cancellable: true)
     }
 
     func reset(projectName: String?) async -> ToolResult {
@@ -198,7 +198,10 @@ final class GitTools: Sendable {
 
     // MARK: - Private Process Runner
 
-    private func runGit(_ args: [String], projectName: String?) async -> ToolResult {
+    /// `cancellable` is false by default: a git command that changes the repository (add, commit,
+    /// push, reset, revert, checkout) must not be killed halfway, because that can leave
+    /// index.lock or a half-applied state. Only read-only commands opt in.
+    private func runGit(_ args: [String], projectName: String?, cancellable: Bool = false) async -> ToolResult {
         // Resolve path first — return a clear error if project is unknown or map is empty.
         let workingDir: String
         switch resolvePath(for: projectName) {
@@ -210,29 +213,6 @@ final class GitTools: Sendable {
 
         let label = projectName.map { "[\($0)]" } ?? ""
         print("[ChappieMCP] 🔧 git\(label) \(args.joined(separator: " ")) @ \(workingDir)")
-
-        return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let result = self.runProcess(
-                    executable: "/usr/bin/git",
-                    args: args,
-                    workingDirectory: workingDir
-                )
-                continuation.resume(returning: result)
-            }
-        }
-    }
-
-    private func runProcess(executable: String, args: [String], workingDirectory: String) -> ToolResult {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = args
-        process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
-
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
 
         // Build environment:
         // HOME            — git needs it to find ~/.gitconfig and ~/.ssh/id_ed25519
@@ -250,43 +230,35 @@ final class GitTools: Sendable {
             "GIT_TERMINAL_PROMPT": "0",
             "TERM": "dumb"
         ]
-
-        // Forward SSH_AUTH_SOCK from parent process so ssh-agent works for SSH remotes.
         if let sshAuthSock = ProcessInfo.processInfo.environment["SSH_AUTH_SOCK"] {
             env["SSH_AUTH_SOCK"] = sshAuthSock
         }
 
-        process.environment = env
+        // ProcessRunner reads both pipes in parallel; the old loop read stderr only after exit,
+        // which deadlocks when git writes more than a pipe buffer (~64 KB) to stderr.
+        let run = await ProcessRunner.run(
+            executable: "/usr/bin/git",
+            args: args,
+            workingDirectory: workingDir,
+            environment: env,
+            cancellable: cancellable
+        )
 
-        do {
-            try process.run()
-        } catch {
-            return .failure("Failed to launch git: \(error.localizedDescription)")
+        if let launchError = run.launchError {
+            return .failure("Failed to launch git: \(launchError)")
+        }
+        if run.stopReason == .cancelled {
+            return .failure("🛑 git \(args.joined(separator: " ")) was cancelled.")
         }
 
-        // Read stdout via availableData loop — more robust than readDataToEndOfFile()
-        // when git might not close the pipe immediately.
-        var stdoutData = Data()
-        var stderrData = Data()
-
-        while process.isRunning {
-            let chunk = stdoutPipe.fileHandleForReading.availableData
-            if !chunk.isEmpty { stdoutData.append(chunk) }
-            Thread.sleep(forTimeInterval: 0.05)
-        }
-
-        stdoutData.append(stdoutPipe.fileHandleForReading.readDataToEndOfFile())
-        stderrData.append(stderrPipe.fileHandleForReading.readDataToEndOfFile())
-
-        let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
-        let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-
-        if process.terminationStatus == 0 {
+        let stdout = run.stdoutText
+        if run.exitCode == 0 {
             let output = stdout.isEmpty ? "(no output)" : stdout
             return .success("git \(args.joined(separator: " ")):\n\(output)")
         } else {
+            let stderr = run.stderrText
             let errorOutput = stderr.isEmpty ? stdout : stderr
-            return .failure("git \(args.joined(separator: " ")) exited with code \(process.terminationStatus):\n\(errorOutput)")
+            return .failure("git \(args.joined(separator: " ")) exited with code \(run.exitCode):\n\(errorOutput)")
         }
     }
 }

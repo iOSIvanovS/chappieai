@@ -116,7 +116,7 @@ final class ToolDispatcher: Sendable {
             guard let path = args["path"], !path.isEmpty else {
                 return .failure("Argument 'path' is required (e.g. 'contract.docx')")
             }
-            return docTools.readDocument(relativePath: path, projectName: args["project"])
+            return await docTools.readDocument(relativePath: path, projectName: args["project"])
 
         case "write_document":
             guard let path = args["path"], !path.isEmpty else {

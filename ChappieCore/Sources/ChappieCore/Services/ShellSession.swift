@@ -192,7 +192,8 @@ public actor ShellSession {
     }
 
     private func killSession() {
-        process?.terminate()
+        // The whole tree, not just bash: a running command (build, sleep, ssh...) is its child.
+        if let pid = process?.processIdentifier { ProcessTree.terminate(rootPid: pid) }
         process = nil
         stdinPipe = nil
         stdoutPipe = nil
@@ -218,7 +219,21 @@ public actor ShellSession {
         let box = SentinelReadBox()
         var timedOut = false
 
-        let result: ShellResult = await withCheckedContinuation { continuation in
+        // Stop in the UI cancels this task. The wait below would otherwise run until the command
+        // finished or timed out (up to 5 minutes), while the shell keeps working. The process
+        // tree itself is stopped by killSession() right after this returns.
+        let result: ShellResult = await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+            box.installCancelAction {
+                guard box.markResumedIfNeeded() else { return }
+                handle.readabilityHandler = nil
+                box.markCancelled()
+                let partial = String(data: box.currentAccumulated(), encoding: .utf8) ?? ""
+                continuation.resume(returning: ShellResult(
+                    output: "🛑 Command cancelled by the user; the shell session was stopped.\nPartial output:\n\(partial)",
+                    exitCode: -1
+                ))
+            }
             handle.readabilityHandler = { fh in
                 let chunk = fh.availableData
                 guard !chunk.isEmpty else { return }
@@ -247,12 +262,16 @@ public actor ShellSession {
                     exitCode: -1
                 ))
             }
+            }
+        } onCancel: {
+            box.cancel()
         }
 
         timedOut = box.wasTimedOut()
-        if timedOut {
-            // Actually kill the hung session (not just document the intent) so the
-            // next call starts a fresh bash process instead of reusing a stuck one.
+        if timedOut || box.wasCancelled() {
+            // Actually kill the hung or cancelled session (not just document the intent) so the
+            // next call starts a fresh bash process instead of reusing a stuck one. The tree kill
+            // also takes down whatever the command had started.
             killSession()
         }
         return result
@@ -292,6 +311,30 @@ private final class SentinelReadBox: @unchecked Sendable {
     private var accumulated = Data()
     private var resumed = false
     private var timedOut = false
+    private var cancelled = false
+    private var cancelAction: (@Sendable () -> Void)?
+    private var cancelRequested = false
+
+    /// Registers what to do on Stop. If Stop already arrived, it runs immediately.
+    func installCancelAction(_ action: @escaping @Sendable () -> Void) {
+        let runNow: Bool = lock.withLock {
+            cancelAction = action
+            return cancelRequested
+        }
+        if runNow { action() }
+    }
+
+    /// Called from the task's cancellation handler.
+    func cancel() {
+        let action: (@Sendable () -> Void)? = lock.withLock {
+            cancelRequested = true
+            return cancelAction
+        }
+        action?()
+    }
+
+    func markCancelled() { lock.withLock { cancelled = true } }
+    func wasCancelled() -> Bool { lock.withLock { cancelled } }
 
     /// Appends a chunk and returns the current full snapshot.
     func appendChunk(_ chunk: Data) -> Data {
