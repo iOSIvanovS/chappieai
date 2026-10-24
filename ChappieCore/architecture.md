@@ -74,10 +74,10 @@ ChappieCore/
         │   ├── BackupModels.swift          # ChappieExportBundle, ExportedProvider, ExportedChunk
         │   ├── BackupCrypto.swift          # PBKDF2 + AES-256-GCM whole-file encryption
         │   └── BackupService.swift         # Assembles bundle from Stores (incl. Keychain secrets), encrypts
-        ├── ToolAccessController.swift  # Hard gate before every tool execution
         ├── WebFetchService.swift       # Fetches web pages and extracts clean text
         └── ToolExecution/
-            ├── ToolAccessControl.swift              # Access control rules per tool category
+            ├── ToolPolicy.swift                     # THE access table (deny by default) + pure decide()
+            ├── ToolAuthorization.swift              # Target-project resolution, canonical project arg, exposure filter
             ├── ToolDefinitions.swift                # Orchestrator: assembles availableTools from extensions
             ├── ToolDefinitions+FileTools.swift      # File system, search, document, attachment tool defs
             ├── ToolDefinitions+MemoryTools.swift    # Memory tool definitions (IT-08)
@@ -315,7 +315,7 @@ graph TD
         Orch["AIOrchestrator\nReasoning loop"]
         TES["ToolExecutionService\nTool dispatcher"]
         SPB["SystemPromptBuilder\nDeterministic prompt assembly"]
-        TAC["ToolAccessController\nHard gate per tool call"]
+        TAC["ToolPolicy\nSingle access table, deny by default"]
         TSess["ThreadSession\nRuntime thread container"]
         MemM["MemoryManager\nSemantic memory"]
         FSM["FileSystemManager\nSecure FS access (absolutePath)"]
@@ -406,7 +406,7 @@ process(prompt, history, config, memoryContext)
   → buildContextWindow(history, config)
   → loop (maxOrchestratorSteps = 500):
       → streamWithRetry() → aiClient.streamRequestWithTools()
-      → if tool_use → ToolAccessController.check() → toolService.execute()
+      → if tool_use → toolService.execute() (authorize via ToolPolicy inside)
       → if text → return AIOrchestratorResult
 ```
 
@@ -427,18 +427,25 @@ Empty sections are omitted — no wasted tokens.
 
 ---
 
-## 12. ToolAccessController
+## 12. ToolPolicy — one access table
 
-Hard gate before every tool execution.
+`ToolPolicy.swift` holds one row per tool (`ToolCapability`): alwaysOn, terminal, forbidden, fileRead, fileWrite,
+locRead, locWrite, git, build, tests, buildLog. **A tool without a row is denied.** `ToolPolicy.decide` is a pure
+function `(tool, target project's ProjectSettings, thread terminal level, Starter?) → ToolDecision`.
 
-```swift
-public enum AccessResult: Sendable {
-    case allowed
-    case denied(reason: String)
-}
-```
+`ToolAuthorization.swift` connects it to the live thread, for both questions with the same function:
+- **Execution** — `authorize()` picks the call's target project (explicit `project` arg, else the only attached
+  project, else a `ProjectName/` path prefix for file tools; `list_files`/`search_in_project` may span all).
+  Several projects and no way to tell → refused with the list, never "the first one". Rights of OTHER projects
+  never apply. The canonical project name is written back into the arguments.
+- **Exposure** — `availableTools` is filtered by `isToolExposed`: a tool is shown only if some attached project
+  (or the thread, for the terminal) lets it run.
 
-`git_diff` is permanently blocked — cannot be overridden by any settings.
+Rules worth knowing: ADVISOR reads only (files, search, loc read tools); `build_project` needs only
+`buildEnabled`, `run_tests` also needs test access; `git_log` is allowed at the read-only git level; loc_* need an
+Xcode project and carry a `project` argument that scopes the helper's path roots; Starter is read-only;
+arguments of project tools must be a flat string map (otherwise refused with an explanation).
+`git_diff` is permanently blocked. Tests: `ToolPolicyTests` (completeness check against `availableTools`).
 
 ---
 
@@ -472,4 +479,5 @@ public enum AccessResult: Sendable {
 | 2026-10 | Fixed silent history loss: saving a lazily loaded window used to delete all chunks and write only the in-memory part. New `ChappieStorage.replaceIndexedRecords` (atomic delete-tail + insert) and `ThreadStore.saveLoadedMessages(fromChunk:)`; the old `saveMessages` was renamed `replaceAllMessages` to make its destructive meaning explicit. ViewModel resets `oldestLoadedChunkIndex` on thread switch. Covered by ThreadStoreWindowSaveTests. |
 | 2026-10 | Storage integrity (backlog 2a): unreadable thread list is no longer treated as empty-and-overwritten. `ChappieStorage.preserveCorruptedRecord` backs up damaged bytes; `ThreadStore.loadPayloads` salvages threads one by one and queues `StorageIntegrityIssue`; `SQLiteStorage.load` backs up any undecodable record before returning nil. New `SaveQueue` serializes user-data writes and surfaces failures (Retry/Skip) instead of `try?`. Covered by ThreadStoreIntegrityTests (9) and SaveQueueTests (9). |
 | 2026-10 | Thread list recovery (backlog 2b): a damaged list is repaired on read — readable threads kept, threads known only from message chunks rebuilt with their original ids, repaired list written back. Banner mentions how many were rebuilt. Covered by ThreadStoreRecoveryTests (9). |
+| 2026-10 | Access control unified (backlog 4): `ToolPolicy` (one table, deny by default, per-target-project rights) + `ToolAuthorization` (target resolution, exposure filter) replace `ToolAccessController` (merged "most permissive" rights, fail-open) and `checkToolAccess`. loc_* are now gated by role and Xcode flag and carry a `project` argument that restricts the helper's path roots. Removed: ToolPermissions, ThreadSession.toolPermissions, v2ToolPermissions, the dead `attach_file` case. |
 | 2026-08 | Backup import UI shipped in app layer (Chappie/architecture.md): BackupImportSheet two-step confirmation (decrypt/preview, then explicit destructive "Restore Now"), reachable from SettingsView and from OnboardingView welcome step as a "Restore from Backup" shortcut that skips the whole provider setup wizard. |

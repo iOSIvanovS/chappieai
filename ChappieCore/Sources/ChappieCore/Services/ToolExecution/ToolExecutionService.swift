@@ -4,7 +4,8 @@
 // Core actor: init, dependency injection, context setters, and main execute() dispatcher.
 // Tool implementations are split by domain:
 //   ToolDefinitions.swift   — availableTools array
-//   ToolAccessControl.swift — IT-09 access check (role, git, tests, terminal, license plan)
+//   ToolPolicy.swift        — the single access table (deny by default) + pure decision function
+//   ToolAuthorization.swift — picks the call's target project, applies ToolPolicy, exposure filter
 //   MemoryTools.swift       — IT-08 scope resolution + memory execution cases
 //   FileTools.swift         — file system + search + document tools + attachment tools + web_fetch
 //   GitBuildTools.swift     — git + build/test execution
@@ -12,7 +13,8 @@
 //
 // UNIFIED PROJECT ARG:
 // Every tool that operates within a project scope carries an explicit "project" display name arg.
-// Access control resolves settings via args["project"] — no path heuristics, no guessing.
+// Authorization resolves the target project (explicit arg, single project, or path prefix) and
+// never guesses between several projects — see ToolAuthorization.swift.
 // Exceptions: fetch_attachment / send_attachment (thread-level, no project scope),
 //             run_ssh (remote host).
 //
@@ -43,13 +45,6 @@ public struct AttachmentSaveResult: Sendable {
 enum ScopeResolution {
     case resolved(String)
     case failed(String)
-}
-
-// MARK: - ToolAccessResult (IT-09)
-
-enum ToolAccessResult {
-    case allowed
-    case denied(String)
 }
 
 /// AI agent tool execution service.
@@ -195,15 +190,6 @@ public actor ToolExecutionService {
     /// user message — the only way the model actually "sees" the image (see AIOrchestrator+ToolExecution.swift).
     public static let viewImageMarker = "__CHAPPIE_IMAGE_DATA_URI__:"
 
-    // MARK: - loc_* tool names
-
-    private static let locToolNames: Set<String> = [
-        "loc_info", "loc_create", "loc_rename", "loc_delete",
-        "loc_add_language", "loc_remove_language", "loc_key_check",
-        "loc_next_batch", "loc_submit_batch", "loc_dead_keys",
-        "loc_add_key", "loc_remove_key", "loc_rename_key", "loc_rename_keys", "loc_list_keys"
-    ]
-
     // MARK: - Tool execution dispatcher
 
     public func execute(
@@ -211,53 +197,38 @@ public actor ToolExecutionService {
         onOutput: (@Sendable (String) -> Void)? = nil
     ) async -> String {
         let name = call.function.name
-        let argsData = call.function.arguments.data(using: .utf8) ?? Data()
+        let rawArgsData = call.function.arguments.data(using: .utf8) ?? Data()
 
-        let args = (try? JSONDecoder().decode([String: String].self, from: argsData)) ?? [:]
-        let projectName = args["project"]
+        // Project tools need a loaded, attached project before the policy can even pick a target.
+        if ToolPolicy.capability(of: name)?.needsProject == true {
+            if !isFileSystemReady {
+                return """
+                ⏳ Projects are still loading — file tools are temporarily unavailable.
+                Wait a moment and try again. This will take no more than a few seconds.
+                """
+            }
+            if !hasActiveProjects {
+                return """
+                ❌ Tool '\(name)' is unavailable: no project is attached to the current thread.
 
-        let projectRequiredTools: Set<String> = [
-            "list_files", "read_file", "write_file", "patch_file", "delete_file",
-            "get_file_info", "move_file", "rename_file",
-            "read_document", "write_document", "view_image",
-            "search_in_file", "search_in_project",
-            "git_status", "git_diff", "git_add", "git_commit", "git_push",
-            "git_log", "git_reset", "git_revert", "git_checkout",
-            "build_project", "run_tests", "read_build_log",
-            "run_terminal"
-        ]
-
-        if projectRequiredTools.contains(name) && !isFileSystemReady {
-            return """
-            ⏳ Projects are still loading — file tools are temporarily unavailable.
-            Wait a moment and try again. This will take no more than a few seconds.
-            """
-        }
-
-        if projectRequiredTools.contains(name) && !hasActiveProjects {
-            return """
-            ❌ Tool '\(name)' is unavailable: no project is attached to the current thread.
-
-            To use file tools and git commands, add a project to the thread first:
-            • Click the '+' button in the projects bar above the chat, or
-            • Drag and drop the project folder into the chat window.
-            """
-        }
-
-        if projectRequiredTools.contains(name) {
-            let accessResult = checkToolAccess(toolName: name, projectName: projectName)
-            if case .denied(let message) = accessResult {
-                print("[ToolExecutionService] 🚫 Access denied for '\(name)' (project: \(projectName ?? "nil"))")
-                return message
+                To use file tools and git commands, add a project to the thread first:
+                • Click the '+' button in the projects bar above the chat, or
+                • Drag and drop the project folder into the chat window.
+                """
             }
         }
 
-        if name == "run_ssh" {
-            let accessResult = checkToolAccess(toolName: name, projectName: nil)
-            if case .denied(let message) = accessResult {
-                print("[ToolExecutionService] 🚫 Access denied for 'run_ssh'")
-                return message
-            }
+        // The one gate. Unknown tools are denied here; project tools come back with the
+        // canonical project name already written into the arguments.
+        let argsData: Data
+        let args: [String: String]
+        switch authorize(toolName: name, argsData: rawArgsData) {
+        case .denied(let message):
+            print("[ToolExecutionService] 🚫 Access denied for '\(name)'")
+            return message
+        case .allowed(let data, let decoded):
+            argsData = data
+            args = decoded
         }
 
         do {
@@ -266,7 +237,7 @@ public actor ToolExecutionService {
                  "get_file_info", "move_file", "rename_file",
                  "read_document", "write_document",
                  "search_in_file", "search_in_project",
-                 "fetch_attachment", "send_attachment", "attach_file",
+                 "fetch_attachment", "send_attachment",
                  "view_image",
                  "web_fetch":
                 return try await executeFileTool(name: name, argsData: argsData)
@@ -292,7 +263,7 @@ public actor ToolExecutionService {
                 return await handler()
 
             default:
-                if Self.locToolNames.contains(name) {
+                if ToolPolicy.localizationTools.contains(name) {
                     return await mcpBridge.execute(tool: name, args: args)
                 }
                 return "Error: Unknown tool \(name)"

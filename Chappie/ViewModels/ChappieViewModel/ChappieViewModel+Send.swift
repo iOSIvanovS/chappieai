@@ -1,7 +1,7 @@
 // ChappieViewModel+Send.swift
 // Chappie
 //
-// send(), cancel, output attachments, cancellation handler, v2ToolPermissions.
+// send(), cancel, output attachments, cancellation handler.
 
 import SwiftUI
 import ChappieCore
@@ -54,7 +54,6 @@ extension ChappieViewModel {
             let currentAIMessage = await buildCurrentAIMessage(text: prompt, attachments: attachments)
 
             let systemPromptOverride = await v2SystemPrompt()
-            let toolPermissionsOverride = await v2ToolPermissions()
 
             do {
                 let result = try await orchestrator.process(
@@ -64,7 +63,6 @@ extension ChappieViewModel {
                     config: config,
                     memoryContext: memoryContext,
                     overrideSystemPrompt: systemPromptOverride,
-                    overrideToolPermissions: toolPermissionsOverride,
                     onToolCall: { toolName, targetPath in
                         Task { @MainActor in
                             self.currentToolCall = targetPath.isEmpty
@@ -227,12 +225,5 @@ extension ChappieViewModel {
         if let threadId = activeThreadId {
             persistMessages(messages, threadId: threadId)
         }
-    }
-
-    // MARK: - V2 Tool Permissions
-
-    func v2ToolPermissions() async -> ToolPermissions? {
-        guard let session = _activeThreadSession else { return nil }
-        return try? await session.toolPermissions()
     }
 }

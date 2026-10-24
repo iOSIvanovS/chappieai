@@ -3,7 +3,7 @@
 //
 // WHY THIS FILE:
 // Execution of all git_* and build/test tools via MCPToolBridge.
-// git_diff is blocked here as a safety net (primary block is in ToolAccessControl).
+// git_diff is blocked here as a safety net (primary block is in ToolPolicy).
 //
 // MULTI-PROJECT GIT:
 // All git_* tools accept an optional "project" arg. When provided, it is forwarded
@@ -30,7 +30,7 @@ extension ToolExecutionService {
             return await mcpBridge.execute(tool: "git_status", args: args)
 
         case "git_diff":
-            // Safety net — primary block is in checkToolAccess().
+            // Safety net — primary block is in ToolPolicy.
             return "❌ git_diff is permanently FORBIDDEN — it loads the entire project into AI context and costs real money."
 
         case "git_add":

@@ -9,7 +9,6 @@ extension AIOrchestrator {
         sessionHistory: inout [AIMessage],
         lastToolSignature: inout String?,
         collectedOutputFiles: inout [String],
-        overrideToolPermissions: ToolPermissions?,
         onToolCall: @Sendable (String, String) -> Void,
         onTerminalOutput: (@Sendable (String) -> Void)? = nil,
         onTerminalStart: (@Sendable (String) -> Void)? = nil,
@@ -32,23 +31,9 @@ extension AIOrchestrator {
                 This is an infinite loop. DO NOT REPEAT THE SAME ACTION. USE A DIFFERENT APPROACH.
                 """
                 print("[AIOrchestrator] Loop detected: \(toolName) called twice in a row with same args")
-            } else if let permissions = overrideToolPermissions {
-                let access = ToolAccessController.check(toolName: toolName, permissions: permissions)
-                if case .denied = access {
-                    resultString = access.denialJSON(toolName: toolName)
-                    print("[AIOrchestrator] V2 access denied for '\(toolName)'")
-                } else {
-                    lastToolSignature = signature
-                    onToolCall(toolName, targetPath)
-                    if isTerminalTool {
-                        onTerminalStart?(extractCommand(from: arguments))
-                    }
-                    resultString = await toolService.execute(call: toolCall, onOutput: onTerminalOutput)
-                    if isTerminalTool {
-                        onTerminalFinish?()
-                    }
-                }
             } else {
+                // Access control happens inside toolService.execute (ToolPolicy): denied calls come
+                // back as an explanatory message, so the tool_call always gets its tool result.
                 lastToolSignature = signature
                 onToolCall(toolName, targetPath)
                 if isTerminalTool {

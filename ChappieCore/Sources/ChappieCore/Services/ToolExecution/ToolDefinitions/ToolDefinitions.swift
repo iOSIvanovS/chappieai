@@ -17,8 +17,9 @@
 // - git_diff is intentionally OMITTED: dumps entire project into AI context.
 //
 // MULTI-PROJECT ACCESS CONTROL:
-// Availability is based on the UNION of all attached projects' settings.
-// Per-call blocking happens in ToolAccessControl.swift via the "project" arg.
+// The lists above decide what is DESCRIBED; the final filter (isToolExposed → ToolPolicy) decides
+// what is OFFERED: a tool appears only if some attached project (or the thread) lets it run.
+// Per-call authorization uses the same policy against the single project the call targets.
 
 import Foundation
 
@@ -80,7 +81,7 @@ extension ToolExecutionService {
 
         // Localization — any Xcode project
         if hasXcodeProject {
-            tools.append(contentsOf: localizationTools())
+            tools.append(contentsOf: localizationTools(allInfos: allInfos))
         }
 
         // Project management — always
@@ -91,7 +92,9 @@ extension ToolExecutionService {
             tools.append(contentsOf: terminalTools(progInfos: progInfos))
         }
 
-        return tools
+        // The model only sees tools that ToolPolicy lets it run somewhere in this thread.
+        // Same decision function as execution, so what is offered and what works cannot drift apart.
+        return tools.filter { isToolExposed($0.function.name) }
     }
 
     // MARK: - Dynamic project arg descriptions

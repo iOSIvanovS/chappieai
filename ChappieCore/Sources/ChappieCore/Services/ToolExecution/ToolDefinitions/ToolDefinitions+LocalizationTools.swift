@@ -7,11 +7,13 @@ import Foundation
 
 extension ToolExecutionService {
 
-    func localizationTools() -> [AITool] {
+    func localizationTools(allInfos: [ActiveMemoryContext.ProjectInfo]) -> [AITool] {
         let pathArg = AIToolProperty(type: "string", description: "Relative path to the .xcstrings file (e.g. 'Chappie/Localizable.xcstrings')")
         let keyArg  = AIToolProperty(type: "string", description: "Localization key string")
+        let projectArg = AIToolProperty(type: "string", description: fileToolProjectArgDescription(for: allInfos))
+        let multiProject = allInfos.count > 1
 
-        return [
+        return Self.withProjectArg(projectArg, required: multiProject, to: [
             AITool(function: AIFunctionDefinition(
                 name: "loc_info",
                 description: "Returns a map of all .xcstrings files in the project with per-language coverage stats.\nUse at the start of any localization session to understand current state.",
@@ -150,6 +152,27 @@ extension ToolExecutionService {
                     required: ["path"]
                 )
             ))
-        ]
+        ])
+    }
+
+    /// Adds the `project` argument to every loc_* definition: rights and path roots are checked
+    /// against that one project, not against "whichever project happens to contain the path".
+    private static func withProjectArg(
+        _ projectArg: AIToolProperty,
+        required: Bool,
+        to tools: [AITool]
+    ) -> [AITool] {
+        tools.map { tool in
+            let f = tool.function
+            var properties = f.parameters.properties
+            properties["project"] = projectArg
+            var requiredArgs = f.parameters.required ?? []
+            if required && !requiredArgs.contains("project") { requiredArgs.append("project") }
+            return AITool(function: AIFunctionDefinition(
+                name: f.name,
+                description: f.description,
+                parameters: AIToolParameters(properties: properties, required: requiredArgs)
+            ))
+        }
     }
 }

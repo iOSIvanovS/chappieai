@@ -71,7 +71,7 @@ extension ToolExecutionService {
             }
             return try await fileSystem.getFileInfo(at: path, projectName: args["project"])
 
-        // Executor-only mutations — role check happens in ToolAccessControl before this call.
+        // Executor-only mutations — role check happens in ToolPolicy before this call.
         case "move_file", "rename_file":
             guard let args = try? JSONDecoder().decode([String: String].self, from: argsData),
                   let from = args["from"], !from.isEmpty,

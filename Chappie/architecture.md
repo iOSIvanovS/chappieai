@@ -128,7 +128,7 @@ graph TD
         Orch["AIOrchestrator"]
         TSess["ThreadSession"]
         SPB["SystemPromptBuilder"]
-        TAC["ToolAccessController"]
+        TAC["ToolPolicy"]
         TS["ThreadStore\n(owns project CRUD)"]
         MS["MemoryStore"]
         APS["AIProviderStore"]

@@ -157,7 +157,7 @@ Empty sections are omitted entirely — no wasted tokens.
 | `ThreadProjectEntry` | Project in context of a specific thread; owns `absolutePath`, `ProjectSettings`, memory |
 | `ThreadSession` | Runtime container assembled on thread activation, discarded on switch |
 | `SystemPromptBuilder` | Deterministic prompt assembly from `PromptContext`; pure value transformer |
-| `ToolAccessController` | Hard gate before every tool execution; returns structured `AccessResult` |
+| `ToolPolicy` | Single access table (deny by default); `ToolAuthorization` applies it per call and per exposed tool |
 | `AppSettingsStore` | Actor-based CRUD for the singleton AppSettings record |
 | `LicenseService` | Actor; owns trial/activation/validation/grace period/owner JWT logic |
 

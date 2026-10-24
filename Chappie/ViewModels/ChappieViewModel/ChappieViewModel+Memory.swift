@@ -28,7 +28,7 @@
 //
 // TERMINAL ACCESS:
 //   threadTerminalAccess is passed from activeThreadSettings to ActiveMemoryContext
-//   so ToolDefinitions and ToolAccessControl can read it without touching project settings.
+//   so ToolDefinitions and ToolPolicy can read it without touching project settings.
 //
 // ATOMIC CONTEXT+SETTINGS UPDATE:
 //   setMemoryContextAndSettings() writes both ActiveMemoryContext and projectSettingsCache
@@ -78,7 +78,7 @@ extension ChappieViewModel {
             threadTerminalAccess: activeThreadSettings.terminalAccess
         )
 
-        // Project settings for ToolAccessControl — must arrive together with context.
+        // Project settings for ToolPolicy — must arrive together with context.
         let settingsMap = Dictionary(uniqueKeysWithValues: activeProjects.map { ($0.id, $0.settings) })
 
         // WHY atomic: writing context then settings as two separate actor hops creates a window

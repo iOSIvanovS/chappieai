@@ -19,7 +19,7 @@
 // DANGEROUS COMMANDS:
 // A static blocklist prevents the most destructive operations regardless
 // of TerminalAccessLevel. This is a last-resort safety net, not the primary guard.
-// Primary guard is TerminalAccessLevel in ProjectSettings + ToolAccessControl.
+// Primary guard is TerminalAccessLevel in ProjectSettings + ToolPolicy.
 
 import Foundation
 

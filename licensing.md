@@ -174,7 +174,7 @@ Shows:
 | Multiple devices | ❌ | ❌ | ❌ | ✅ (5) | ❌ |
 | Offline validation | ❌ | ❌ | ❌ | ❌ | ✅ |
 
-**Enforcement point:** `ToolAccessController` — already exists, needs plan check added.
+**Enforcement point:** `ToolPolicy` / `ToolAuthorization` (ChappieCore) — Starter is read-only there.
 
 ---
 
@@ -210,7 +210,7 @@ enum LicenseState {
 
 ## 10. Integration Points
 
-### ToolAccessController
+### ToolPolicy
 Add check: if `plan == .starter` → block Executor tools, return `.denied("Upgrade to Pro")`.
 
 ### SystemPromptBuilder
@@ -283,7 +283,7 @@ Signed with Ed25519. Chappie verifies signature → if valid → grant owner acc
 - [ ] Settings → License tab (full UI)
 
 ### Phase 6 — Blocking logic (LAST — only after Phase 4 confirmed)
-- [ ] ToolAccessController: add plan-based tool blocking
+- [x] ToolPolicy: plan-based tool blocking (Starter read-only)
 - [ ] Trial expired → block AI calls, show paywall
 - [ ] Starter → block Executor tools
 - [ ] Grace period exceeded → read-only mode

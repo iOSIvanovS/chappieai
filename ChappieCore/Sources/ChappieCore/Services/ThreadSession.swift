@@ -8,7 +8,6 @@
 //   - Loads all memory scopes for the active thread from SwiftData in one pass
 //   - Resolves project settings from attached ProjectMetadata (Sendable DTOs)
 //   - Builds PromptContext for SystemPromptBuilder
-//   - Computes merged ToolPermissions for ToolAccessController
 //   - Caches the built system prompt until explicitly invalidated
 //
 // CONTRACT:
@@ -35,7 +34,6 @@ public actor ThreadSession {
 
     // Cached prompt — rebuilt only when invalidated.
     private var cachedSystemPrompt: String?
-    private var cachedPermissions: ToolPermissions?
 
     // MARK: - Init
 
@@ -65,20 +63,9 @@ public actor ThreadSession {
         return prompt
     }
 
-    /// Returns merged ToolPermissions for this thread, building on first call.
-    public func toolPermissions() async throws -> ToolPermissions {
-        if let cached = cachedPermissions { return cached }
-
-        let context = try await buildPromptContext()
-        let permissions = promptBuilder.toolPermissions(for: context)
-        cachedPermissions = permissions
-        return permissions
-    }
-
-    /// Clears cached prompt and permissions — call after any memory or settings change.
+    /// Clears the cached prompt — call after any memory or settings change.
     public func invalidateCache() {
         cachedSystemPrompt = nil
-        cachedPermissions = nil
     }
 
     // MARK: - Private: context assembly

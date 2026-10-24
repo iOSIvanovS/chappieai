@@ -4,16 +4,23 @@
 //
 // Both git_* and build_project/run_tests use projectPathMap to resolve per-project paths.
 // build_project/run_tests additionally use projectEnvMap to pick the correct build tool.
+// loc_* tools are scoped to the project named in the call (see localizationTools(for:)).
 
 import Foundation
+
+private struct ToolFailure: Error {
+    let message: String
+}
 
 final class ToolDispatcher: Sendable {
     private let gitTools: GitTools
     private let buildTools: BuildTools
     private let locTools: LocalizationTools
     private let docTools: DocumentTools
+    private let projectPathMap: [String: String]
 
     init(projectPath: String, projectEnvMap: [String: String], projectPathMap: [String: String] = [:]) {
+        self.projectPathMap = projectPathMap
         self.gitTools   = GitTools(projectPath: projectPath, projectPathMap: projectPathMap)
         // WHY projectPathMap here: BuildTools must run xcodebuild in the correct project directory.
         // Without it, xcodeProjectName() scans defaultProjectPath and finds the wrong .xcodeproj.
@@ -22,7 +29,29 @@ final class ToolDispatcher: Sendable {
         self.docTools   = DocumentTools(projectPath: projectPath, projectPathMap: projectPathMap)
     }
 
+    /// loc_* tools scoped to the project named in the call. The app has already checked THAT
+    /// project's rights, so the helper must not let a path resolve into a sibling project.
+    /// Without a `project` argument (older callers) every attached root stays reachable.
+    private func localizationTools(for projectName: String?) -> Result<LocalizationTools, ToolFailure> {
+        guard let name = projectName, !name.isEmpty else { return .success(locTools) }
+        guard let path = projectPathMap[name] else {
+            let known = projectPathMap.keys.sorted().joined(separator: ", ")
+            return .failure(ToolFailure(message: "Unknown project '\(name)'. Attached: \(known.isEmpty ? "(none)" : known)"))
+        }
+        return .success(LocalizationTools(projectPath: "", projectPathMap: [name: path]))
+    }
+
     func execute(tool: String, args: [String: String]) async -> ToolResult {
+        if tool.hasPrefix("loc_") {
+            switch localizationTools(for: args["project"]) {
+            case .failure(let failure): return .failure(failure.message)
+            case .success(let scoped):  return executeLocalization(tool: tool, args: args, locTools: scoped)
+            }
+        }
+        return await executeNonLocalization(tool: tool, args: args)
+    }
+
+    private func executeNonLocalization(tool: String, args: [String: String]) async -> ToolResult {
         switch tool {
 
         // MARK: - Git tools
@@ -104,7 +133,15 @@ final class ToolDispatcher: Sendable {
                 projectName: args["project"]
             )
 
-        // MARK: - Localization tools
+        default:
+            return .failure("Unknown tool: \(tool).")
+        }
+    }
+
+    // MARK: - Localization tools
+
+    private func executeLocalization(tool: String, args: [String: String], locTools: LocalizationTools) -> ToolResult {
+        switch tool {
 
         case "loc_info":
             return locTools.info()

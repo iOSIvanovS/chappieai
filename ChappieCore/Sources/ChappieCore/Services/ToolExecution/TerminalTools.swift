@@ -27,7 +27,7 @@
 //
 // ACCESS CONTROL:
 // Terminal access is thread-level — read from activeMemoryContext.threadTerminalAccess.
-// No project role required. checkToolAccess() handles the gate before this code runs.
+// No project role required. ToolPolicy handles the gate before this code runs.
 
 import Foundation
 
@@ -142,7 +142,7 @@ extension ToolExecutionService {
             """
         }
 
-        // Thread-level access gate — access control already passed in checkToolAccess(),
+        // Thread-level access gate — access control already passed in ToolPolicy,
         // but confirmation mode is determined here from threadTerminalAccess.
         let terminalAccess = activeMemoryContext.threadTerminalAccess
         if terminalAccess.requiresConfirmation {
