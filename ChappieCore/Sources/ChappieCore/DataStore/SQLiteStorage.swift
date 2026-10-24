@@ -142,6 +142,27 @@ public actor SQLiteStorage: ChappieStorage {
         print("[SQLiteStorage] 🗑 Deleted all rows with prefix '\(prefix)'")
     }
 
+    /// Delete-tail + insert in a single transaction. The suffix is parsed inside the transaction
+    /// so a concurrent writer cannot slip a new row between our read and our delete.
+    public func replaceIndexedRecords(prefix: String, fromIndex: Int, payloads: [Data]) async throws {
+        _ = try await db.write { db in
+            let existing = try StoredRow
+                .filter(Column("relation").like("\(prefix)%"))
+                .fetchAll(db)
+            for row in existing {
+                let suffix = row.relation.dropFirst(prefix.count)
+                if let index = Int(suffix), index >= fromIndex {
+                    try StoredRow
+                        .filter(Column("relation") == row.relation)
+                        .deleteAll(db)
+                }
+            }
+            for (offset, data) in payloads.enumerated() {
+                try StoredRow(relation: "\(prefix)\(fromIndex + offset)", payload: data).save(db)
+            }
+        }
+    }
+
     // MARK: - ChappieStorage: Existence
 
     public func exists(_ relation: ChappieStorageRelation) async throws -> Bool {

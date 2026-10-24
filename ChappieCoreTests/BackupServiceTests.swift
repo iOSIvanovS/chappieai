@@ -45,7 +45,7 @@ struct BackupServiceTests {
             firstKeyName: "Default", firstKeyValue: "sk-secret"
         )
         let threadId = try await threadStore.createThread(title: "Migration test")
-        try await threadStore.saveMessages([TestMessage(text: "hello")], toThreadId: threadId)
+        try await threadStore.replaceAllMessages([TestMessage(text: "hello")], toThreadId: threadId)
         try await memoryStore.saveEntry(key: "fact1", type: "fact", jsonString: "{\"a\":1}", scope: "global")
 
         let bundle = try await backup.exportBundle()
@@ -103,7 +103,7 @@ struct BackupServiceTests {
     func importRestoresThreadsAndMessages() async throws {
         let (sourceBackup, sourceThreads, _, _) = try makeStores()
         let threadId = try await sourceThreads.createThread(title: "Original")
-        try await sourceThreads.saveMessages([TestMessage(text: "msg1"), TestMessage(text: "msg2")], toThreadId: threadId)
+        try await sourceThreads.replaceAllMessages([TestMessage(text: "msg1"), TestMessage(text: "msg2")], toThreadId: threadId)
         let bundle = try await sourceBackup.exportBundle()
 
         let (targetBackup, targetThreads, _, _) = try makeStores()
@@ -122,12 +122,12 @@ struct BackupServiceTests {
     func importWipesExistingThreads() async throws {
         let (sourceBackup, sourceThreads, _, _) = try makeStores()
         let importedId = try await sourceThreads.createThread(title: "Imported")
-        try await sourceThreads.saveMessages([TestMessage(text: "keep")], toThreadId: importedId)
+        try await sourceThreads.replaceAllMessages([TestMessage(text: "keep")], toThreadId: importedId)
         let bundle = try await sourceBackup.exportBundle()
 
         let (targetBackup, targetThreads, _, _) = try makeStores()
         let staleId = try await targetThreads.createThread(title: "Stale")
-        try await targetThreads.saveMessages([TestMessage(text: "should be wiped")], toThreadId: staleId)
+        try await targetThreads.replaceAllMessages([TestMessage(text: "should be wiped")], toThreadId: staleId)
 
         try await targetBackup.applyImport(bundle)
 

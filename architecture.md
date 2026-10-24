@@ -205,6 +205,7 @@ Messages are stored in chunks of 500 per SQLite row:
 - `loadMessages()` loads only the **last chunk** — O(1) open time regardless of history size
 - `loadMoreMessages()` loads previous chunks on scroll — lazy pagination
 - `deleteByPrefix()` deletes all chunks atomically in one SQL query
+- Saving: ViewModel calls `saveLoadedMessages(_, toThreadId:, fromChunk: loadedWindowStartChunk)` — only chunks of the loaded window are rewritten (one transaction); older chunks stay untouched. `replaceAllMessages` is reserved for "clear memory" / delete-old-messages.
 
 ---
 

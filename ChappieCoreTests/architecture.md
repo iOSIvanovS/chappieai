@@ -30,6 +30,7 @@ ChappieCoreTests/
 ├── MemoryManagerTests.swift            # Semantic memory CRUD via SQLiteStorage
 ├── ThreadIsolationTests.swift          # SystemPromptBuilder + ToolAccessController rules
 ├── ThreadStoreTests.swift              # Chunk system: roundtrip, lazy load, pagination, boundary, delete
+├── ThreadStoreWindowSaveTests.swift    # saveLoadedMessages: older chunks survive, atomic failure, boundaries
 └── WebFetchServiceTests.swift          # WebFetchService HTTP + parsing
 
 Project root:

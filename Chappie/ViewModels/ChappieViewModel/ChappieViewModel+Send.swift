@@ -137,8 +137,9 @@ extension ChappieViewModel {
 
                 if let threadId = activeThreadId, let store = self.threadStore {
                     let currentMessages = self.messages
+                    let fromChunk = self.loadedWindowStartChunk
                     Task { @MainActor in
-                        try? await store.saveMessages(currentMessages, toThreadId: threadId)
+                        try? await store.saveLoadedMessages(currentMessages, toThreadId: threadId, fromChunk: fromChunk)
                         if let refreshed = try? await store.loadThreads() { self.threads = refreshed }
                     }
                 }
@@ -230,8 +231,9 @@ extension ChappieViewModel {
 
         if let threadId = activeThreadId, let store = self.threadStore {
             let currentMessages = self.messages
+            let fromChunk = self.loadedWindowStartChunk
             Task {
-                try? await store.saveMessages(currentMessages, toThreadId: threadId)
+                try? await store.saveLoadedMessages(currentMessages, toThreadId: threadId, fromChunk: fromChunk)
             }
         }
     }

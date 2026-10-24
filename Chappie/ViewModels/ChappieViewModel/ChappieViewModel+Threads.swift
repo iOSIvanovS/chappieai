@@ -57,6 +57,10 @@ extension ChappieViewModel {
         self.isLoadingMessages = true
         self.messages = []
         self.displayedMessages = []
+        // Window bookkeeping belongs to the previous thread; a stale index would make the next
+        // save write chunks at the wrong position.
+        self.oldestLoadedChunkIndex = nil
+        self.hasMoreChunks = false
         self.activeThread = thread
         self._activeThreadSession = nil
 

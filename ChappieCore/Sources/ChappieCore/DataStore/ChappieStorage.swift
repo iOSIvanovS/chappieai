@@ -43,6 +43,12 @@ public protocol ChappieStorage: Actor {
     /// Used to atomically delete all chunks of a thread.
     func deleteByPrefix(_ prefix: String) async throws
 
+    /// Atomically replaces the tail of an indexed series of records.
+    /// Keys look like "<prefix><integer>". In ONE transaction: deletes every row under `prefix`
+    /// whose integer suffix is >= `fromIndex`, then writes `payloads` as fromIndex, fromIndex+1, ...
+    /// Rows with a lower index are untouched. On failure nothing changes (rollback).
+    func replaceIndexedRecords(prefix: String, fromIndex: Int, payloads: [Data]) async throws
+
     // MARK: Existence
 
     /// Returns true if a record exists for the given relation.

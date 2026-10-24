@@ -87,8 +87,9 @@ extension ChappieViewModel {
         guard let threadId = activeThread?.id, let store = threadStore else { return }
         // Filter out ephemeral .terminalConfirmation cases before saving.
         let persistable = messages.filter { !$0.isTerminalConfirmation }
+        let fromChunk = loadedWindowStartChunk
         Task {
-            try? await store.saveMessages(persistable, toThreadId: threadId)
+            try? await store.saveLoadedMessages(persistable, toThreadId: threadId, fromChunk: fromChunk)
         }
     }
 }

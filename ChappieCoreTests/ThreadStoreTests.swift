@@ -54,7 +54,7 @@ struct ThreadStoreTests {
         let threadId = try await store.createThread(title: "Test")
         let messages = makeMessages(10)
 
-        try await store.saveMessages(messages, toThreadId: threadId)
+        try await store.replaceAllMessages(messages, toThreadId: threadId)
         let loaded = try await store.loadAllMessages(fromThreadId: threadId, as: TestMessage.self)
 
         #expect(loaded == messages)
@@ -66,7 +66,7 @@ struct ThreadStoreTests {
         let threadId = try await store.createThread(title: "Large")
         let messages = makeMessages(1200)
 
-        try await store.saveMessages(messages, toThreadId: threadId)
+        try await store.replaceAllMessages(messages, toThreadId: threadId)
         let loaded = try await store.loadAllMessages(fromThreadId: threadId, as: TestMessage.self)
 
         #expect(loaded.count == 1200)
@@ -81,7 +81,7 @@ struct ThreadStoreTests {
         let threadId = try await store.createThread(title: "Boundary500")
         let messages = makeMessages(500)
 
-        try await store.saveMessages(messages, toThreadId: threadId)
+        try await store.replaceAllMessages(messages, toThreadId: threadId)
         let (loaded, hasMore) = try await store.loadMessages(fromThreadId: threadId, as: TestMessage.self)
 
         #expect(loaded.count == 500)
@@ -94,7 +94,7 @@ struct ThreadStoreTests {
         let threadId = try await store.createThread(title: "Boundary501")
         let messages = makeMessages(501)
 
-        try await store.saveMessages(messages, toThreadId: threadId)
+        try await store.replaceAllMessages(messages, toThreadId: threadId)
         let (loaded, hasMore) = try await store.loadMessages(fromThreadId: threadId, as: TestMessage.self)
 
         // Last chunk has 1 message (the 501st)
@@ -111,7 +111,7 @@ struct ThreadStoreTests {
         // 3 chunks: 0–499, 500–999, 1000–1049
         let messages = makeMessages(1050)
 
-        try await store.saveMessages(messages, toThreadId: threadId)
+        try await store.replaceAllMessages(messages, toThreadId: threadId)
         let (loaded, hasMore) = try await store.loadMessages(fromThreadId: threadId, as: TestMessage.self)
 
         // Last chunk = messages 1000–1049 (50 messages)
@@ -140,7 +140,7 @@ struct ThreadStoreTests {
         let threadId = try await store.createThread(title: "Paginate")
         // 3 chunks: 0 (500 msgs), 1 (500 msgs), 2 (100 msgs)
         let messages = makeMessages(1100)
-        try await store.saveMessages(messages, toThreadId: threadId)
+        try await store.replaceAllMessages(messages, toThreadId: threadId)
 
         // Step 1: open thread — get last chunk (index 2, 100 msgs)
         let (_, _) = try await store.loadMessages(fromThreadId: threadId, as: TestMessage.self)
@@ -174,7 +174,7 @@ struct ThreadStoreTests {
     func paginationAtOldest() async throws {
         let store = try makeStore()
         let threadId = try await store.createThread(title: "PaginateOldest")
-        try await store.saveMessages(makeMessages(300), toThreadId: threadId)
+        try await store.replaceAllMessages(makeMessages(300), toThreadId: threadId)
 
         // Only one chunk (index 0) — calling loadMore from it should return nothing
         let (msgs, hasMore, newIndex) = try await store.loadMoreMessages(
@@ -194,7 +194,7 @@ struct ThreadStoreTests {
     func deleteThreadRemovesChunks() async throws {
         let store = try makeStore()
         let threadId = try await store.createThread(title: "ToDelete")
-        try await store.saveMessages(makeMessages(1200), toThreadId: threadId)
+        try await store.replaceAllMessages(makeMessages(1200), toThreadId: threadId)
 
         try await store.deleteThread(id: threadId)
 
@@ -214,7 +214,7 @@ struct ThreadStoreTests {
         let store = try makeStore()
         let threadId = try await store.createThread(title: "Trim")
         let messages = makeMessages(10)
-        try await store.saveMessages(messages, toThreadId: threadId)
+        try await store.replaceAllMessages(messages, toThreadId: threadId)
 
         try await store.deleteOldMessages(count: 3, fromThreadId: threadId, as: TestMessage.self)
 
@@ -227,7 +227,7 @@ struct ThreadStoreTests {
     func deleteOldMessagesAll() async throws {
         let store = try makeStore()
         let threadId = try await store.createThread(title: "TrimAll")
-        try await store.saveMessages(makeMessages(5), toThreadId: threadId)
+        try await store.replaceAllMessages(makeMessages(5), toThreadId: threadId)
 
         try await store.deleteOldMessages(count: 100, fromThreadId: threadId, as: TestMessage.self)
 
@@ -241,7 +241,7 @@ struct ThreadStoreTests {
         let threadId = try await store.createThread(title: "ReChunk")
         // 2 chunks: 500 + 200 = 700 messages
         let messages = makeMessages(700)
-        try await store.saveMessages(messages, toThreadId: threadId)
+        try await store.replaceAllMessages(messages, toThreadId: threadId)
 
         // Remove 600 — crosses chunk boundary, result = 100 messages in 1 chunk
         try await store.deleteOldMessages(count: 600, fromThreadId: threadId, as: TestMessage.self)
@@ -257,13 +257,13 @@ struct ThreadStoreTests {
 
     // MARK: - Overwrite
 
-    @Test("saveMessages overwrites previous history")
+    @Test("replaceAllMessages overwrites previous history")
     func overwriteHistory() async throws {
         let store = try makeStore()
         let threadId = try await store.createThread(title: "Overwrite")
 
-        try await store.saveMessages(makeMessages(600), toThreadId: threadId)
-        try await store.saveMessages(makeMessages(10), toThreadId: threadId)
+        try await store.replaceAllMessages(makeMessages(600), toThreadId: threadId)
+        try await store.replaceAllMessages(makeMessages(10), toThreadId: threadId)
 
         let loaded = try await store.loadAllMessages(fromThreadId: threadId, as: TestMessage.self)
         #expect(loaded.count == 10)
@@ -279,8 +279,8 @@ struct ThreadStoreTests {
 
         let msgsA = makeMessages(5)
         let msgsB = makeMessages(3)
-        try await store.saveMessages(msgsA, toThreadId: threadA)
-        try await store.saveMessages(msgsB, toThreadId: threadB)
+        try await store.replaceAllMessages(msgsA, toThreadId: threadA)
+        try await store.replaceAllMessages(msgsB, toThreadId: threadB)
 
         let loadedA = try await store.loadAllMessages(fromThreadId: threadA, as: TestMessage.self)
         let loadedB = try await store.loadAllMessages(fromThreadId: threadB, as: TestMessage.self)

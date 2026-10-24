@@ -105,6 +105,7 @@ public protocol ChappieStorage: Actor {
     func saveRawData(_ data: Data, for relation: ChappieStorageRelation) async throws
     func delete(_ relation: ChappieStorageRelation) async throws
     func deleteByPrefix(_ prefix: String) async throws   // atomic bulk delete — used by chunk system
+    func replaceIndexedRecords(prefix: String, fromIndex: Int, payloads: [Data]) async throws // delete tail + insert, ONE transaction
     func exists(_ relation: ChappieStorageRelation) async throws -> Bool
     func keys(withPrefix prefix: String) async throws -> [String]
 }
@@ -189,7 +190,24 @@ loadAllMessages(fromThreadId:as:) → [T]
 
 // Scroll-up pagination — returns previous chunk
 loadMoreMessages(fromThreadId:currentOldestChunkIndex:as:) → (messages, hasMore, newOldestChunkIndex)
+
+// Normal save of the in-memory window: replaces chunks >= fromChunk in ONE transaction,
+// older chunks on disk are never touched.
+saveLoadedMessages(_:toThreadId:fromChunk:)
+
+// DESTRUCTIVE: replaces the whole history (clear memory, deleteOldMessages, tests).
+replaceAllMessages(_:toThreadId:)
 ```
+
+### Save rule
+
+The UI holds only a window of the history (last chunk + whatever the user scrolled in).
+The window start is owned by the ViewModel (`oldestLoadedChunkIndex ?? 0`) and passed
+explicitly on every save — the store cannot infer it, because `loadAllMessages` also reads
+everything. `oldestLoadedChunkIndex` is reset on thread switch.
+
+Retention: history is **unlimited by design** (the 100-message trim was removed in 2026-06).
+The user cleans up manually via Memory Management.
 
 ---
 
@@ -422,4 +440,5 @@ public enum AccessResult: Sendable {
 | 2026-08 | Project path editable: ThreadStore.updateProjectPath() lets the user manually fix absolutePath in Settings (e.g. after a machine migration) without re-picking the folder via NSOpenPanel. |
 | 2026-08 | BackupService (export/import foundation): ChappieExportBundle carries providers (+ Keychain secrets pulled out explicitly), full ThreadPayload list, all message chunks (opaque Data — ChappieCore stays decoupled from app-layer ChatMessage), and the full MemoryStorage blob. Attachments on disk are intentionally excluded (app already degrades gracefully for missing attachment files — no crash). BackupCrypto encrypts the whole serialized bundle with PBKDF2-HMAC-SHA256 (310k iterations) + AES-256-GCM — one password unlocks everything, including secrets. Export wired end-to-end (BackupService.exportEncrypted → ChappieViewModel.exportBackup). |
 | 2026-08 | BackupService import (full restore, no merge — agreed with user): ThreadStore.importAll/AIProviderStore.importAll/MemoryStore.importStorage each destructively wipe existing data before writing the imported set (threads+chunks, providers+Keychain secrets, all memory scopes respectively) — matches the "migration/full restore" scenario, selective merge is an explicit non-goal. BackupService.decryptBundle + applyImport orchestrate the full flow. Project folder paths and attachments are NOT part of the bundle — user reconnects project paths manually after import via the editable absolutePath field (ProjectSettingsSheet). Covered by BackupServiceTests (8 tests: export completeness, provider/thread/memory restore + wipe-before-restore, encrypted end-to-end flow, wrong password). |
+| 2026-10 | Fixed silent history loss: saving a lazily loaded window used to delete all chunks and write only the in-memory part. New `ChappieStorage.replaceIndexedRecords` (atomic delete-tail + insert) and `ThreadStore.saveLoadedMessages(fromChunk:)`; the old `saveMessages` was renamed `replaceAllMessages` to make its destructive meaning explicit. ViewModel resets `oldestLoadedChunkIndex` on thread switch. Covered by ThreadStoreWindowSaveTests. |
 | 2026-08 | Backup import UI shipped in app layer (Chappie/architecture.md): BackupImportSheet two-step confirmation (decrypt/preview, then explicit destructive "Restore Now"), reachable from SettingsView and from OnboardingView welcome step as a "Restore from Backup" shortcut that skips the whole provider setup wizard. |

@@ -234,8 +234,16 @@ final class ChappieViewModel {
         messages.append(systemMessage)
         resetPagination(fireScrollTrigger: false)
 
+        // The whole history is wiped on disk, so the in-memory window now starts at chunk 0.
+        hasMoreChunks = false
+        oldestLoadedChunkIndex = nil
+
         if let threadId = activeThread?.id, let store = threadStore {
-            Task { try? await store.saveMessages([ChatMessage](), toThreadId: threadId) }
+            Task { try? await store.replaceAllMessages([ChatMessage](), toThreadId: threadId) }
         }
     }
+
+    /// First chunk index of the in-memory message window. Passed to `saveLoadedMessages`
+    /// so that older, not-yet-loaded chunks on disk are never overwritten.
+    var loadedWindowStartChunk: Int { oldestLoadedChunkIndex ?? 0 }
 }

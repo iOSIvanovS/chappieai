@@ -28,7 +28,7 @@ extension ChappieViewModel {
         messages.append(greetingMessage)
         appendToDisplayed(greetingMessage)
 
-        try? await store.saveMessages(messages, toThreadId: thread.id)
+        try? await store.saveLoadedMessages(messages, toThreadId: thread.id, fromChunk: loadedWindowStartChunk)
         print("[ChappieViewModel] Static welcome greeting inserted for thread '\(thread.title)'")
     }
 

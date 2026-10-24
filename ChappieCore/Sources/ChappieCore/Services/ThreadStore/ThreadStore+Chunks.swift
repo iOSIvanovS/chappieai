@@ -44,16 +44,27 @@ extension ThreadStore {
 
     // MARK: Chunk read/write
 
-    /// Writes all messages as chunks, replacing any existing chunks.
-    func writeChunks<T: Codable>(_ messages: [T], toThreadId threadId: UUID) async throws {
+    /// Writes `messages` as chunks starting at chunk `fromChunk`, replacing chunks with an index
+    /// >= fromChunk in ONE transaction (a crash or error leaves the old data intact).
+    /// Chunks below `fromChunk` are never touched.
+    func writeChunks<T: Codable>(_ messages: [T], toThreadId threadId: UUID, fromChunk: Int = 0) async throws {
         let prefix = ChappieStorageRelation.chunkPrefix(for: threadId)
-        try await dataStore.deleteByPrefix(prefix)
+        let encoder = JSONEncoder()
+        let payloads = try messages
+            .chunked(into: THREAD_CHUNK_SIZE)
+            .filter { !$0.isEmpty }
+            .map { try encoder.encode($0) }
+        try await dataStore.replaceIndexedRecords(prefix: prefix, fromIndex: fromChunk, payloads: payloads)
+    }
 
-        let chunks = messages.chunked(into: THREAD_CHUNK_SIZE)
-        for (index, chunk) in chunks.enumerated() {
-            let data = try JSONEncoder().encode(chunk)
-            try await dataStore.saveRawData(data, for: chunkRelation(threadId, index))
+    /// Bumps `updatedAt` of the thread and refreshes the metadata cache.
+    private func touchThread(_ threadId: UUID) async throws {
+        var payloads = try await loadPayloads()
+        if let idx = payloads.firstIndex(where: { $0.id == threadId }) {
+            payloads[idx].updatedAt = Date()
+            try await savePayloads(payloads)
         }
+        try await refreshCache()
     }
 
     /// Reads all chunks and assembles the full message array.
@@ -90,16 +101,24 @@ extension ThreadStore {
 
     // MARK: Public API
 
-    /// Saves the full message history for a thread as chunks.
-    public func saveMessages<T: Codable>(_ messages: [T], toThreadId threadId: UUID) async throws {
-        try await writeChunks(messages, toThreadId: threadId)
+    /// DESTRUCTIVE: replaces the ENTIRE stored history of a thread with `messages`.
+    /// Only pass the complete history here (import, "clear memory", delete-old-messages).
+    /// For normal saves of a lazily loaded window use `saveLoadedMessages`.
+    public func replaceAllMessages<T: Codable>(_ messages: [T], toThreadId threadId: UUID) async throws {
+        try await writeChunks(messages, toThreadId: threadId, fromChunk: 0)
+        try await touchThread(threadId)
+    }
 
-        var payloads = try await loadPayloads()
-        if let idx = payloads.firstIndex(where: { $0.id == threadId }) {
-            payloads[idx].updatedAt = Date()
-            try await savePayloads(payloads)
-        }
-        try await refreshCache()
+    /// Saves the in-memory window of a thread. `messages` must be exactly the messages from
+    /// chunk `fromChunk` to the end of the thread; older chunks stay on disk untouched.
+    /// WHY: the UI only loads the last chunk on open — rewriting from 0 would erase older history.
+    public func saveLoadedMessages<T: Codable>(
+        _ messages: [T],
+        toThreadId threadId: UUID,
+        fromChunk: Int
+    ) async throws {
+        try await writeChunks(messages, toThreadId: threadId, fromChunk: max(0, fromChunk))
+        try await touchThread(threadId)
     }
 
     /// Loads the last chunk only — fast O(1) open regardless of history size.
@@ -168,7 +187,7 @@ extension ThreadStore {
         let toDelete = min(count, messages.count)
         messages.removeFirst(toDelete)
 
-        try await saveMessages(messages, toThreadId: threadId)
+        try await replaceAllMessages(messages, toThreadId: threadId)
         print("[ThreadStore] 🗑 Deleted \(toDelete) old messages from thread \(threadId)")
     }
 }
