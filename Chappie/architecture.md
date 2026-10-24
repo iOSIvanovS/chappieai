@@ -40,7 +40,8 @@ Chappie/
 │   ├── ChappieViewModel+Projects.swift       # Project add/remove/settings — user-only, via ThreadStore
 │   ├── ChappieViewModel+Terminal.swift       # Terminal confirmation flow (approve/reject)
 │   ├── ChappieViewModel+PersonaBlock.swift   # v2PersonaBlock + baseSystemPrompt constants
-│   └── StreamingState.swift            # Streaming state model (isolated from ViewModel)
+│   ├── RetryStatus+Label.swift         # RetryStatus -> localized "Provider error 500 · retry 2 of 5 in 4s"
+│   └── StreamingState.swift            # Streaming state model (isolated from ViewModel); retryLabel shown in the action bar
 ├── Settings/
 │   ├── SettingsView.swift              # App settings sheet (+ onboarding reset button)
 │   ├── MemoryManagementView.swift      # Memory browser/editor sheet

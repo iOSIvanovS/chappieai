@@ -64,6 +64,8 @@ public actor AIOrchestrator {
     let fileSystem: FileSystemManager
     let memoryManager: MemoryManager
     let defaultConfig: AppConfig
+    /// Single retry policy for every model request (HTTP errors, network drops, timeouts, stalls).
+    let retryPolicy: RetryPolicy
 
     // B-04: invalidate() sets this flag; process() checks it before each agentic step.
     var isInvalidated: Bool = false
@@ -75,8 +77,10 @@ public actor AIOrchestrator {
         toolService: ToolExecutionService,
         fileSystem: FileSystemManager,
         memoryManager: MemoryManager,
-        config: AppConfig = .shared
+        config: AppConfig = .shared,
+        retryPolicy: RetryPolicy = .standard
     ) {
+        self.retryPolicy = retryPolicy
         self.aiClient = aiClient
         self.toolService = toolService
         self.fileSystem = fileSystem
@@ -106,7 +110,8 @@ public actor AIOrchestrator {
         onBalanceUpdate: (@Sendable (Double) -> Void)? = nil,
         onTerminalOutput: (@Sendable (String) -> Void)? = nil,
         onTerminalStart: (@Sendable (String) -> Void)? = nil,
-        onTerminalFinish: (@Sendable () -> Void)? = nil
+        onTerminalFinish: (@Sendable () -> Void)? = nil,
+        onRetry: (@Sendable (RetryStatus?) -> Void)? = nil
     ) async throws -> AIOrchestratorResult {
 
         guard !isInvalidated else {
@@ -149,7 +154,8 @@ public actor AIOrchestrator {
                 sessionHistory: sessionHistory,
                 tools: tools,
                 config: config,
-                onToken: onToken
+                onToken: onToken,
+                onRetry: onRetry
             )
 
             if let cost = streamResult.cost {

@@ -47,7 +47,8 @@ extension AnthropicClient {
         }
 
         try Task.checkCancellation()
-        try validateHTTPResponse(response, data: nil)
+        let errorBody = await LLMHTTP.errorBodyIfNeeded(response, bytes: asyncBytes)
+        try validateHTTPResponse(response, data: errorBody)
 
         final class StreamState: @unchecked Sendable {
             var accumulatedText = ""
@@ -69,6 +70,11 @@ extension AnthropicClient {
                 guard line.hasPrefix("data: ") else { continue }
                 let jsonString = String(line.dropFirst(6))
                 guard !jsonString.isEmpty else { continue }
+
+                // `event: error` (e.g. overloaded_error) arrives inside a 200 stream.
+                if jsonString.contains("\"error\""), let streamError = ProviderStreamError.parse(jsonString) {
+                    throw streamError
+                }
 
                 guard let data = jsonString.data(using: .utf8),
                       let json = try? JSONDecoder().decode(AnthropicStreamEvent.self, from: data) else {
@@ -134,7 +140,8 @@ extension AnthropicClient {
             }
             throw ChappieError.cancelled
         } catch {
-            throw error
+            if state.accumulatedText.isEmpty || !state.toolBlocks.isEmpty { throw error }
+            throw StreamInterruptedError(underlying: error, partialText: state.accumulatedText)
         }
 
         let toolCalls: [AIToolCall]? = state.toolBlocks.isEmpty ? nil :

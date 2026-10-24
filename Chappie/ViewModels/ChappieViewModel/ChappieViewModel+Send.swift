@@ -90,6 +90,9 @@ extension ChappieViewModel {
                     },
                     onTerminalFinish: {
                         Task { @MainActor in self.terminal.finish() }
+                    },
+                    onRetry: { status in
+                        Task { @MainActor in self.streaming.retryLabel = status?.localizedLabel }
                     }
                 )
 

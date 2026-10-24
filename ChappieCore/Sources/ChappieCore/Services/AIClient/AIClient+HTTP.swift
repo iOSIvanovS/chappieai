@@ -121,15 +121,8 @@ extension AIClient {
             throw ChappieError.networkError("Invalid response type (not HTTPURLResponse)")
         }
         guard !(200...299).contains(http.statusCode) else { return }
-
-        let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? "No response body"
-        let isContextError = http.statusCode == 413
-            || body.lowercased().contains("context")
-            || body.lowercased().contains("limit")
-            || body.lowercased().contains("too long")
-
-        if isContextError { throw ChappieError.aiContextLimitExceeded }
-        throw ChappieError.networkError("HTTP \(http.statusCode): \(body)")
+        // Typed error: the retry layer classifies by status code (500/429 retry, 401/400 do not).
+        throw LLMHTTP.error(for: http, body: data)
     }
 
     func decodeResponse(_ data: Data) throws -> AITunnelResponse {

@@ -30,7 +30,6 @@ ChappieCore/
     │   ├── MemoryModels.swift          # MemoryEntry, MemoryScope, MemoryStorage
     │   ├── ProjectModels.swift         # ProjectSettings, ProjectMetadata, ThreadProjectEntry
     │   ├── RemoteProviderCatalog.swift  # DTOs for providers.json (GitHub-hosted catalog)
-    │   ├── RequestLog.swift            # Request/response logging model
     │   ├── StorageIntegrity.swift      # StorageIntegrityIssue (damaged data report), LossyElement
     │   └── ThreadModels.swift          # ThreadSettings, ThreadMetadata, ThreadPayload (with projects)
     └── Services/
@@ -43,7 +42,12 @@ ChappieCore/
         ├── AnthropicClient.swift       # Anthropic native API (/v1/messages)
         ├── AnthropicModels.swift       # Anthropic-specific request/response models
         ├── AIOrchestrator.swift                  # Reasoning loop: core + process()
-        ├── AIOrchestrator+Retry.swift            # streamWithRetry, stall/timeout logic
+        ├── AIOrchestrator+Retry.swift            # streamWithRetry: thin adapter over LLMRetryRunner
+        ├── LLMRetry/
+        │   ├── LLMRetryRunner.swift        # THE retry loop: HTTP 5xx/429, network, timeout, stall, mid-stream cut
+        │   ├── LLMFailureClassifier.swift  # error -> retry(reason, Retry-After, partial text) / fatal / cancelled
+        │   ├── LLMHTTP.swift               # typed ProviderHTTPError, bounded error-body read for streams, Retry-After
+        │   └── RetryPolicy.swift           # 5 retries, 1/2/4/8/16 s (cap 30) + jitter; RetryStatus for the UI
         ├── AIOrchestrator+ContextWindow.swift    # buildContextWindow, estimateTokens
         ├── AIOrchestrator+ToolExecution.swift    # executeToolCalls, parseOutputFilePath
         ├── AIProviderStore.swift       # CRUD for AI providers + Keychain (multi-key)
@@ -399,7 +403,7 @@ AIClientFactory.make(for:apiKey:model:) → AIClient | AnthropicClient
 
 Split across 4 files:
 - `AIOrchestrator.swift` — core actor, init, `process()` agentic loop
-- `AIOrchestrator+Retry.swift` — `streamWithRetry`, stall/timeout logic, diagnostic request
+- `AIOrchestrator+Retry.swift` — `streamWithRetry`, adapter over `LLMRetryRunner` (see "LLM request retry")
 - `AIOrchestrator+ContextWindow.swift` — `buildContextWindow`, `estimateTokens`
 - `AIOrchestrator+ToolExecution.swift` — `executeToolCalls`, `parseOutputFilePath`
 
@@ -452,6 +456,31 @@ arguments of project tools must be a flat string map (otherwise refused with an 
 
 ---
 
+## 12a. LLM request retry — one system
+
+Every failure of a model request goes through `LLMRetryRunner` (the old stall and timeout special cases are
+folded into it). Only the model request is repeated; tools run outside the loop.
+
+- **Classifier** (`LLMFailureClassifier`): retry = HTTP 408/425/429/5xx, `URLError` network/timeout codes,
+  in-stream `overloaded_error`, `StallError`; fatal = 400/401/402/403/404/422, context overflow, parsing,
+  429 about quota/billing; cancellation is never retried or wrapped.
+- **Real error text**: streaming clients now read the (bounded, 4 KB / 5 s) error body, so the user sees the
+  provider's message instead of "No response body", and a 400 "context length" is recognised as such.
+  Context detection only applies to 400/413/422 — a 429 or 500 mentioning "limit" stays retryable.
+- **Schedule** (`RetryPolicy`): 5 retries, pauses 1/2/4/8/16 s (cap 30) with ±20 % jitter; `Retry-After`
+  raises the pause (ignored above 120 s). The pause is measured from the moment the error ARRIVED, ticking
+  in 1 s steps, so a failure after a minute of model "thinking" does not eat the pause.
+- **Slow failures** (timeout, stall) each cost the full request timeout, so they have their own cap
+  (`AppConfig.maxStallRetries`) and end with an actionable message (context size, new thread).
+- **Continuation**: if text had already reached the user (stall, connection reset, in-stream error), the
+  retry appends the partial answer plus a "continue exactly where you left off" prompt and joins the texts;
+  real progress resets the retry budget. A half-built tool call is never continued — the step restarts.
+- **UI**: `onRetry(RetryStatus?)` → `StreamingState.retryLabel` → shown in the agent action bar
+  ("Provider error 500 · retry 2 of 5 in 4s"). Cancellation and thread invalidation interrupt a pause.
+- Tests: `LLMRetryTests` (classifier, HTTP parsing, schedule, runner with injected sleep).
+
+---
+
 ## 13. ShellSession + TerminalTools
 
 `ShellSession` — persistent bash process per thread ID.
@@ -483,4 +512,5 @@ arguments of project tools must be a flat string map (otherwise refused with an 
 | 2026-10 | Storage integrity (backlog 2a): unreadable thread list is no longer treated as empty-and-overwritten. `ChappieStorage.preserveCorruptedRecord` backs up damaged bytes; `ThreadStore.loadPayloads` salvages threads one by one and queues `StorageIntegrityIssue`; `SQLiteStorage.load` backs up any undecodable record before returning nil. New `SaveQueue` serializes user-data writes and surfaces failures (Retry/Skip) instead of `try?`. Covered by ThreadStoreIntegrityTests (9) and SaveQueueTests (9). |
 | 2026-10 | Thread list recovery (backlog 2b): a damaged list is repaired on read — readable threads kept, threads known only from message chunks rebuilt with their original ids, repaired list written back. Banner mentions how many were rebuilt. Covered by ThreadStoreRecoveryTests (9). |
 | 2026-10 | Access control unified (backlog 4): `ToolPolicy` (one table, deny by default, per-target-project rights) + `ToolAuthorization` (target resolution, exposure filter) replace `ToolAccessController` (merged "most permissive" rights, fail-open) and `checkToolAccess`. loc_* are now gated by role and Xcode flag and carry a `project` argument that restricts the helper's path roots. Removed: ToolPermissions, ThreadSession.toolPermissions, v2ToolPermissions, the dead `attach_file` case. |
+| 2026-10 | Unified LLM retry (backlog 13): `LLMRetryRunner` + classifier replace the stall/timeout special cases; HTTP 5xx/429 and network drops are retried with backoff measured from error arrival; streaming error bodies are read; mid-stream cuts continue the partial answer; progress shown in the action bar. Removed `RequestLog` and the diagnostic request (hardcoded Russian). Covered by LLMRetryTests (33 cases). |
 | 2026-08 | Backup import UI shipped in app layer (Chappie/architecture.md): BackupImportSheet two-step confirmation (decrypt/preview, then explicit destructive "Restore Now"), reachable from SettingsView and from OnboardingView welcome step as a "Restore from Backup" shortcut that skips the whole provider setup wizard. |

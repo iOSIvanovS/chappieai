@@ -40,7 +40,10 @@ extension AIClient {
         }
 
         try Task.checkCancellation()
-        try validateHTTPResponse(response, data: nil)
+        // Read the error body (bounded) so the user sees the provider's real message
+        // and context-length errors are recognised.
+        let errorBody = await LLMHTTP.errorBodyIfNeeded(response, bytes: asyncBytes)
+        try validateHTTPResponse(response, data: errorBody)
 
         final class StreamState: @unchecked Sendable {
             var accumulatedText = ""
@@ -61,6 +64,11 @@ extension AIClient {
                 guard !line.isEmpty, line.hasPrefix("data: ") else { continue }
                 let jsonString = String(line.dropFirst(6))
                 if jsonString == "[DONE]" { break }
+
+                // Providers can report failures inside a 200 stream: {"error": {...}}.
+                if jsonString.contains("\"error\""), let streamError = ProviderStreamError.parse(jsonString) {
+                    throw streamError
+                }
 
                 guard let chunkData = jsonString.data(using: .utf8),
                       let chunk = try? JSONDecoder().decode(AIStreamChunk.self, from: chunkData) else {
@@ -118,7 +126,10 @@ extension AIClient {
             }
             throw ChappieError.cancelled
         } catch {
-            throw error
+            // Dropped mid-answer: hand the already-shown text to the retry layer so it can continue
+            // instead of starting over. With a half-built tool call, continuing is unsafe — restart.
+            if state.accumulatedText.isEmpty || !state.toolCallBuffers.isEmpty { throw error }
+            throw StreamInterruptedError(underlying: error, partialText: state.accumulatedText)
         }
 
         let assembledToolCalls: [AIToolCall]? = state.toolCallBuffers.isEmpty ? nil :

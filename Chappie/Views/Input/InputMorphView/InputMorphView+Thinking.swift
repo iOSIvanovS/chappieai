@@ -21,7 +21,7 @@ extension InputMorphView {
             // CPU-23: currentToolCall throttled to 200ms in StreamingState — at most 5 redraws/sec.
             // CPU-29: NO .animation here — cross-fade runs two render passes simultaneously.
             // At 200ms cadence, instant text swap is imperceptible and costs nothing.
-            Text(streaming.currentToolCall ?? String(localized: "input.thinking"))
+            Text(streaming.retryLabel ?? streaming.currentToolCall ?? String(localized: "input.thinking"))
                 .font(.system(size: 12, weight: .regular, design: .monospaced))
                 .lineLimit(1)
                 .truncationMode(.middle)

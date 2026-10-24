@@ -49,6 +49,10 @@ final class StreamingState {
     // True while the AI is generating a response.
     var isThinking: Bool = false
 
+    // Localized "provider error, retry 2 of 5 in 4s" label while a failed request waits to be
+    // re-sent. Takes priority over the tool-call label in the action bar; nil = no retry going on.
+    var retryLabel: String? = nil
+
     // CPU-15: balance moved here — updates during streaming without invalidating ViewModel observers.
     // nil until first response received from server.
     var currentBalance: Double? = nil
@@ -79,6 +83,7 @@ final class StreamingState {
         _throttleTask?.cancel()
         _throttleTask = nil
         isThinking = false
+        retryLabel = nil
         // currentBalance is NOT reset — it persists across requests.
     }
 }

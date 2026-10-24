@@ -170,10 +170,6 @@ public struct AnthropicClient: Sendable, AIClientProtocol {
             throw ChappieError.networkError("Invalid response type")
         }
         guard !(200...299).contains(http.statusCode) else { return }
-        let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-        if http.statusCode == 413 || body.lowercased().contains("context") {
-            throw ChappieError.aiContextLimitExceeded
-        }
-        throw ChappieError.networkError("HTTP \(http.statusCode): \(body)")
+        throw LLMHTTP.error(for: http, body: data)
     }
 }
