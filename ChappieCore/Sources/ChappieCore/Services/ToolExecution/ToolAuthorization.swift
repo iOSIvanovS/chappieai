@@ -39,19 +39,33 @@ extension ToolExecutionService {
         let starter = licenseState.isStarterPlan
         let terminal = activeMemoryContext.threadTerminalAccess
 
-        guard let capability = ToolPolicy.capability(of: toolName), capability.needsProject else {
-            // No project involved (always-on, terminal, forbidden, unknown).
+        guard let capability = ToolPolicy.capability(of: toolName) else {
+            // Unknown or forbidden tool: denied whatever the arguments look like.
             let decision = ToolPolicy.decide(tool: toolName, project: nil, terminalAccess: terminal, isStarterPlan: starter)
-            return finish(decision, argsData: argsData)
+            return finish(decision, argsData: argsData, args: [:])
         }
 
-        // Arguments must be a flat string map: the executors decode them the same way, and we
-        // need to write the canonical project name back into them.
-        guard var args = try? JSONDecoder().decode([String: String].self, from: argsData) else {
-            return .denied("""
-            ❌ Tool '\(toolName)': arguments must be a JSON object whose values are all strings \
-            (write numbers and booleans as strings, e.g. "30").
-            """)
+        // Every executor reads a flat string map, so normalise once here (30 → "30", true → "true").
+        // web_fetch is the exception: it carries a nested headers object and parses the raw JSON itself.
+        var args: [String: String] = [:]
+        var argsData = argsData
+        if toolName != "web_fetch" {
+            switch ToolArguments.parse(data: argsData) {
+            case .failure(let error):
+                return .denied(ToolArguments.explanation(for: error, tool: toolName))
+            case .success(let parsed):
+                args = parsed
+            }
+            guard let flat = try? JSONEncoder().encode(args) else {
+                return .denied("❌ Tool '\(toolName)': failed to re-encode arguments.")
+            }
+            argsData = flat
+        }
+
+        guard capability.needsProject else {
+            // No project involved (always-on, terminal).
+            let decision = ToolPolicy.decide(tool: toolName, project: nil, terminalAccess: terminal, isStarterPlan: starter)
+            return finish(decision, argsData: argsData, args: args)
         }
 
         let projects = activeMemoryContext.projects
@@ -74,14 +88,15 @@ extension ToolExecutionService {
             if allowedSomewhere { return .allowed(argsData: argsData, args: args) }
             return finish(
                 ToolPolicy.decide(tool: toolName, project: nil, terminalAccess: terminal, isStarterPlan: starter),
-                argsData: argsData
+                argsData: argsData,
+                args: args
             )
         }
 
         let decision = ToolPolicy.decide(
             tool: toolName, project: settings(of: target), terminalAccess: terminal, isStarterPlan: starter
         )
-        guard case .allowed = decision else { return finish(decision, argsData: argsData) }
+        guard case .allowed = decision else { return finish(decision, argsData: argsData, args: args) }
 
         args["project"] = target.name
         guard let canonical = try? JSONEncoder().encode(args) else {
@@ -120,10 +135,9 @@ extension ToolExecutionService {
         projectSettingsCache[project.id] ?? ProjectSettings()
     }
 
-    private func finish(_ decision: ToolDecision, argsData: Data) -> ToolAuthorization {
+    private func finish(_ decision: ToolDecision, argsData: Data, args: [String: String]) -> ToolAuthorization {
         switch decision {
         case .allowed:
-            let args = (try? JSONDecoder().decode([String: String].self, from: argsData)) ?? [:]
             return .allowed(argsData: argsData, args: args)
         case .denied(let message):
             return .denied(message)

@@ -32,6 +32,7 @@ ChappieCoreTests/
 ├── CancellationTests.swift             # ProcessTree (tree kill, SIGTERM-ignoring child, pid identity, early cancel, Core/MCP parity), ShellSession cancel, MCPToolBridge cancel
 ├── MemoryManagerTests.swift            # Semantic memory CRUD via SQLiteStorage
 ├── ThreadIsolationTests.swift          # SystemPromptBuilder: sections, memory isolation, terminal lines
+├── ToolArgumentsTests.swift            # Lenient argument parsing: scalars, null, nested, double-encoded, errors
 ├── ToolPolicyTests.swift               # Access table: roles, plans, git/build rules, per-project resolution, exposure completeness
 ├── ThreadStoreTests.swift              # Chunk system: roundtrip, lazy load, pagination, boundary, delete
 ├── ThreadStoreWindowSaveTests.swift    # saveLoadedMessages: older chunks survive, atomic failure, boundaries

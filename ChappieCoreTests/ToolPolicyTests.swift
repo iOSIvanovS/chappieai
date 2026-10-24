@@ -295,12 +295,21 @@ struct ToolAuthorizationTests {
         #expect(isAllowed(await rig.authorize("search_in_project", #"{"query":"x"}"#)))
     }
 
-    @Test("Arguments that are not a flat string map are refused with an explanation, not guessed at")
+    @Test("Numbers and booleans no longer lose the project: they become strings")
     func nonStringArguments() async {
         let rig = await Rig([("One", xcodeExecutor()), ("Two", xcodeExecutor())])
-        let result = await rig.authorize("run_tests", #"{"project":"One","timeout":30}"#)
-        #expect(!isAllowed(result))
-        #expect(denial(result).contains("strings"))
+        let result = await rig.authorize("run_tests", #"{"project":"One","timeout":30,"verbose":true}"#)
+        guard case .allowed(_, let args) = result else { Issue.record("expected allowed"); return }
+        #expect(args["project"] == "One")
+        #expect(args["timeout"] == "30")
+        #expect(args["verbose"] == "true")
+    }
+
+    @Test("Arguments that are not a JSON object are refused with an explanation")
+    func unreadableArguments() async {
+        let rig = await Rig([("One", xcodeExecutor())])
+        #expect(denial(await rig.authorize("read_file", "[1,2]")).contains("JSON object"))
+        #expect(denial(await rig.authorize("read_file", "{broken")).contains("not valid JSON"))
     }
 
     @Test("Tools without a project ignore the argument shape (web_fetch carries nested headers)")
