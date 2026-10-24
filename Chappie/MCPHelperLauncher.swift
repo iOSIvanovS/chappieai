@@ -71,7 +71,9 @@ final class MCPHelperLauncher {
     func launch(workspacePath: String? = nil,
                 projectEnvMap: [String: String] = [:],
                 projectPathMap: [String: String] = [:]) {
-        let path = workspacePath ?? FileManager.default.currentDirectoryPath
+        // No workspace chosen → pass an empty root. The launch directory used to be substituted here,
+        // which is "/" under Xcode and turned the helper's path guard into a no-op.
+        let path = workspacePath ?? ""
 
         if let process = helperProcess, process.isRunning,
            currentWorkspacePath == path,

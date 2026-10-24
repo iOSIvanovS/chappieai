@@ -36,7 +36,8 @@ ChappieMCP/
     └── Tools/
         ├── GitTools.swift             # git_status, git_add, git_commit, git_log, git_reset, git_revert, git_checkout
         ├── BuildTools.swift           # build_project, run_tests, read_build_log (env-aware routing)
-        ├── LocalizationTools.swift    # loc_* tools (Xcode / xcstrings only)
+        ├── PathGuard.swift            # Byte-identical copy of ChappieCore's PathGuard (parity test) — project containment
+        ├── LocalizationTools.swift    # loc_* tools (Xcode / xcstrings only); create/rename/delete accept only .xcstrings
         └── DocumentTools.swift        # read_document, write_document (Office formats via ZIPFoundation)
 ```
 
@@ -134,6 +135,12 @@ All git commands run with: `GIT_PAGER=cat`, `GIT_TERMINAL_PROMPT=0`, `GIT_CONFIG
 | `dotnet` | `dotnet build` | `dotnet test [proj]` |
 
 Build log saved to `<workspacePath>/.build_log.txt`.
+
+### Path safety (PathGuard.swift)
+
+All path-taking tools (`loc_*`, `read_document`, `write_document` incl. `output_path`) resolve paths through `PathGuard`: relative only, no `..`, symlinks leading outside the project root are refused. The single exception is an absolute path inside `~/Library/Application Support/Chappie/Attachments` (the app hands those over for attachments). Git/build tools take no file paths from the model.
+
+**Roots.** `loc_*` and documents check paths against the attached projects' roots (`projectPathMap`), never against the workspace folder alone. A root of `/`, empty or non-existent is unusable (`PathGuard.isUsableRoot`): `main.swift` turns such an `argv[1]` into an empty workspace, and `MCPHelperLauncher` no longer substitutes the launch directory (which is `/` under Xcode and made the guard a no-op). With several projects, `loc_create` needs a path whose folder already exists in exactly one project; `loc_rename` keeps the destination in the source's project; `loc_dead_keys` scans only the project that owns the file.
 
 ### Localization (LocalizationTools.swift)
 

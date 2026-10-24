@@ -12,7 +12,7 @@ extension LocalizationTools {
     func addLanguage(language: String, relativePath: String?) -> ToolResult {
         let files: [String]
         if let relativePath, !relativePath.isEmpty {
-            files = [resolveFullPath(relativePath)]
+            do { files = [try resolveFullPath(relativePath)] } catch { return .failure("\(error)") }
         } else {
             files = findXCStringsFiles()
         }
@@ -60,7 +60,7 @@ extension LocalizationTools {
     func removeLanguage(language: String, relativePath: String?) -> ToolResult {
         let files: [String]
         if let relativePath, !relativePath.isEmpty {
-            files = [resolveFullPath(relativePath)]
+            do { files = [try resolveFullPath(relativePath)] } catch { return .failure("\(error)") }
         } else {
             files = findXCStringsFiles()
         }

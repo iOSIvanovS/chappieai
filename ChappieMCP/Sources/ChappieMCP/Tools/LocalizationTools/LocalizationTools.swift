@@ -111,7 +111,10 @@ final class LocalizationTools: Sendable {
 
     /// Creates a new .xcstrings file at the given path relative to project root.
     func create(relativePath: String, sourceLanguage: String) -> ToolResult {
-        let fullPath = projectPath + "/" + relativePath
+        if let rejected = requireXCStringsExtension(relativePath) { return rejected }
+        let fullPath: String
+        do { fullPath = try resolveNewFilePath(relativePath) }
+        catch { return .failure("\(error)") }
 
         if FileManager.default.fileExists(atPath: fullPath) {
             return .failure("File already exists: \(relativePath)\nUse loc_info to see existing files.")
@@ -152,8 +155,22 @@ final class LocalizationTools: Sendable {
 
     /// Renames (moves) a .xcstrings file.
     func rename(fromRelativePath: String, toRelativePath: String) -> ToolResult {
-        let fromPath = projectPath + "/" + fromRelativePath
-        let toPath = projectPath + "/" + toRelativePath
+        if let rejected = requireXCStringsExtension(fromRelativePath) ?? requireXCStringsExtension(toRelativePath) {
+            return rejected
+        }
+        let fromPath: String
+        let toPath: String
+        do {
+            fromPath = try resolveFullPath(fromRelativePath)
+            // The destination lives in the same project as the source: moving a file between
+            // projects is not what "rename" means, and it keeps the guard's root unambiguous.
+            guard FileManager.default.fileExists(atPath: fromPath), let root = root(containing: fromPath) else {
+                return .failure("File not found: \(fromRelativePath)")
+            }
+            toPath = try PathGuard.resolve(toRelativePath, inRoot: URL(fileURLWithPath: root)).path
+        } catch {
+            return .failure("\(error)")
+        }
 
         guard FileManager.default.fileExists(atPath: fromPath) else {
             return .failure("File not found: \(fromRelativePath)")
@@ -179,7 +196,10 @@ final class LocalizationTools: Sendable {
 
     /// Deletes a .xcstrings file.
     func delete(relativePath: String) -> ToolResult {
-        let fullPath = projectPath + "/" + relativePath
+        if let rejected = requireXCStringsExtension(relativePath) { return rejected }
+        let fullPath: String
+        do { fullPath = try resolveFullPath(relativePath) }
+        catch { return .failure("\(error)") }
 
         guard FileManager.default.fileExists(atPath: fullPath) else {
             return .failure("File not found: \(relativePath)")

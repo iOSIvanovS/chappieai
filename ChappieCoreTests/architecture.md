@@ -27,6 +27,7 @@ ChappieCoreTests/
 ├── AITunnelModelsTests.swift           # Codable roundtrip for AI wire models
 ├── ChappieErrorTests.swift             # ChappieError enum coverage
 ├── FileSystemManagerTests.swift        # FS ops + path traversal protection
+├── PathGuardTests.swift                # "..", absolute, symlink escapes, sibling prefix, unusable roots ("/", empty, symlink to "/"), Core/MCP copy parity
 ├── MemoryManagerTests.swift            # Semantic memory CRUD via SQLiteStorage
 ├── ThreadIsolationTests.swift          # SystemPromptBuilder + ToolAccessController rules
 ├── ThreadStoreTests.swift              # Chunk system: roundtrip, lazy load, pagination, boundary, delete
@@ -51,6 +52,7 @@ graph TD
         ATMT["AITunnelModelsTests"]
         CET["ChappieErrorTests"]
         FSMT["FileSystemManagerTests"]
+        PGT["PathGuardTests"]
         MMT["MemoryManagerTests"]
         TIT["ThreadIsolationTests"]
         TSTT["ThreadStoreTests"]

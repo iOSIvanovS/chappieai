@@ -67,28 +67,13 @@ public actor FileSystemManager {
     // MARK: - Security
 
     /// Resolves a relative path inside a specific workspace and validates it stays inside.
-    /// Guards against Path Traversal (CWE-22).
+    /// Guards against Path Traversal (CWE-22) and symlinks leading outside the workspace.
     func validateAndResolvePath(_ relativePath: String, in workspaceURL: URL) throws -> URL {
-        let resolvedWorkspace = workspaceURL.resolvingSymlinksInPath()
-        let resolvedTarget = resolvedWorkspace
-            .appendingPathComponent(relativePath)
-            .standardized
-
-        // Trailing slash prevents false prefix match: "/foo/bar" vs "/foo/barbaz"
-        let workspacePath = resolvedWorkspace.path.hasSuffix("/")
-            ? resolvedWorkspace.path
-            : resolvedWorkspace.path + "/"
-
-        let targetPath = resolvedTarget.path
-        let isInside = targetPath == resolvedWorkspace.path || targetPath.hasPrefix(workspacePath)
-
-        guard isInside else {
-            throw ChappieError.fileSystemError(
-                "Path traversal blocked: '\(relativePath)' resolves to '\(targetPath)' outside workspace '\(resolvedWorkspace.path)'"
-            )
+        do {
+            return try PathGuard.resolve(relativePath, inRoot: workspaceURL)
+        } catch let violation as PathGuard.Violation {
+            throw ChappieError.fileSystemError("Path blocked: \(violation.message)")
         }
-
-        return resolvedTarget
     }
 
     // MARK: - Routing

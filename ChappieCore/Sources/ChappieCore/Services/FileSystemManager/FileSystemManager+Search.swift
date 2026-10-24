@@ -55,11 +55,19 @@ extension FileSystemManager {
         for (wsName, wsURL) in targetWorkspaces {
             guard let enumerator = fileManager.enumerator(
                 at: wsURL,
-                includingPropertiesForKeys: [.isRegularFileKey],
+                includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
                 options: [.skipsHiddenFiles]
             ) else { continue }
 
+            let realRoot = PathGuard.realRoot(of: wsURL)
+
             for case let fileURL as URL in enumerator {
+                // A symlink to a file outside the project would otherwise have its content read here.
+                if let realRoot,
+                   (try? fileURL.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true,
+                   PathGuard.escapes(fileURL, realRoot: realRoot) {
+                    continue
+                }
                 guard shouldSearchFile(fileURL, pattern: filePattern) else { continue }
                 guard let content = try? String(contentsOf: fileURL, encoding: .utf8) else { continue }
 

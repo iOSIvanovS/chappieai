@@ -28,7 +28,13 @@ signal(SIGPIPE, SIG_IGN)
 
 let args = CommandLine.arguments
 
-let projectPath: String = args.count > 1 ? args[1] : FileManager.default.currentDirectoryPath
+// "/" and "" mean "no workspace folder chosen" (the app used to pass the launch directory,
+// which is "/" under Xcode). Such a root would make every path "inside the project", so it is
+// dropped; the per-project roots from argv[4] are the real boundaries.
+let projectPath: String = {
+    guard args.count > 1, PathGuard.isUsableRoot(args[1]) else { return "" }
+    return args[1]
+}()
 let socketPath: String  = args.count > 2 ? args[2] : "/tmp/com.chappie.mcp.sock"
 
 // Parse argv[3]: {"ProjectName": "envRawValue", ...}
@@ -53,7 +59,7 @@ let projectPathMap: [String: String] = {
 }()
 
 print("[ChappieMCP] 🚀 Starting server (Unix Domain Socket)")
-print("[ChappieMCP] 📁 Workspace: \(projectPath)")
+print("[ChappieMCP] 📁 Workspace: \(projectPath.isEmpty ? "(none)" : projectPath)")
 print("[ChappieMCP] 🔌 Socket:    \(socketPath)")
 print("[ChappieMCP] 🗺️  Envs:     \(projectEnvMap.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ", "))")
 print("[ChappieMCP] 📂 Paths:    \(projectPathMap.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ", "))")

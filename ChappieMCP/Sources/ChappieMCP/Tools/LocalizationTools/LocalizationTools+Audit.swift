@@ -10,7 +10,8 @@ extension LocalizationTools {
 
     /// Finds keys in xcstrings that are not used anywhere in .swift files.
     func deadKeys(relativePath: String) -> ToolResult {
-        let fullPath = resolveFullPath(relativePath)
+        let fullPath: String
+        do { fullPath = try resolveFullPath(relativePath) } catch { return .failure("\(error)") }
 
         guard let xcstrings = loadXCStrings(at: fullPath) else {
             return .failure("Failed to load: \(relativePath)")
@@ -21,7 +22,9 @@ extension LocalizationTools {
             return .success("No keys found in \(relativePath).")
         }
 
-        let swiftFiles = findSwiftFiles()
+        // Scan only the project that owns the file: another project's code says nothing about its keys.
+        let scanRoots = root(containing: fullPath).map { [$0] } ?? usableRoots()
+        let swiftFiles = findSwiftFiles(in: scanRoots)
         var allSourceCode = ""
         for swiftFile in swiftFiles {
             if let content = try? String(contentsOfFile: swiftFile, encoding: .utf8) {

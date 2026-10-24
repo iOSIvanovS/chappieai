@@ -27,8 +27,13 @@ final class BuildTools: Sendable {
     let projectPathMap: [String: String]
 
     /// Shared log file path — written by build/test, read by read_build_log.
+    /// Falls back to the temp folder when the helper has no workspace folder (empty root):
+    /// "/" + ".build_log.txt" would target the read-only filesystem root.
     var buildLogPath: String {
-        defaultProjectPath + "/.build_log.txt"
+        if defaultProjectPath.isEmpty {
+            return (NSTemporaryDirectory() as NSString).appendingPathComponent("chappie_build_log.txt")
+        }
+        return defaultProjectPath + "/.build_log.txt"
     }
 
     init(projectPath: String, projectEnvMap: [String: String], projectPathMap: [String: String] = [:]) {

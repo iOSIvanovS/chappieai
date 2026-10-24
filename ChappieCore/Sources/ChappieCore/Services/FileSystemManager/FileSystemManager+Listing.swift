@@ -35,15 +35,23 @@ extension FileSystemManager {
         for (name, url) in workspaces {
             guard let enumerator = fileManager.enumerator(
                 at: url,
-                includingPropertiesForKeys: [.isRegularFileKey],
+                includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
                 options: [.skipsHiddenFiles]
             ) else {
                 throw ChappieError.fileSystemError("Cannot access directory: \(url.path)")
             }
 
             let resolvedURL = url.resolvingSymlinksInPath()
+            let realRoot = PathGuard.realRoot(of: url)
 
             for case let fileURL as URL in enumerator {
+                // The enumerator never descends into symlinked folders, so only the entry itself
+                // can be a link; hide those pointing outside the project (they are unreadable anyway).
+                if let realRoot,
+                   (try? fileURL.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true,
+                   PathGuard.escapes(fileURL, realRoot: realRoot) {
+                    continue
+                }
                 let resolvedFile = fileURL.resolvingSymlinksInPath()
                 var relativePath = resolvedFile.path.replacingOccurrences(
                     of: resolvedURL.path + "/", with: ""

@@ -28,7 +28,9 @@ final class DocumentTools: Sendable {
 
     /// Routes to the correct reader based on file extension.
     func readDocument(relativePath: String, projectName: String? = nil) -> ToolResult {
-        let fullPath = resolvePath(relativePath, projectName: projectName)
+        let fullPath: String
+        do { fullPath = try resolvePath(relativePath, projectName: projectName) }
+        catch { return .failure("read_document: \(error)") }
         let ext = URL(fileURLWithPath: fullPath).pathExtension.lowercased()
 
         switch ext {
@@ -56,7 +58,14 @@ final class DocumentTools: Sendable {
     /// Routes to ZIP patcher or plain-text writer based on file extension.
     /// Returns structured JSON: {"status":"ok","saved_path":"...","filename":"..."}
     func writeDocument(relativePath: String, xmlContent: String, outputPath: String?, entryName: String?, projectName: String? = nil) -> ToolResult {
-        let fullPath = resolvePath(relativePath, projectName: projectName)
+        let fullPath: String
+        let resolvedOutput: String?
+        do {
+            fullPath = try resolvePath(relativePath, projectName: projectName)
+            resolvedOutput = try outputPath.map { try resolvePath($0, projectName: projectName) }
+        } catch {
+            return .failure("write_document: \(error)")
+        }
         let ext = URL(fileURLWithPath: fullPath).pathExtension.lowercased()
 
         let primaryEntry: String
@@ -66,30 +75,47 @@ final class DocumentTools: Sendable {
         case "pptx":      primaryEntry = entryName ?? "ppt/slides/slide1.xml"
         case "odt":       primaryEntry = entryName ?? "content.xml"
         case "rtf", "csv":
-            return writePlainText(content: xmlContent, originalPath: fullPath, outputPath: outputPath.map { resolvePath($0, projectName: projectName) })
+            return writePlainText(content: xmlContent, originalPath: fullPath, outputPath: resolvedOutput)
         default:
             return .failure("write_document: unsupported format '.\(ext)'. Supported: docx, xlsx, pptx, odt, rtf, csv.")
         }
 
-        let destination = outputPath.map { resolvePath($0, projectName: projectName) } ?? fullPath
+        let destination = resolvedOutput ?? fullPath
         return replaceZipEntry(sourcePath: fullPath, entryName: primaryEntry, newContent: xmlContent, outputPath: destination)
     }
 
     // MARK: - Path helpers
 
-    func resolvePath(_ relativePath: String, projectName: String? = nil) -> String {
-        if relativePath.hasPrefix("/") { return relativePath }
+    /// Directory where the app stores chat attachments. The app passes absolute paths inside it
+    /// (fetch_attachment / send_attachment), so it is the single allowed exception to
+    /// "relative paths only".
+    static var attachmentsRoot: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Chappie/Attachments", isDirectory: true)
+    }
+
+    /// Resolves an AI-supplied path to a file inside the project (or the attachments store).
+    /// Throws when the path is absolute elsewhere, contains "..", or leaves the project via a symlink.
+    func resolvePath(_ relativePath: String, projectName: String? = nil) throws -> String {
+        if relativePath.hasPrefix("/") {
+            return try PathGuard.resolveAbsolute(relativePath, allowedRoots: [Self.attachmentsRoot]).path
+        }
         // WHY: when a named project is specified, resolve against its root — not the default project.
-        let base: String
+        var root = projectPath
+        var path = relativePath
         if let name = projectName, let mapped = projectPathMap[name] {
-            base = mapped
+            root = mapped
             // WHY: list_files returns "ProjectName/file.docx" — strip the prefix to avoid double-nesting.
             let prefix = name + "/"
-            let stripped = relativePath.hasPrefix(prefix) ? String(relativePath.dropFirst(prefix.count)) : relativePath
-            return base + "/" + stripped
-        } else {
-            base = projectPath
+            if path.hasPrefix(prefix) { path = String(path.dropFirst(prefix.count)) }
+        } else if !PathGuard.isUsableRoot(root), projectPathMap.count == 1, let only = projectPathMap.values.first {
+            // The helper may start without a workspace folder (root "/"): use the single attached project.
+            root = only
         }
-        return base + "/" + relativePath
+        // An empty root would silently mean "the process's current directory".
+        guard PathGuard.isUsableRoot(root) else {
+            throw PathGuard.Violation(message: "No project folder is available. Attach a project to the thread first.")
+        }
+        return try PathGuard.resolve(path, inRoot: URL(fileURLWithPath: root)).path
     }
 }

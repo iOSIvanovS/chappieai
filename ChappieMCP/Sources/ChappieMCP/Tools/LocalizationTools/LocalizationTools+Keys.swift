@@ -10,7 +10,8 @@ extension LocalizationTools {
 
     /// Adds a new key with English value and optional comment.
     func addKey(relativePath: String, key: String, englishValue: String, comment: String?) -> ToolResult {
-        let fullPath = resolveFullPath(relativePath)
+        let fullPath: String
+        do { fullPath = try resolveFullPath(relativePath) } catch { return .failure("\(error)") }
 
         guard var xcstrings = loadXCStrings(at: fullPath) else {
             return .failure("Failed to load: \(relativePath)")
@@ -40,7 +41,8 @@ extension LocalizationTools {
 
     /// Removes a key and all its translations from the xcstrings file.
     func removeKey(relativePath: String, key: String) -> ToolResult {
-        let fullPath = resolveFullPath(relativePath)
+        let fullPath: String
+        do { fullPath = try resolveFullPath(relativePath) } catch { return .failure("\(error)") }
 
         guard var xcstrings = loadXCStrings(at: fullPath) else {
             return .failure("Failed to load: \(relativePath)")
@@ -63,7 +65,8 @@ extension LocalizationTools {
 
     /// Renames a single key, preserving all existing translations.
     func renameKey(relativePath: String, oldKey: String, newKey: String) -> ToolResult {
-        let fullPath = resolveFullPath(relativePath)
+        let fullPath: String
+        do { fullPath = try resolveFullPath(relativePath) } catch { return .failure("\(error)") }
 
         guard var xcstrings = loadXCStrings(at: fullPath) else {
             return .failure("Failed to load: \(relativePath)")
@@ -93,7 +96,8 @@ extension LocalizationTools {
     /// Renames multiple keys in a single file write — cheaper than calling renameKey N times.
     /// WHY: file is loaded once, all renames applied in memory, saved once.
     func renameKeys(relativePath: String, renamesJSON: String) -> ToolResult {
-        let fullPath = resolveFullPath(relativePath)
+        let fullPath: String
+        do { fullPath = try resolveFullPath(relativePath) } catch { return .failure("\(error)") }
 
         guard var xcstrings = loadXCStrings(at: fullPath) else {
             return .failure("Failed to load: \(relativePath)")
@@ -150,7 +154,8 @@ extension LocalizationTools {
 
     /// Returns translation status for a specific key across all languages.
     func keyCheck(key: String, relativePath: String) -> ToolResult {
-        let fullPath = resolveFullPath(relativePath)
+        let fullPath: String
+        do { fullPath = try resolveFullPath(relativePath) } catch { return .failure("\(error)") }
 
         guard let xcstrings = loadXCStrings(at: fullPath) else {
             return .failure("Failed to load: \(relativePath)")
@@ -187,7 +192,8 @@ extension LocalizationTools {
     /// Returns all keys in the file with optional substring filter.
     /// WHY: needed to audit the file and plan batch rename operations.
     func listKeys(relativePath: String, filter: String?) -> ToolResult {
-        let fullPath = resolveFullPath(relativePath)
+        let fullPath: String
+        do { fullPath = try resolveFullPath(relativePath) } catch { return .failure("\(error)") }
 
         guard let xcstrings = loadXCStrings(at: fullPath) else {
             return .failure("Failed to load: \(relativePath)")

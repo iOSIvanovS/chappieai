@@ -12,7 +12,8 @@ extension LocalizationTools {
 
     /// Returns the next batch of keys needing translation.
     func nextBatch(relativePath: String) -> ToolResult {
-        let fullPath = resolveFullPath(relativePath)
+        let fullPath: String
+        do { fullPath = try resolveFullPath(relativePath) } catch { return .failure("\(error)") }
 
         guard let xcstrings = loadXCStrings(at: fullPath) else {
             return .failure("Failed to load: \(relativePath)")
@@ -95,7 +96,8 @@ extension LocalizationTools {
     /// Accepts translations and writes them to the xcstrings file without duplicates.
     /// translations format: {"key": {"ru": "Translation", "de": "Übersetzung"}}
     func submitBatch(relativePath: String, translationsJSON: String) -> ToolResult {
-        let fullPath = resolveFullPath(relativePath)
+        let fullPath: String
+        do { fullPath = try resolveFullPath(relativePath) } catch { return .failure("\(error)") }
 
         guard var xcstrings = loadXCStrings(at: fullPath) else {
             return .failure("Failed to load: \(relativePath)")
