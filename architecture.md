@@ -35,7 +35,7 @@
 
 ```mermaid
 graph TD
-    subgraph App["Chappie.app (macOS 26+)"]
+    subgraph App["Chappie.app (macOS 14+)"]
         UI["Chappie — SwiftUI UI\nsee Chappie/architecture.md"]
         Core["ChappieCore — Business Logic\nsee ChappieCore/architecture.md"]
         UI -->|depends on| Core
@@ -92,7 +92,7 @@ ChappieMCP
 | Technology | Usage |
 |---|---|
 | Swift 6 (Full Concurrency) | Entire project |
-| SwiftUI macOS 26+ | UI layer |
+| SwiftUI macOS 14+ | UI layer (deployment target 14.0) |
 | GRDB (SQLite) | Persistence via SQLiteStorage |
 | @Observable | ViewModel |
 | Actors | ChappieCore services |

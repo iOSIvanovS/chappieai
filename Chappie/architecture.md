@@ -19,78 +19,46 @@ All business logic lives in ChappieCore. The UI target is responsible only for:
 
 ## 2. File Structure
 
+Folders named after a type (e.g. `ChatScrollView/`) hold that type's main file plus its `+Extension` files. Only folders and notable files are listed; see the source tree for the rest.
+
 ```
 Chappie/
 ├── ChappieApp.swift                    # @main, bootStorage(), AppDelegate
-├── ContentView.swift                   # Conductor: assembles components, manages sheets
 ├── DropHandler.swift                   # Drag-and-drop: files AND project folders
 ├── MCPHelperLauncher.swift             # ChappieMCP child process: launch, readiness probe, crash restart, on-demand recovery
-├── Models/
-│   ├── AppState.swift                  # @Observable singleton: onboarding state
-│   ├── ChatMessage.swift               # UI message model (enum: .message / .toolCall / .terminalConfirmation)
-│   └── AttachedFile.swift              # Attached file model for input
+├── Models/                             # AppState, ChatMessage, AttachedFile, AttachmentStore
 ├── ViewModels/
-│   ├── ChappieViewModel.swift          # @Observable @MainActor ViewModel (core state)
-│   ├── ChappieViewModel+Send.swift     # send() — AI request pipeline
-│   ├── ChappieViewModel+Threads.swift  # Thread CRUD + selectThread()
-│   ├── ChappieViewModel+ThreadSession.swift  # ThreadSession lifecycle
-│   ├── ChappieViewModel+Providers.swift      # Provider/key switching + balance
-│   ├── ChappieViewModel+AppSettings.swift    # AppSettings read/write via AppSettingsStore
-│   ├── ChappieViewModel+Memory.swift         # Memory tool callbacks
-│   ├── ChappieViewModel+Projects.swift       # Project add/remove/settings — user-only, via ThreadStore
-│   ├── ChappieViewModel+Terminal.swift       # Terminal confirmation flow (approve/reject)
-│   ├── ChappieViewModel+PersonaBlock.swift   # v2PersonaBlock + baseSystemPrompt constants
+│   ├── ChappieViewModel/               # @Observable @MainActor ViewModel, split by concern:
+│   │                                   #   Send (AI request pipeline), Threads / ThreadSession / ThreadProvider / ThreadSettings / ThreadGreeting,
+│   │                                   #   Providers, AppSettings, Memory, Projects (user-only), Terminal (confirmation flow),
+│   │                                   #   Multimodal (images + Office attachments), Persistence (SaveQueue), History, Pagination,
+│   │                                   #   Backup, Boot, License, DevEnvironment, Workspace, PersonaBlock (system prompt constants)
 │   ├── RetryStatus+Label.swift         # RetryStatus -> localized "Provider error 500 · retry 2 of 5 in 4s"
-│   └── StreamingState.swift            # Streaming state model (isolated from ViewModel); retryLabel shown in the action bar
+│   ├── StreamingState.swift            # Streaming state (isolated from ViewModel); retryLabel shown in the action bar
+│   └── TerminalLiveState.swift         # Live terminal window state
 ├── Settings/
-│   ├── SettingsView.swift              # App settings sheet (+ onboarding reset button)
-│   ├── MemoryManagementView.swift      # Memory browser/editor sheet
-│   └── BackupSettingsView/
-│       ├── BackupExportSheet.swift     # Password entry + NSSavePanel → writes encrypted .chappiebackup
-│       └── BackupImportSheet.swift     # NSOpenPanel + password → decrypt/preview → confirm → destructive restore
+│   ├── SettingsView/                   # App settings sheet (+ Sections, Helpers)
+│   ├── MemoryManagementView/           # Memory browser/editor, DeleteMessagesSheet, Actions
+│   └── BackupSettingsView/             # BackupExportSheet, BackupImportSheet (encrypted .chappiebackup)
 └── Views/
     ├── Chat/
-    │   ├── ChatScrollView.swift         # Message feed (LazyVStack, anti-jump streaming)
-    │   ├── MessageBubbleView.swift      # Single message bubble (+ terminal confirmation UI)
-    │   ├── ModelPickerRow.swift         # Model picker (top row) + thread settings gear
-    │   ├── StatusBarView.swift          # Status bar (current tool)
-    │   ├── ProjectChipsView.swift       # Project chips + balance chip (bottom row)
-    │   ├── ProjectSettingsSheet.swift   # Project settings sheet
-    │   ├── ThreadSettingsSheet.swift    # Thread settings: name, provider+key+model, context
-    │   └── Markdown/
-    │       ├── MarkdownModels.swift
-    │       ├── MarkdownTextView.swift
-    │       ├── CodeBlockView.swift
-    │       ├── SyntaxEngine.swift
-    │       ├── SyntaxTheme.swift
-    │       └── SyntaxNSTheme.swift
-    ├── Input/
-    │   ├── ChappieTextEditorView.swift  # Multi-line text input
-    │   ├── InputMorphView.swift         # Morphing input container
-    │   ├── AttachmentViews.swift        # File attachment UI
-    │   ├── EmojiPickerView.swift        # Emoji picker
-    │   └── InputLayoutConstants.swift  # Layout constants
-    ├── Providers/
-    │   ├── ProvidersSettingsView.swift  # Provider list + ProviderDetailView (keys + models)
-    │   ├── AddProviderSheet.swift       # Add/edit provider (2-step: endpoint → models)
-    │   ├── CatalogPickerSheet.swift     # Catalog browser: pick provider or manual setup
-    │   ├── EditKeySheet.swift           # Add/edit a named API key on a provider
-    │   ├── AddModelSheet.swift          # Add models to a provider (fetch list + manual)
-    │   └── NewThreadProviderSheet.swift # Provider+key+model picker when creating a thread
-    ├── Sidebar/
-    │   ├── SidebarView.swift            # Sidebar container
-    │   ├── ThreadListView.swift         # Thread list
-    │   └── ThreadRowView.swift          # Single thread row (gear + trash on hover)
-    ├── Toolbar/
-    │   └── ToolbarContent.swift         # Toolbar: sidebar toggle + thread title + settings gear
-    ├── Shared/
-    │   ├── ProviderModelPickerRows.swift # Shared: ProviderPickRow, ModelPickRow
-    │   ├── ProviderIconView.swift        # Provider logo/icon view
-    │   ├── ShakeEffect.swift            # Shake animation modifier
-    │   └── FlowLayout.swift             # Flow layout for chips
-    └── Onboarding/
-        ├── OnboardingView.swift         # Onboarding: welcome step (+ "Restore from Backup" shortcut) + provider setup step
-        └── EULAView.swift               # EULA/terms sheet
+    │   ├── ContentView/                # Conductor: assembles components, manages sheets, paywall
+    │   ├── ChatScrollView/             # Message feed (LazyVStack, anti-jump streaming)
+    │   ├── MessageBubbleView/          # Message bubble (+ attachments, terminal confirmation UI)
+    │   ├── ProjectChipsView/           # Project chips + balance chip (bottom row)
+    │   ├── ProjectSettingsSheet/       # Project settings sheet
+    │   ├── ThreadSettingsSheet/        # Thread settings: name, provider+key+model, context, terminal
+    │   ├── Markdown/                   # Markdown rendering, CodeBlockView, SyntaxEngine/, themes
+    │   ├── ModelPickerRow.swift        # Model picker (top row) + thread settings gear
+    │   └── StatusBarView.swift         # Status bar (current tool, retry label)
+    ├── Input/                          # InputMorphView/, text editor, attachment UI, emoji picker, layout constants
+    ├── Providers/                      # ProvidersSettingsView/, AddProviderSheet/, AddModelSheet/, NewThreadProviderSheet/, CatalogPickerSheet, EditKeySheet
+    ├── Sidebar/                        # SidebarView, ThreadListView, ThreadRowView
+    ├── Toolbar/                        # ToolbarContent
+    ├── Terminal/                       # TerminalLiveView, TerminalWindowController (live terminal window)
+    ├── License/                        # LicenseActivationView/, TrialBannerView
+    ├── Onboarding/                     # OnboardingView (+ "Restore from Backup"), EULAView
+    └── Shared/                         # FlowLayout, ProviderIconView, ShakeEffect, StorageIssueBanner, WindowDragArea, picker rows
 ```
 
 ---
