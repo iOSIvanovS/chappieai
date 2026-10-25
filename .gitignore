@@ -51,3 +51,8 @@ fastlane/test_output
 *.swp
 *.swo
 *~
+
+# Stray artifacts
+.build_log.txt
+*.sock
+/{*
