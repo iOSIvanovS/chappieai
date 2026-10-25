@@ -83,6 +83,16 @@ extension ToolExecutionService {
         print("[TerminalTools] 🧹 Cleared shell session for thread \(threadId)")
     }
 
+    /// Refusal text for a command CommandSafety flagged. States what was matched and how to proceed,
+    /// so the model neither retries blindly nor believes anything beyond that rule is guarded.
+    static func blockedMessage(_ reason: String) -> String {
+        """
+        🚫 Command blocked by the safety net: \(reason).
+        The command was NOT run. If this was a mistake, fix the command (use a narrower, explicit path). \
+        If it is really intended, tell the user to run it manually in Terminal.app.
+        """
+    }
+
     // MARK: - run_terminal
 
     func executeTerminalTool(
@@ -135,11 +145,8 @@ extension ToolExecutionService {
             command = rawCommand
         }
 
-        if let pattern = ShellSession.dangerousPattern(in: command) {
-            return """
-            🚫 Command blocked: contains dangerous pattern '\(pattern)'.
-            This command is unconditionally prohibited. Perform it manually in Terminal.app.
-            """
+        if let reason = ShellSession.dangerousPattern(in: command) {
+            return Self.blockedMessage(reason)
         }
 
         // Thread-level access gate — access control already passed in ToolPolicy,
@@ -162,8 +169,8 @@ extension ToolExecutionService {
         timeout: TimeInterval = 300,
         onOutput: (@Sendable (String) -> Void)? = nil
     ) async -> String {
-        if let pattern = ShellSession.dangerousPattern(in: command) {
-            return "🚫 Command blocked: contains dangerous pattern '\(pattern)'."
+        if let reason = ShellSession.dangerousPattern(in: command) {
+            return Self.blockedMessage(reason)
         }
         let cappedTimeout = ShellSession.cappedTimeout(for: command, requested: timeout)
         let result = await runLocalCommand(command, timeout: cappedTimeout, onOutput: onOutput)
@@ -220,8 +227,8 @@ extension ToolExecutionService {
         // can hang the remote session for hours without ever completing.
         let timeoutSeconds = ShellSession.cappedTimeoutSeconds(for: remoteCommand, requested: requestedTimeoutSeconds)
 
-        if let pattern = ShellSession.dangerousPattern(in: remoteCommand) {
-            return "🚫 SSH command blocked: contains dangerous pattern '\(pattern)'."
+        if let reason = ShellSession.dangerousPattern(in: remoteCommand) {
+            return Self.blockedMessage(reason)
         }
 
         // Build SSH argument list — all values are immutable let constants for Swift 6 Sendable.

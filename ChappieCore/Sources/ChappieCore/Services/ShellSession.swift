@@ -17,9 +17,9 @@
 // On timeout the session is killed and recreated on next use.
 //
 // DANGEROUS COMMANDS:
-// A static blocklist prevents the most destructive operations regardless
-// of TerminalAccessLevel. This is a last-resort safety net, not the primary guard.
-// Primary guard is TerminalAccessLevel in ProjectSettings + ToolPolicy.
+// CommandSafety (word-level analysis, not substrings) catches catastrophic mistakes regardless
+// of TerminalAccessLevel. It is a safety net, not a security boundary: the real guard is
+// TerminalAccessLevel in ProjectSettings + ToolPolicy.
 
 import Foundation
 
@@ -40,30 +40,6 @@ public actor ShellSession {
     // Unique sentinel printed after each command to detect output end.
     private let sentinel = "___CHAPPIE_CMD_DONE_\(UUID().uuidString.prefix(8))___"
 
-    // MARK: - Dangerous command patterns (last-resort guard)
-
-    // WHY STATIC: these are unconditionally blocked regardless of any settings.
-    // They represent irreversible system-level operations that no AI should run autonomously.
-    static let dangerousPatterns: [String] = [
-        "rm -rf /",
-        "rm -rf ~",
-        "sudo rm",
-        "mkfs",
-        "dd if=",
-        "> /dev/sd",
-        "> /dev/disk",
-        "shutdown",
-        "reboot",
-        "halt",
-        "curl | bash",
-        "curl | sh",
-        "wget | bash",
-        "wget | sh",
-        ":(){ :|:& };:",   // fork bomb
-        "chmod -R 777 /",
-        "chmod 777 /",
-    ]
-
     // MARK: - Init
 
     public init(initialDirectory: String) {
@@ -72,16 +48,10 @@ public actor ShellSession {
 
     // MARK: - Public API
 
-    /// Checks if a command contains any dangerous pattern.
-    /// Returns the matched pattern if dangerous, nil if safe.
+    /// Reason string when the command is a known catastrophic operation, nil otherwise.
+    /// A mistake-catching net, not a security boundary: see CommandSafety.
     public static func dangerousPattern(in command: String) -> String? {
-        let lower = command.lowercased()
-        for pattern in dangerousPatterns {
-            if lower.contains(pattern.lowercased()) {
-                return pattern
-            }
-        }
-        return nil
+        CommandSafety.violation(in: command)
     }
 
     // MARK: - Find command safety cap

@@ -30,6 +30,7 @@ ChappieCoreTests/
 ├── PathGuardTests.swift                # "..", absolute, symlink escapes, sibling prefix, unusable roots ("/", empty, symlink to "/"), Core/MCP copy parity
 ├── MCPHelperLifecycleTests.swift       # Per-instance socket naming, stale-socket cleanup, restart back-off, bridge recover-and-retry
 ├── CancellationTests.swift             # ProcessTree (tree kill, SIGTERM-ignoring child, pid identity, early cancel, Core/MCP parity), ShellSession cancel, MCPToolBridge cancel
+├── CommandSafetyTests.swift            # Catastrophes blocked in every spelling (rm -fr /, sudo, bash -c, ...), harmless look-alikes allowed (rm -rf /tmp/x, "reboot" in text/heredoc), tokenizer
 ├── OutputGuardTests.swift              # Size gate: 200/100 KB boundaries on UTF-8 bytes, notices, OutputCapture, runaway shell command, end-to-end through execute()
 ├── ImagePipelineTests.swift            # ImageDownscaler (2000 px cap, JPEG, alpha, pass-through, cache reuse/invalidation), ImageValve, image marker restriction
 ├── OfficeImagesTests.swift             # ToolImageResult marker, OfficeMediaIntake (foreign folder/file/symlink refused, folder deleted), OutputGuard on documents with pictures
