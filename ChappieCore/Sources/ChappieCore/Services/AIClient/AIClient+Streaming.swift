@@ -17,7 +17,6 @@ extension AIClient {
         let body = AITunnelRequest(
             model: modelName,
             messages: messages,
-            temperature: 0.7,
             tools: tools.isEmpty ? nil : tools,
             stream: true,
             // AITunnel (Anthropic): top-level cache_control caches everything automatically —

@@ -60,7 +60,6 @@ extension AIClient {
         let body = AITunnelRequest(
             model: modelName,
             messages: [AIMessage(role: "user", content: "hi")],
-            temperature: 0.1,
             tools: nil,
             stream: false,
             cacheControl: nil

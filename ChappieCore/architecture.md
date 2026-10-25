@@ -20,7 +20,7 @@ ChappieCore/
     │   └── SQLiteStorage.swift         # GRDB-based backend — sole production implementor (+ corrupt-record backup)
     ├── Models/
     │   ├── AIProviderModels.swift       # AIProvider, APIKey, AIModel, ProviderProtocol
-    │   ├── AITunnelModels.swift         # AIMessage, AIUsage, AIMessageContent
+    │   ├── AITunnelModels.swift         # AIMessage, AIUsage, AIMessageContent, AITunnelRequest (no temperature field by design: o-series/gpt-5 reject non-default values with HTTP 400, provider default is used)
     │   ├── AITunnelStreamModels.swift   # AIStreamChunk, SSE parsing models
     │   ├── AITunnelContentModels.swift  # Content block types (text, tool_use, tool_result)
     │   ├── AITunnelToolModels.swift     # Tool call/result wire models

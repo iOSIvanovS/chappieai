@@ -126,6 +126,15 @@ struct AITunnelModelsTests {
         #expect(json?["stream"] as? Bool == true)
     }
 
+    @Test("AITunnelRequest never sends temperature (o-series/gpt-5 reject non-default values)")
+    func requestOmitsTemperature() throws {
+        let request = AITunnelRequest(model: "o3", messages: [], stream: true)
+        let data = try JSONEncoder().encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        #expect(json?["temperature"] == nil)
+    }
+
     // MARK: - AIStreamChunk
 
     @Test("AIStreamChunk decodes from a real SSE JSON payload")

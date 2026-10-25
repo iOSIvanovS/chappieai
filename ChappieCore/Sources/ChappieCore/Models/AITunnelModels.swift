@@ -9,10 +9,13 @@ import Foundation
 /// This covers system prompt + all tool results + full chat history in one shot.
 /// Other providers: cache_control is always nil — they handle caching automatically.
 /// stream=true → SSE chunks; stream=false → single blocking response.
+///
+/// No `temperature` field on purpose: some models (OpenAI o-series, gpt-5) reject any value
+/// except the default with HTTP 400, and a per-model allow-list would go stale. The provider
+/// default is used everywhere.
 public struct AITunnelRequest: Encodable, Sendable {
     public let model: String
     public let messages: [AIMessage]
-    public let temperature: Double?
     public let tools: [AITool]?
     public let stream: Bool
     public let cache_control: AICacheControl?
@@ -20,14 +23,12 @@ public struct AITunnelRequest: Encodable, Sendable {
     public init(
         model: String,
         messages: [AIMessage],
-        temperature: Double? = nil,
         tools: [AITool]? = nil,
         stream: Bool = false,
         cacheControl: AICacheControl? = nil
     ) {
         self.model = model
         self.messages = messages
-        self.temperature = temperature
         self.tools = tools
         self.stream = stream
         self.cache_control = cacheControl

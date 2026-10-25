@@ -144,7 +144,6 @@ extension AIClient {
         let body = AITunnelRequest(
             model: modelName,
             messages: messages,
-            temperature: 0.7,
             tools: tools.isEmpty ? nil : tools,
             stream: false,
             cacheControl: nil
