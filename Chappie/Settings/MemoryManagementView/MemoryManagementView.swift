@@ -125,7 +125,7 @@ struct MemoryManagementView: View {
                     Text("common.separator_dot")
                         .foregroundStyle(.secondary)
                         .font(.caption)
-                    Text(String(format: "%.2f МБ", info.sizeMB))
+                    Text(ByteCountFormatter.string(fromByteCount: Int64(info.sizeBytes), countStyle: .binary))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

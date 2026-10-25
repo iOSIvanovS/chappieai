@@ -49,7 +49,7 @@ struct DeleteMessagesSheet: View {
                 // Stats
                 HStack(spacing: 24) {
                     statBox(value: "\(threadInfo.messageCount)", label: String(localized: "memory.stat_total"))
-                    statBox(value: String(format: "%.2f МБ", threadInfo.sizeMB), label: String(localized: "memory.stat_size"))
+                    statBox(value: ByteCountFormatter.string(fromByteCount: Int64(threadInfo.sizeBytes), countStyle: .binary), label: String(localized: "memory.stat_size"))
                 }
 
                 // Slider
