@@ -120,9 +120,10 @@ extension ThreadSettingsSheet {
 
     // MARK: - Context Info Box
 
+    @ViewBuilder
     var contextInfoBox: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if draftSettings.isUnlimitedContext {
+        if draftSettings.isUnlimitedContext {
+            VStack(alignment: .leading, spacing: 6) {
                 infoRow(
                     icon: "infinity",
                     color: .orange,
@@ -133,17 +134,10 @@ extension ThreadSettingsSheet {
                     color: .secondary,
                     text: String(localized: "thread.settings.all_messages_shown")
                 )
-            } else {
-                let tokenBudget = draftSettings.maxMessagesInContext * 500
-                infoRow(
-                    icon: "arrow.up.doc",
-                    color: .accentColor,
-                    text: String(format: String(localized: "thread.settings.token_budget"), formatNumber(tokenBudget))
-                )
             }
+            .padding(12)
+            .background(Color.primary.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
         }
-        .padding(12)
-        .background(Color.primary.opacity(0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }

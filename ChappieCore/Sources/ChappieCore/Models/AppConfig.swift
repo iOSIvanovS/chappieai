@@ -13,6 +13,10 @@ import Foundation
 ///
 /// DYNAMIC (IT-02): Created from ThreadSettings — each thread has its own config.
 /// AppConfig.shared is the default (30 messages).
+///
+/// NO TOKEN BUDGET, NO STEP CAP: context depth is controlled only by message count.
+/// Modern windows are ~1M tokens and task decomposition keeps runs far below that;
+/// a fake "tokens = messages × 500" number and a 500-step cap were removed as misleading.
 public struct AppConfig: Codable, Equatable, Sendable {
 
     // MARK: - Singleton
@@ -22,19 +26,10 @@ public struct AppConfig: Codable, Equatable, Sendable {
 
     // MARK: - Parameters
 
-    /// Guards against infinite loops if the model gets stuck on tool calls. Hardcoded.
-    public let maxOrchestratorSteps: Int
-
-    /// Max token budget for history sent to LLM.
-    /// Formula: maxMessagesInContext × 500. Int.max when isUnlimitedContext = true.
-    public let tokenBudget: Int
-
-    /// Hard limit on message count in context window. Range: 10...1000.
-    ///
-    /// WHY SEPARATE FROM tokenBudget: tokenBudget controls volume, not count.
+    /// Hard limit on message count in context window. Range: 10...1000. Int.max when unlimited.
     public let maxMessagesInContext: Int
 
-    /// When true — tokenBudget and maxMessagesInContext are both Int.max. No trimming.
+    /// When true — maxMessagesInContext is Int.max. No trimming.
     public let isUnlimitedContext: Bool
 
     /// API response timeout. 300s covers multi-file refactoring tasks. Hardcoded.
@@ -56,9 +51,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
 
     /// Default config: 30 messages — matches ThreadSettings default.
     private init() {
-        maxOrchestratorSteps     = 500
         maxMessagesInContext     = 30
-        tokenBudget              = 30 * 500
         isUnlimitedContext       = false
         requestTimeoutSeconds    = 300
         connectionTimeoutSeconds = 30
@@ -66,9 +59,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
         maxStallRetries          = 2
     }
 
-    /// Creates config from thread settings. tokenBudget = maxMessagesInContext × 500.
+    /// Creates config from thread settings.
     public init(settings: ThreadSettings) {
-        maxOrchestratorSteps     = 500
         isUnlimitedContext       = settings.isUnlimitedContext
         requestTimeoutSeconds    = 300
         connectionTimeoutSeconds = 30
@@ -77,21 +69,15 @@ public struct AppConfig: Codable, Equatable, Sendable {
 
         if settings.isUnlimitedContext {
             maxMessagesInContext = Int.max
-            tokenBudget          = Int.max
         } else {
             // Clamp 10...1000 — mirrors ThreadSettings valid range
-            let clamped          = max(10, min(1000, settings.maxMessagesInContext))
-            maxMessagesInContext  = clamped
-            tokenBudget          = clamped * 500
+            maxMessagesInContext = max(10, min(1000, settings.maxMessagesInContext))
         }
     }
 
     /// Convenience init from raw message count — for tests and legacy code.
     public init(maxMessagesInContext: Int) {
-        let clamped              = max(10, min(1000, maxMessagesInContext))
-        maxOrchestratorSteps     = 500
-        self.maxMessagesInContext = clamped
-        tokenBudget              = clamped * 500
+        self.maxMessagesInContext = max(10, min(1000, maxMessagesInContext))
         isUnlimitedContext       = false
         requestTimeoutSeconds    = 300
         connectionTimeoutSeconds = 30

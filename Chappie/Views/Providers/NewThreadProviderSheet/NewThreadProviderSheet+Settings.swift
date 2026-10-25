@@ -83,19 +83,17 @@ extension NewThreadProviderSheet {
 
     // MARK: - Context Info Box
 
+    @ViewBuilder
     var contextInfoBox: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if draftSettings.isUnlimitedContext {
+        if draftSettings.isUnlimitedContext {
+            VStack(alignment: .leading, spacing: 6) {
                 infoRow(icon: "infinity", color: .orange, text: String(localized: "thread.settings.unlimited_info"))
                 infoRow(icon: "bubble.left.and.bubble.right", color: .secondary, text: String(localized: "thread.settings.all_messages_shown"))
-            } else {
-                let tokenBudget = draftSettings.maxMessagesInContext * 500
-                infoRow(icon: "arrow.up.doc", color: .accentColor, text: String(format: String(localized: "thread.settings.token_budget"), formatNumber(tokenBudget)))
             }
+            .padding(10)
+            .background(Color.primary.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
         }
-        .padding(10)
-        .background(Color.primary.opacity(0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     // MARK: - Helpers
@@ -112,13 +110,5 @@ extension NewThreadProviderSheet {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-    }
-
-    func formatNumber(_ n: Int) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.groupingSeparator = " "
-        formatter.locale = Locale(identifier: "ru_RU")
-        return formatter.string(from: NSNumber(value: n)) ?? "\(n)"
     }
 }

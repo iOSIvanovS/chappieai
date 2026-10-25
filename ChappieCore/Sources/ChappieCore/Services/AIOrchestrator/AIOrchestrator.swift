@@ -137,9 +137,9 @@ public actor AIOrchestrator {
         var lastToolSignature: String? = nil
         var collectedOutputFiles: [String] = []
 
-        let maxSteps = config.maxOrchestratorSteps
-
-        while stepCount < maxSteps {
+        // No step cap by design: the loop ends on a final answer, Stop/cancel, or a fatal error.
+        // Runaway protection is the repeated-call guard + the Stop button, not a magic number.
+        while true {
             guard !isInvalidated else {
                 print("[AIOrchestrator] Aborted at step \(stepCount) — orchestrator was invalidated")
                 throw CancellationError()
@@ -197,10 +197,5 @@ public actor AIOrchestrator {
                 )
             }
         }
-
-        throw ChappieError.unknown(
-            "Orchestrator step limit exceeded (maxOrchestratorSteps = \(maxSteps)). " +
-            "Loop artificially stopped. Increase AppConfig.maxOrchestratorSteps if needed."
-        )
     }
 }

@@ -72,11 +72,6 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
     /// Int.max in JSON/Codable is fragile. An explicit Bool is clear and safe.
     public var isUnlimitedContext: Bool
 
-    /// Computed token budget: maxMessagesInContext × 500. Not stored — avoids migration on formula changes.
-    public var tokenBudget: Int {
-        isUnlimitedContext ? Int.max : maxMessagesInContext * 500
-    }
-
     /// UUID of the AI provider for this thread. nil = use default provider.
     ///
     /// WHY UUID, NOT INLINE PROVIDER: avoids duplication — thread always reflects latest provider config.

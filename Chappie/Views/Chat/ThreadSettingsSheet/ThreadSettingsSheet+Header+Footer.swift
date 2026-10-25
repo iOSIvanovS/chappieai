@@ -112,12 +112,4 @@ extension ThreadSettingsSheet {
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
-
-    func formatNumber(_ n: Int) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.groupingSeparator = " "
-        formatter.locale = Locale(identifier: "ru_RU")
-        return formatter.string(from: NSNumber(value: n)) ?? "\(n)"
-    }
 }

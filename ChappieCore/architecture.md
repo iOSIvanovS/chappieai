@@ -379,13 +379,20 @@ struct ThreadSettings: Codable, Sendable {
 struct AppConfig: Codable {
     static let shared = AppConfig()            // default: 100 messages
     init(settings: ThreadSettings)             // per-thread config
-    let maxMessagesInContext: Int              // 10...1000
-    let tokenBudget: Int                       // maxMessagesInContext × 500
+    let maxMessagesInContext: Int              // 10...1000 (Int.max when unlimited)
     let isUnlimitedContext: Bool
-    let maxOrchestratorSteps: Int             // 500, hardcoded
     let stallTimeoutSeconds: TimeInterval     // 300s, hardcoded
 }
 ```
+
+**Decision: no token budget and no orchestrator step cap.** Context depth is controlled by message
+count only. Reasons: (1) the old `tokenBudget = messages × 500` was never enforced, only displayed in the
+settings UI as a misleading number; (2) model windows are ~1M tokens and mandatory task decomposition keeps
+real sessions around 200–300K; (3) tool results are not carried between requests (only user/assistant text
+and attachments), and within one run provider prompt caching absorbs the growth; (4) the 500-step cap was a
+loop guard, but real runaway protection is the repeated-call guard (`lastToolSignature`), the Stop button
+and the retry policy. The agentic loop therefore ends only on a final answer, cancellation or a fatal error.
+Oversized single tool results are handled per tool (see tool output thresholds), not by a global cap.
 
 ---
 
