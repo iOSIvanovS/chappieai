@@ -59,8 +59,7 @@ extension ChappieViewModel {
         var parts: [AIMultimodalPart] = []
         if !text.isEmpty { parts.append(.text(text)) }
         for attachment in attachments {
-            let part = await multimodalPart(for: attachment)
-            parts.append(part)
+            parts.append(contentsOf: await multimodalParts(for: attachment))
         }
         return AIMessage(role: "user", multimodalParts: parts)
     }

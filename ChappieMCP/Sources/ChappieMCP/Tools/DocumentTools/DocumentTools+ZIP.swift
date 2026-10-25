@@ -14,7 +14,7 @@ extension DocumentTools {
     // MARK: - ZIP XML reading
 
     /// Reads one or more named entries from a ZIP archive and returns their XML content.
-    func readZipXML(at path: String, entries: [String], format: String) -> ToolResult {
+    func readZipXML(at path: String, entries: [String], format: String, mediaFolders: [String] = []) -> ToolResult {
         guard FileManager.default.fileExists(atPath: path) else {
             return .failure("read_document: file not found at '\(path)'")
         }
@@ -23,6 +23,7 @@ extension DocumentTools {
             return .failure("read_document: cannot open '\(path)' as a ZIP archive. The file may be corrupted.")
         }
 
+        let collector = OfficeMediaCollector(archive: archive, mediaFolders: mediaFolders)
         var parts: [String] = []
         for entryName in entries {
             guard let entry = archive[entryName] else {
@@ -39,19 +40,21 @@ extension DocumentTools {
                 return .failure("read_document: '\(entryName)' is not valid UTF-8 text.")
             }
             let normalized = normalizeOfficeXML(xml, entryName: entryName)
-            parts.append("<!-- Entry: \(entryName) -->\n\(normalized)")
+            let annotated = collector.annotate(normalized, partPath: entryName)
+            parts.append("<!-- Entry: \(entryName) -->\n\(annotated)")
         }
 
         if parts.isEmpty {
             return .failure("read_document: no readable XML entries found in \(format) file.")
         }
 
+        let extracted = collector.finish()
         let header = "<!-- \(format) document: \(URL(fileURLWithPath: path).lastPathComponent) -->\n"
-        return .success(header + parts.joined(separator: "\n\n"))
+        return .success(header + extracted.note + parts.joined(separator: "\n\n"), media: extracted.media)
     }
 
     /// Reads all slides/sheets matching a prefix pattern (e.g. "ppt/slides/slide").
-    func readZipXMLPattern(at path: String, prefix: String, format: String) -> ToolResult {
+    func readZipXMLPattern(at path: String, prefix: String, format: String, mediaFolders: [String] = []) -> ToolResult {
         guard FileManager.default.fileExists(atPath: path) else {
             return .failure("read_document: file not found at '\(path)'")
         }
@@ -72,7 +75,7 @@ extension DocumentTools {
             return .failure("read_document: no entries found with prefix '\(prefix)' in \(format) file.")
         }
 
-        return readZipXML(at: path, entries: matchingEntries, format: format)
+        return readZipXML(at: path, entries: matchingEntries, format: format, mediaFolders: mediaFolders)
     }
 
     // MARK: - ZIP entry replacement

@@ -199,6 +199,10 @@ public actor ToolExecutionService {
     /// with the marker (a file that imitates it) is treated as ordinary text.
     public static let imageResultTools: Set<String> = ["view_image", "fetch_attachment"]
 
+    /// Tools whose result may be a document's text plus its pictures (ToolImageResult marker).
+    /// Everything else that starts with the marker is plain text.
+    public static let documentImageTools: Set<String> = ["read_document", "fetch_attachment"]
+
     // MARK: - Tool execution dispatcher
 
     /// The only entry point for running a tool. Everything a tool returns passes OutputGuard here,

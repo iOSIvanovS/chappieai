@@ -42,7 +42,8 @@ ChappieMCP/
         ├── BuildTools.swift           # build_project, run_tests, read_build_log (env-aware routing)
         ├── PathGuard.swift            # Byte-identical copy of ChappieCore's PathGuard (parity test) — project containment
         ├── LocalizationTools.swift    # loc_* tools (Xcode / xcstrings only); create/rename/delete accept only .xcstrings
-        └── DocumentTools.swift        # read_document, write_document (Office formats via ZIPFoundation)
+        └── DocumentTools/             # read_document, write_document (Office formats via ZIPFoundation)
+            └── DocumentTools+Media.swift  # OfficeMediaCollector: pictures of docx/pptx/xlsx/odt → temp folder + [image N] XML comments
 ```
 
 ---
@@ -205,6 +206,15 @@ Xcode-specific (`.xcstrings` format). Injected only when `devEnvironment == .xco
 ### Documents (DocumentTools.swift)
 
 Office document read/write via ZIP+XML. Uses **ZIPFoundation** (SPM, no external installs).
+
+**Pictures.** `read_document` also extracts the pictures a document uses (`word/media`, `ppt/media`, `xl/media`,
+ODT `Pictures/`; PNG/JPEG/GIF/WebP only, at most 20, 30 MB each, 120 MB total). References are resolved through the
+part's `_rels` file (DrawingML `a:blip`, VML `v:imagedata`, ODT `draw:image`); pictures nobody references are
+appended after the referenced ones. Each reference gets a `<!-- [image N: name] -->` comment before it, so the XML
+stays valid and can still be written back with `write_document`. The files go to `<temp>/chappie-mcp-media/<uuid>/`
+(file names are prefixed with the number and stripped to their last path component — no zip-slip); the folder and
+file paths are returned in the separate `mediaDir` / `media` fields of the response, never in the text. The app
+reads and deletes the folder; folders older than an hour (a crash) are pruned on the next extraction.
 
 | Tool | Purpose |
 |------|---------|

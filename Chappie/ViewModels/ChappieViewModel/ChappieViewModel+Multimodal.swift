@@ -10,6 +10,16 @@ extension ChappieViewModel {
 
     // MARK: - Multimodal Encoding
 
+    /// An Office attachment yields several parts (its text, then its pictures); everything else one.
+    func multimodalParts(for attachment: AttachedFile) async -> [AIMultimodalPart] {
+        switch attachment.mimeType {
+        case .docx, .xlsx, .pptx, .rtf:
+            return await extractOfficeDocument(attachment)
+        default:
+            return [await multimodalPart(for: attachment)]
+        }
+    }
+
     func multimodalPart(for attachment: AttachedFile) async -> AIMultimodalPart {
         switch attachment.mimeType {
         case .imageJpeg, .imagePng, .imageGif, .imageWebp:
@@ -35,7 +45,9 @@ extension ChappieViewModel {
             return .text("File: \(attachment.filename) (PDF, \(size / 1024)KB) — binary content, cannot extract text inline.")
 
         case .docx, .xlsx, .pptx, .rtf:
-            return await extractOfficeDocument(attachment)
+            // Callers that can take several parts use multimodalParts(for:); this keeps the text only.
+            let parts = await extractOfficeDocument(attachment)
+            return parts.first ?? .text(attachmentReferenceText(for: attachment))
 
         case .other:
             let size = (try? attachment.localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
@@ -83,14 +95,15 @@ extension ChappieViewModel {
 
     // MARK: - Office Document Extraction
 
-    private func extractOfficeDocument(_ attachment: AttachedFile) async -> AIMultimodalPart {
+    private func extractOfficeDocument(_ attachment: AttachedFile) async -> [AIMultimodalPart] {
         guard let toolService else {
-            return .text("File: \(attachment.filename) — tool service unavailable")
+            return [.text("File: \(attachment.filename) — tool service unavailable")]
         }
         return await callReadDocument(path: attachment.localURL.path, filename: attachment.filename, toolService: toolService)
     }
 
-    private func callReadDocument(path: String, filename: String, toolService: ToolExecutionService) async -> AIMultimodalPart {
+    /// Text of the document first, then its pictures as real images (see ToolImageResult).
+    private func callReadDocument(path: String, filename: String, toolService: ToolExecutionService) async -> [AIMultimodalPart] {
         let args = "{\"path\":\"\(path)\"}"
         let fakeCall = AIToolCall(
             id: "attachment-\(UUID().uuidString)",
@@ -98,7 +111,12 @@ extension ChappieViewModel {
             function: AIToolCallFunction(name: "read_document", arguments: args)
         )
         let result = await toolService.execute(call: fakeCall)
-        return .text("File: \(filename)\n\n\(result)")
+        guard let withImages = ToolImageResult.decode(result) else {
+            return [.text("File: \(filename)\n\n\(result)")]
+        }
+        var parts: [AIMultimodalPart] = [.text("File: \(filename)\n\n\(withImages.text)")]
+        parts.append(contentsOf: withImages.multimodalParts)
+        return parts
     }
 
     // MARK: - Attachment Reference

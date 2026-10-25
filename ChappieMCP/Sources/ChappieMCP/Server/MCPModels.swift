@@ -14,6 +14,22 @@ struct MCPRequest: Codable, Sendable {
 struct MCPResponse: Codable, Sendable {
     let result: String?
     let error: String?
+    /// Pictures extracted from an Office document. Deliberately NOT part of `result`: the text of a
+    /// document must never be able to name a file the app will open.
+    let mediaDir: String?
+    let media: [ToolMediaFile]?
+}
+
+/// One extracted picture: a label for the model and where the helper wrote it.
+struct ToolMediaFile: Codable, Sendable {
+    let label: String
+    let path: String
+}
+
+/// Pictures the helper wrote into its own temp folder; the app reads and deletes the folder.
+struct ToolMedia: Sendable {
+    let directory: String
+    let files: [ToolMediaFile]
 }
 
 // MARK: - ToolResult
@@ -21,9 +37,12 @@ struct MCPResponse: Codable, Sendable {
 struct ToolResult: Sendable {
     let value: String?
     let error: String?
+    let media: ToolMedia?
 
-    static func success(_ value: String) -> ToolResult { ToolResult(value: value, error: nil) }
-    static func failure(_ error: String) -> ToolResult { ToolResult(value: nil, error: error) }
+    static func success(_ value: String, media: ToolMedia? = nil) -> ToolResult {
+        ToolResult(value: value, error: nil, media: media)
+    }
+    static func failure(_ error: String) -> ToolResult { ToolResult(value: nil, error: error, media: nil) }
 }
 
 // MARK: - MCPServerError

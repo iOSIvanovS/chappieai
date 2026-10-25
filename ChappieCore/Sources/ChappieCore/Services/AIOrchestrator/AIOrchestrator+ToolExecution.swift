@@ -77,6 +77,22 @@ extension AIOrchestrator {
                 continue
             }
 
+            // read_document / fetch_attachment of an Office file: the text goes back as the tool result,
+            // the pictures of the document follow as a user message so the model sees them as images.
+            if ToolExecutionService.documentImageTools.contains(toolName),
+               let withImages = ToolImageResult.decode(resultString) {
+                sessionHistory.append(AIMessage(
+                    role: "tool",
+                    content: withImages.text,
+                    tool_call_id: toolCall.id,
+                    name: toolName
+                ))
+                var parts: [AIMultimodalPart] = [.text("Images contained in the document returned by `\(toolName)` (numbered as in its [image N] markers):")]
+                parts.append(contentsOf: withImages.multimodalParts)
+                sessionHistory.append(AIMessage(role: "user", multimodalParts: parts))
+                continue
+            }
+
             sessionHistory.append(AIMessage(
                 role: "tool",
                 content: resultString,

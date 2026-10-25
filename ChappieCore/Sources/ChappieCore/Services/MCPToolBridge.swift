@@ -220,9 +220,23 @@ public actor MCPToolBridge {
         }
 
         if let error = response.error {
+            // Pictures may have been written before the error; do not leave the folder behind.
+            if let dir = response.mediaDir { discardMediaDirectory(dir) }
             return .answered("❌ Tool \(tool) error: \(error)")
         }
-        return .answered(response.result ?? "(empty result)")
+        // Pictures of an Office document: validated, downscaled, and folded into the result.
+        let items = response.media?.map { OfficeMediaIntake.Item(label: $0.label, path: $0.path) }
+        return .answered(OfficeMediaIntake.process(
+            text: response.result ?? "(empty result)",
+            mediaDir: response.mediaDir,
+            items: items
+        ))
+    }
+
+    /// Deletes a helper media folder, but only one that really is a child of the shared media root.
+    private static func discardMediaDirectory(_ path: String) {
+        guard let directory = OfficeMediaIntake.acceptedDirectory(path, root: OfficeMediaIntake.defaultRoot) else { return }
+        try? FileManager.default.removeItem(atPath: directory)
     }
 }
 
@@ -258,4 +272,12 @@ private struct MCPRequestBody: Codable, Sendable {
 private struct MCPResponseBody: Codable, Sendable {
     let result: String?
     let error: String?
+    /// Absent in answers of a helper built before pictures were supported.
+    let mediaDir: String?
+    let media: [MCPMediaFile]?
+}
+
+private struct MCPMediaFile: Codable, Sendable {
+    let label: String
+    let path: String
 }

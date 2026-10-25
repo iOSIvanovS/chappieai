@@ -31,6 +31,9 @@ public enum OutputGuard {
     /// beyond the limit, so there is no reason to hold more than this.
     public static let captureCap = commandLimit * 2
 
+    /// Whole result of a document with pictures (text + up to 20 downscaled images as base64).
+    public static let documentImagesCap = 40 * 1024 * 1024
+
     // MARK: - Classification
 
     public enum Kind: Sendable { case read, command }
@@ -59,6 +62,17 @@ public enum OutputGuard {
         // pipeline (ImageDownscaler) bounds its size, so text limits do not apply.
         if ToolExecutionService.imageResultTools.contains(toolName),
            output.hasPrefix(ToolExecutionService.viewImageMarker) { return output }
+
+        // A document with pictures: the TEXT is judged like any other read; the pictures were already
+        // bounded by the image pipeline. A size cap on the whole thing guards against an imitation.
+        if ToolExecutionService.documentImageTools.contains(toolName),
+           let withImages = ToolImageResult.decode(output) {
+            guard output.utf8.count <= documentImagesCap else {
+                return oversizeNotice(toolName: toolName, bytes: output.utf8.count)
+            }
+            let verdict = apply(toolName: toolName, output: withImages.text)
+            return verdict == withImages.text ? output : verdict
+        }
 
         // A collector that stopped storing output reports the real size through a marker.
         let size = truncatedTotal(in: output) ?? output.utf8.count

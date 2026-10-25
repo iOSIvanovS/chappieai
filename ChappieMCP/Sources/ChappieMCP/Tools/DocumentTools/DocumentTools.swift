@@ -35,13 +35,17 @@ final class DocumentTools: Sendable {
 
         switch ext {
         case "docx":
-            return readZipXML(at: fullPath, entries: ["word/document.xml"], format: "Word (.docx)")
+            return readZipXML(at: fullPath, entries: ["word/document.xml"], format: "Word (.docx)",
+                              mediaFolders: ["word/media/"])
         case "xlsx":
-            return readZipXML(at: fullPath, entries: ["xl/sharedStrings.xml", "xl/worksheets/sheet1.xml"], format: "Excel (.xlsx)")
+            return readZipXML(at: fullPath, entries: ["xl/sharedStrings.xml", "xl/worksheets/sheet1.xml"], format: "Excel (.xlsx)",
+                              mediaFolders: ["xl/media/"])
         case "pptx":
-            return readZipXMLPattern(at: fullPath, prefix: "ppt/slides/slide", format: "PowerPoint (.pptx)")
+            return readZipXMLPattern(at: fullPath, prefix: "ppt/slides/slide", format: "PowerPoint (.pptx)",
+                                     mediaFolders: ["ppt/media/"])
         case "odt":
-            return readZipXML(at: fullPath, entries: ["content.xml"], format: "OpenDocument Text (.odt)")
+            return readZipXML(at: fullPath, entries: ["content.xml"], format: "OpenDocument Text (.odt)",
+                              mediaFolders: ["Pictures/"])
         case "rtf":
             return readRTF(at: fullPath)
         case "csv":

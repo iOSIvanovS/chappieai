@@ -70,7 +70,9 @@ ChappieCore/
         ├── SaveQueue.swift             # Ordered write queue; failed write pauses until Retry/Skip
         ├── ImagePipeline/
         │   ├── ImageDownscaler.swift   # THE one place an image becomes a request part: long side ≤ 2000 px, JPEG, EXIF + alpha handled, on-disk cache of the downscaled copy
-        │   └── ImageValve.swift        # Emergency valve: past 40 images per request the OLDEST become a text note (normally inactive)
+        │   ├── ImageValve.swift        # Emergency valve: past 40 images per request the OLDEST become a text note (normally inactive)
+        │   ├── ToolImageResult.swift   # Marker form of "document text + its pictures" (read_document / fetch_attachment of Office files)
+        │   └── OfficeMediaIntake.swift # App side of the helper's extracted pictures: validate folder + files, downscale, delete the folder
         ├── OutputGuard/
         │   ├── OutputGuard.swift       # THE size gate for every tool result (200 KB read / 100 KB command), oversize notice
         │   └── OutputCapture.swift     # Memory-capped collector for running commands (keeps head + tail window, counts all bytes)
@@ -514,6 +516,18 @@ folded into it). Only the model request is repeated; tools run outside the loop.
 - `view_image` and `fetch_attachment` return an image behind `ToolExecutionService.viewImageMarker`; only the tools in
   `imageResultTools` are honoured, so a text file that imitates the marker is judged as ordinary text.
 - `fetch_attachment` for any other binary type returns only size and type, never base64 text.
+- **Pictures inside Office documents.** `read_document` (and `fetch_attachment` / attached Word, Excel, PowerPoint,
+  ODT) gives the model the document text AND its pictures as real images. The helper extracts the media into its own
+  temp folder and reports it in separate response fields (`mediaDir`, `media`) — never inside the text, so document
+  text cannot name a file for the app to open. `OfficeMediaIntake` accepts only a folder that is a direct child of
+  the shared media root and only regular (non-link) files directly inside it, downscales through `ImageDownscaler`,
+  and deletes the folder. The result travels as `ToolImageResult` (marker `__CHAPPIE_DOC_IMAGES__:`); only
+  `documentImageTools` are honoured. `AIOrchestrator` turns it into a tool message (text) plus a user message
+  (labelled images); the ViewModel does the same for attached documents (`multimodalParts(for:)`). `OutputGuard`
+  judges the TEXT by the 200 KB limit; the pictures are bounded by the pipeline (≤ 20 per document) and by a 40 MB
+  cap on the whole marker form.
+- `read_build_log` returns only the lines containing `error:` or `failed` (deduplicated, with line numbers) plus the
+  size of the full log: the full log is progress noise, and `run_tests` already carries the summary.
 - Source files up to 50 MB are read (`FileSystemManager.maxImageBytes`); this only guards memory.
 
 Tests: `ImagePipelineTests`.
@@ -601,4 +615,5 @@ runaway, end-to-end through `execute`).
 | 2026-10 | Unified LLM retry (backlog 13): `LLMRetryRunner` + classifier replace the stall/timeout special cases; HTTP 5xx/429 and network drops are retried with backoff measured from error arrival; streaming error bodies are read; mid-stream cuts continue the partial answer; progress shown in the action bar. Removed `RequestLog` and the diagnostic request (hardcoded Russian). Covered by LLMRetryTests (33 cases). |
 | 2026-10 | OutputGuard (backlog 10b-1): one gate in `ToolExecutionService.execute` refuses oversized tool results (200 KB read / 100 KB command, measured on prepared UTF-8 text) with a notice instead of a cut piece; `OutputCapture` caps memory for running commands; `read_file` checks size before loading. Covered by OutputGuardTests (18). |
 | 2026-10 | ImagePipeline (backlog 10b-2a): `ImageDownscaler` caps every image sent to a model at 2000 px / JPEG with an on-disk cache for attachments; `view_image` and `fetch_attachment` return real images (marker restricted to `imageResultTools`); `fetch_attachment` no longer returns base64 text; `ImageValve` guards provider image-count limits. Covered by ImagePipelineTests (13). |
+| 2026-10 | Office pictures (backlog 10b-2b): the helper extracts `word|ppt|xl/media` (and ODT `Pictures/`) pictures into a private temp folder and leaves `<!-- [image N: name] -->` XML comments in the text (valid XML, safe for `write_document`); the app validates, downscales and deletes the folder, and shows the images to the model as separate multimodal parts. `read_build_log` now returns only error/failed lines. Covered by OfficeImagesTests (15). |
 | 2026-08 | Backup import UI shipped in app layer (Chappie/architecture.md): BackupImportSheet two-step confirmation (decrypt/preview, then explicit destructive "Restore Now"), reachable from SettingsView and from OnboardingView welcome step as a "Restore from Backup" shortcut that skips the whole provider setup wizard. |

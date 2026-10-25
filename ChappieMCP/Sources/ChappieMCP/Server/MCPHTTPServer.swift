@@ -310,14 +310,19 @@ final class MCPUnixServer: @unchecked Sendable {
 
     private func processRequest(data: Data) async -> Data {
         guard let request = try? JSONDecoder().decode(MCPRequest.self, from: data) else {
-            let response = MCPResponse(result: nil, error: "Invalid JSON request")
+            let response = MCPResponse(result: nil, error: "Invalid JSON request", mediaDir: nil, media: nil)
             return (try? JSONEncoder().encode(response)) ?? Data()
         }
 
         print("[ChappieMCP] 🔧 Tool: \(request.tool) | Args: \(request.args)")
 
         let toolResult = await toolDispatcher.execute(tool: request.tool, args: request.args)
-        let response = MCPResponse(result: toolResult.value, error: toolResult.error)
+        let response = MCPResponse(
+            result: toolResult.value,
+            error: toolResult.error,
+            mediaDir: toolResult.media?.directory,
+            media: toolResult.media?.files
+        )
         return (try? JSONEncoder().encode(response)) ?? Data()
     }
 }
