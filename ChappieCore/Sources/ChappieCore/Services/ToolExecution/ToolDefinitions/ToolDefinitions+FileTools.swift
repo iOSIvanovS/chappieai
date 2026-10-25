@@ -77,7 +77,7 @@ extension ToolExecutionService {
             Use when the user refers to a screenshot or image they created/saved in the project \
             (not attached directly to the chat) and you need to actually see its content.
             Unlike read_file, this returns the image itself for visual inspection, not text.
-            Max file size: 5MB.
+            Large images are downscaled automatically (long side up to 2000 px) before you see them.
             """,
             parameters: AIToolParameters(
                 properties: [
@@ -235,7 +235,7 @@ extension ToolExecutionService {
         return [
             AITool(function: AIFunctionDefinition(
                 name: "fetch_attachment",
-                description: "Read a file attachment from the current thread by its UUID.\nUse when the user has sent you a file and you want to read its contents.\nReturns: base64 data URI for images, XML for Office documents (docx/xlsx/pptx),\nextracted text for PDFs, UTF-8 string for plain text files.\nThe UUID is shown in the attachment reference block: [Attachment: filename | uuid: ...]",
+                description: "Read a file attachment from the current thread by its UUID.\nUse when the user has sent you a file and you want to read its contents.\nReturns: the image itself for images (you see it in the next message), XML for Office documents (docx/xlsx/pptx),\nextracted text for PDFs, UTF-8 string for plain text files. Other file types return only their size and type.\nThe UUID is shown in the attachment reference block: [Attachment: filename | uuid: ...]",
                 parameters: AIToolParameters(
                     properties: ["uuid": AIToolProperty(type: "string", description: "UUID of the attachment to fetch (from the attachment reference block)")],
                     required: ["uuid"]

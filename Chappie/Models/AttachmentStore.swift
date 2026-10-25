@@ -97,6 +97,16 @@ final class AttachmentStore: @unchecked Sendable {
         return file
     }
 
+    // MARK: - Downscaled image cache
+
+    /// Where the downscaled JPEG of an image attachment lives. Deliberately NOT inside the attachment's
+    /// own folder: resolve(uuid:) returns the first file of that folder and must keep returning the original.
+    nonisolated func downscaledImageURL(for attachmentId: UUID) -> URL {
+        rootURL.deletingLastPathComponent()
+            .appendingPathComponent("ImageCache", isDirectory: true)
+            .appendingPathComponent("\(attachmentId.uuidString).jpg")
+    }
+
     // MARK: - Folder
 
     nonisolated func folderURL(for attachmentId: UUID) -> URL {

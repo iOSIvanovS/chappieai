@@ -195,6 +195,10 @@ public actor ToolExecutionService {
     /// user message — the only way the model actually "sees" the image (see AIOrchestrator+ToolExecution.swift).
     public static let viewImageMarker = "__CHAPPIE_IMAGE_DATA_URI__:"
 
+    /// Only these tools may return an image behind the marker. Any other tool whose text merely starts
+    /// with the marker (a file that imitates it) is treated as ordinary text.
+    public static let imageResultTools: Set<String> = ["view_image", "fetch_attachment"]
+
     // MARK: - Tool execution dispatcher
 
     /// The only entry point for running a tool. Everything a tool returns passes OutputGuard here,

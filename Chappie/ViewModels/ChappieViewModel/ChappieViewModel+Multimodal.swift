@@ -13,12 +13,7 @@ extension ChappieViewModel {
     func multimodalPart(for attachment: AttachedFile) async -> AIMultimodalPart {
         switch attachment.mimeType {
         case .imageJpeg, .imagePng, .imageGif, .imageWebp:
-            // Images are sent inline as base64 — small enough to be worth it.
-            guard let data = try? Data(contentsOf: attachment.localURL) else {
-                return .text(attachmentReferenceText(for: attachment))
-            }
-            let dataURI = "data:\(attachment.mimeType.rawValue);base64,\(data.base64EncodedString())"
-            return .imageURL(dataURI)
+            return imagePart(for: attachment)
 
         case .plainText:
             guard let data = try? Data(contentsOf: attachment.localURL) else {
@@ -52,11 +47,7 @@ extension ChappieViewModel {
     func multimodalPartSync(for attachment: AttachedFile) -> AIMultimodalPart {
         switch attachment.mimeType {
         case .imageJpeg, .imagePng, .imageGif, .imageWebp:
-            guard let data = try? Data(contentsOf: attachment.localURL) else {
-                return .text(attachmentReferenceText(for: attachment))
-            }
-            let dataURI = "data:\(attachment.mimeType.rawValue);base64,\(data.base64EncodedString())"
-            return .imageURL(dataURI)
+            return imagePart(for: attachment)
         case .plainText:
             guard let data = try? Data(contentsOf: attachment.localURL),
                   let content = String(data: data, encoding: .utf8) else {
@@ -73,6 +64,21 @@ extension ChappieViewModel {
             let size = (try? attachment.localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
             return .text("File: \(attachment.filename) (\(attachment.mimeType.rawValue), \(size / 1024)KB)")
         }
+    }
+
+    /// The one way an attached image enters a request: downscaled (see ImageDownscaler), with the
+    /// downscaled copy cached on disk so history rebuilds do not re-encode it on every request.
+    /// The original file stays untouched.
+    private func imagePart(for attachment: AttachedFile) -> AIMultimodalPart {
+        let cache = AttachmentStore.shared.downscaledImageURL(for: attachment.id)
+        guard let uri = ImageDownscaler.dataURI(
+            forFileAt: attachment.localURL,
+            mimeType: attachment.mimeType.rawValue,
+            cacheURL: cache
+        ) else {
+            return .text("\(attachmentReferenceText(for: attachment)) — image could not be prepared for sending")
+        }
+        return .imageURL(uri)
     }
 
     // MARK: - Office Document Extraction

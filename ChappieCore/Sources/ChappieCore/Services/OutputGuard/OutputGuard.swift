@@ -55,9 +55,10 @@ public enum OutputGuard {
 
     /// Returns `output` unchanged when it fits, otherwise the oversize notice.
     public static func apply(toolName: String, output: String) -> String {
-        // view_image carries a data URI that AIOrchestrator turns into a real image part; its own
-        // size rules (and the image pipeline) are separate from text limits.
-        if output.hasPrefix(ToolExecutionService.viewImageMarker) { return output }
+        // Image tools carry a data URI that AIOrchestrator turns into a real image part; the image
+        // pipeline (ImageDownscaler) bounds its size, so text limits do not apply.
+        if ToolExecutionService.imageResultTools.contains(toolName),
+           output.hasPrefix(ToolExecutionService.viewImageMarker) { return output }
 
         // A collector that stopped storing output reports the real size through a marker.
         let size = truncatedTotal(in: output) ?? output.utf8.count

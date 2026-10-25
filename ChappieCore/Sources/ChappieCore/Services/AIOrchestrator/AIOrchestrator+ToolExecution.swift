@@ -60,11 +60,12 @@ extension AIOrchestrator {
                 }
             }
 
-            // view_image: tool results can't carry images (providers only accept image_url
+            // view_image / fetch_attachment (image): tool results can't carry images (providers only accept image_url
             // inside user-role multimodal content). Strip the marker, keep a short text
             // acknowledgment in the tool message, and inject the actual image as a synthetic
             // user message right after — this is the only way the model actually "sees" it.
-            if toolName == "view_image", resultString.hasPrefix(ToolExecutionService.viewImageMarker) {
+            if ToolExecutionService.imageResultTools.contains(toolName),
+               resultString.hasPrefix(ToolExecutionService.viewImageMarker) {
                 let dataURI = String(resultString.dropFirst(ToolExecutionService.viewImageMarker.count))
                 sessionHistory.append(AIMessage(
                     role: "tool",

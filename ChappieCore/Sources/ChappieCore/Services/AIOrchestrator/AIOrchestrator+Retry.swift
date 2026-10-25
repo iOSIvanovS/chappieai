@@ -26,7 +26,7 @@ extension AIOrchestrator {
         return try await runner.run(history: sessionHistory, onRetry: onRetry) { history in
             try await client.streamRequestWithTools(
                 systemPrompt: systemPrompt,
-                chatHistory: history,
+                chatHistory: ImageValve.apply(history),
                 tools: tools,
                 stallTimeout: stallTimeout,
                 onToken: onToken

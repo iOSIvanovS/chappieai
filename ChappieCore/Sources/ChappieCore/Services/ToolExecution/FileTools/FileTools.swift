@@ -93,7 +93,9 @@ extension ToolExecutionService {
                 return "Error: Argument 'path' is required for view_image"
             }
             let (data, mimeType) = try await fileSystem.readImageData(at: path, projectName: args["project"])
-            let dataURI = "data:\(mimeType);base64,\(data.base64EncodedString())"
+            guard let dataURI = ImageDownscaler.dataURI(for: data, mimeType: mimeType) else {
+                return "Error: Image '\(path)' could not be decoded or prepared for sending."
+            }
             // Marker prefix lets AIOrchestrator+ToolExecution detect this result and inject
             // a synthetic multimodal user message — plain tool-result strings can't carry images.
             return "\(ToolExecutionService.viewImageMarker)\(dataURI)"

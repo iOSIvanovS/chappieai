@@ -8,8 +8,9 @@ import Foundation
 
 extension FileSystemManager {
 
-    /// Max image size accepted by view_image — keeps request payloads reasonable.
-    static let maxImageBytes = 5 * 1024 * 1024
+    /// Largest source file read into memory. This is only a guard against absurd files: what goes to the
+    /// model is the downscaled copy (ImageDownscaler), whose size does not depend on the original's.
+    static let maxImageBytes = 50 * 1024 * 1024
 
     /// Reads an image file as raw bytes + its MIME type, resolved by extension.
     /// Same path-traversal guard as readFile() — routes through validateAndResolvePath().

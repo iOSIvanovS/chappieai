@@ -2,8 +2,8 @@
 // ChappieCore
 //
 // Implements fetch_attachment and send_attachment tool execution.
-// MimeCategory classifies file types for routing: image → base64, Office → MCP ZIP patch,
-// PDF/text → plain read, other → base64 fallback.
+// MimeCategory classifies file types for routing: image → downscaled image part, Office → MCP ZIP patch,
+// PDF/text → plain read, other → size and type only.
 //
 // WHY CLOSURES: AttachmentStore lives in the Chappie app target, not in ChappieCore.
 // Closures are registered at startup via registerAttachmentHandlers() and bridge the boundary.
@@ -77,10 +77,17 @@ extension ToolExecutionService {
 
         switch mimeCategory {
         case .image(let mimeString):
-            guard let data = try? Data(contentsOf: url) else {
+            // Same route as view_image: downscaled, and returned behind the image marker so the
+            // orchestrator shows it to the model as a real image instead of base64 text.
+            guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+                  size <= FileSystemManager.maxImageBytes,
+                  let data = try? Data(contentsOf: url) else {
                 return "Error: Could not read image at \(url.path)"
             }
-            return "data:\(mimeString);base64,\(data.base64EncodedString())"
+            guard let dataURI = ImageDownscaler.dataURI(for: data, mimeType: mimeString) else {
+                return "Error: Image \(url.lastPathComponent) could not be decoded or prepared for sending."
+            }
+            return "\(ToolExecutionService.viewImageMarker)\(dataURI)"
 
         case .officeDocument, .pdf:
             // Delegate to MCP which has ZIPFoundation and pdftotext available.
@@ -94,10 +101,11 @@ extension ToolExecutionService {
             return text
 
         case .other:
-            guard let data = try? Data(contentsOf: url) else {
-                return "Error: Could not read file at \(url.path)"
-            }
-            return "data:application/octet-stream;base64,\(data.base64EncodedString())"
+            // Never base64 as text: a few MB of it is millions of tokens and the model cannot use it.
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            return "Attachment \(url.lastPathComponent): type .\(ext.isEmpty ? "unknown" : ext), "
+                + "\(OutputGuard.formatSize(size)). This file type cannot be read as text; "
+                + "tell the user it is not supported for reading."
         }
     }
 

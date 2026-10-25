@@ -68,6 +68,9 @@ ChappieCore/
         ├── ProjectStore.swift          # downgradeAllProjectsToAdvisor() only — no CRUD
         ├── ProvidersRemoteService.swift # Fetches + caches providers.json from GitHub
         ├── SaveQueue.swift             # Ordered write queue; failed write pauses until Retry/Skip
+        ├── ImagePipeline/
+        │   ├── ImageDownscaler.swift   # THE one place an image becomes a request part: long side ≤ 2000 px, JPEG, EXIF + alpha handled, on-disk cache of the downscaled copy
+        │   └── ImageValve.swift        # Emergency valve: past 40 images per request the OLDEST become a text note (normally inactive)
         ├── OutputGuard/
         │   ├── OutputGuard.swift       # THE size gate for every tool result (200 KB read / 100 KB command), oversize notice
         │   └── OutputCapture.swift     # Memory-capped collector for running commands (keeps head + tail window, counts all bytes)
@@ -495,6 +498,26 @@ folded into it). Only the model request is repeated; tools run outside the loop.
 
 ---
 
+## 12a. ImagePipeline — images sent to a model
+
+> **RULE: every image that enters a request goes through `ImageDownscaler`.** Providers bill an image by pixels,
+> not bytes, so the cap is on the long side (2000 px), and the result is re-encoded as JPEG (alpha flattened on
+> white, EXIF rotation applied, animated GIF → first frame). Small images (≤ 2000 px and ≤ 1.5 MB) pass untouched.
+
+- Callers: attachment encoding in the app (`ChappieViewModel+Multimodal.imagePart`, used for both the current
+  message and history rebuilds), `view_image`, and `fetch_attachment` for images.
+- The original file is never modified. For attachments the downscaled copy is cached at
+  `Application Support/Chappie/ImageCache/<attachment id>.jpg` (outside the attachment folder, because
+  `AttachmentStore.resolve` returns the first file of that folder) and reused while the original is not newer.
+- **All images stay in the history** (decision: the model may compare images across the whole window); the downscale
+  is the saving. `ImageValve` is only a safety net against provider limits on image count / request size.
+- `view_image` and `fetch_attachment` return an image behind `ToolExecutionService.viewImageMarker`; only the tools in
+  `imageResultTools` are honoured, so a text file that imitates the marker is judged as ordinary text.
+- `fetch_attachment` for any other binary type returns only size and type, never base64 text.
+- Source files up to 50 MB are read (`FileSystemManager.maxImageBytes`); this only guards memory.
+
+Tests: `ImagePipelineTests`.
+
 ## 12b. OutputGuard — the one size gate for tool results
 
 > **RULE FOR ANY NEW TOOL: its result must leave through `ToolExecutionService.execute`.** That method wraps
@@ -577,4 +600,5 @@ runaway, end-to-end through `execute`).
 | 2026-10 | Tool arguments (backlog 8): `ToolArguments.parse` replaces strict `[String:String]` decoding in `authorize()`. Numbers/bools are stringified, null dropped, nested values become JSON text, double-encoded objects unwrapped; unreadable JSON / non-objects are refused with an explanation instead of silently becoming empty arguments (which used to lose `project`). Covered by ToolArgumentsTests (11). |
 | 2026-10 | Unified LLM retry (backlog 13): `LLMRetryRunner` + classifier replace the stall/timeout special cases; HTTP 5xx/429 and network drops are retried with backoff measured from error arrival; streaming error bodies are read; mid-stream cuts continue the partial answer; progress shown in the action bar. Removed `RequestLog` and the diagnostic request (hardcoded Russian). Covered by LLMRetryTests (33 cases). |
 | 2026-10 | OutputGuard (backlog 10b-1): one gate in `ToolExecutionService.execute` refuses oversized tool results (200 KB read / 100 KB command, measured on prepared UTF-8 text) with a notice instead of a cut piece; `OutputCapture` caps memory for running commands; `read_file` checks size before loading. Covered by OutputGuardTests (18). |
+| 2026-10 | ImagePipeline (backlog 10b-2a): `ImageDownscaler` caps every image sent to a model at 2000 px / JPEG with an on-disk cache for attachments; `view_image` and `fetch_attachment` return real images (marker restricted to `imageResultTools`); `fetch_attachment` no longer returns base64 text; `ImageValve` guards provider image-count limits. Covered by ImagePipelineTests (13). |
 | 2026-08 | Backup import UI shipped in app layer (Chappie/architecture.md): BackupImportSheet two-step confirmation (decrypt/preview, then explicit destructive "Restore Now"), reachable from SettingsView and from OnboardingView welcome step as a "Restore from Backup" shortcut that skips the whole provider setup wizard. |
