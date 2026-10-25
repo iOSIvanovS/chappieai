@@ -38,8 +38,7 @@ final class DocumentTools: Sendable {
             return readZipXML(at: fullPath, entries: ["word/document.xml"], format: "Word (.docx)",
                               mediaFolders: ["word/media/"])
         case "xlsx":
-            return readZipXML(at: fullPath, entries: ["xl/sharedStrings.xml", "xl/worksheets/sheet1.xml"], format: "Excel (.xlsx)",
-                              mediaFolders: ["xl/media/"])
+            return readExcel(at: fullPath)
         case "pptx":
             return readZipXMLPattern(at: fullPath, prefix: "ppt/slides/slide", format: "PowerPoint (.pptx)",
                                      mediaFolders: ["ppt/media/"])

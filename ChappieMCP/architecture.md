@@ -43,6 +43,7 @@ ChappieMCP/
         ├── PathGuard.swift            # Byte-identical copy of ChappieCore's PathGuard (parity test) — project containment
         ├── LocalizationTools.swift    # loc_* tools (Xcode / xcstrings only); create/rename/delete accept only .xcstrings
         └── DocumentTools/             # read_document, write_document (Office formats via ZIPFoundation)
+            ├── DocumentTools+Excel.swift  # readExcel: workbook.xml + sharedStrings + ALL worksheets in natural order
             └── DocumentTools+Media.swift  # OfficeMediaCollector: pictures of docx/pptx/xlsx/odt → temp folder + [image N] XML comments
 ```
 
@@ -218,7 +219,7 @@ reads and deletes the folder; folders older than an hour (a crash) are pruned on
 
 | Tool | Purpose |
 |------|---------|
-| `read_document` | Extract primary XML/text from Office document |
+| `read_document` | Extract XML/text from an Office document (Excel: every sheet; the size gate of the app still applies, 200 KB of text) |
 | `write_document` | Replace primary XML entry and save (or save as new file) |
 
 **Supported formats:**
@@ -226,7 +227,7 @@ reads and deletes the folder; folders older than an hour (a crash) are pruned on
 | Format | Read | Write | Primary entry |
 |---|---|---|---|
 | `.docx` | ✅ | ✅ | `word/document.xml` |
-| `.xlsx` | ✅ | ✅ | `xl/worksheets/sheet1.xml` |
+| `.xlsx` | ✅ all sheets | ✅ one entry per call | read: `xl/workbook.xml` (sheet names), `xl/sharedStrings.xml`, every `xl/worksheets/sheet*.xml` (natural order: sheet2 before sheet10). write default: `sheet1.xml`; other sheets via `entry_name` |
 | `.pptx` | ✅ | ✅ | `ppt/slides/slide*.xml` |
 | `.odt` | ✅ | ✅ | `content.xml` |
 | `.rtf` | ✅ | ✅ | plain text (no ZIP) |
