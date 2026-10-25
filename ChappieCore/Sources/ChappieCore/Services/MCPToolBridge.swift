@@ -197,8 +197,13 @@ public actor MCPToolBridge {
                            | UInt32(responseHeader[2]) << 8
                            | UInt32(responseHeader[3])
 
-        guard responseLength > 0, responseLength < 10_000_000 else {
+        guard responseLength > 0 else {
             return .answered("❌ Invalid response length from server: \(responseLength)")
+        }
+        // Far above any OutputGuard limit: not read at all (the socket closes on return), the model
+        // gets the same "too large" notice as for any other oversized result.
+        guard responseLength < 10_000_000 else {
+            return .answered(OutputGuard.oversizeNotice(toolName: tool, bytes: Int(responseLength)))
         }
 
         var responseBytes = [UInt8](repeating: 0, count: Int(responseLength))

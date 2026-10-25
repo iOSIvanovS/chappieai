@@ -228,7 +228,7 @@ public actor ShellSession {
                 guard box.markResumedIfNeeded() else { return }
                 handle.readabilityHandler = nil
                 box.markCancelled()
-                let partial = String(data: box.currentAccumulated(), encoding: .utf8) ?? ""
+                let partial = box.capture.text()
                 continuation.resume(returning: ShellResult(
                     output: "🛑 Command cancelled by the user; the shell session was stopped.\nPartial output:\n\(partial)",
                     exitCode: -1
@@ -237,16 +237,18 @@ public actor ShellSession {
             handle.readabilityHandler = { fh in
                 let chunk = fh.availableData
                 guard !chunk.isEmpty else { return }
-                let snapshot = box.appendChunk(chunk)
+                // Only the trailing window is decoded to look for the sentinel; the capture itself
+                // stops storing after OutputGuard.captureCap, so a runaway command cannot grow memory.
+                let tail = box.capture.append(chunk)
                 // Stream raw chunk immediately for live UI — sentinel/exit-code
                 // noise is stripped only from the final parsed result, not here.
                 if let chunkText = String(data: chunk, encoding: .utf8) {
                     onOutput?(chunkText)
                 }
-                if let text = String(data: snapshot, encoding: .utf8), text.contains(sentinel) {
+                if tail.contains(sentinel) {
                     guard box.markResumedIfNeeded() else { return }
                     handle.readabilityHandler = nil
-                    continuation.resume(returning: ShellSession.parseOutput(text, sentinel: sentinel))
+                    continuation.resume(returning: ShellSession.parseOutput(box.capture, sentinel: sentinel))
                 }
             }
 
@@ -256,7 +258,7 @@ public actor ShellSession {
                 guard box.markResumedIfNeeded() else { return }
                 handle.readabilityHandler = nil
                 box.markTimedOut()
-                let partial = String(data: box.currentAccumulated(), encoding: .utf8) ?? ""
+                let partial = box.capture.text()
                 continuation.resume(returning: ShellResult(
                     output: "⏱️ Command timed out after \(Int(timeout))s.\nPartial output:\n\(partial)",
                     exitCode: -1
@@ -279,10 +281,15 @@ public actor ShellSession {
 
     /// Extracts clean output and exit code from sentinel-wrapped output.
     /// Static + nonisolated so it can be called from Task.detached without capturing self.
-    private static func parseOutput(_ raw: String, sentinel: String) -> ShellResult {
+    static func parseOutput(_ capture: OutputCapture, sentinel: String) -> ShellResult {
+        // Normal case: everything fit, parse the whole text.
+        // Truncated case: the middle was not stored, so the exit code is read from the tail window and
+        // the stored head is returned with the size marker; OutputGuard then replaces it with a notice.
+        let truncated = capture.isTruncated
+        let raw = truncated ? capture.tailText : capture.headText
+
         // Split on sentinel — take everything before it.
-        let parts = raw.components(separatedBy: sentinel)
-        let output = parts.first ?? raw
+        let output = raw.components(separatedBy: sentinel).first ?? raw
 
         // Extract EXIT_CODE line injected after command.
         var exitCode = 0
@@ -291,9 +298,13 @@ public actor ShellSession {
             if line.hasPrefix("EXIT_CODE:"),
                let code = Int(line.dropFirst("EXIT_CODE:".count).trimmingCharacters(in: .whitespaces)) {
                 exitCode = code
-            } else {
+            } else if !truncated {
                 cleanLines.append(line)
             }
+        }
+        if truncated {
+            let stored = capture.headText + "\n" + OutputGuard.truncationMarker(totalBytes: capture.totalBytes)
+            return ShellResult(output: stored, exitCode: exitCode)
         }
         let cleanOutput = cleanLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -308,7 +319,8 @@ public actor ShellSession {
 /// fires synchronously from a GCD dispatch source, not from an async context.
 private final class SentinelReadBox: @unchecked Sendable {
     private let lock = NSLock()
-    private var accumulated = Data()
+    /// Output collector with its own lock and a memory cap (see OutputCapture).
+    let capture = OutputCapture()
     private var resumed = false
     private var timedOut = false
     private var cancelled = false
@@ -335,20 +347,6 @@ private final class SentinelReadBox: @unchecked Sendable {
 
     func markCancelled() { lock.withLock { cancelled = true } }
     func wasCancelled() -> Bool { lock.withLock { cancelled } }
-
-    /// Appends a chunk and returns the current full snapshot.
-    func appendChunk(_ chunk: Data) -> Data {
-        lock.lock()
-        defer { lock.unlock() }
-        accumulated.append(chunk)
-        return accumulated
-    }
-
-    func currentAccumulated() -> Data {
-        lock.lock()
-        defer { lock.unlock() }
-        return accumulated
-    }
 
     /// Returns true only the first time it's called — guards against double-resume
     /// when both the readabilityHandler and the watchdog race to finish.

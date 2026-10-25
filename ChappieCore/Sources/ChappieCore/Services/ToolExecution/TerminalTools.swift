@@ -166,7 +166,10 @@ extension ToolExecutionService {
             return "🚫 Command blocked: contains dangerous pattern '\(pattern)'."
         }
         let cappedTimeout = ShellSession.cappedTimeout(for: command, requested: timeout)
-        return await runLocalCommand(command, timeout: cappedTimeout, onOutput: onOutput)
+        let result = await runLocalCommand(command, timeout: cappedTimeout, onOutput: onOutput)
+        // This result becomes a chat message that later travels to the model as history, so it
+        // goes through the same size gate as a tool result.
+        return OutputGuard.apply(toolName: "run_terminal", output: result)
     }
 
     private func runLocalCommand(
@@ -263,16 +266,15 @@ extension ToolExecutionService {
                 // WHY accumulate via lock instead of readDataToEndOfFile: readabilityHandler
                 // fires live as chunks arrive over the SSH pipe, enabling onOutput streaming
                 // for the live terminal UI. Final result is still built from full accumulation.
-                let accumulatedLock = NSLock()
-                nonisolated(unsafe) var outAccumulated = Data()
-                nonisolated(unsafe) var errAccumulated = Data()
+                // OutputCapture stops storing past OutputGuard.captureCap, so a runaway remote command
+                // cannot grow memory; the real byte count is kept for the oversize notice.
+                let outCapture = OutputCapture()
+                let errCapture = OutputCapture()
 
                 outPipe.fileHandleForReading.readabilityHandler = { handle in
                     let chunk = handle.availableData
                     guard !chunk.isEmpty else { return }
-                    accumulatedLock.lock()
-                    outAccumulated.append(chunk)
-                    accumulatedLock.unlock()
+                    outCapture.append(chunk)
                     if let chunkText = String(data: chunk, encoding: .utf8) {
                         onOutput?(chunkText)
                     }
@@ -280,9 +282,7 @@ extension ToolExecutionService {
                 errPipe.fileHandleForReading.readabilityHandler = { handle in
                     let chunk = handle.availableData
                     guard !chunk.isEmpty else { return }
-                    accumulatedLock.lock()
-                    errAccumulated.append(chunk)
-                    accumulatedLock.unlock()
+                    errCapture.append(chunk)
                     if let chunkText = String(data: chunk, encoding: .utf8) {
                         onOutput?(chunkText)
                     }
@@ -324,17 +324,10 @@ extension ToolExecutionService {
                 outPipe.fileHandleForReading.readabilityHandler = nil
                 errPipe.fileHandleForReading.readabilityHandler = nil
 
-                // WHY a sync helper: NSLock.lock()/unlock() are marked noasync in Swift 6 —
-                // calling them directly inside an async function body is a compile error
-                // regardless of await points. Wrapping in a plain sync closure sidesteps that.
-                func readAccumulated() -> (String, String) {
-                    accumulatedLock.lock()
-                    defer { accumulatedLock.unlock() }
-                    let out = String(data: outAccumulated, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    let err = String(data: errAccumulated, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    return (out, err)
-                }
-                let (stdout, stderr) = readAccumulated()
+                // text() already carries the size marker when the stream was cut (OutputGuard sums the
+                // markers of stdout and stderr).
+                let stdout = outCapture.text().trimmingCharacters(in: .whitespacesAndNewlines)
+                let stderr = errCapture.text().trimmingCharacters(in: .whitespacesAndNewlines)
                 let exitCode = process.terminationStatus
 
                 print("[SSHTools] \(exitCode == 0 ? "✅" : "❌") Exit \(exitCode) from \(finalTarget)")

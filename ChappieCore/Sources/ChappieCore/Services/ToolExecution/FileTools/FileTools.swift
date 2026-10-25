@@ -30,6 +30,12 @@ extension ToolExecutionService {
                   let path = args["path"] else {
                 return "Error: Invalid arguments for read_file"
             }
+            // Size check before loading: a 50 MB file must not be read into memory just to be refused.
+            // Bytes on disk equal the UTF-8 text size for a text file, so this is the prepared size.
+            if let size = try await fileSystem.fileByteSize(at: path, projectName: args["project"]),
+               size > OutputGuard.readLimit {
+                return OutputGuard.oversizeNotice(toolName: name, bytes: size)
+            }
             return try await fileSystem.readFile(at: path, projectName: args["project"])
 
         case "write_file":

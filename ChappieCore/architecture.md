@@ -57,6 +57,7 @@ ChappieCore/
         ├── FileSystemManager+Search.swift      # searchInFile, searchInProject, grep helpers
         ├── FileSystemManager+Patch.swift       # patchFile (exactlyOne policy), getFileInfo
         ├── FileSystemManager+Image.swift       # readImageData (view_image) — raw bytes, no UTF-8 decode
+        ├── FileSystemManager+Size.swift        # fileByteSize: size check BEFORE read_file loads the file
         ├── PathGuard.swift                     # Project containment: rejects "..", absolute paths, symlinks leaving the root
         ├── MCPToolBridge.swift         # Bridge to ChappieMCP via Unix socket; asks the app to restart the helper and retries once if nobody listens
         ├── MCPHelper/
@@ -67,6 +68,9 @@ ChappieCore/
         ├── ProjectStore.swift          # downgradeAllProjectsToAdvisor() only — no CRUD
         ├── ProvidersRemoteService.swift # Fetches + caches providers.json from GitHub
         ├── SaveQueue.swift             # Ordered write queue; failed write pauses until Retry/Skip
+        ├── OutputGuard/
+        │   ├── OutputGuard.swift       # THE size gate for every tool result (200 KB read / 100 KB command), oversize notice
+        │   └── OutputCapture.swift     # Memory-capped collector for running commands (keeps head + tail window, counts all bytes)
         ├── ProcessControl/
         │   └── ProcessTree.swift       # Stop a process + descendants (SIGTERM, SIGKILL after grace); ProcessCanceller; copy lives in ChappieMCP
         ├── ShellSession.swift          # Persistent bash session (per-thread, run_terminal)
@@ -392,7 +396,7 @@ real sessions around 200–300K; (3) tool results are not carried between reques
 and attachments), and within one run provider prompt caching absorbs the growth; (4) the 500-step cap was a
 loop guard, but real runaway protection is the repeated-call guard (`lastToolSignature`), the Stop button
 and the retry policy. The agentic loop therefore ends only on a final answer, cancellation or a fatal error.
-Oversized single tool results are handled per tool (see tool output thresholds), not by a global cap.
+Oversized single tool results are handled by one gate, `OutputGuard` (section 12b), not by a global cap.
 
 ---
 
@@ -421,9 +425,9 @@ Split across 4 files:
 process(prompt, history, config, memoryContext)
   → systemPrompt (via ThreadSession)
   → buildContextWindow(history, config)
-  → loop (maxOrchestratorSteps = 500):
+  → loop (no step cap; ends on final answer, Stop, or a fatal error):
       → streamWithRetry() → aiClient.streamRequestWithTools()
-      → if tool_use → toolService.execute() (authorize via ToolPolicy inside)
+      → if tool_use → toolService.execute() (authorize via ToolPolicy, size-check via OutputGuard)
       → if text → return AIOrchestratorResult
 ```
 
@@ -491,6 +495,47 @@ folded into it). Only the model request is repeated; tools run outside the loop.
 
 ---
 
+## 12b. OutputGuard — the one size gate for tool results
+
+> **RULE FOR ANY NEW TOOL: its result must leave through `ToolExecutionService.execute`.** That method wraps
+> the private `executeUnguarded` and passes every result through `OutputGuard.apply`. Never call a tool's
+> implementation (or `mcpBridge.execute`) from somewhere else and hand its text to the model — that would
+> bypass the size gate. A tool that runs a process and returns its output (output size unknown until it
+> has run) must also be added to `OutputGuard.commandTools`; a test checks that this set stays a subset of the
+> classified tools. Everything else is covered automatically as a "read" result.
+
+What is measured is the **prepared result** (UTF-8 bytes of the text that would go to the model), not the size
+of a source file: a 10 MB Word file with 100 KB of text passes, a 1 MB plain-text novel does not. Images are not
+counted here (`view_image` carries a data URI that the orchestrator turns into a real image part; the image
+pipeline has its own rules).
+
+| Kind | Tools | Limit |
+|---|---|---|
+| read | everything not listed as command: files, documents, search, memory, web, attachments, `read_build_log` | 200 KB |
+| command | `run_terminal`, `run_ssh`, `build_project`, `run_tests`, `git_*` | 100 KB |
+
+**Over the limit nothing is cut.** No head/tail/middle: the model gets a notice with the real size and the limit
+and is told to ask the user for less data (read) or to narrow the command and check state before re-running
+(command: it has already executed, so refusing the result is not "undoing" it). `web_fetch` keeps its own
+100 000-character truncation (decided separately).
+
+Memory safety: `read_file` asks `fileByteSize` first, so a 50 MB file is refused without being loaded.
+Running commands collect output through `OutputCapture` (`ShellSession`, `run_ssh`): storage stops at
+`captureCap` (200 KB), only the byte count keeps growing, and a tail window is kept so the exit code and the
+end-of-output sentinel are still found. A cut stream appends `[[CHAPPIE_OUTPUT_TRUNCATED:<bytes>]]`; the gate
+sums the markers (stdout + stderr) and judges the real size. `MCPToolBridge` refuses a helper response
+over 10 MB with the same notice. The confirmed-terminal path (`executeConfirmedCommand`) is gated too, since
+its result becomes a chat message that later travels to the model as history.
+
+Not yet covered (helper side, ChappieMCP has no test target): `ProcessRunner` still reads build/git output
+to the end in memory. Its callers already return a bounded summary (build/test: last lines + errors), and
+git output is small in practice; a cap there is a candidate for a later pass. Images are item 10b-2.
+
+Tests: `OutputGuardTests` (thresholds on the byte boundary, UTF-8 counting, notices, capture, real shell
+runaway, end-to-end through `execute`).
+
+---
+
 ## 13. ShellSession + TerminalTools
 
 `ShellSession` — persistent bash process per thread ID.
@@ -531,4 +576,5 @@ folded into it). Only the model request is repeated; tools run outside the loop.
 | 2026-10 | Access control unified (backlog 4): `ToolPolicy` (one table, deny by default, per-target-project rights) + `ToolAuthorization` (target resolution, exposure filter) replace `ToolAccessController` (merged "most permissive" rights, fail-open) and `checkToolAccess`. loc_* are now gated by role and Xcode flag and carry a `project` argument that restricts the helper's path roots. Removed: ToolPermissions, ThreadSession.toolPermissions, v2ToolPermissions, the dead `attach_file` case. |
 | 2026-10 | Tool arguments (backlog 8): `ToolArguments.parse` replaces strict `[String:String]` decoding in `authorize()`. Numbers/bools are stringified, null dropped, nested values become JSON text, double-encoded objects unwrapped; unreadable JSON / non-objects are refused with an explanation instead of silently becoming empty arguments (which used to lose `project`). Covered by ToolArgumentsTests (11). |
 | 2026-10 | Unified LLM retry (backlog 13): `LLMRetryRunner` + classifier replace the stall/timeout special cases; HTTP 5xx/429 and network drops are retried with backoff measured from error arrival; streaming error bodies are read; mid-stream cuts continue the partial answer; progress shown in the action bar. Removed `RequestLog` and the diagnostic request (hardcoded Russian). Covered by LLMRetryTests (33 cases). |
+| 2026-10 | OutputGuard (backlog 10b-1): one gate in `ToolExecutionService.execute` refuses oversized tool results (200 KB read / 100 KB command, measured on prepared UTF-8 text) with a notice instead of a cut piece; `OutputCapture` caps memory for running commands; `read_file` checks size before loading. Covered by OutputGuardTests (18). |
 | 2026-08 | Backup import UI shipped in app layer (Chappie/architecture.md): BackupImportSheet two-step confirmation (decrypt/preview, then explicit destructive "Restore Now"), reachable from SettingsView and from OnboardingView welcome step as a "Restore from Backup" shortcut that skips the whole provider setup wizard. |
