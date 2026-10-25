@@ -7,7 +7,7 @@ extension AIOrchestrator {
     func executeToolCalls(
         _ toolCalls: [AIToolCall],
         sessionHistory: inout [AIMessage],
-        lastToolSignature: inout String?,
+        loopGuard: inout LoopGuard,
         collectedOutputFiles: inout [String],
         onToolCall: @Sendable (String, String) -> Void,
         onTerminalOutput: (@Sendable (String) -> Void)? = nil,
@@ -24,17 +24,13 @@ extension AIOrchestrator {
             let isTerminalTool = terminalToolNames.contains(toolName)
             let resultString: String
 
-            if lastToolSignature == signature {
-                // Identical call twice in a row = infinite loop guard.
-                resultString = """
-                SYSTEM ERROR: You just called `\(toolName)` with the exact same arguments right before this. \
-                This is an infinite loop. DO NOT REPEAT THE SAME ACTION. USE A DIFFERENT APPROACH.
-                """
-                print("[AIOrchestrator] Loop detected: \(toolName) called twice in a row with same args")
+            if loopGuard.shouldBlock(signature: signature) {
+                // 3rd identical call whose result never changed: nothing new can come out of it.
+                resultString = LoopGuard.blockedMessage(toolName: toolName)
+                print("[AIOrchestrator] Loop guard: \(toolName) blocked (3rd identical call, identical results)")
             } else {
                 // Access control happens inside toolService.execute (ToolPolicy): denied calls come
                 // back as an explanatory message, so the tool_call always gets its tool result.
-                lastToolSignature = signature
                 onToolCall(toolName, targetPath)
                 if isTerminalTool {
                     onTerminalStart?(extractCommand(from: arguments))
@@ -43,6 +39,7 @@ extension AIOrchestrator {
                 if isTerminalTool {
                     onTerminalFinish?()
                 }
+                loopGuard.record(signature: signature, result: resultString)
                 // Stop was pressed while the tool ran: the tool already stopped its processes and
                 // returned. Leave the loop now instead of sending its "cancelled" text to the model
                 // and paying for another request (and running the remaining tool calls of this step).

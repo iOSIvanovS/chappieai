@@ -134,7 +134,7 @@ public actor AIOrchestrator {
         var totalCost: Double = 0.0
         var latestBalance: Double? = nil
         var stepCount = 0
-        var lastToolSignature: String? = nil
+        var loopGuard = LoopGuard()
         var collectedOutputFiles: [String] = []
 
         // No step cap by design: the loop ends on a final answer, Stop/cancel, or a fatal error.
@@ -179,7 +179,7 @@ public actor AIOrchestrator {
                 try await executeToolCalls(
                     toolCalls,
                     sessionHistory: &sessionHistory,
-                    lastToolSignature: &lastToolSignature,
+                    loopGuard: &loopGuard,
                     collectedOutputFiles: &collectedOutputFiles,
                     onToolCall: onToolCall,
                     onTerminalOutput: onTerminalOutput,

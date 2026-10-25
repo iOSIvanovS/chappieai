@@ -50,6 +50,7 @@ ChappieCore/
         │   └── RetryPolicy.swift           # 5 retries, 1/2/4/8/16 s (cap 30) + jitter; RetryStatus for the UI
         ├── AIOrchestrator+ContextWindow.swift    # buildContextWindow, estimateTokens
         ├── AIOrchestrator+ToolExecution.swift    # executeToolCalls, parseOutputFilePath
+        ├── LoopGuard.swift                       # 3rd identical call with an unchanged result is blocked, with an explanation
         ├── AIProviderStore.swift       # CRUD for AI providers + Keychain (multi-key)
         ├── AppSettingsStore.swift      # Actor-based CRUD for singleton AppSettings
         ├── FileSystemManager.swift             # Secure FS: init, routing, read/write/delete/move
@@ -402,7 +403,7 @@ count only. Reasons: (1) the old `tokenBudget = messages × 500` was never enfor
 settings UI as a misleading number; (2) model windows are ~1M tokens and mandatory task decomposition keeps
 real sessions around 200–300K; (3) tool results are not carried between requests (only user/assistant text
 and attachments), and within one run provider prompt caching absorbs the growth; (4) the 500-step cap was a
-loop guard, but real runaway protection is the repeated-call guard (`lastToolSignature`), the Stop button
+loop guard, but real runaway protection is the repeated-call guard (`LoopGuard`, below), the Stop button
 and the retry policy. The agentic loop therefore ends only on a final answer, cancellation or a fatal error.
 Oversized single tool results are handled by one gate, `OutputGuard` (section 12b), not by a global cap.
 
@@ -428,6 +429,11 @@ Split across 4 files:
 - `AIOrchestrator+Retry.swift` — `streamWithRetry`, adapter over `LLMRetryRunner` (see "LLM request retry")
 - `AIOrchestrator+ContextWindow.swift` — `buildContextWindow`, `estimateTokens`
 - `AIOrchestrator+ToolExecution.swift` — `executeToolCalls`, `parseOutputFilePath`
+- `LoopGuard.swift` — repeated-call guard. The 3rd identical call (same tool + arguments) in a row is blocked,
+  but only while every previous result was identical (result hash compared); a changed result is progress and
+  restarts the count, so polling `git_status` or re-checking a build is fine. A blocked call is not recorded
+  (it did not run). The message explains why and what to do. Known gap, accepted: a loop whose result differs
+  each time (a timestamp in the output) is not caught — only Stop ends it.
 
 ```
 process(prompt, history, config, memoryContext)
