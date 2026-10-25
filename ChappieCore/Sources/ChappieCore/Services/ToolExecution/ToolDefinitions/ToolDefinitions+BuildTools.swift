@@ -50,7 +50,7 @@ extension ToolExecutionService {
 
             tools.append(AITool(function: AIFunctionDefinition(
                 name: "read_build_log",
-                description: "Read the full log of the last build or test run.",
+                description: "Read the diagnostic lines of the last build or test run log: only lines containing 'error:' or 'failed' (case-insensitive, duplicates removed, with line numbers). The full log is not returned — it is mostly progress noise.",
                 parameters: AIToolParameters(
                     properties: ["project": AIToolProperty(type: "string", description: projectArgDesc)],
                     required: []

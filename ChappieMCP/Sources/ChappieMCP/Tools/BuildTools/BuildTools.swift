@@ -176,9 +176,33 @@ final class BuildTools: Sendable {
 
     func readLastLog() async -> ToolResult {
         let logURL = URL(fileURLWithPath: buildLogPath)
-        guard let content = try? String(contentsOf: logURL, encoding: .utf8) else {
+        // Lossy decoding: a build log may contain stray non-UTF-8 bytes from tools; failing the
+        // whole read because of one bad byte would hide the very errors we want to see.
+        guard let data = try? Data(contentsOf: logURL) else {
             return .failure("Build log not found. Run build_project or run_tests first.")
         }
-        return .success(content)
+        return .success(Self.errorLines(inLog: String(decoding: data, as: UTF8.self), totalBytes: data.count))
+    }
+
+    /// Only the lines that matter for diagnosis. A full xcodebuild log is hundreds of KB of
+    /// progress noise; the model needs failures, and the run_tests answer already carries the summary.
+    static func errorLines(inLog log: String, totalBytes: Int) -> String {
+        var seen = Set<String>()
+        var hits: [String] = []
+        var number = 0
+        for line in log.split(separator: "\n", omittingEmptySubsequences: false) {
+            number += 1
+            let lower = line.lowercased()
+            guard lower.contains("error:") || lower.contains("failed") else { continue }
+            let text = line.trimmingCharacters(in: .whitespaces)
+            // The same diagnostic repeats once per architecture/target; one copy is enough.
+            if seen.insert(text).inserted { hits.append("\(number): \(text)") }
+        }
+        let kb = String(format: "%.1f", Double(totalBytes) / 1024)
+        if hits.isEmpty {
+            return "No lines containing 'error:' or 'failed' in the last log (\(kb) KB, \(number) lines)."
+        }
+        return "Lines containing 'error:' or 'failed' (\(hits.count) of \(number) lines, full log \(kb) KB):\n"
+            + hits.joined(separator: "\n")
     }
 }
