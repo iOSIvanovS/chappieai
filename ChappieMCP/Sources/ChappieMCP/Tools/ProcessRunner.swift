@@ -30,6 +30,10 @@ struct ProcessRun: Sendable {
 
 enum ProcessRunner {
 
+    /// PATH for every child process. It must contain /bin and the sbin dirs: build scripts and git
+    /// hooks call sleep, cat, rm, ls from /bin, and a PATH without it fails with "command not found".
+    static let toolSearchPath = "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:/usr/local/go/bin"
+
     static func run(
         executable: String,
         args: [String],

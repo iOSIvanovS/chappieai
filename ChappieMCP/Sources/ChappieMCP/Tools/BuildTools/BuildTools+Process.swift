@@ -63,7 +63,7 @@ extension BuildTools {
             workingDirectory: workingDirectory,
             environment: [
                 "HOME": NSHomeDirectory(),
-                "PATH": "/usr/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin/swift:/usr/local/go/bin",
+                "PATH": ProcessRunner.toolSearchPath,
                 "LANG": "en_US.UTF-8",
                 "NSUnbufferedIO": "YES"
             ],

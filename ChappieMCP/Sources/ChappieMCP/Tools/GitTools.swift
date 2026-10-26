@@ -317,7 +317,7 @@ final class GitTools: Sendable {
         // NOTE: GIT_CONFIG_NOSYSTEM removed — it blocked SSH credential helpers on some setups
         var env: [String: String] = [
             "HOME": NSHomeDirectory(),
-            "PATH": "/usr/bin:/usr/local/bin:/opt/homebrew/bin",
+            "PATH": ProcessRunner.toolSearchPath,
             "LANG": "en_US.UTF-8",
             "GIT_PAGER": "cat",
             "GIT_TERMINAL_PROMPT": "0",

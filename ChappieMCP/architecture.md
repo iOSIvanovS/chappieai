@@ -111,6 +111,7 @@ Response: [4 bytes UInt32 BE length] [JSON: {"result": "...", "error": null}]
 - **Self-heal on call:** when `MCPToolBridge` cannot connect (ENOENT / ECONNREFUSED — the request never reached a helper) it asks the launcher to restart the helper once and retries once. Parallel callers share one recovery.
 - **Exit with the app:** the helper polls `getppid()` once a second and exits (removing its socket) when its parent changes — a killed app (Xcode Stop = SIGKILL) leaves no orphan. SIGTERM also cleans up. The socket file is unlinked only if its inode is still the one the helper bound, so a restart on the same path cannot delete the new helper's socket.
 - **Not automatic:** helpers left over from before this change are not killed by code.
+- **Child PATH:** every child (build, tests, git, hooks) gets `ProcessRunner.toolSearchPath`, which includes `/bin`, `/sbin`, `/usr/sbin`. The old PATH lacked `/bin`, so `sleep`, `cat`, `rm` in scripts and git hooks failed with "command not found".
 
 ### Misbehaving clients
 
