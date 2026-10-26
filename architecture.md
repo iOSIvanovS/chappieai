@@ -10,7 +10,9 @@
 ├── Chappie/                                 # UI target → see Chappie/architecture.md
 ├── ChappieCore/                             # Business logic → see ChappieCore/architecture.md
 ├── ChappieCoreTests/                        # Tests → see ChappieCoreTests/architecture.md
-├── ChappieMCP/                              # Helper process → see ChappieMCP/architecture.md
+├── ChappieMCP/                              # Helper process (thin main.swift) → see ChappieMCP/architecture.md
+├── ChappieMCPCore/                          # Helper logic as a local package → see ChappieMCP/architecture.md
+├── ChappieMCPTests/                         # Helper tests → see ChappieMCP/architecture.md
 └── Scripts/                                 # Internal maintenance scripts (not part of build)
     ├── providers_1_clear.sh                 # Initializes providers.json
     ├── providers_2_append.sh                # Appends a batch of providers/models (≤100)
@@ -27,7 +29,9 @@
 | `Chappie` | SwiftUI App | UI shell, @MainActor, @Observable ViewModel |
 | `ChappieCore` | Swift Package Library | All business logic: AI, tools, memory |
 | `ChappieCoreTests` | Unit Test Bundle | Tests for ChappieCore |
-| `ChappieMCP` | Command Line Tool | Child process: git + xcodebuild + localization |
+| `ChappieMCP` | Command Line Tool | Child process entry point (only `main.swift`) |
+| `ChappieMCPCore` | Swift Package Library (local) | All helper logic: git, build, localization, documents, socket server |
+| `ChappieMCPTests` | Unit Test Bundle | Tests for ChappieMCPCore (in `ChappieCoreTests.xctestplan`) |
 
 ---
 
@@ -82,7 +86,10 @@ ChappieCoreTests
     └── depends on → ChappieCore
 
 ChappieMCP
-    └── standalone (no ChappieCore dependency)
+    └── depends on → ChappieMCPCore (no ChappieCore dependency)
+
+ChappieMCPTests
+    └── depends on → ChappieMCPCore
 ```
 
 ---

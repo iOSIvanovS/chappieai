@@ -19,6 +19,14 @@
         "identifier" : "874865F92FC3029E00F5E876",
         "name" : "ChappieCoreTests"
       }
+    },
+    {
+      "parallelizable" : false,
+      "target" : {
+        "containerPath" : "container:Chappie.xcodeproj",
+        "identifier" : "3EBACA3A308F7D0800DC5C1F",
+        "name" : "ChappieMCPTests"
+      }
     }
   ],
   "version" : 1

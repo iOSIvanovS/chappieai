@@ -62,6 +62,14 @@ enum SocketIO {
         var sent = 0
         let total = data.count
 
+        // macOS ignores MSG_DONTWAIT on send(): a blocking socket still blocks until the whole
+        // buffer is queued, so a client that never reads would pin this thread past the deadline
+        // (reproduced: 20 MB to a silent peer never returned). O_NONBLOCK is honoured, so set it
+        // for the duration of the write and restore the original flags afterwards.
+        let originalFlags = fcntl(fd, F_GETFL)
+        if originalFlags >= 0 { _ = fcntl(fd, F_SETFL, originalFlags | O_NONBLOCK) }
+        defer { if originalFlags >= 0 { _ = fcntl(fd, F_SETFL, originalFlags) } }
+
         while sent < total {
             guard let waitMs = remainingMilliseconds(until: deadline) else { return .timedOut }
 
@@ -74,10 +82,8 @@ enum SocketIO {
             }
 
             let offset = sent
-            // MSG_DONTWAIT: a blocking send of a large buffer could stall past the deadline
-            // even though poll() reported "writable".
             let n = data.withUnsafeBytes {
-                send(fd, $0.baseAddress! + offset, total - offset, MSG_DONTWAIT)
+                send(fd, $0.baseAddress! + offset, total - offset, 0)
             }
             if n < 0 {
                 if errno == EINTR || errno == EAGAIN { continue }

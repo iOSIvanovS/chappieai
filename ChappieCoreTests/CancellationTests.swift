@@ -135,7 +135,7 @@ struct ProcessTreeTests {
     func copiesAreIdentical() throws {
         let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let core = repo.appendingPathComponent("ChappieCore/Sources/ChappieCore/Services/ProcessControl/ProcessTree.swift")
-        let mcp = repo.appendingPathComponent("ChappieMCP/Sources/ChappieMCP/Tools/ProcessTree.swift")
+        let mcp = repo.appendingPathComponent("ChappieMCPCore/Sources/ChappieMCPCore/Tools/ProcessTree.swift")
         let coreText = try String(contentsOf: core, encoding: .utf8)
         let mcpText = try String(contentsOf: mcp, encoding: .utf8)
         #expect(coreText == mcpText, "ProcessTree.swift copies drifted apart — copy the Core file over the MCP one")

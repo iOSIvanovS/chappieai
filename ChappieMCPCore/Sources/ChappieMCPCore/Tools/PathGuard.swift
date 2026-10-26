@@ -5,7 +5,7 @@
 // that lead outside a project root (CWE-22 + symlink escape).
 //
 // WHY TWO COPIES: ChappieMCP is a separate executable and cannot import ChappieCore.
-// ChappieMCP/Sources/ChappieMCP/Tools/PathGuard.swift MUST stay byte-identical to this file;
+// ChappieMCPCore/Sources/ChappieMCPCore/Tools/PathGuard.swift MUST stay byte-identical to this file;
 // PathGuardParityTests fails as soon as they drift apart.
 
 import Foundation

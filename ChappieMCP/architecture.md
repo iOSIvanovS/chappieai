@@ -27,25 +27,46 @@ Chappie.app/Contents/Helpers/ChappieMCP
 
 ```
 ChappieMCP/
-├── architecture.md
-├── main.swift                         # Entry point: reads argv, starts MCPUnixServer
-└── Sources/ChappieMCP/
+├── architecture.md                    # This file (covers the executable, ChappieMCPCore and ChappieMCPTests)
+└── Sources/ChappieMCP/main.swift      # Thin entry point: ChappieMCPHelper.run(arguments:)
+
+ChappieMCPCore/                        # Local Swift package: ALL helper logic (so tests can @testable import it)
+└── Sources/ChappieMCPCore/
+    ├── HelperEntry.swift              # HelperArguments.parse + ChappieMCPHelper.run (signals, parent watch, server start)
     ├── DevEnvironment.swift           # Mirrors ChappieCore.DevEnvironment (rawValues must stay in sync)
     ├── Server/
     │   ├── MCPHTTPServer.swift        # Unix Domain Socket server + ToolDispatcher; socket I/O on a private GCD queue
+    │   ├── MCPModels.swift            # Wire models (MCPRequest / MCPResponse)
+    │   ├── ToolDispatcher.swift       # Tool name -> implementation, project root restriction
     │   ├── ClientWatcher.swift        # poll()s the client socket while a tool runs; hang-up cancels the tool's Task
     │   └── SocketIO.swift             # poll()-based read/write with one overall deadline per transfer
     └── Tools/
         ├── ProcessRunner.swift        # Shared child-process runner: parallel pipes, timeout, cancel = stop the whole process tree
         ├── ProcessTree.swift          # Identical copy of ChappieCore's file (SIGTERM tree, SIGKILL after 2 s); parity is tested
         ├── GitTools.swift             # git_status, git_add, git_commit, git_log, git_reset, git_revert, git_checkout
-        ├── BuildTools.swift           # build_project, run_tests, read_build_log (env-aware routing)
+        ├── BuildTools/                # build_project, run_tests, read_build_log (env-aware routing)
         ├── PathGuard.swift            # Byte-identical copy of ChappieCore's PathGuard (parity test) — project containment
-        ├── LocalizationTools.swift    # loc_* tools (Xcode / xcstrings only); create/rename/delete accept only .xcstrings
+        ├── LocalizationTools/         # loc_* tools (Xcode / xcstrings only); create/rename/delete accept only .xcstrings
         └── DocumentTools/             # read_document, write_document (Office formats via ZIPFoundation)
             ├── DocumentTools+Excel.swift  # readExcel: workbook.xml + sharedStrings + ALL worksheets in natural order
             └── DocumentTools+Media.swift  # OfficeMediaCollector: pictures of docx/pptx/xlsx/odt → temp folder + [image N] XML comments
+
+ChappieMCPTests/                       # Xcode unit-test bundle (Swift Testing), in ChappieCoreTests.xctestplan
+├── ProcessRunnerTests.swift           # pipe deadlock, timeout, cancel kills the tree, non-cancellable commands
+├── SocketIOTests.swift                # deadlines for silent / dripping / non-reading peers (socketpair)
+├── GitCommandKindTests.swift          # timeout classes and cancellability of git commands
+├── HelperArgumentsTests.swift         # argv contract (mandatory socket path, env maps)
+└── OfficeMediaTests.swift             # picture extraction, markers, write-safe XML
 ```
+
+**Why the library split:** an executable target cannot be imported by a test bundle reliably, so the
+executable is only `main.swift` and everything else lives in `ChappieMCPCore`. Live scenarios that need
+real processes and sockets (parent death, client hang-up during `run_tests`) are still checked by hand on a
+temporary socket path, never on the app's own socket.
+
+**macOS socket pitfall (found by `SocketIOTests`):** `send(..., MSG_DONTWAIT)` is ignored on macOS; a blocking
+socket still blocks until the whole buffer is queued. `SocketIO.writeAll` therefore sets `O_NONBLOCK` for the
+duration of the write and restores the flags afterwards.
 
 ---
 
