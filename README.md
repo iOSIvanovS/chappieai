@@ -105,6 +105,8 @@ Chappie checks for updates automatically and installs them in the background via
 
 **System requirements:** macOS 14 Sonoma or later · Apple Silicon or Intel
 
+> **Updating from a version older than 1.0.22?** Starting with 1.0.22, the update-signing key was replaced. Installations older than 1.0.22 cannot verify the new signature, so automatic update will refuse to install it. Download the 1.0.22 DMG above once and replace the app manually — your threads, memory, and settings are kept. From 1.0.22 onwards, updates install automatically as before.
+
 ---
 
 ## First launch — Gatekeeper warning
