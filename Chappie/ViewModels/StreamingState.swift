@@ -53,6 +53,11 @@ final class StreamingState {
     // re-sent. Takes priority over the tool-call label in the action bar; nil = no retry going on.
     var retryLabel: String? = nil
 
+    // Time window the tool watchdog allows for the tool running right now (start...deadline).
+    // The action bar replaces its spinner with a pie that fills over this window (no number, no layout
+    // change, only the 16pt pie redraws once per second). nil = no tool is running.
+    var toolBudget: ClosedRange<Date>? = nil
+
     // CPU-15: balance moved here — updates during streaming without invalidating ViewModel observers.
     // nil until first response received from server.
     var currentBalance: Double? = nil
@@ -84,6 +89,7 @@ final class StreamingState {
         _throttleTask = nil
         isThinking = false
         retryLabel = nil
+        toolBudget = nil
         // currentBalance is NOT reset — it persists across requests.
     }
 }

@@ -8492,6 +8492,83 @@
         }
       }
     },
+    "input.tool_budget_help" : {
+      "comment" : "Tooltip on the thin bar at the bottom of the agent action bar; it fills while a tool runs and shows how long the tool may still take before the watchdog stops it",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "الوقت المتبقي قبل إيقاف هذه الأداة تلقائيًا"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verbleibende Zeit, bevor dieses Werkzeug automatisch gestoppt wird"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time left before this tool is stopped automatically"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tiempo restante antes de que esta herramienta se detenga automáticamente"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Temps restant avant l'arrêt automatique de cet outil"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "इस टूल के अपने-आप रुकने से पहले बचा समय"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tempo rimasto prima che questo strumento venga fermato automaticamente"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このツールが自動停止するまでの残り時間"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tempo restante antes de esta ferramenta ser parada automaticamente"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tempo restante antes de esta ferramenta ser interrompida automaticamente"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Время до автоматической остановки этого инструмента"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此工具被自动停止前的剩余时间"
+          }
+        }
+      }
+    },
     "license.activate_button" : {
       "localizations" : {
         "ar" : {

@@ -43,11 +43,15 @@ extension ChappieViewModel {
 
         // Show thinking state while the command runs.
         isThinking = true
+        setToolBudget(ToolDeadlines.seconds(tool: "run_terminal", arguments: "{}"))
 
-        Task {
+        // Held in currentRequestTask so the Stop button reaches the command like any other request.
+        currentRequestTask = Task {
             let result = await toolService.executeConfirmedCommand(command)
             await MainActor.run {
+                self.setToolBudget(nil)
                 self.isThinking = false
+                self.currentRequestTask = nil
                 self.replaceConfirmation(id: messageId, with: result)
                 self.saveMessagesIfNeeded()
             }

@@ -205,14 +205,19 @@ public actor ToolExecutionService {
 
     // MARK: - Tool execution dispatcher
 
-    /// The only entry point for running a tool. Everything a tool returns passes OutputGuard here,
-    /// so a new tool gets the size check without having to add one (see OutputGuard.swift).
+    /// The only entry point for running a tool. Everything a tool returns passes two gates here, so a
+    /// new tool gets both without registering anything: ToolWatchdog (it must answer in time, see
+    /// ToolDeadlines) and OutputGuard (its result must not be huge, see OutputGuard.swift).
     public func execute(
         call: AIToolCall,
         onOutput: (@Sendable (String) -> Void)? = nil
     ) async -> String {
-        let result = await executeUnguarded(call: call, onOutput: onOutput)
-        return OutputGuard.apply(toolName: call.function.name, output: result)
+        let name = call.function.name
+        let seconds = ToolDeadlines.seconds(tool: name, arguments: call.function.arguments)
+        let result = await ToolWatchdog.run(toolName: name, seconds: seconds) { [self] in
+            await executeUnguarded(call: call, onOutput: onOutput)
+        }
+        return OutputGuard.apply(toolName: name, output: result)
     }
 
     /// Never call this directly: it skips the output size gate.

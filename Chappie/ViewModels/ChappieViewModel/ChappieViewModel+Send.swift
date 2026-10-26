@@ -93,6 +93,9 @@ extension ChappieViewModel {
                     },
                     onRetry: { status in
                         Task { @MainActor in self.streaming.retryLabel = status?.localizedLabel }
+                    },
+                    onToolBudget: { seconds in
+                        Task { @MainActor in self.setToolBudget(seconds) }
                     }
                 )
 
@@ -170,6 +173,16 @@ extension ChappieViewModel {
 
             self.currentRequestTask = nil
         }
+    }
+
+    // MARK: - Tool time budget
+
+    /// Starts (seconds != nil) or clears the filling bar of the running tool.
+    @MainActor
+    func setToolBudget(_ seconds: TimeInterval?) {
+        guard let seconds else { streaming.toolBudget = nil; return }
+        let now = Date()
+        streaming.toolBudget = now...now.addingTimeInterval(seconds)
     }
 
     // MARK: - Cancel

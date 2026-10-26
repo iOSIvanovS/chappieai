@@ -12,7 +12,8 @@ extension AIOrchestrator {
         onToolCall: @Sendable (String, String) -> Void,
         onTerminalOutput: (@Sendable (String) -> Void)? = nil,
         onTerminalStart: (@Sendable (String) -> Void)? = nil,
-        onTerminalFinish: (@Sendable () -> Void)? = nil
+        onTerminalFinish: (@Sendable () -> Void)? = nil,
+        onToolBudget: (@Sendable (TimeInterval?) -> Void)? = nil
     ) async throws {
         let terminalToolNames: Set<String> = ["run_terminal", "run_ssh"]
 
@@ -35,7 +36,10 @@ extension AIOrchestrator {
                 if isTerminalTool {
                     onTerminalStart?(extractCommand(from: arguments))
                 }
+                // The UI shows the time the watchdog allows for this call as a filling bar.
+                onToolBudget?(ToolDeadlines.seconds(tool: toolName, arguments: arguments))
                 resultString = await toolService.execute(call: toolCall, onOutput: onTerminalOutput)
+                onToolBudget?(nil)
                 if isTerminalTool {
                     onTerminalFinish?()
                 }

@@ -21,7 +21,8 @@ import Foundation
 public actor MCPToolBridge {
 
     private let socketPath: String
-    /// Build tasks can take minutes — large timeout is intentional.
+    /// Must stay >= the longest ToolDeadlines value (build/test = 1200s), otherwise the bridge
+    /// cuts a legitimate long build before the watchdog's own deadline.
     private let timeoutSeconds: Double
 
     /// Asked to bring the helper back when a call finds nobody listening. The app's launcher
@@ -30,7 +31,7 @@ public actor MCPToolBridge {
 
     public init(
         socketPath: String = MCPSocket.currentProcessPath,
-        timeoutSeconds: Double = 600
+        timeoutSeconds: Double = 1800
     ) {
         self.socketPath = socketPath
         self.timeoutSeconds = timeoutSeconds

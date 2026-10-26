@@ -173,7 +173,11 @@ extension ToolExecutionService {
             return Self.blockedMessage(reason)
         }
         let cappedTimeout = ShellSession.cappedTimeout(for: command, requested: timeout)
-        let result = await runLocalCommand(command, timeout: cappedTimeout, onOutput: onOutput)
+        // Same watchdog as every other tool call; the clock starts now, after the user's approval.
+        let seconds = ToolDeadlines.seconds(tool: "run_terminal", arguments: "{\"timeout\":\"\(Int(cappedTimeout))\"}")
+        let result = await ToolWatchdog.run(toolName: "run_terminal", seconds: seconds) { [self] in
+            await runLocalCommand(command, timeout: cappedTimeout, onOutput: onOutput)
+        }
         // This result becomes a chat message that later travels to the model as history, so it
         // goes through the same size gate as a tool result.
         return OutputGuard.apply(toolName: "run_terminal", output: result)

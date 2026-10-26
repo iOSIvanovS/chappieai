@@ -77,6 +77,9 @@ ChappieCore/
         ├── CommandSafety/
         │   ├── CommandSafety.swift     # Safety NET against catastrophic command mistakes (rm -r on /, ~, system dirs; mkfs; dd/redirect to disks; shutdown/reboot by name; download | shell; fork bomb)
         │   └── CommandTokenizer.swift  # Small shell lexer: quotes, separators, pipes, heredoc bodies (data, not commands)
+        ├── ToolWatchdog/
+        │   ├── ToolDeadlines.swift     # THE table of allowed run time per tool class (also read by the UI bar) + timeout message
+        │   └── ToolWatchdog.swift      # Races a tool call against its deadline; on expiry cancels it and answers the model
         ├── OutputGuard/
         │   ├── OutputGuard.swift       # THE size gate for every tool result (200 KB read / 100 KB command), oversize notice
         │   └── OutputCapture.swift     # Memory-capped collector for running commands (keeps head + tail window, counts all bytes)
@@ -541,6 +544,32 @@ folded into it). Only the model request is repeated; tools run outside the loop.
 
 Tests: `ImagePipelineTests`.
 
+## 12a2. ToolWatchdog — the one time gate for tool calls
+
+> **Same rule as OutputGuard:** `ToolExecutionService.execute` wraps every call in `ToolWatchdog.run`. A new tool
+> is covered automatically (default 2 minutes); give it a row in `ToolDeadlines.seconds` only if it legitimately
+> runs longer.
+
+A tool that never answers must not freeze the model's chain of work. On expiry the watchdog cancels the tool's
+task (the existing Stop path: the bridge closes its socket, the helper kills the process tree, the shell session
+is killed) and returns a message instead. It does not wait for the tool to finish: a call stuck in an
+uncancellable system call is abandoned and its late result is dropped.
+
+| Class | Deadline |
+|---|---|
+| files, search, documents, memory, attachments, web, localization, read_build_log | 2 min |
+| git status/log/add/reset/checkout | 3 min |
+| run_terminal / run_ssh | 5 min; a longer requested `timeout` is honoured (+30 s grace) up to 30 min |
+| build_project / run_tests | 20 min |
+| git commit / revert / push | 12 min (above the helper's own 10 min cap, which normally fires first) |
+
+The message tells the model the outcome: mutating tools (`ToolDeadlines.isMutating`) are reported as
+"RESULT IS UNKNOWN, check state, no automatic retry"; readers as "nothing was changed". The clock starts at real
+execution, so waiting for a manual terminal approval does not count; `approveTerminalCommand` runs the command
+through the same watchdog and under `currentRequestTask`, so Stop reaches it. The UI shows the allowed time as a
+pie that fills clockwise in the tint colour in place of the spinner of the agent action bar (`StreamingState.toolBudget`;
+no number; a bar under the row was rejected because it made the label jump). Tests: `ToolWatchdogTests`.
+
 ## 12b. OutputGuard — the one size gate for tool results
 
 > **RULE FOR ANY NEW TOOL: its result must leave through `ToolExecutionService.execute`.** That method wraps
@@ -634,6 +663,7 @@ bypasses. Applies to `run_terminal`, confirmed commands and `run_ssh`.
 | 2026-10 | Access control unified (backlog 4): `ToolPolicy` (one table, deny by default, per-target-project rights) + `ToolAuthorization` (target resolution, exposure filter) replace `ToolAccessController` (merged "most permissive" rights, fail-open) and `checkToolAccess`. loc_* are now gated by role and Xcode flag and carry a `project` argument that restricts the helper's path roots. Removed: ToolPermissions, ThreadSession.toolPermissions, v2ToolPermissions, the dead `attach_file` case. |
 | 2026-10 | Tool arguments (backlog 8): `ToolArguments.parse` replaces strict `[String:String]` decoding in `authorize()`. Numbers/bools are stringified, null dropped, nested values become JSON text, double-encoded objects unwrapped; unreadable JSON / non-objects are refused with an explanation instead of silently becoming empty arguments (which used to lose `project`). Covered by ToolArgumentsTests (11). |
 | 2026-10 | Unified LLM retry (backlog 13): `LLMRetryRunner` + classifier replace the stall/timeout special cases; HTTP 5xx/429 and network drops are retried with backoff measured from error arrival; streaming error bodies are read; mid-stream cuts continue the partial answer; progress shown in the action bar. Removed `RequestLog` and the diagnostic request (hardcoded Russian). Covered by LLMRetryTests (33 cases). |
+| 2026-10 | ToolWatchdog (backlog 15): `ToolExecutionService.execute` runs every tool under a per-class deadline (`ToolDeadlines`); a hung tool is cancelled and the model gets an explicit message (outcome unknown for mutating tools). Manual terminal approval is under the same watchdog and bound to Stop. Covered by ToolWatchdogTests. |
 | 2026-10 | OutputGuard (backlog 10b-1): one gate in `ToolExecutionService.execute` refuses oversized tool results (200 KB read / 100 KB command, measured on prepared UTF-8 text) with a notice instead of a cut piece; `OutputCapture` caps memory for running commands; `read_file` checks size before loading. Covered by OutputGuardTests (18). |
 | 2026-10 | ImagePipeline (backlog 10b-2a): `ImageDownscaler` caps every image sent to a model at 2000 px / JPEG with an on-disk cache for attachments; `view_image` and `fetch_attachment` return real images (marker restricted to `imageResultTools`); `fetch_attachment` no longer returns base64 text; `ImageValve` guards provider image-count limits. Covered by ImagePipelineTests (13). |
 | 2026-10 | Office pictures (backlog 10b-2b): the helper extracts `word|ppt|xl/media` (and ODT `Pictures/`) pictures into a private temp folder and leaves `<!-- [image N: name] -->` XML comments in the text (valid XML, safe for `write_document`); the app validates, downscales and deletes the folder, and shows the images to the model as separate multimodal parts. `read_build_log` now returns only error/failed lines. Covered by OfficeImagesTests (15). |

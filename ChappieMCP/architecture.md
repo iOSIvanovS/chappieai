@@ -122,7 +122,7 @@ Response: [4 bytes UInt32 BE length] [JSON: {"result": "...", "error": null}]
 | `argv[3]` | JSON map `{"ProjectName": "xcode", ...}` — project→env routing |
 
 **MCPHelperLauncher** restarts the helper when workspace or devEnvironment changes.
-**MCPToolBridge** connects per call (no persistent connection). Timeout: 600s.
+**MCPToolBridge** connects per call (no persistent connection). Timeout: 1800s (must stay >= the longest `ToolDeadlines` value, 1200s for build/test, so the bridge never cuts a call before the watchdog does).
 
 ### Helper lifecycle
 

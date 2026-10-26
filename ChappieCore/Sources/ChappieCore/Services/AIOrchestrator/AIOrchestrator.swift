@@ -111,7 +111,8 @@ public actor AIOrchestrator {
         onTerminalOutput: (@Sendable (String) -> Void)? = nil,
         onTerminalStart: (@Sendable (String) -> Void)? = nil,
         onTerminalFinish: (@Sendable () -> Void)? = nil,
-        onRetry: (@Sendable (RetryStatus?) -> Void)? = nil
+        onRetry: (@Sendable (RetryStatus?) -> Void)? = nil,
+        onToolBudget: (@Sendable (TimeInterval?) -> Void)? = nil
     ) async throws -> AIOrchestratorResult {
 
         guard !isInvalidated else {
@@ -184,7 +185,8 @@ public actor AIOrchestrator {
                     onToolCall: onToolCall,
                     onTerminalOutput: onTerminalOutput,
                     onTerminalStart: onTerminalStart,
-                    onTerminalFinish: onTerminalFinish
+                    onTerminalFinish: onTerminalFinish,
+                    onToolBudget: onToolBudget
                 )
                 continue
             } else {
