@@ -158,7 +158,8 @@ public struct SystemPromptBuilder {
         var lines = ["## \(title)"]
         for entry in entries.sorted(by: { $0.key < $1.key }) {
             let displayValue = formatEntryValue(entry.jsonString)
-            lines.append("- [\(entry.type)] \(entry.key): \(displayValue)")
+            let dates = MessageTimestamp.entryDates(created: entry.createdAt, updated: entry.updatedAt)
+            lines.append("- [\(entry.type)] \(entry.key) \(dates): \(displayValue)")
         }
         return lines.joined(separator: "\n")
     }

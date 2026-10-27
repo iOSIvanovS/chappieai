@@ -102,7 +102,11 @@ extension MemoryManager {
     // MARK: - Internal helpers
 
     /// Formats a list of entries into a titled memory block for the system prompt.
-    func formatEntriesForPrompt(_ entries: [MemoryEntry], title: String) -> String? {
+    func formatEntriesForPrompt(
+        _ entries: [MemoryEntry],
+        title: String,
+        timeZone: TimeZone = .current
+    ) -> String? {
         guard !entries.isEmpty else { return nil }
 
         var lines = ["## \(title)"]
@@ -115,9 +119,13 @@ extension MemoryManager {
             } else {
                 displayValue = entry.jsonString
             }
-            lines.append("- [\(entry.type)] \(entry.key): \(displayValue)")
+            lines.append("- [\(entry.type)] \(entry.key) \(datesLabel(for: entry, timeZone: timeZone)): \(displayValue)")
         }
 
         return lines.joined(separator: "\n")
+    }
+
+    func datesLabel(for entry: MemoryEntry, timeZone: TimeZone) -> String {
+        MessageTimestamp.entryDates(created: entry.createdAt, updated: entry.updatedAt, timeZone: timeZone)
     }
 }

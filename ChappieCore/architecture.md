@@ -658,9 +658,19 @@ first line of its text: `[2026-10-27 15:03 +03:00 · 23h since previous message 
 - **Gaps are measured over the messages the model actually receives** (local notices filtered out first).
 - **Legacy messages** saved before `createdAt` existed have `nil` and get no label; the first stamped message
   after the update has no gap.
-- Not covered yet (separate pass): created/updated dates on memory entries.
 
-Tests: `MessageTimestampTests`.
+### Dates on memory entries
+
+`MemoryEntry` already stored `createdAt`/`updatedAt` (`saveEntry` keeps the first and bumps the second), so
+no migration was needed: existing entries carry real dates. They were just never shown. `formatEntriesForPrompt`
+now appends `(created 2026-10-20, updated 2026-10-27)`; the update day is omitted when equal to the creation day.
+Day granularity on purpose: a stored day never changes between requests, so the system prompt and the provider
+cache stay stable. The date is formatted by `MessageTimestamp.entryDates` (same hand-built, locale-independent rule).
+Two code paths render memory: `MemoryManager.formatEntriesForPrompt` (legacy) and `SystemPromptBuilder.memoryBlock`
+(the one the app actually uses via `ThreadSession`); both go through `entryDates`, so they cannot drift apart.
+The "Unknown" case agreed earlier turned out unnecessary: no entry lacks a date.
+
+Tests: `MessageTimestampTests`, `MemoryDatesTests`.
 
 ---
 

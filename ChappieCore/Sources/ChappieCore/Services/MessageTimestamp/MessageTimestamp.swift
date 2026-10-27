@@ -86,6 +86,23 @@ public enum MessageTimestamp {
         )
     }
 
+    /// `2026-10-27`. Same hand-built, locale-independent approach as `stamp`; used for memory entries.
+    public static func day(_ date: Date, timeZone: TimeZone = .current) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let c = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
+    }
+
+    /// `(created 2026-10-20, updated 2026-10-27)`. Lets the model tell a stale "in progress" note
+    /// from a fresh one. The update day is omitted when it equals the creation day.
+    /// Stored dates are stable, so the prompt (and the provider cache) does not change between requests.
+    public static func entryDates(created: Date, updated: Date, timeZone: TimeZone = .current) -> String {
+        let c = day(created, timeZone: timeZone)
+        let u = day(updated, timeZone: timeZone)
+        return c == u ? "(created \(c))" : "(created \(c), updated \(u))"
+    }
+
     /// `3d 4h`, `23h 10m`, `4m`. Two most significant units; seconds are dropped.
     static func duration(_ interval: TimeInterval) -> String {
         let totalMinutes = Int(interval / 60)
