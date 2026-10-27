@@ -331,5 +331,18 @@
                 type="application/octet-stream"
             />
         </item>
+
+        <item>
+            <title>Version 1.0.25</title>
+            <pubDate>Tue, 27 Oct 2026 10:43:33 +0000</pubDate>
+            <sparkle:version>26</sparkle:version>
+            <sparkle:shortVersionString>1.0.25</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.25.dmg"
+                sparkle:edSignature="N1vehChfn/BbootSLxVQkOv+WZ51eJUDfzuByDCDcAOMOAAT6ZN4Y/GwnZsURNX2c71KBOtXpeXyubMcMS2KAg=="
+                length="10056471"
+                type="application/octet-stream"
+            />
+        </item>
     </channel>
 </rss>
