@@ -201,7 +201,7 @@ public actor ToolExecutionService {
 
     /// Tools whose result may be a document's text plus its pictures (ToolImageResult marker).
     /// Everything else that starts with the marker is plain text.
-    public static let documentImageTools: Set<String> = ["read_document", "fetch_attachment"]
+    public static let documentImageTools: Set<String> = ["read_document", "fetch_attachment", "pdf_page_as_image"]
 
     // MARK: - Tool execution dispatcher
 
@@ -270,6 +270,9 @@ public actor ToolExecutionService {
                  "view_image",
                  "web_fetch":
                 return try await executeFileTool(name: name, argsData: argsData)
+
+            case "pdf_info", "pdf_page_as_txt", "pdf_page_as_image":
+                return await executePDFTool(name: name, argsData: argsData)
 
             case "memorize", "recall", "search_memory", "delete_memory":
                 return try await executeMemoryTool(name: name, argsData: argsData)

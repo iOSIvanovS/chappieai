@@ -5,7 +5,8 @@
 // Routes read_document and write_document tool calls.
 // Actual format handling is split into focused extensions:
 //   +ZIP    — read/write ZIP-based Office formats (docx, xlsx, pptx, odt)
-//   +Text   — plain text formats (rtf, csv, pdf)
+//   +Text   — plain text formats (rtf, csv)
+//   +PDF    — pdf_info, pdf_page_as_txt, pdf_page_as_image (PDFKit); read_document refuses PDF
 //   +XMLNormalization — Office XML cleanup before returning to AI
 
 import Foundation
@@ -50,9 +51,9 @@ final class DocumentTools: Sendable {
         case "csv":
             return readPlainText(at: fullPath, format: "CSV")
         case "pdf":
-            return await readPDF(at: fullPath)
+            return .failure("read_document does not read PDF files. \(Self.pdfToolsHint)")
         default:
-            return .failure("read_document: unsupported format '.\(ext)'. Supported: docx, xlsx, pptx, odt, rtf, csv, pdf.")
+            return .failure("read_document: unsupported format '.\(ext)'. Supported: docx, xlsx, pptx, odt, rtf, csv. PDF has its own tools: pdf_info, pdf_page_as_txt, pdf_page_as_image.")
         }
     }
 

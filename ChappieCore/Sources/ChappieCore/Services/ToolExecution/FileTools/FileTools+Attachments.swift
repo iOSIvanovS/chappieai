@@ -3,7 +3,7 @@
 //
 // Implements fetch_attachment and send_attachment tool execution.
 // MimeCategory classifies file types for routing: image → downscaled image part, Office → MCP ZIP patch,
-// PDF/text → plain read, other → size and type only.
+// text → plain read, PDF → refused with a pointer to the pdf_* tools, other → size and type only.
 //
 // WHY CLOSURES: AttachmentStore lives in the Chappie app target, not in ChappieCore.
 // Closures are registered at startup via registerAttachmentHandlers() and bridge the boundary.
@@ -89,8 +89,12 @@ extension ToolExecutionService {
             }
             return "\(ToolExecutionService.viewImageMarker)\(dataURI)"
 
-        case .officeDocument, .pdf:
-            // Delegate to MCP which has ZIPFoundation and pdftotext available.
+        case .pdf:
+            // A PDF is read page by page with its own tools, never as one blob.
+            return PDFGuidance.refusal(tool: "fetch_attachment", attachmentUUID: uuid.uuidString)
+
+        case .officeDocument:
+            // Delegate to MCP, which has ZIPFoundation available.
             return await mcpBridge.execute(tool: "read_document", args: ["path": url.path])
 
         case .plainText:

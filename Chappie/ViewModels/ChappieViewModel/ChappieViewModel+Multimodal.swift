@@ -35,14 +35,7 @@ extension ChappieViewModel {
             return .text("File: \(attachment.filename)\n\n\(content)")
 
         case .pdf:
-            guard let data = try? Data(contentsOf: attachment.localURL) else {
-                return .text(attachmentReferenceText(for: attachment))
-            }
-            if let text = String(data: data, encoding: .utf8), !text.isEmpty {
-                return .text("File: \(attachment.filename)\n\n\(text)")
-            }
-            let size = (try? attachment.localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            return .text("File: \(attachment.filename) (PDF, \(size / 1024)KB) — binary content, cannot extract text inline.")
+            return .text(pdfReferenceText(for: attachment))
 
         case .docx, .xlsx, .pptx, .rtf:
             // Callers that can take several parts use multimodalParts(for:); this keeps the text only.
@@ -67,8 +60,7 @@ extension ChappieViewModel {
             }
             return .text("File: \(attachment.filename)\n\n\(content)")
         case .pdf:
-            let size = (try? attachment.localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            return .text("File: \(attachment.filename) (PDF, \(size / 1024)KB)")
+            return .text(pdfReferenceText(for: attachment))
         case .docx, .xlsx, .pptx, .rtf:
             // Sync path: reference only. Full extraction happens in buildCurrentAIMessage (async).
             return .text(attachmentReferenceText(for: attachment))
@@ -117,6 +109,15 @@ extension ChappieViewModel {
         var parts: [AIMultimodalPart] = [.text("File: \(filename)\n\n\(withImages.text)")]
         parts.append(contentsOf: withImages.multimodalParts)
         return parts
+    }
+
+    // MARK: - PDF reference
+
+    /// A PDF is never inlined: it is read page by page with the pdf tools, which need only the uuid.
+    func pdfReferenceText(for attachment: AttachedFile) -> String {
+        let size = (try? attachment.localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        return "File: \(attachment.filename) (PDF, \(size / 1024)KB) | uuid: \(attachment.id.uuidString). "
+            + "Read it with pdf_info (pages and text volume), pdf_page_as_txt and pdf_page_as_image, passing this uuid."
     }
 
     // MARK: - Attachment Reference

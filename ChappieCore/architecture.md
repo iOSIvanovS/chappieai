@@ -80,6 +80,9 @@ ChappieCore/
         ├── ToolWatchdog/
         │   ├── ToolDeadlines.swift     # THE table of allowed run time per tool class (also read by the UI bar) + timeout message
         │   └── ToolWatchdog.swift      # Races a tool call against its deadline; on expiry cancels it and answers the model
+        ├── ToolExecution/PDFTools/
+        │   ├── PDFTools.swift          # pdf_info / pdf_page_as_txt / pdf_page_as_image: picks the file (uuid or project path), calls the helper
+        │   └── PDFGuidance.swift       # Refusal text every other reader returns for a PDF, pointing to the pdf_* tools
         ├── OutputGuard/
         │   ├── OutputGuard.swift       # THE size gate for every tool result (200 KB read / 100 KB command), oversize notice
         │   └── OutputCapture.swift     # Memory-capped collector for running commands (keeps head + tail window, counts all bytes)
@@ -569,6 +572,27 @@ execution, so waiting for a manual terminal approval does not count; `approveTer
 through the same watchdog and under `currentRequestTask`, so Stop reaches it. The UI shows the allowed time as a
 pie that fills clockwise in the tint colour in place of the spinner of the agent action bar (`StreamingState.toolBudget`;
 no number; a bar under the row was rejected because it made the label jump). Tests: `ToolWatchdogTests`.
+
+## 12a2. PDF tools — a PDF is read only page by page
+
+`pdf_info`, `pdf_page_as_txt`, `pdf_page_as_image` (definitions in `ToolDefinitions+PDFTools`, execution in
+`ToolExecution/PDFTools/PDFTools.swift`, reading in the helper with PDFKit). Decisions:
+
+- **Every other reader refuses a PDF** (`read_file`, `read_document`, `search_in_file`, `fetch_attachment`) with
+  `PDFGuidance.refusal`, which names the three tools (and the attachment uuid when there is one). Reason: the earlier
+  one-blob read depended on Homebrew's pdftotext and fell back to a byte scan that produced ~200 KB of garbage for
+  compressed files, which the OutputGuard then refused with a misleading "too large".
+- **`page` is mandatory** for `pdf_page_as_txt` (single page or range) and `pdf_page_as_image` (single page), checked
+  in the app before the helper round trip. `pdf_info` takes none and lists the text volume per page, so the model
+  decides what to read. No automatic rendering, no page cap heuristic.
+- **Source:** `path` (+ `project`, resolved like other tools, never guessed) or the `uuid` of an attachment. Classified
+  `alwaysOn` in `ToolPolicy` because an attached PDF can exist in a thread without a project; project paths stay inside
+  the project through the helper's PathGuard.
+- **Page picture** returns as a `ToolImageResult` like an Office picture: `pdf_page_as_image` is in
+  `documentImageTools`, so the text is judged by OutputGuard and the picture is shown to the model as an image.
+- **A chat attachment of a PDF** is inlined as a reference line with its uuid (`pdfReferenceText`) instead of its
+  bytes; the model reads it with the pdf tools.
+- Standard deadline (2 min), not mutating. Tests: `PDFToolsRoutingTests` (here) and `PDFToolsTests` (helper).
 
 ## 12b. OutputGuard — the one size gate for tool results
 

@@ -38,6 +38,7 @@ ChappieCoreTests/
 ├── OutputGuardTests.swift              # Size gate: 200/100 KB boundaries on UTF-8 bytes, notices, OutputCapture, runaway shell command, end-to-end through execute()
 ├── ImagePipelineTests.swift            # ImageDownscaler (2000 px cap, JPEG, alpha, pass-through, cache reuse/invalidation), ImageValve, image marker restriction
 ├── OfficeImagesTests.swift             # ToolImageResult marker, OfficeMediaIntake (foreign folder/file/symlink refused, folder deleted), OutputGuard on documents with pictures
+├── PDFToolsRoutingTests.swift          # pdf_* classified/exposed, page mandatory, other readers refuse a PDF, picture result through OutputGuard
 ├── MemoryManagerTests.swift            # Semantic memory CRUD via SQLiteStorage
 ├── ThreadIsolationTests.swift          # SystemPromptBuilder: sections, memory isolation, terminal lines
 ├── ToolArgumentsTests.swift            # Lenient argument parsing: scalars, null, nested, double-encoded, errors

@@ -30,6 +30,7 @@ extension ToolExecutionService {
                   let path = args["path"] else {
                 return "Error: Invalid arguments for read_file"
             }
+            if PDFGuidance.isPDF(path: path) { return PDFGuidance.refusal(tool: name) }
             // Size check before loading: a 50 MB file must not be read into memory just to be refused.
             // Bytes on disk equal the UTF-8 text size for a text file, so this is the prepared size.
             if let size = try await fileSystem.fileByteSize(at: path, projectName: args["project"]),
@@ -106,6 +107,7 @@ extension ToolExecutionService {
                   let query = args["query"], !query.isEmpty else {
                 return "Error: Arguments 'path' and 'query' are required for search_in_file"
             }
+            if PDFGuidance.isPDF(path: path) { return PDFGuidance.refusal(tool: name) }
             let contextLines = Int(args["context_lines"] ?? "2") ?? 2
             return try await fileSystem.searchInFile(
                 path: path,
@@ -135,6 +137,7 @@ extension ToolExecutionService {
                   let path = args["path"], !path.isEmpty else {
                 return "Error: Argument 'path' is required for read_document"
             }
+            if PDFGuidance.isPDF(path: path) { return PDFGuidance.refusal(tool: name) }
             var mcpArgs: [String: String] = ["path": path]
             if let project = args["project"] { mcpArgs["project"] = project }
             return await mcpBridge.execute(tool: "read_document", args: mcpArgs)

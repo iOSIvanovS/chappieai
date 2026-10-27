@@ -118,6 +118,26 @@ final class ToolDispatcher: Sendable {
             }
             return await docTools.readDocument(relativePath: path, projectName: args["project"])
 
+        // MARK: - PDF tools (the only way a PDF is read)
+
+        case "pdf_info":
+            guard let path = args["path"], !path.isEmpty else {
+                return .failure("Argument 'path' is required (e.g. 'report.pdf')")
+            }
+            return docTools.pdfInfo(relativePath: path, projectName: args["project"])
+
+        case "pdf_page_as_txt":
+            guard let path = args["path"], !path.isEmpty else {
+                return .failure("Argument 'path' is required (e.g. 'report.pdf')")
+            }
+            return docTools.pdfPageText(relativePath: path, projectName: args["project"], page: args["page"])
+
+        case "pdf_page_as_image":
+            guard let path = args["path"], !path.isEmpty else {
+                return .failure("Argument 'path' is required (e.g. 'report.pdf')")
+            }
+            return docTools.pdfPageImage(relativePath: path, projectName: args["project"], page: args["page"])
+
         case "write_document":
             guard let path = args["path"], !path.isEmpty else {
                 return .failure("Argument 'path' is required")

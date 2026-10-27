@@ -56,6 +56,7 @@ extension ToolExecutionService {
 
         // Office documents + attachments + web — always
         tools.append(contentsOf: documentTools(allInfos: allInfos))
+        tools.append(contentsOf: pdfTools(allInfos: allInfos))
         tools.append(contentsOf: attachmentTools())
         tools.append(AITool(function: AIFunctionDefinition(
             name: "web_fetch",

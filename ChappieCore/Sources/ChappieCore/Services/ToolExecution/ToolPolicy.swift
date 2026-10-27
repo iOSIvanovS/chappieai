@@ -89,7 +89,10 @@ public enum ToolPolicy {
             "web_fetch",
             "memorize", "recall", "search_memory", "delete_memory",
             "list_thread_projects",
-            "fetch_attachment", "send_attachment"
+            "fetch_attachment", "send_attachment",
+            // A PDF may be an attachment in a thread without any project; a project path is resolved
+            // by PDFTools itself and the helper's PathGuard keeps it inside that project.
+            "pdf_info", "pdf_page_as_txt", "pdf_page_as_image"
         ])
         add(.terminal, ["run_terminal", "run_ssh"])
         add(.forbidden, ["git_diff"])

@@ -227,7 +227,8 @@ final class OfficeMediaCollector {
         URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true).appendingPathComponent(directoryName, isDirectory: true)
     }
 
-    private static func makeDirectory() -> URL? {
+    /// Also used by the PDF page renderer: same folder, same cleanup, same app-side validation.
+    static func makeDirectory() -> URL? {
         let fm = FileManager.default
         let root = rootDirectory
         do { try fm.createDirectory(at: root, withIntermediateDirectories: true) } catch { return nil }

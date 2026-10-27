@@ -49,14 +49,16 @@ ChappieMCPCore/                        # Local Swift package: ALL helper logic (
         ├── LocalizationTools/         # loc_* tools (Xcode / xcstrings only); create/rename/delete accept only .xcstrings
         └── DocumentTools/             # read_document, write_document (Office formats via ZIPFoundation)
             ├── DocumentTools+Excel.swift  # readExcel: workbook.xml + sharedStrings + ALL worksheets in natural order
-            └── DocumentTools+Media.swift  # OfficeMediaCollector: pictures of docx/pptx/xlsx/odt → temp folder + [image N] XML comments
+            ├── DocumentTools+Media.swift  # OfficeMediaCollector: pictures of docx/pptx/xlsx/odt → temp folder + [image N] XML comments
+            └── DocumentTools+PDF.swift    # pdf_info, pdf_page_as_txt, pdf_page_as_image (PDFKit) — the ONLY way a PDF is read
 
 ChappieMCPTests/                       # Xcode unit-test bundle (Swift Testing), in ChappieCoreTests.xctestplan
 ├── ProcessRunnerTests.swift           # pipe deadlock, timeout, cancel kills the tree, non-cancellable commands
 ├── SocketIOTests.swift                # deadlines for silent / dripping / non-reading peers (socketpair)
 ├── GitCommandKindTests.swift          # timeout classes and cancellability of git commands
 ├── HelperArgumentsTests.swift         # argv contract (mandatory socket path, env maps)
-└── OfficeMediaTests.swift             # picture extraction, markers, write-safe XML
+├── OfficeMediaTests.swift             # picture extraction, markers, write-safe XML
+└── PDFToolsTests.swift                # generated PDFs: page text, ranges, scan pages, 2000 px JPEG render, argument rules
 ```
 
 **Why the library split:** an executable target cannot be imported by a test bundle reliably, so the
@@ -146,7 +148,7 @@ A client that connects and goes silent must not starve real calls (24 silent cli
 ### Cancellation (Stop button)
 The app cancels a call by hanging up. The helper never reads from the client again after the request, so any readability on the socket means "peer gone".
 - `ClientWatcher` (one `poll()` loop per running tool, on the I/O queue) cancels the tool's `Task` when the peer closes. It is stopped and joined before the descriptor is closed.
-- `ProcessRunner` turns Task cancellation into `ProcessTree.terminate`: SIGTERM to the process and all descendants, SIGKILL for survivors after 2 s (pid + start time are checked first, so a recycled pid is never killed). Used by build/test, git and the PDF converter.
+- `ProcessRunner` turns Task cancellation into `ProcessTree.terminate`: SIGTERM to the process and all descendants, SIGKILL for survivors after 2 s (pid + start time are checked first, so a recycled pid is never killed). Used by build/test and git.
 - **Git write commands are not cancellable** (`add`, `commit`, `push`, `reset`, `revert`, `checkout`): killing them halfway can leave `index.lock` or a half-applied state. They run to the end even if the client left (only their timeout stops them, see below); only `status` and `log` stop.
 - Not cancellable by design: in-process work (loc_*, file/zip document readers) is short and has no child process.
 
@@ -254,7 +256,27 @@ reads and deletes the folder; folders older than an hour (a crash) are pruned on
 | `.odt` | ✅ | ✅ | `content.xml` |
 | `.rtf` | ✅ | ✅ | plain text (no ZIP) |
 | `.csv` | ✅ | ✅ | plain text (no ZIP) |
-| `.pdf` | ✅ | ❌ | text extraction only |
+| `.pdf` | ❌ (refused) | ❌ | read only through `pdf_info` / `pdf_page_as_txt` / `pdf_page_as_image` — see below |
+
+### PDF (DocumentTools+PDF.swift)
+
+A PDF is a set of pages, so it has its own tools and no other reader accepts it (`read_document`, `read_file`,
+`search_in_file`, `fetch_attachment` refuse and point here — see `PDFGuidance` in ChappieCore).
+
+| Tool | Purpose |
+|---|---|
+| `pdf_info` | page count, title/author, and per page: characters of text and size in points; lists pages with no text layer |
+| `pdf_page_as_txt` | text of one page or a range (`3`, `2-4`; at most 50 pages per call); `page` is mandatory |
+| `pdf_page_as_image` | one page drawn to a JPEG, long side 2000 px, white background; `page` is mandatory, one page per call |
+
+- **Only PDFKit** (ships with macOS): the user installs nothing. The former pdftotext (Homebrew) path and the raw byte
+  scan were removed: the scan returned garbage for compressed PDFs and tripped the size gate.
+- A page with no text is reported as such and the model is pointed to `pdf_page_as_image`; there is no automatic
+  rendering and no page cap heuristic — the model chooses pages from `pdf_info`.
+- The page picture goes into the same temp folder as Office pictures (`chappie-mcp-media`), is named in the separate
+  `media` field, and the app downscales and deletes it. Whether the PDF is a project file or an attachment, the helper
+  gets a path that passes `PathGuard`.
+- A password-protected PDF (non-empty password) is reported as unreadable; an empty user password is tried.
 
 **XML normalization (Word):** removes `rsid*` attributes, `w:proofErr`, `w:bookmarkStart/End` — noise added by Word for spell-check / revision tracking.
 

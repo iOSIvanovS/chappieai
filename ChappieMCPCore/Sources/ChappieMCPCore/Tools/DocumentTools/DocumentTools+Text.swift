@@ -2,9 +2,9 @@
 // ChappieMCP
 //
 // WHY THIS FILE:
-// Handles plain-text and binary-text formats: RTF, CSV, PDF.
-// PDF is read-only — extracted via pdftotext (Homebrew) or raw byte scan fallback.
+// Handles plain-text formats: RTF and CSV.
 // RTF strips control words to expose readable plain text.
+// PDF lives in DocumentTools+PDF.swift (its own tools).
 
 import Foundation
 
@@ -34,70 +34,6 @@ extension DocumentTools {
         } catch {
             return .failure("write_document: failed to write file: \(error.localizedDescription)")
         }
-    }
-
-    // MARK: - PDF (read-only)
-
-    func readPDF(at path: String) async -> ToolResult {
-        guard FileManager.default.fileExists(atPath: path) else {
-            return .failure("read_document: file not found at '\(path)'")
-        }
-
-        // Prefer pdftotext (brew install poppler) for high-quality extraction. Large PDFs can take
-        // a while, so it runs through the shared runner and stops when the app cancels the call.
-        let pdftotextPath = "/opt/homebrew/bin/pdftotext"
-        if FileManager.default.fileExists(atPath: pdftotextPath) {
-            let run = await ProcessRunner.run(
-                executable: pdftotextPath,
-                args: [path, "-"],
-                environment: ["HOME": NSHomeDirectory(), "LANG": "en_US.UTF-8"]
-            )
-            if run.stopReason == .cancelled {
-                return .failure("🛑 read_document was cancelled.")
-            }
-            let text = run.stdoutText
-            if run.launchError == nil, !text.isEmpty {
-                return .success("<!-- PDF document (text extraction): \(URL(fileURLWithPath: path).lastPathComponent) -->\n\(text)")
-            }
-            // Otherwise fall through to the raw scan.
-        }
-
-        guard let data = FileManager.default.contents(atPath: path) else {
-            return .failure("read_document: cannot read PDF file.")
-        }
-        let text = extractTextFromPDFData(data)
-        if text.isEmpty {
-            return .failure("read_document: PDF text extraction failed. Install pdftotext (brew install poppler) for better results.")
-        }
-        return .success("<!-- PDF document (raw extraction): \(URL(fileURLWithPath: path).lastPathComponent) -->\n\(text)")
-    }
-
-    /// Fallback PDF text extraction — scans for parenthesised string objects in raw PDF bytes.
-    private func extractTextFromPDFData(_ data: Data) -> String {
-        guard let raw = String(data: data, encoding: .isoLatin1) else { return "" }
-        var result: [String] = []
-        var i = raw.startIndex
-        while i < raw.endIndex {
-            if raw[i] == "(" {
-                let start = raw.index(after: i)
-                var depth = 1
-                var j = start
-                while j < raw.endIndex && depth > 0 {
-                    if raw[j] == "(" { depth += 1 }
-                    else if raw[j] == ")" { depth -= 1 }
-                    if depth > 0 { j = raw.index(after: j) }
-                }
-                if depth == 0 {
-                    let token = String(raw[start..<j])
-                    let cleaned = token.filter { $0.isLetter || $0.isNumber || $0.isWhitespace || ".,;:!?-–—\"'()".contains($0) }
-                    if cleaned.count > 3 { result.append(cleaned) }
-                    i = raw.index(after: j)
-                    continue
-                }
-            }
-            i = raw.index(after: i)
-        }
-        return result.joined(separator: " ")
     }
 
     // MARK: - RTF
