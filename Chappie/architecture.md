@@ -24,6 +24,7 @@ Folders named after a type (e.g. `ChatScrollView/`) hold that type's main file p
 ```
 Chappie/
 ├── ChappieApp.swift                    # @main, bootStorage(), AppDelegate
+├── SparkleRelaunchHandler.swift        # Sparkle delegate: closes open sheets before relaunch so the quit request is not blocked
 ├── DropHandler.swift                   # Drag-and-drop: files AND project folders
 ├── MCPHelperLauncher.swift             # ChappieMCP child process: launch, readiness probe, crash restart, on-demand recovery
 ├── Models/                             # AppState, ChatMessage, AttachedFile, AttachmentStore

@@ -61,7 +61,7 @@ struct ChappieApp: App {
     init() {
         updaterController = SPUStandardUpdaterController(
             startingUpdater: true,
-            updaterDelegate: nil,
+            updaterDelegate: SparkleRelaunchHandler.shared,
             userDriverDelegate: nil
         )
     }
