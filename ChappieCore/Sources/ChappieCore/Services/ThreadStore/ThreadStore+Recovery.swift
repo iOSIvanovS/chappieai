@@ -7,7 +7,8 @@
 // so the thread ids survive even when the list record itself is destroyed. Rebuilding a thread
 // with the SAME id re-attaches its messages and its thread memory (memory scope key = thread UUID).
 // What cannot be restored: thread settings, attached projects (and so project memory scopes),
-// original timestamps (messages carry none).
+// original thread timestamps (message creation times exist only for messages saved after
+// that field was added, and rebuilt threads get synthetic list dates).
 //
 // WHEN IT RUNS: only when the list record is present but unreadable. A healthy list never
 // resurrects chunks without a thread — those are leftovers of an interrupted delete.

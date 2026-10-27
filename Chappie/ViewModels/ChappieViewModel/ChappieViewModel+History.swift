@@ -10,21 +10,38 @@ extension ChappieViewModel {
 
     // MARK: - Build Network History
 
+    /// Local notices that are shown in the chat but never sent to the model.
+    private func isLocalNotice(_ text: String) -> Bool {
+        text.contains("Project connected")
+            || text.contains("Memory cleared")
+            || text.contains("API key updated")
+            || text.hasPrefix("⚠️")
+            || text.hasPrefix("Error:")
+            || text.hasPrefix("Oops, error:")
+    }
+
+    /// Time labels for the user messages the model will see (current message included).
+    /// Computed over the same filtered list as the history, so a gap is never measured
+    /// across a message the model does not receive.
+    func timestampLabels() -> [UUID: String] {
+        let entries = messages.compactMap { msg -> MessageTimestampEntry? in
+            guard case .message(let id, let isUser, let text, _, _, let createdAt) = msg,
+                  !isLocalNotice(text) else { return nil }
+            return MessageTimestampEntry(id: id, isUser: isUser, createdAt: createdAt)
+        }
+        return MessageTimestamp.labels(for: entries)
+    }
+
     func buildRawNetworkHistory(excludingLast: Int = 0) -> [AIMessage] {
         let sourceMessages = excludingLast > 0 && messages.count > excludingLast
             ? Array(messages.dropLast(excludingLast))
             : messages
+        let labels = timestampLabels()
 
         return sourceMessages.compactMap { msg -> AIMessage? in
-            guard case .message(_, let isUser, let text, _, let attachments) = msg else { return nil }
+            guard case .message(let id, let isUser, let text, _, let attachments, _) = msg else { return nil }
 
-            let isSystemMessage = text.contains("Project connected")
-                || text.contains("Memory cleared")
-                || text.contains("API key updated")
-                || text.hasPrefix("⚠️")
-                || text.hasPrefix("Error:")
-                || text.hasPrefix("Oops, error:")
-            if isSystemMessage { return nil }
+            if isLocalNotice(text) { return nil }
 
             let role = isUser ? "user" : "assistant"
 
@@ -40,24 +57,27 @@ extension ChappieViewModel {
             }
 
             // User messages: build multimodal content for images; text refs for everything else.
+            // The time label is the first line of the text block; the stored text stays clean.
+            let stamped = MessageTimestamp.prefixed(text, with: labels[id])
             if !attachments.isEmpty {
                 var parts: [AIMultimodalPart] = []
-                if !text.isEmpty { parts.append(.text(text)) }
+                if !stamped.isEmpty { parts.append(.text(stamped)) }
                 for attachment in attachments {
                     parts.append(multimodalPartSync(for: attachment))
                 }
                 return AIMessage(role: role, multimodalParts: parts)
             }
 
-            return AIMessage(role: role, content: text)
+            return AIMessage(role: role, content: stamped)
         }
     }
 
-    func buildCurrentAIMessage(text: String, attachments: [AttachedFile]) async -> AIMessage {
-        guard !attachments.isEmpty else { return AIMessage(role: "user", content: text) }
+    func buildCurrentAIMessage(text: String, attachments: [AttachedFile], timeLabel: String? = nil) async -> AIMessage {
+        let stamped = MessageTimestamp.prefixed(text, with: timeLabel)
+        guard !attachments.isEmpty else { return AIMessage(role: "user", content: stamped) }
 
         var parts: [AIMultimodalPart] = []
-        if !text.isEmpty { parts.append(.text(text)) }
+        if !stamped.isEmpty { parts.append(.text(stamped)) }
         for attachment in attachments {
             parts.append(contentsOf: await multimodalParts(for: attachment))
         }

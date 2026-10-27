@@ -44,6 +44,7 @@ extension ChappieViewModel {
         runningCost = 0.0
 
         let networkHistory = buildRawNetworkHistory(excludingLast: 1)
+        let currentTimeLabel = timestampLabels()[userMessageId]
 
         let config = activeConfig
         let memoryContext = activeMemoryContext
@@ -51,7 +52,7 @@ extension ChappieViewModel {
         let activeProviderId = activeProvider?.id
 
         currentRequestTask = Task {
-            let currentAIMessage = await buildCurrentAIMessage(text: prompt, attachments: attachments)
+            let currentAIMessage = await buildCurrentAIMessage(text: prompt, attachments: attachments, timeLabel: currentTimeLabel)
 
             let systemPromptOverride = await v2SystemPrompt()
 

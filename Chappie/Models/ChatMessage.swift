@@ -47,12 +47,16 @@ public nonisolated enum ChatMessage: Identifiable, Hashable, Codable, Sendable {
     /// - cost: Request cost in RUB — only on final AI responses.
     /// - attachments: Files attached by the user. Empty array for AI responses.
     ///   Stored inline as base64 for persistence.
+    /// - createdAt: Creation time. nil for messages saved before this field existed (no way to
+    ///   recover it). For AI messages it is the moment the run finished, which is what the
+    ///   timestamp label uses to compute run duration.
     case message(
         id: UUID = UUID(),
         isUser: Bool,
         text: String,
         cost: Double? = nil,
-        attachments: [AttachedFile] = []
+        attachments: [AttachedFile] = [],
+        createdAt: Date? = Date()
     )
 
     /// A tool-call log — a technical step in the agentic cycle.
@@ -85,7 +89,7 @@ public nonisolated enum ChatMessage: Identifiable, Hashable, Codable, Sendable {
     /// Unique identifier — needed for ForEach and ScrollViewReader.scrollTo()
     public var id: UUID {
         switch self {
-        case .message(let id, _, _, _, _): return id
+        case .message(let id, _, _, _, _, _): return id
         case .toolCall(let id, _, _): return id
         case .terminalConfirmation(let id, _, _): return id
         }
@@ -96,7 +100,7 @@ public nonisolated enum ChatMessage: Identifiable, Hashable, Codable, Sendable {
     /// Whether this is a user message (for filtering when building the API context).
     public var isUser: Bool {
         switch self {
-        case .message(_, let isUser, _, _, _): return isUser
+        case .message(_, let isUser, _, _, _, _): return isUser
         case .toolCall: return false
         case .terminalConfirmation: return false
         }
@@ -105,7 +109,7 @@ public nonisolated enum ChatMessage: Identifiable, Hashable, Codable, Sendable {
     /// Message text — only for .message case, nil otherwise.
     public var text: String? {
         switch self {
-        case .message(_, _, let text, _, _): return text
+        case .message(_, _, let text, _, _, _): return text
         case .toolCall: return nil
         case .terminalConfirmation: return nil
         }
@@ -114,7 +118,7 @@ public nonisolated enum ChatMessage: Identifiable, Hashable, Codable, Sendable {
     /// Request cost — only for final AI responses.
     public var cost: Double? {
         switch self {
-        case .message(_, _, _, let cost, _): return cost
+        case .message(_, _, _, let cost, _, _): return cost
         case .toolCall: return nil
         case .terminalConfirmation: return nil
         }
@@ -123,10 +127,16 @@ public nonisolated enum ChatMessage: Identifiable, Hashable, Codable, Sendable {
     /// Files attached to this message. Empty for AI responses and tool calls.
     public var attachments: [AttachedFile] {
         switch self {
-        case .message(_, _, _, _, let attachments): return attachments
+        case .message(_, _, _, _, let attachments, _): return attachments
         case .toolCall: return []
         case .terminalConfirmation: return []
         }
+    }
+
+    /// Creation time — only for .message, and nil for messages saved before the field existed.
+    public var createdAt: Date? {
+        if case .message(_, _, _, _, _, let createdAt) = self { return createdAt }
+        return nil
     }
 
     /// Whether this is a tool-call log entry.
@@ -147,7 +157,7 @@ public nonisolated enum ChatMessage: Identifiable, Hashable, Codable, Sendable {
     // if a specific JSON format is required. We want a readable, forward-compatible format.
 
     private enum CodingKeys: String, CodingKey {
-        case type, id, isUser, text, cost, attachments, toolName, targetPath
+        case type, id, isUser, text, cost, attachments, createdAt, toolName, targetPath
         case command, threadId
     }
 
@@ -166,7 +176,10 @@ public nonisolated enum ChatMessage: Identifiable, Hashable, Codable, Sendable {
             let text        = try container.decode(String.self, forKey: .text)
             let cost        = try container.decodeIfPresent(Double.self, forKey: .cost)
             let attachments = try container.decodeIfPresent([AttachedFile].self, forKey: .attachments) ?? []
-            self = .message(id: id, isUser: isUser, text: text, cost: cost, attachments: attachments)
+            // Absent in files saved before the field existed; stays nil rather than "now".
+            let createdAt   = try container.decodeIfPresent(Date.self, forKey: .createdAt)
+            self = .message(id: id, isUser: isUser, text: text, cost: cost,
+                            attachments: attachments, createdAt: createdAt)
 
         case .toolCall:
             let toolName   = try container.decode(String.self, forKey: .toolName)
@@ -185,8 +198,9 @@ public nonisolated enum ChatMessage: Identifiable, Hashable, Codable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
 
         switch self {
-        case .message(let id, let isUser, let text, let cost, let attachments):
+        case .message(let id, let isUser, let text, let cost, let attachments, let createdAt):
             try container.encode(MessageType.message, forKey: .type)
+            try container.encodeIfPresent(createdAt, forKey: .createdAt)
             try container.encode(id,     forKey: .id)
             try container.encode(isUser, forKey: .isUser)
             try container.encode(text,   forKey: .text)

@@ -641,6 +641,29 @@ bypasses. Applies to `run_terminal`, confirmed commands and `run_ssh`.
 
 ---
 
+## 14. MessageTimestamp — time labels for user messages
+
+`Services/MessageTimestamp/MessageTimestamp.swift`. The model sees no clock, so each USER message gets a label as the
+first line of its text: `[2026-10-27 15:03 +03:00 · 23h since previous message · previous reply took 4m]`.
+
+- **Stamped: user messages only.** Stamped assistant replies would teach the model to open its own replies with an
+  invented stamp. The run duration (assistant `createdAt` minus the preceding user `createdAt`) rides on the NEXT
+  user label instead. Gaps under 1 minute are omitted; the first message has no gap.
+- **Computed by the client**, never by the model (models are bad at date subtraction). English, always on, no toggle.
+- **Never stored and never shown in the UI.** Built in `ChappieViewModel+History` when a request is assembled, from
+  `ChatMessage.createdAt`, so a message always yields the same label and the provider prompt cache stays valid.
+  The system prompt is untouched on purpose.
+- **Format is hand-built** (fixed gregorian calendar, system time zone) so Mac locale settings cannot change a
+  label that was already sent.
+- **Gaps are measured over the messages the model actually receives** (local notices filtered out first).
+- **Legacy messages** saved before `createdAt` existed have `nil` and get no label; the first stamped message
+  after the update has no gap.
+- Not covered yet (separate pass): created/updated dates on memory entries.
+
+Tests: `MessageTimestampTests`.
+
+---
+
 ## 📚 Changelog
 
 | Date | Change |
