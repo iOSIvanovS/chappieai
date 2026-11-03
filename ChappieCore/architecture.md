@@ -36,6 +36,19 @@ ChappieCore/
     │   ├── StorageIntegrity.swift      # StorageIntegrityIssue (damaged data report), LossyElement
     │   └── ThreadModels.swift          # ThreadSettings (incl. curlEnabled, curlHosts; manual Codable), ThreadMetadata, ThreadPayload
     └── Services/
+        ├── CurlEngine/                 # Curl-Chappie engine (pass 2 of 5), app-wide actor, no UI/tools yet
+        │   ├── CurlEngine.swift        #   actor: send/extract/sessionInfo/reset, rate limit (60/min), 401 -> one re-login, response building
+        │   ├── CurlEngine+Prepare.swift #  placeholder substitution, allow-list gate on the FINAL url, header/body/query building, session auth
+        │   ├── CurlEngine+Login.swift  #   login recipe (extract rules + apply rules), single-flight, generation counter
+        │   ├── CurlGate.swift          #   method x host permission x login path decision (pure)
+        │   ├── CurlTemplate.swift      #   {{secret:name.field}} / {{var:name}}, single-pass, escaping per destination
+        │   ├── CurlRedactor.swift      #   known values (plain/JSON/percent), credential-looking JSON keys, credential headers
+        │   ├── CurlSession.swift       #   CurlSessionKey = origin + SHA-256 fingerprint of credential VALUES; in-memory session state
+        │   ├── CurlCookiesAndPaths.swift # cookie jar per session key, JSON path extraction
+        │   ├── CurlTransport.swift     #   protocol + URLSession impl (no redirects, no cookie storage/cache, 5 MB body cap)
+        │   ├── CurlContext.swift       #   hosts of the thread + secret metadata + value provider (Keychain)
+        │   ├── CurlRequestModels.swift #   request/recipe/result value types, CurlError
+        │   └── CurlResponse.swift      #   redacted result + text rendering for the model
         ├── CurlSecretKeychain/         # Keychain values of Curl-Chappie secrets, account "<secretId>.<field>"; deleted with the project; not in backups (user re-enters after migration)
         ├── AIClient.swift              # OpenAI-compatible HTTP client (entry point)
         ├── AIClient+HTTP.swift         # HTTP request building + response parsing
