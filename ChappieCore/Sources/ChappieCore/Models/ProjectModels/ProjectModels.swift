@@ -46,6 +46,10 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
     /// user builds/tests manually and reports results back in chat instead.
     public var buildEnabled: Bool
 
+    /// Curl-Chappie secrets of this project: metadata only, values are in the Keychain
+    /// (CurlSecretKeychain). Empty by default.
+    public var curlSecrets: [CurlSecret]
+
     public init(
         agentRole: AgentRole = .advisor,
         isProgrammingProject: Bool = false,
@@ -57,7 +61,8 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         commentsEnabled: Bool = false,
         commentsLanguage: ProjectLanguage = .english,
         terminalAccess: TerminalAccessLevel = .none,
-        buildEnabled: Bool = true
+        buildEnabled: Bool = true,
+        curlSecrets: [CurlSecret] = []
     ) {
         self.agentRole = agentRole
         self.isProgrammingProject = isProgrammingProject
@@ -70,6 +75,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         self.commentsLanguage = commentsLanguage
         self.terminalAccess = terminalAccess
         self.buildEnabled = buildEnabled
+        self.curlSecrets = curlSecrets
     }
 
     /// Resets all access flags when downgrading to advisor role.
@@ -80,6 +86,8 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         architectureEnabled = false
         commentsEnabled = false
         terminalAccess = .none
+        // Curl-Chappie is not available to advisors at all. Secret metadata is kept so that
+        // switching back to executor does not lose the user's setup.
     }
 
     // MARK: - Codable (manual — new fields must decode safely from old stored JSON)
@@ -87,7 +95,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
     private enum CodingKeys: String, CodingKey {
         case agentRole, isProgrammingProject, devEnvironment, gitAccess, testsAccess
         case architectureEnabled, architectureLanguage, commentsEnabled, commentsLanguage
-        case terminalAccess, buildEnabled
+        case terminalAccess, buildEnabled, curlSecrets
     }
 
     public init(from decoder: Decoder) throws {
@@ -104,6 +112,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         terminalAccess = try c.decodeIfPresent(TerminalAccessLevel.self, forKey: .terminalAccess) ?? .none
         // Old records predate this field — default to true (build was always allowed before).
         buildEnabled = try c.decodeIfPresent(Bool.self, forKey: .buildEnabled) ?? true
+        curlSecrets = try c.decodeIfPresent([CurlSecret].self, forKey: .curlSecrets) ?? []
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -119,6 +128,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         try c.encode(commentsLanguage, forKey: .commentsLanguage)
         try c.encode(terminalAccess, forKey: .terminalAccess)
         try c.encode(buildEnabled, forKey: .buildEnabled)
+        try c.encode(curlSecrets, forKey: .curlSecrets)
     }
 }
 

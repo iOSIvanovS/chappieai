@@ -51,8 +51,12 @@ extension ThreadStore {
         }
 
         let before = projects.count
+        // Secret values live in the Keychain, outside the payload — drop them with the project
+        // so no orphaned credentials stay behind.
+        let removedSecrets = projects.filter { $0.id == projectId }.flatMap { $0.settings.curlSecrets }
         projects.removeAll { $0.id == projectId }
         guard projects.count < before else { return }
+        CurlSecretKeychain().deleteAll(removedSecrets)
 
         payloads[idx].projectsJSON = (try? JSONEncoder().encode(projects)) ?? payloads[idx].projectsJSON
         payloads[idx].updatedAt = Date()

@@ -92,13 +92,22 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
     /// Starter plan forces this to .none across all threads.
     public var terminalAccess: TerminalAccessLevel
 
+    /// Curl-Chappie (HTTP request tool) switch for this thread. Off by default.
+    public var curlEnabled: Bool
+
+    /// Allow-list of hosts Curl-Chappie may talk to in this thread, with per-host permission.
+    /// Empty = the tool has nowhere to send anything.
+    public var curlHosts: [CurlHost]
+
     public init(
         maxMessagesInContext: Int = 30,
         isUnlimitedContext: Bool = false,
         activeProviderId: UUID? = nil,
         activeKeyId: UUID? = nil,
         activeModelName: String? = nil,
-        terminalAccess: TerminalAccessLevel = .none
+        terminalAccess: TerminalAccessLevel = .none,
+        curlEnabled: Bool = false,
+        curlHosts: [CurlHost] = []
     ) {
         // Clamp to valid range 10...1000 — guard against corrupted JSON values
         self.maxMessagesInContext = max(10, min(1000, maxMessagesInContext))
@@ -107,6 +116,32 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
         self.activeKeyId = activeKeyId
         self.activeModelName = activeModelName
         self.terminalAccess = terminalAccess
+        self.curlEnabled = curlEnabled
+        self.curlHosts = curlHosts
+    }
+
+    // MARK: Codable (manual)
+    // WHY MANUAL: synthesized decoding throws on a missing key, and callers fall back to
+    // ThreadSettings() on any decode error — one new field would silently reset every
+    // old thread's provider, model and terminal settings.
+
+    private enum CodingKeys: String, CodingKey {
+        case maxMessagesInContext, isUnlimitedContext, activeProviderId, activeKeyId
+        case activeModelName, terminalAccess, curlEnabled, curlHosts
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            maxMessagesInContext: try c.decodeIfPresent(Int.self, forKey: .maxMessagesInContext) ?? 30,
+            isUnlimitedContext: try c.decodeIfPresent(Bool.self, forKey: .isUnlimitedContext) ?? false,
+            activeProviderId: try c.decodeIfPresent(UUID.self, forKey: .activeProviderId),
+            activeKeyId: try c.decodeIfPresent(UUID.self, forKey: .activeKeyId),
+            activeModelName: try c.decodeIfPresent(String.self, forKey: .activeModelName),
+            terminalAccess: try c.decodeIfPresent(TerminalAccessLevel.self, forKey: .terminalAccess) ?? .none,
+            curlEnabled: try c.decodeIfPresent(Bool.self, forKey: .curlEnabled) ?? false,
+            curlHosts: try c.decodeIfPresent([CurlHost].self, forKey: .curlHosts) ?? []
+        )
     }
 }
 

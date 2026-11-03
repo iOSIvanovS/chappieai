@@ -28,11 +28,15 @@ ChappieCore/
     │   ├── AppConfig.swift             # Centralized config (dynamic, per-thread). Default: 100 messages.
     │   ├── ChappieError.swift          # ChappieError enum
     │   ├── MemoryModels.swift          # MemoryEntry, MemoryScope, MemoryStorage
-    │   ├── ProjectModels.swift         # ProjectSettings, ProjectMetadata, ThreadProjectEntry
+    │   ├── CurlChappie/                # Curl-Chappie data model (HTTP request tool, pass 1 of 5)
+    │   │   ├── CurlHost.swift          #   Thread allow-list entry (origin + permission readOnly/readAndLogin/full + loginPath); CurlOrigin = the one definition of "same host"
+    │   │   └── CurlSecret.swift        #   Project secret METADATA (name, kind, host origin); values are never stored here
+    │   ├── ProjectModels.swift         # ProjectSettings (incl. curlSecrets), ProjectMetadata, ThreadProjectEntry
     │   ├── RemoteProviderCatalog.swift  # DTOs for providers.json (GitHub-hosted catalog)
     │   ├── StorageIntegrity.swift      # StorageIntegrityIssue (damaged data report), LossyElement
-    │   └── ThreadModels.swift          # ThreadSettings, ThreadMetadata, ThreadPayload (with projects)
+    │   └── ThreadModels.swift          # ThreadSettings (incl. curlEnabled, curlHosts; manual Codable), ThreadMetadata, ThreadPayload
     └── Services/
+        ├── CurlSecretKeychain/         # Keychain values of Curl-Chappie secrets, account "<secretId>.<field>"; deleted with the project; not in backups (user re-enters after migration)
         ├── AIClient.swift              # OpenAI-compatible HTTP client (entry point)
         ├── AIClient+HTTP.swift         # HTTP request building + response parsing
         ├── AIClient+Streaming.swift    # SSE streaming parser
