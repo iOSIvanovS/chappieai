@@ -2,6 +2,7 @@
 // ChappieCore
 //
 // All project-related enums: roles, access levels, language, dev environment.
+// No localized UI strings here: labels live in the app target (ProjectModels+Display.swift).
 
 import Foundation
 
@@ -12,22 +13,6 @@ import Foundation
 public enum AgentRole: String, Codable, Sendable, CaseIterable {
     case advisor
     case executor
-
-    public var displayName: String {
-        switch self {
-        case .advisor:  return NSLocalizedString("role.advisor", bundle: .main, comment: "")
-        case .executor: return NSLocalizedString("role.executor", bundle: .main, comment: "")
-        }
-    }
-
-    public var description: String {
-        switch self {
-        case .advisor:
-            return NSLocalizedString("role.advisor.description", bundle: .main, comment: "")
-        case .executor:
-            return NSLocalizedString("role.executor.description", bundle: .main, comment: "")
-        }
-    }
 }
 
 // MARK: - GitAccessLevel
@@ -37,15 +22,6 @@ public enum GitAccessLevel: String, Codable, Sendable, CaseIterable {
     case statusOnly
     case write
     case full
-
-    public var displayName: String {
-        switch self {
-        case .none:       return NSLocalizedString("git.access.none", bundle: .main, comment: "")
-        case .statusOnly: return NSLocalizedString("git.access.status_only", bundle: .main, comment: "")
-        case .write:      return NSLocalizedString("git.access.write", bundle: .main, comment: "")
-        case .full:       return NSLocalizedString("git.access.full", bundle: .main, comment: "")
-        }
-    }
 
     // git_diff is NEVER allowed — it loads entire project into AI context (costs money).
     // git_push is available at .write and above — same level as git_commit.
@@ -72,15 +48,6 @@ public enum TestsAccessLevel: String, Codable, Sendable, CaseIterable {
     case run
     case write
 
-    public var displayName: String {
-        switch self {
-        case .none:     return NSLocalizedString("tests.access.none", bundle: .main, comment: "")
-        case .readOnly: return NSLocalizedString("tests.access.read_only", bundle: .main, comment: "")
-        case .run:      return NSLocalizedString("tests.access.run", bundle: .main, comment: "")
-        case .write:    return NSLocalizedString("tests.access.write", bundle: .main, comment: "")
-        }
-    }
-
     public var canRun: Bool { self == .run || self == .write }
     public var canWrite: Bool { self == .write }
     public var canReadLog: Bool { self != .none }
@@ -102,25 +69,6 @@ public enum TerminalAccessLevel: String, Codable, Sendable, CaseIterable {
     case none
     case confirm
     case auto
-
-    public var displayName: String {
-        switch self {
-        case .none:    return NSLocalizedString("terminal.access.none", bundle: .main, comment: "")
-        case .confirm: return NSLocalizedString("terminal.access.confirm", bundle: .main, comment: "")
-        case .auto:    return NSLocalizedString("terminal.access.auto", bundle: .main, comment: "")
-        }
-    }
-
-    public var description: String {
-        switch self {
-        case .none:
-            return NSLocalizedString("terminal.access.none.description", bundle: .main, comment: "")
-        case .confirm:
-            return NSLocalizedString("terminal.access.confirm.description", bundle: .main, comment: "")
-        case .auto:
-            return NSLocalizedString("terminal.access.auto.description", bundle: .main, comment: "")
-        }
-    }
 
     public var isEnabled: Bool { self != .none }
     public var requiresConfirmation: Bool { self == .confirm }
@@ -207,9 +155,11 @@ public enum DevEnvironment: String, Codable, Sendable, CaseIterable {
     // Detected by index.html or .html files when no framework marker is present.
     case html            = "html"
 
+    /// Stable English name used in AI prompts and tool messages. UI uses `localizedName`
+    /// (app target), so the core never depends on the app's string catalog.
     public var displayName: String {
         switch self {
-        case .unknown:         return NSLocalizedString("dev.env.unknown", bundle: .main, comment: "")
+        case .unknown:         return "Unknown"
         case .xcode:           return "Xcode (Swift / Obj-C)"
         case .nodejs:          return "Node.js"
         case .python:          return "Python"

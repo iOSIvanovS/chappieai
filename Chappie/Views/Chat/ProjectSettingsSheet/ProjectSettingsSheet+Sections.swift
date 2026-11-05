@@ -140,7 +140,7 @@ extension ProjectSettingsSheet {
             HStack(spacing: 8) {
                 Picker("project.settings.env_picker", selection: $draft.devEnvironment) {
                     ForEach(DevEnvironment.allCases, id: \.self) { env in
-                        Text(env.displayName).tag(env)
+                        Text(env.localizedName).tag(env)
                     }
                 }
                 .pickerStyle(.menu)

@@ -60,7 +60,7 @@ Chappie/
     ├── Terminal/                       # TerminalLiveView, TerminalWindowController (live terminal window)
     ├── License/                        # LicenseActivationView/, TrialBannerView
     ├── Onboarding/                     # OnboardingView (+ "Restore from Backup"), EULAView
-    └── Shared/                         # FlowLayout, ProviderIconView, ShakeEffect, StorageIssueBanner, WindowDragArea, picker rows
+    └── Shared/                         # FlowLayout, ProviderIconView, ShakeEffect, StorageIssueBanner, WindowDragArea, picker rows, ProjectModels+Display (localized labels of ChappieCore enums)
 ```
 
 ---
