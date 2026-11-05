@@ -141,6 +141,51 @@ struct CurlResponseShapingTests {
         #expect(response.notes.contains { $0.contains("ignored") })
     }
 
+    private final class StatusStub: CurlTransport, @unchecked Sendable {
+        let status: Int
+        let body: String
+        init(_ status: Int, _ body: String) { self.status = status; self.body = body }
+        func send(_ request: URLRequest) async throws -> CurlRawResponse {
+            CurlRawResponse(status: status, headers: [CurlHeader("Content-Type", "application/json")], body: Data(body.utf8))
+        }
+    }
+
+    @Test("pick is not applied to an error status, the whole body stays readable")
+    func pickSkippedOnError() async throws {
+        let body = #"{"title":"Validation","message":"count must be at least 2"}"#
+        let engine = CurlEngine(transport: StatusStub(422, body))
+        let response = try await engine.send(
+            CurlRequestSpec(method: "GET", url: "https://dev.x.ru/a", pick: ["data.id"]), context: context)
+        #expect(response.body == body)
+        #expect(response.notes.contains { $0.contains("not applied") && $0.contains("422") })
+    }
+
+    @Test("When no pick path matches, the note lists the top-level keys")
+    func pickNothingMatchedHint() async throws {
+        let engine = CurlEngine(transport: Stub(#"{"id":45,"role":"admin"}"#))
+        let response = try await engine.send(
+            CurlRequestSpec(method: "GET", url: "https://dev.x.ru/a", pick: ["data.id", "data.items[*].name"]),
+            context: context)
+        #expect(response.notes.contains { $0.contains("Top-level keys") && $0.contains("id, role") })
+    }
+
+    @Test("No hint when at least one path matched")
+    func pickNoHintWhenMatched() async throws {
+        let engine = CurlEngine(transport: Stub(#"{"id":45}"#))
+        let response = try await engine.send(
+            CurlRequestSpec(method: "GET", url: "https://dev.x.ru/a", pick: ["id", "nope"]), context: context)
+        #expect(!response.notes.contains { $0.contains("Top-level keys") })
+    }
+
+    @Test("pickReport tells matched from unmatched, wildcards over nothing count as unmatched")
+    func pickReport() throws {
+        let hit = try #require(CurlJSONPath.pickReport(["data.constructions[*].id"], from: sample))
+        #expect(hit.matchedAny)
+        let miss = try #require(CurlJSONPath.pickReport(["data.constructions[*].zzz"], from: sample))
+        #expect(!miss.matchedAny)
+        #expect(miss.topLevelKeys == ["data", "paginate"])
+    }
+
     @Test("A known secret written as \\uXXXX is still redacted after decoding")
     func redactionSeesDecodedText() async throws {
         let secret = CurlSecret(name: "pw", kind: .plain, hostOrigin: "https://dev.x.ru")

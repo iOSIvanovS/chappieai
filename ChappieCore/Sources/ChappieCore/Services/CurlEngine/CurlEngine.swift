@@ -214,10 +214,17 @@ public actor CurlEngine {
             let decoded = String(decoding: raw.body, as: UTF8.self)
             text = redactor.redactBody(CurlUnicodeEscapes.decode(decoded))
             // Picking runs on the already redacted text, so it can never expose anything.
-            if !pick.isEmpty {
-                if let picked = CurlJSONPath.pick(pick, from: text) {
-                    text = picked
+            if !pick.isEmpty, raw.status >= 400 {
+                // An error body is exactly what the model needs to read in full.
+                notes.append("'pick' was not applied because the status is \(raw.status): the whole error body is shown.")
+            } else if !pick.isEmpty {
+                if let report = CurlJSONPath.pickReport(pick, from: text) {
+                    text = report.text
                     notes.append("Body reduced to the requested 'pick' paths (full response: \(raw.body.count) bytes).")
+                    if !report.matchedAny {
+                        let keys = report.topLevelKeys.isEmpty ? "the top level is not an object" : report.topLevelKeys.joined(separator: ", ")
+                        notes.append("No 'pick' path matched anything. Top-level keys of the response: \(keys). Check the wrapper (for example 'data.') and field names; the full response is still stored in the session.")
+                    }
                 } else {
                     notes.append("'pick' was ignored: the body is not valid JSON or a path is malformed, so the whole body is shown.")
                 }

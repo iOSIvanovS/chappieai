@@ -70,17 +70,40 @@ public enum CurlJSONPath {
     /// `data.items[*].id` gives `[1,2,3]`. A path that matches nothing is `null`.
     /// Returns nil when the text is not JSON or a path is malformed (the caller then shows the whole body).
     public static func pick(_ paths: [String], from text: String) -> String? {
+        pickReport(paths, from: text)?.text
+    }
+
+    /// Same as `pick`, plus the facts the caller needs for a hint: whether any path matched
+    /// and which keys the top-level object has (to fix a wrong wrapper such as `data.`).
+    public static func pickReport(_ paths: [String], from text: String) -> PickReport? {
         guard !paths.isEmpty,
               let root = try? JSONSerialization.jsonObject(with: Data(text.utf8), options: [.fragmentsAllowed])
         else { return nil }
         var parts: [String] = []
+        var matchedAny = false
         for path in paths {
             guard let tokens = parse(path) else { return nil }
-            let value: Any = walk(tokens, root) ?? NSNull()
+            let found = walk(tokens, root)
+            if let found, !isAllNull(found) { matchedAny = true }
+            let value: Any = found ?? NSNull()
             guard let key = encode(path), let body = encode(value) else { return nil }
             parts.append("\(key):\(body)")
         }
-        return "{" + parts.joined(separator: ",") + "}"
+        let keys = (root as? [String: Any])?.keys.sorted() ?? []
+        return PickReport(text: "{" + parts.joined(separator: ",") + "}", matchedAny: matchedAny, topLevelKeys: keys)
+    }
+
+    public struct PickReport: Sendable, Equatable {
+        public let text: String
+        public let matchedAny: Bool
+        public let topLevelKeys: [String]
+    }
+
+    /// A wildcard over missing fields gives `[null,null]`: that is still "nothing found".
+    private static func isAllNull(_ value: Any) -> Bool {
+        if value is NSNull { return true }
+        if let array = value as? [Any] { return array.allSatisfy { isAllNull($0) } }
+        return false
     }
 
     private static func walk(_ tokens: [Token], _ node: Any) -> Any? {
