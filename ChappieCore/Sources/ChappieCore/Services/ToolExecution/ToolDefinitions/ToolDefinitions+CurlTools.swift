@@ -61,7 +61,7 @@ extension ToolExecutionService {
                         "text": AIToolProperty(type: "string", description: "Raw text body."),
                         "content_type": AIToolProperty(type: "string", description: "Content-Type for `text`."),
                         "session": session,
-                        "pick": AIToolProperty(type: "string", description: "Optional JSON array of paths to keep from a JSON body, e.g. [\"data.items[*].id\", \"paginate.total\"]. `[*]` takes every element of an array. Returns {\"path\": value}; missing paths are null. Use it to keep large responses short; the full response stays available to curl_extract.")
+                        "pick": AIToolProperty(type: "string", description: "Optional JSON array of paths to keep from a JSON body, e.g. [\"data.items[*].id\", \"paginate.total\"]. `[*]` takes every element of an array. A trailing `{a,b}` keeps only those fields of each object, e.g. `data.items[*].{id,name}` gives [{\"id\":1,\"name\":\"x\"}]. Returns {\"path\": value}; missing paths are null. Not applied to 4xx/5xx responses. Use it to keep large responses short; the full response stays available to curl_extract.")
                     ],
                     required: []
                 )

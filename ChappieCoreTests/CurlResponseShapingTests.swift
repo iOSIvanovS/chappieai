@@ -84,6 +84,53 @@ struct CurlResponseShapingTests {
         #expect(out == #"{"u":"a\"b/c"}"#)
     }
 
+    @Test("Projection keeps only the listed fields of every object, missing ones are null")
+    func pickProjection() throws {
+        let out = try #require(CurlJSONPath.pick(["data.constructions[*].{id,note,zzz}"], from: sample))
+        #expect(out == #"{"data.constructions[*].{id,note,zzz}":[{"id":1,"note":null,"zzz":null},{"id":2,"note":null,"zzz":null}]}"#)
+    }
+
+    @Test("Projection works on a single object and tolerates spaces")
+    func pickProjectionSingle() throws {
+        let out = try #require(CurlJSONPath.pick(["paginate.{ total }"], from: sample))
+        #expect(out == #"{"paginate.{ total }":{"total":13}}"#)
+    }
+
+    @Test("Projection must be last and well formed, otherwise the caller falls back")
+    func pickProjectionMalformed() {
+        #expect(CurlJSONPath.pick(["data.{id}.x"], from: sample) == nil)
+        #expect(CurlJSONPath.pick(["data.{id"], from: sample) == nil)
+        #expect(CurlJSONPath.pick(["data.{}"], from: sample) == nil)
+        #expect(CurlJSONPath.pick(["data.{a,,b}"], from: sample) == nil)
+    }
+
+    @Test("Projecting a scalar gives null and counts as unmatched")
+    func pickProjectionOnScalar() throws {
+        let report = try #require(CurlJSONPath.pickReport(["paginate.total.{x}"], from: sample))
+        #expect(report.text == #"{"paginate.total.{x}":null}"#)
+        #expect(!report.matchedAny)
+    }
+
+    @Test("A projection whose fields are all missing counts as unmatched")
+    func pickProjectionAllMissing() throws {
+        let report = try #require(CurlJSONPath.pickReport(["data.constructions[*].{zzz}"], from: sample))
+        #expect(!report.matchedAny)
+    }
+
+    @Test("A projection is not accepted by single-value extraction")
+    func projectionNotInExtract() {
+        #expect(CurlJSONPath.extract("data.constructions[0].{id}", from: Data(sample.utf8)) == nil)
+    }
+
+    @Test("A projected secret field is still redacted through the engine")
+    func projectionKeepsRedaction() async throws {
+        let engine = CurlEngine(transport: Stub(#"{"items":[{"id":1,"refresh_token":"abcdef"}]}"#))
+        let response = try await engine.send(
+            CurlRequestSpec(method: "GET", url: "https://dev.x.ru/a", pick: ["items[*].{id,refresh_token}"]), context: context)
+        #expect(response.body.contains("<redacted>"))
+        #expect(!response.body.contains("abcdef"))
+    }
+
     @Test("A wildcard is not accepted by single-value extraction")
     func wildcardNotInExtract() {
         #expect(CurlJSONPath.extract("data.constructions[*].id", from: Data(sample.utf8)) == nil)

@@ -53,12 +53,18 @@ public enum CurlCookieJar {
 
 public enum CurlJSONPath {
 
-    private enum Token { case key(String), index(Int), wildcard }
+    private enum Token { case key(String), index(Int), wildcard, project([String]) }
 
     /// Returns the value as text: strings as-is, numbers and booleans as written, containers as
-    /// compact JSON, null/missing as nil. A `[*]` wildcard is not allowed here (see `pick`).
+    /// compact JSON, null/missing as nil. `[*]` and `{a,b}` are not allowed here (see `pick`).
     public static func extract(_ path: String, from data: Data) -> String? {
-        guard let tokens = parse(path), !tokens.contains(where: { if case .wildcard = $0 { return true } else { return false } }),
+        guard let tokens = parse(path),
+              !tokens.contains(where: {
+                  switch $0 {
+                  case .wildcard, .project: return true
+                  default: return false
+                  }
+              }),
               let root = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]),
               let found = walk(tokens, root)
         else { return nil }
@@ -67,7 +73,9 @@ public enum CurlJSONPath {
 
     /// Keeps only the requested paths of a JSON document and returns them as one compact JSON object
     /// `{"path": value, ...}` in the order given. `[*]` collects every element of an array, e.g.
-    /// `data.items[*].id` gives `[1,2,3]`. A path that matches nothing is `null`.
+    /// `data.items[*].id` gives `[1,2,3]`. A trailing `{a,b}` projects objects to those fields:
+    /// `data.items[*].{id,name}` gives `[{"id":1,"name":"x"},...]` (a missing field is `null`,
+    /// keys come out sorted). A path that matches nothing is `null`.
     /// Returns nil when the text is not JSON or a path is malformed (the caller then shows the whole body).
     public static func pick(_ paths: [String], from text: String) -> String? {
         pickReport(paths, from: text)?.text
@@ -103,6 +111,7 @@ public enum CurlJSONPath {
     private static func isAllNull(_ value: Any) -> Bool {
         if value is NSNull { return true }
         if let array = value as? [Any] { return array.allSatisfy { isAllNull($0) } }
+        if let dict = value as? [String: Any] { return dict.values.allSatisfy { isAllNull($0) } }
         return false
     }
 
@@ -119,6 +128,15 @@ public enum CurlJSONPath {
         case .wildcard:
             guard let array = node as? [Any] else { return nil }
             return array.map { walk(rest, $0) ?? NSNull() }
+        case .project(let fields):
+            // Always the last token (enforced by parse), so there is nothing left in `rest`.
+            if let array = node as? [Any] {
+                return array.map { walk(tokens, $0) ?? NSNull() }
+            }
+            guard let dict = node as? [String: Any] else { return nil }
+            var projected: [String: Any] = [:]
+            for field in fields { projected[field] = dict[field] ?? NSNull() }
+            return projected
         }
     }
 
@@ -150,6 +168,16 @@ public enum CurlJSONPath {
                 }
                 lastWasIndex = false
                 i = path.index(after: i)
+            } else if ch == "{" {
+                if !key.isEmpty { tokens.append(.key(key)); key = "" }
+                guard let close = path[i...].firstIndex(of: "}"),
+                      path.index(after: close) == path.endIndex else { return nil }   // must be last
+                let fields = path[path.index(after: i)..<close]
+                    .split(separator: ",", omittingEmptySubsequences: false)
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                guard !fields.isEmpty, !fields.contains(where: { $0.isEmpty }) else { return nil }
+                tokens.append(.project(fields))
+                return tokens
             } else if ch == "[" {
                 if !key.isEmpty { tokens.append(.key(key)); key = "" }
                 guard let close = path[i...].firstIndex(of: "]") else { return nil }
