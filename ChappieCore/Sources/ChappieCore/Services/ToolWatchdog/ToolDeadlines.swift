@@ -74,7 +74,9 @@ public enum ToolDeadlines {
             "git_add", "git_commit", "git_push", "git_reset", "git_revert", "git_checkout",
             "memorize", "delete_memory", "send_attachment",
             // A POST/PUT/DELETE may already have reached the server; a login changes the session.
-            "curl_request", "curl_session"
+            "curl_request", "curl_session",
+            // Scenario files are written and removed in the project folder.
+            "curl_scenario_save", "curl_scenario_delete"
         ].contains(tool)
     }
 

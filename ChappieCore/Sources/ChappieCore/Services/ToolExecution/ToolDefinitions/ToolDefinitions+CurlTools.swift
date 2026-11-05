@@ -122,6 +122,80 @@ extension ToolExecutionService {
                     required: ["host", "name", "from"]
                 )
             ))
+        ] + curlScenarioTools(project: project)
+    }
+
+    // MARK: - Scenario files
+
+    private func curlScenarioTools(project: AIToolProperty) -> [AITool] {
+        let folder = AIToolProperty(type: "string", description: "Scenarios folder inside the project, relative to the project root, e.g. \"Scenarios\". Agree on the folder with the user once and keep using it. Hidden folders (.git) and paths outside the project are refused.")
+        return [
+            AITool(function: AIFunctionDefinition(
+                name: "curl_scenario_info",
+                description: """
+                List the scenarios of a project folder (name, what it does, actors, secret slots, inputs, returns, calls, whether it writes data), \
+                or with `name` show one scenario's JSON with validation problems and the scenarios that call it. A scenario is a saved, repeatable chain of \
+                HTTP steps; it knows no host and no concrete secret names, only abstract slots that a run maps to real ones. Never sends a request.
+                """,
+                parameters: AIToolParameters(
+                    properties: [
+                        "project": project,
+                        "folder": folder,
+                        "name": AIToolProperty(type: "string", description: "Scenario to show in full. Omit to list all.")
+                    ],
+                    required: ["folder"]
+                )
+            )),
+            AITool(function: AIFunctionDefinition(
+                name: "curl_scenario_save",
+                description: """
+                Validate and save a scenario as <folder>/<name>.json (replaces a scenario of the same name). Nothing is written unless it validates; \
+                every problem is listed at once. Never sends a request.
+                Format (one JSON object, unknown keys are errors; the // remarks below are explanations, do NOT send them):
+                {"name":"issue_assign_notify","description":"what it does","mutates":true,
+                 "actors":["author","oleg"],            // abstract users; a run maps each to a login+password secret
+                 "secrets":["client"],                   // other secret slots: {{secret:client.value}}
+                 "inputs":[{"name":"companyId","description":"…","default":"18"}],   // no default = required
+                 "steps":[
+                  {"id":"login","as":"author","method":"POST","path":"/api/login/token",
+                   "form":{"login":"{{secret:author.login}}","password":"{{secret:author.password}}","clientId":"{{secret:client.value}}"},
+                   "login":{"extract":{"access_token":"json:access_token","token_type":{"from":"json:token_type","sensitive":false}},
+                            "apply":[{"header":"Authorization","template":"{{var:token_type}} {{var:access_token}}"}]},
+                   "expect":{"status":200}},
+                  {"id":"create","as":"author","method":"POST","path":"/api/issues","json":{"title":"t","companyId":"{{input:companyId}}"},
+                   "extract":{"issueId":"json:data.id"},"expect":{"status":[200,201],"checks":[{"path":"data.id","exists":true}]}},
+                  {"id":"auth2","call":"Authorization","as":"oleg","with":{"x":"1"},"returns":["userId"]}   // runs another scenario; its values: {{var:auth2.userId}}
+                 ],
+                 "returns":["issueId"],                  // extract names (or stepId.name after a call) handed to a caller
+                 "cleanup":[{"id":"remove","as":"author","method":"DELETE","path":"/api/issues/{{var:issueId}}"}]}
+                Placeholders: {{secret:slot.login|password|value}}, {{input:name}}, {{var:name}}. A step is a request (method, path starting with "/", \
+                query, headers, one of json/form/text, extract, expect) or a call. Checks: {path, equals|contains|exists}. mutates must be true when any \
+                non-GET step (login steps excepted) exists or a called scenario writes. Only the ROOT scenario's cleanup runs, after the steps and after a \
+                failure; cleanup of called scenarios never runs, so the root cleans up everything it created. Max call depth \(CurlScenarioRules.maxDepth), no cycles. \
+                A called scenario sees only what `with` passes; only `returns` comes back. Slots of a callee's `secrets` must be declared in the caller too.
+                """,
+                parameters: AIToolParameters(
+                    properties: [
+                        "project": project,
+                        "folder": folder,
+                        "scenario": AIToolProperty(type: "string", description: "The whole scenario as a JSON object (text). Its `name` is the file name."),
+                        "name": AIToolProperty(type: "string", description: "Optional: must equal scenario.name; a guard against saving under the wrong name.")
+                    ],
+                    required: ["folder", "scenario"]
+                )
+            )),
+            AITool(function: AIFunctionDefinition(
+                name: "curl_scenario_delete",
+                description: "Delete a scenario file. Refused while another scenario of the folder still calls it (they are named). Never sends a request.",
+                parameters: AIToolParameters(
+                    properties: [
+                        "project": project,
+                        "folder": folder,
+                        "name": AIToolProperty(type: "string", description: "Scenario to delete.")
+                    ],
+                    required: ["folder", "name"]
+                )
+            ))
         ]
     }
 }

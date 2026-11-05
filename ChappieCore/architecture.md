@@ -101,7 +101,15 @@ ChappieCore/
         ├── ToolWatchdog/
         │   ├── ToolDeadlines.swift     # THE table of allowed run time per tool class (also read by the UI bar) + timeout message
         │   └── ToolWatchdog.swift      # Races a tool call against its deadline; on expiry cancels it and answers the model
-        ├── ToolExecution/CurlTools/    # Curl-Chappie tools (pass 3): curl_request / curl_session / curl_extract
+        ├── CurlScenarios/              # Curl-Chappie scenarios (pass D1: files only, no runner yet). A scenario = JSON file `<folder>/<name>.json` in the PROJECT; knows no host and no secret names, only abstract slots (actors = login+password pairs, secrets = other slots) and inputs
+        │   ├── CurlScenarioModels.swift #   value types: steps (request | call), expect, checks, login, inputs, cleanup
+        │   ├── CurlScenarioDecoder.swift #  strict JSON -> model (unknown key = error, all problems collected)
+        │   ├── CurlScenarioRules.swift #   limits (depth 5, 60 steps, 256 KB), identifier rule, `{{secret:slot.field}}` / `{{input:n}}` / `{{var:n}}` scanner
+        │   ├── CurlScenarioValidator.swift # pure: slots, placeholders in order, call contract (inputs/returns/actors/secret slots), cycles, depth, `mutates` must be true if anything writes (login steps excepted, callee writes propagate)
+        │   └── CurlScenarioStore.swift #   one folder of one project via PathGuard (no hidden dirs, no .xcodeproj, no symlink escape); list/load/write(atomic, pretty+sorted keys)/delete; `callers(of:)` for delete protection
+        │   Decisions: cleanup runs for the ROOT scenario only (nested cleanup never runs; root cleans everything using `returns`); a callee sees only `with`, the caller sees only `returns` (as {{var:stepId.name}}); folder is agreed with the user per project, tools take it as a parameter
+        ├── ToolExecution/CurlTools/    # Curl-Chappie tools: curl_request / curl_session / curl_extract (pass 3) + curl_scenario_info / _save / _delete (D1)
+        │   ├── CurlScenarioTools.swift #   scenario file tools; save validates everything before writing and warns about callers that stop validating; delete refuses while called
         │   ├── CurlTools.swift         #   executes the three tools on CurlEngine.shared; context = thread hosts + targeted project's secrets + Keychain
         │   └── CurlToolArguments.swift #   flat string args -> engine types (headers/query/form objects, extract/apply rule arrays, body choice)
         ├── ToolExecution/PDFTools/

@@ -350,7 +350,10 @@ struct ToolExposureTests {
 
     @Test("Curl-Chappie: offered only with the thread switch ON and an EXECUTOR project")
     func curlExposure() async {
-        let curlTools: Set<String> = ["curl_request", "curl_session", "curl_extract"]
+        let curlTools: Set<String> = [
+            "curl_request", "curl_session", "curl_extract",
+            "curl_scenario_info", "curl_scenario_save", "curl_scenario_delete"
+        ]
         #expect(await Rig([("A", xcodeExecutor())]).names().isDisjoint(with: curlTools), "switch off")
         #expect(await Rig([("A", xcodeAdvisor)], curl: true).names().isDisjoint(with: curlTools), "advisor only")
         #expect(await Rig([], curl: true).names().isDisjoint(with: curlTools), "no project")
