@@ -4967,7 +4967,6 @@
       }
     },
     "dev.env.unknown" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -7593,7 +7592,6 @@
       }
     },
     "git.access.full" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -7658,7 +7656,6 @@
       }
     },
     "git.access.none" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -7723,7 +7720,6 @@
       }
     },
     "git.access.status_only" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -7788,7 +7784,6 @@
       }
     },
     "git.access.write" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -7852,66 +7847,66 @@
         }
       }
     },
-    "https://..." : {
+    "https:\/\/..." : {
       "localizations" : {
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         }
       }
@@ -8531,22 +8526,10 @@
             "value" : "इस टूल के अपने-आप रुकने से पहले बचा समय"
           }
         },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tempo rimasto prima che questo strumento venga fermato automaticamente"
-          }
-        },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "このツールが自動停止するまでの残り時間"
-          }
-        },
-        "pt" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tempo restante antes de esta ferramenta ser parada automaticamente"
           }
         },
         "pt-BR" : {
@@ -8634,7 +8617,6 @@
       }
     },
     "license.activate_title" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -9473,7 +9455,6 @@
       }
     },
     "license.jwt_token_hint" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -9538,7 +9519,6 @@
       }
     },
     "license.jwt_token_label" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -9993,7 +9973,6 @@
       }
     },
     "license.plan_devices_1" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -10058,7 +10037,6 @@
       }
     },
     "license.plan_devices_5" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -10187,7 +10165,6 @@
       }
     },
     "license.plan_pro_desc" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -10252,7 +10229,6 @@
       }
     },
     "license.plan_pro_name" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -10317,7 +10293,6 @@
       }
     },
     "license.plan_starter_desc" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -10382,7 +10357,6 @@
       }
     },
     "license.plan_starter_name" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -10447,7 +10421,6 @@
       }
     },
     "license.plan_team_desc" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -10512,7 +10485,6 @@
       }
     },
     "license.plan_team_name" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -11091,7 +11063,6 @@
       }
     },
     "license.state_owner" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -14553,7 +14524,6 @@
       }
     },
     "project.chips.unavailable_hint" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -14810,7 +14780,6 @@
       }
     },
     "project.settings.arch_language" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -15451,7 +15420,6 @@
       }
     },
     "project.settings.comments_language" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -16869,61 +16837,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "/path/to/project"
+            "value" : "\/path\/to\/project"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "/pfad/zum/projekt"
+            "value" : "\/pfad\/zum\/projekt"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "/path/to/project"
+            "value" : "\/path\/to\/project"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "/ruta/al/proyecto"
+            "value" : "\/ruta\/al\/proyecto"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "/chemin/vers/projet"
+            "value" : "\/chemin\/vers\/projet"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "/path/to/project"
+            "value" : "\/path\/to\/project"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "/path/to/project"
+            "value" : "\/path\/to\/project"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "/caminho/para/projeto"
+            "value" : "\/caminho\/para\/projeto"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "/путь/к/проекту"
+            "value" : "\/путь\/к\/проекту"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "/项目/路径"
+            "value" : "\/项目\/路径"
           }
         }
       }
@@ -17574,7 +17542,6 @@
       }
     },
     "project.settings.terminal_auto_warning" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -17639,7 +17606,6 @@
       }
     },
     "project.settings.terminal_picker" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -17704,7 +17670,6 @@
       }
     },
     "project.settings.terminal_safe_hint" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -17769,7 +17734,6 @@
       }
     },
     "project.settings.terminal_section" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -18867,61 +18831,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "بدون مسار، مثال: https://api.openai.com"
+            "value" : "بدون مسار، مثال: https:\/\/api.openai.com"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Kein Pfad, z.B.: https://api.openai.com"
+            "value" : "Kein Pfad, z.B.: https:\/\/api.openai.com"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No path, e.g.: https://api.openai.com"
+            "value" : "No path, e.g.: https:\/\/api.openai.com"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sin ruta, p. ej.: https://api.openai.com"
+            "value" : "Sin ruta, p. ej.: https:\/\/api.openai.com"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sans chemin, ex.: https://api.openai.com"
+            "value" : "Sans chemin, ex.: https:\/\/api.openai.com"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "कोई पाथ नहीं, जैसे: https://api.openai.com"
+            "value" : "कोई पाथ नहीं, जैसे: https:\/\/api.openai.com"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "パスなし、例: https://api.openai.com"
+            "value" : "パスなし、例: https:\/\/api.openai.com"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sem caminho, ex.: https://api.openai.com"
+            "value" : "Sem caminho, ex.: https:\/\/api.openai.com"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Без пути, например: https://api.openai.com"
+            "value" : "Без пути, например: https:\/\/api.openai.com"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "无路径，例如：https://api.openai.com"
+            "value" : "无路径，例如：https:\/\/api.openai.com"
           }
         }
       }
@@ -19866,7 +19830,7 @@
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "(%d / %d)"
+            "value" : "(%d \/ %d)"
           }
         },
         "pt-BR" : {
@@ -19884,7 +19848,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "(%d / %d)"
+            "value" : "(%d \/ %d)"
           }
         }
       }
@@ -21495,61 +21459,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "تنسيق /v1/messages الأصلي. جسم الطلب وفق معيار Anthropic."
+            "value" : "تنسيق \/v1\/messages الأصلي. جسم الطلب وفق معيار Anthropic."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Natives /v1/messages-Format. Anfragekörper nach Anthropic-Standard."
+            "value" : "Natives \/v1\/messages-Format. Anfragekörper nach Anthropic-Standard."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Native /v1/messages format. Request body per Anthropic standard."
+            "value" : "Native \/v1\/messages format. Request body per Anthropic standard."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Formato nativo /v1/messages. Cuerpo de solicitud según estándar Anthropic."
+            "value" : "Formato nativo \/v1\/messages. Cuerpo de solicitud según estándar Anthropic."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Format natif /v1/messages. Corps de requête selon le standard Anthropic."
+            "value" : "Format natif \/v1\/messages. Corps de requête selon le standard Anthropic."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "नेटिव /v1/messages फॉर्मेट। Anthropic मानक के अनुसार अनुरोध बॉडी।"
+            "value" : "नेटिव \/v1\/messages फॉर्मेट। Anthropic मानक के अनुसार अनुरोध बॉडी।"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ネイティブ/v1/messagesフォーマット。Anthropic標準のリクエストボディ。"
+            "value" : "ネイティブ\/v1\/messagesフォーマット。Anthropic標準のリクエストボディ。"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Formato nativo /v1/messages. Corpo de requisição conforme padrão Anthropic."
+            "value" : "Formato nativo \/v1\/messages. Corpo de requisição conforme padrão Anthropic."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Нативный формат /v1/messages. Тело запроса по стандарту Anthropic."
+            "value" : "Нативный формат \/v1\/messages. Тело запроса по стандарту Anthropic."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "原生 /v1/messages 格式。请求体符合 Anthropic 标准。"
+            "value" : "原生 \/v1\/messages 格式。请求体符合 Anthropic 标准。"
           }
         }
       }
@@ -22043,7 +22007,7 @@
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ステップ1/2 — プロバイダー"
+            "value" : "ステップ1\/2 — プロバイダー"
           }
         },
         "pt-BR" : {
@@ -22107,7 +22071,7 @@
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ステップ2/2 — モデル"
+            "value" : "ステップ2\/2 — モデル"
           }
         },
         "pt-BR" : {
@@ -24182,6 +24146,12 @@
     "retry.progress.now" : {
       "comment" : "Shown at the moment the request is being re-sent.",
       "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ · إعادة المحاولة %2$d من %3$d…"
+          }
+        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
@@ -24206,19 +24176,19 @@
             "value" : "%1$@ · nouvel essai %2$d sur %3$d…"
           }
         },
-        "it" : {
+        "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ · tentativo %2$d di %3$d…"
+            "value" : "%1$@ · पुनः प्रयास %2$d\/%3$d…"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ · 再試行中 (%2$d/%3$d)…"
+            "value" : "%1$@ · 再試行中 (%2$d\/%3$d)…"
           }
         },
-        "pt" : {
+        "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "%1$@ · nova tentativa %2$d de %3$d…"
@@ -24233,7 +24203,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ · 正在进行第 %2$d/%3$d 次重试…"
+            "value" : "%1$@ · 正在进行第 %2$d\/%3$d 次重试…"
           }
         }
       }
@@ -24241,6 +24211,12 @@
     "retry.progress.wait" : {
       "comment" : "%1 = reason text, %2 = retry number, %3 = max retries, %4 = seconds until re-send.",
       "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ · إعادة المحاولة %2$d من %3$d خلال %4$d ث"
+          }
+        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
@@ -24265,22 +24241,22 @@
             "value" : "%1$@ · nouvel essai %2$d sur %3$d dans %4$d s"
           }
         },
-        "it" : {
+        "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ · tentativo %2$d di %3$d tra %4$d s"
+            "value" : "%1$@ · पुनः प्रयास %2$d\/%3$d, %4$d सेकंड में"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ · %4$d 秒後に再試行 (%2$d/%3$d)"
+            "value" : "%1$@ · %4$d 秒後に再試行 (%2$d\/%3$d)"
           }
         },
-        "pt" : {
+        "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ · nova tentativa %2$d de %3$d em %4$d s"
+            "value" : "%1$@ · nova tentativa %2$d de %3$d em %4$ds"
           }
         },
         "ru" : {
@@ -24292,7 +24268,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ · 第 %2$d/%3$d 次重试，%4$d 秒后"
+            "value" : "%1$@ · 第 %2$d\/%3$d 次重试，%4$d 秒后"
           }
         }
       }
@@ -24300,6 +24276,12 @@
     "retry.reason.http" : {
       "comment" : "Shown in the agent action bar while a failed request waits to be re-sent. %d = HTTP status code.",
       "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "خطأ من المزوّد %d"
+          }
+        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
@@ -24324,10 +24306,10 @@
             "value" : "Erreur du fournisseur %d"
           }
         },
-        "it" : {
+        "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Errore del provider %d"
+            "value" : "प्रदाता त्रुटि %d"
           }
         },
         "ja" : {
@@ -24336,7 +24318,7 @@
             "value" : "プロバイダーエラー %d"
           }
         },
-        "pt" : {
+        "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Erro do provedor %d"
@@ -24358,6 +24340,12 @@
     },
     "retry.reason.network" : {
       "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "مشكلة في الاتصال"
+          }
+        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
@@ -24382,10 +24370,10 @@
             "value" : "Problème de connexion"
           }
         },
-        "it" : {
+        "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Problema di connessione"
+            "value" : "कनेक्शन में समस्या"
           }
         },
         "ja" : {
@@ -24394,7 +24382,7 @@
             "value" : "接続の問題"
           }
         },
-        "pt" : {
+        "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Problema de conexão"
@@ -24416,6 +24404,12 @@
     },
     "retry.reason.rate_limited" : {
       "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تم بلوغ حد الطلبات"
+          }
+        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
@@ -24440,10 +24434,10 @@
             "value" : "Limite de requêtes atteinte"
           }
         },
-        "it" : {
+        "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Limite di richieste raggiunto"
+            "value" : "अनुरोध सीमा पूरी हो गई"
           }
         },
         "ja" : {
@@ -24452,7 +24446,7 @@
             "value" : "リクエスト制限に達しました"
           }
         },
-        "pt" : {
+        "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Limite de requisições atingido"
@@ -24474,6 +24468,12 @@
     },
     "retry.reason.stall" : {
       "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "توقف المزوّد عن الاستجابة"
+          }
+        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
@@ -24498,10 +24498,10 @@
             "value" : "Le fournisseur ne répond plus"
           }
         },
-        "it" : {
+        "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Il provider ha smesso di rispondere"
+            "value" : "प्रदाता ने प्रतिक्रिया देना बंद कर दिया"
           }
         },
         "ja" : {
@@ -24510,7 +24510,7 @@
             "value" : "プロバイダーが応答を停止しました"
           }
         },
-        "pt" : {
+        "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "O provedor parou de responder"
@@ -24532,6 +24532,12 @@
     },
     "retry.reason.timeout" : {
       "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "لم يردّ المزوّد في الوقت المحدد"
+          }
+        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
@@ -24556,10 +24562,10 @@
             "value" : "Le fournisseur n'a pas répondu à temps"
           }
         },
-        "it" : {
+        "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Il provider non ha risposto in tempo"
+            "value" : "प्रदाता ने समय पर उत्तर नहीं दिया"
           }
         },
         "ja" : {
@@ -24568,7 +24574,7 @@
             "value" : "プロバイダーが時間内に応答しませんでした"
           }
         },
-        "pt" : {
+        "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "O provedor não respondeu a tempo"
@@ -24589,7 +24595,6 @@
       }
     },
     "role.advisor" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -24654,7 +24659,6 @@
       }
     },
     "role.advisor.description" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -24719,7 +24723,6 @@
       }
     },
     "role.executor" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -24784,7 +24787,6 @@
       }
     },
     "role.executor.description" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -25430,7 +25432,7 @@
       }
     },
     "settings.backup_section" : {
-      "comment" : "Settings section header for export/import backup feature",
+      "comment" : "Settings section header for export\/import backup feature",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -29019,7 +29021,6 @@
       }
     },
     "terminal.access.auto" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -29084,7 +29085,6 @@
       }
     },
     "terminal.access.auto.description" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -29149,7 +29149,6 @@
       }
     },
     "terminal.access.confirm" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -29214,7 +29213,6 @@
       }
     },
     "terminal.access.confirm.description" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -29279,7 +29277,6 @@
       }
     },
     "terminal.access.none" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -29344,7 +29341,6 @@
       }
     },
     "terminal.access.none.description" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -29474,7 +29470,6 @@
     },
     "tests.access.none" : {
       "comment" : "Tests access level picker — no access option",
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -29539,7 +29534,6 @@
       }
     },
     "tests.access.read_only" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -29604,7 +29598,6 @@
       }
     },
     "tests.access.run" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -29669,7 +29662,6 @@
       }
     },
     "tests.access.write" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -31978,61 +31970,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "إظهار / إخفاء الخيوط"
+            "value" : "إظهار \/ إخفاء الخيوط"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Threads anzeigen / ausblenden"
+            "value" : "Threads anzeigen \/ ausblenden"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Show / hide threads"
+            "value" : "Show \/ hide threads"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mostrar / ocultar hilos"
+            "value" : "Mostrar \/ ocultar hilos"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Afficher / masquer les fils"
+            "value" : "Afficher \/ masquer les fils"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "थ्रेड दिखाएं / छुपाएं"
+            "value" : "थ्रेड दिखाएं \/ छुपाएं"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "スレッドを表示 / 非表示"
+            "value" : "スレッドを表示 \/ 非表示"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mostrar / ocultar tópicos"
+            "value" : "Mostrar \/ ocultar tópicos"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Показать / скрыть треды"
+            "value" : "Показать \/ скрыть треды"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "显示/隐藏线程"
+            "value" : "显示\/隐藏线程"
           }
         }
       }
