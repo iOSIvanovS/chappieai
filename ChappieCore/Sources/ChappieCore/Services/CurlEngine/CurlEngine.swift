@@ -70,7 +70,8 @@ public actor CurlEngine {
             let elapsed = Int(now().timeIntervalSince(started) * 1000)
             return buildResponse(raw, prepared: prepared, key: key, context: context,
                                  durationMs: max(elapsed, 0), relogin: relogin,
-                                 hadRecipe: sessions[key]?.recipe != nil, sessionName: spec.session)
+                                 hadRecipe: sessions[key]?.recipe != nil, sessionName: spec.session,
+                                 pick: spec.pick)
         }
     }
 
@@ -198,7 +199,7 @@ public actor CurlEngine {
 
     private func buildResponse(
         _ raw: CurlRawResponse, prepared: CurlPrepared, key: CurlSessionKey, context: CurlContext,
-        durationMs: Int, relogin: Bool, hadRecipe: Bool, sessionName: String?
+        durationMs: Int, relogin: Bool, hadRecipe: Bool, sessionName: String?, pick: [String]
     ) -> CurlResponse {
         let redactor = makeRedactor(context: context, origin: key.origin, key: key)
         var notes: [String] = []
@@ -208,11 +209,19 @@ public actor CurlEngine {
         var text: String
         if isHead || raw.body.isEmpty {
             text = ""
-        } else if Self.isTextual(contentType: contentType, body: raw.body),
-                  let decoded = String(data: raw.body, encoding: .utf8) {
-            text = redactor.redactBody(decoded)
         } else if Self.isTextual(contentType: contentType, body: raw.body) {
-            text = redactor.redactBody(String(decoding: raw.body, as: UTF8.self))
+            // Decode \uXXXX first so a known value written that way is still found by the redactor.
+            let decoded = String(decoding: raw.body, as: UTF8.self)
+            text = redactor.redactBody(CurlUnicodeEscapes.decode(decoded))
+            // Picking runs on the already redacted text, so it can never expose anything.
+            if !pick.isEmpty {
+                if let picked = CurlJSONPath.pick(pick, from: text) {
+                    text = picked
+                    notes.append("Body reduced to the requested 'pick' paths (full response: \(raw.body.count) bytes).")
+                } else {
+                    notes.append("'pick' was ignored: the body is not valid JSON or a path is malformed, so the whole body is shown.")
+                }
+            }
         } else {
             text = "<binary body omitted: \(raw.body.count) bytes, Content-Type: \(contentType.isEmpty ? "unknown" : contentType)>"
             notes.append("Binary and file bodies are not shown (file download is not supported).")

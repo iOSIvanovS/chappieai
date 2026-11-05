@@ -45,7 +45,8 @@ ChappieCore/
         │   ├── CurlTemplate.swift      #   {{secret:name.field}} / {{var:name}}, single-pass, escaping per destination; names may hold spaces and any letters
         │   ├── CurlRedactor.swift      #   known values (plain/JSON/percent), credential-looking JSON keys, credential headers
         │   ├── CurlSession.swift       #   CurlSessionKey = origin + SHA-256 fingerprint of credential VALUES; in-memory session state
-        │   ├── CurlCookiesAndPaths.swift # cookie jar per session key, JSON path extraction
+        │   ├── CurlCookiesAndPaths.swift # cookie jar per session key, JSON path extraction, `pick` (paths + [*] wildcard, applied to the redacted body only)
+        │   ├── CurlUnicodeEscapes.swift  #   decodes \uXXXX above ASCII in text bodies before redaction; ASCII escapes stay so JSON structure cannot change
         │   ├── CurlTransport.swift     #   protocol + URLSession impl (no redirects, no cookie storage/cache, 5 MB body cap)
         │   ├── CurlContext.swift       #   hosts of the thread + secret metadata + value provider (Keychain)
         │   ├── CurlRequestModels.swift #   request/recipe/result value types, CurlError

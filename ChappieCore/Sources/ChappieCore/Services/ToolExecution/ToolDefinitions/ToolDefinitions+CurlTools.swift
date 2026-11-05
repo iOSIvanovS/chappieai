@@ -42,7 +42,7 @@ extension ToolExecutionService {
                 description: """
                 Send an HTTP request to a host of this thread's allow-list and get status, headers and body (like Postman). \
                 Each host has a permission: readOnly (GET/HEAD/OPTIONS), readAndLogin (also POST to its login path only) or full. \
-                Redirects are not followed (you get the Location). Files are not downloaded.
+                Redirects are not followed (you get the Location). Files are not downloaded. Non-ASCII text in JSON (\\uXXXX escapes) is shown decoded.
                 \(references)
                 \(hostText)
                 Give one body at most: `json` (JSON text), `form` (object, sent urlencoded) or `text`.
@@ -60,7 +60,8 @@ extension ToolExecutionService {
                         "form": AIToolProperty(type: "object", description: "Form body as an object, sent as application/x-www-form-urlencoded."),
                         "text": AIToolProperty(type: "string", description: "Raw text body."),
                         "content_type": AIToolProperty(type: "string", description: "Content-Type for `text`."),
-                        "session": session
+                        "session": session,
+                        "pick": AIToolProperty(type: "string", description: "Optional JSON array of paths to keep from a JSON body, e.g. [\"data.items[*].id\", \"paginate.total\"]. `[*]` takes every element of an array. Returns {\"path\": value}; missing paths are null. Use it to keep large responses short; the full response stays available to curl_extract.")
                     ],
                     required: []
                 )

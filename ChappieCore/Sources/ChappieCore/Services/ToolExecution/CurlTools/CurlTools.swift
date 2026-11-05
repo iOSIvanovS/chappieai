@@ -65,7 +65,8 @@ extension ToolExecutionService {
             headers: try CurlToolArguments.headers(args),
             query: CurlToolArguments.pairs(from: try CurlToolArguments.object(args, "query")),
             body: try CurlToolArguments.body(args),
-            session: args["session"])
+            session: args["session"],
+            pick: try CurlToolArguments.pick(args))
     }
 
     // MARK: - curl_request

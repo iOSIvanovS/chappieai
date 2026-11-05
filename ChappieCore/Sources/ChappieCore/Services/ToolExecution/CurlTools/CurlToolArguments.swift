@@ -119,6 +119,17 @@ enum CurlToolArguments {
         }
     }
 
+    /// "pick": a JSON array of paths, or one bare path such as data.items[*].id.
+    static func pick(_ args: [String: String]) throws -> [String] {
+        guard let raw = args["pick"]?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return [] }
+        guard raw.hasPrefix("[") else { return [raw] }
+        guard let value = try? JSONSerialization.jsonObject(with: Data(raw.utf8)),
+              let list = value as? [String] else {
+            throw Failure(message: "Argument 'pick' must be a JSON array of path strings, e.g. [\"data.items[*].id\", \"paginate.total\"].")
+        }
+        return list.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
     static func flag(_ args: [String: String], _ key: String) -> Bool {
         ["true", "1", "yes"].contains((args[key] ?? "").lowercased())
     }

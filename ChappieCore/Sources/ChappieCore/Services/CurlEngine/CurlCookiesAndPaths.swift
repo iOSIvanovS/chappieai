@@ -53,27 +53,58 @@ public enum CurlCookieJar {
 
 public enum CurlJSONPath {
 
-    private enum Token { case key(String), index(Int) }
+    private enum Token { case key(String), index(Int), wildcard }
 
     /// Returns the value as text: strings as-is, numbers and booleans as written, containers as
-    /// compact JSON, null/missing as nil.
+    /// compact JSON, null/missing as nil. A `[*]` wildcard is not allowed here (see `pick`).
     public static func extract(_ path: String, from data: Data) -> String? {
-        guard let tokens = parse(path),
-              let root = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+        guard let tokens = parse(path), !tokens.contains(where: { if case .wildcard = $0 { return true } else { return false } }),
+              let root = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]),
+              let found = walk(tokens, root)
         else { return nil }
+        return stringify(found)
+    }
 
-        var current: Any = root
-        for token in tokens {
-            switch token {
-            case .key(let key):
-                guard let dict = current as? [String: Any], let next = dict[key] else { return nil }
-                current = next
-            case .index(let index):
-                guard let array = current as? [Any], index >= 0, index < array.count else { return nil }
-                current = array[index]
-            }
+    /// Keeps only the requested paths of a JSON document and returns them as one compact JSON object
+    /// `{"path": value, ...}` in the order given. `[*]` collects every element of an array, e.g.
+    /// `data.items[*].id` gives `[1,2,3]`. A path that matches nothing is `null`.
+    /// Returns nil when the text is not JSON or a path is malformed (the caller then shows the whole body).
+    public static func pick(_ paths: [String], from text: String) -> String? {
+        guard !paths.isEmpty,
+              let root = try? JSONSerialization.jsonObject(with: Data(text.utf8), options: [.fragmentsAllowed])
+        else { return nil }
+        var parts: [String] = []
+        for path in paths {
+            guard let tokens = parse(path) else { return nil }
+            let value: Any = walk(tokens, root) ?? NSNull()
+            guard let key = encode(path), let body = encode(value) else { return nil }
+            parts.append("\(key):\(body)")
         }
-        return stringify(current)
+        return "{" + parts.joined(separator: ",") + "}"
+    }
+
+    private static func walk(_ tokens: [Token], _ node: Any) -> Any? {
+        guard let first = tokens.first else { return node }
+        let rest = Array(tokens.dropFirst())
+        switch first {
+        case .key(let key):
+            guard let dict = node as? [String: Any], let next = dict[key] else { return nil }
+            return walk(rest, next)
+        case .index(let index):
+            guard let array = node as? [Any], index >= 0, index < array.count else { return nil }
+            return walk(rest, array[index])
+        case .wildcard:
+            guard let array = node as? [Any] else { return nil }
+            return array.map { walk(rest, $0) ?? NSNull() }
+        }
+    }
+
+    private static func encode(_ value: Any) -> String? {
+        guard JSONSerialization.isValidJSONObject([value]),
+              let data = try? JSONSerialization.data(withJSONObject: [value], options: [.sortedKeys, .withoutEscapingSlashes]),
+              let text = String(data: data, encoding: .utf8) else { return nil }
+        // The value was wrapped in an array only to allow scalars; strip the brackets again.
+        return String(text.dropFirst().dropLast())
     }
 
     private static func parse(_ raw: String) -> [Token]? {
@@ -98,9 +129,15 @@ public enum CurlJSONPath {
                 i = path.index(after: i)
             } else if ch == "[" {
                 if !key.isEmpty { tokens.append(.key(key)); key = "" }
-                guard let close = path[i...].firstIndex(of: "]"),
-                      let index = Int(path[path.index(after: i)..<close]) else { return nil }
-                tokens.append(.index(index))
+                guard let close = path[i...].firstIndex(of: "]") else { return nil }
+                let inside = path[path.index(after: i)..<close]
+                if inside == "*" {
+                    tokens.append(.wildcard)
+                } else if let index = Int(inside) {
+                    tokens.append(.index(index))
+                } else {
+                    return nil
+                }
                 lastWasIndex = true
                 i = path.index(after: close)
             } else {

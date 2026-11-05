@@ -40,6 +40,9 @@ public struct CurlRequestSpec: Sendable, Equatable {
     public var body: CurlBody?
     /// Name of the secret this request acts as ("as"). nil = anonymous scratch session.
     public var session: String?
+    /// JSON paths to keep in the shown body (`data.items[*].id`); empty = the whole body.
+    /// Applied after redaction, only to what the model sees: the stored last response stays whole.
+    public var pick: [String]
 
     public init(
         method: String,
@@ -47,7 +50,8 @@ public struct CurlRequestSpec: Sendable, Equatable {
         headers: [CurlHeader] = [],
         query: [CurlPair] = [],
         body: CurlBody? = nil,
-        session: String? = nil
+        session: String? = nil,
+        pick: [String] = []
     ) {
         self.method = method
         self.url = url
@@ -55,6 +59,7 @@ public struct CurlRequestSpec: Sendable, Equatable {
         self.query = query
         self.body = body
         self.session = session
+        self.pick = pick
     }
 }
 
