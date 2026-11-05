@@ -30,7 +30,8 @@ ChappieCore/
     │   ├── MemoryModels.swift          # MemoryEntry, MemoryScope, MemoryStorage
     │   ├── CurlChappie/                # Curl-Chappie data model (HTTP request tool)
     │   │   ├── CurlHost.swift          #   Thread allow-list entry (origin + permission readOnly/readAndLogin/full + loginPath); CurlOrigin = the one definition of "same host"
-    │   │   └── CurlSecret.swift        #   Project secret METADATA (name, kind, host origin); values are never stored here
+    │   │   ├── CurlSecret.swift        #   Project secret METADATA (name, kind, host origin); values are never stored here
+    │   │   └── CurlSecretCatalog.swift #   Names/kinds/hosts/ref syntax of EXECUTOR projects' secrets, appended to the curl tool descriptions so the model knows what to pass as `session` (never values; flags parts with no stored value)
     │   ├── ProjectModels.swift         # ProjectSettings (incl. curlSecrets), ProjectMetadata, ThreadProjectEntry
     │   ├── RemoteProviderCatalog.swift  # DTOs for providers.json (GitHub-hosted catalog)
     │   ├── StorageIntegrity.swift      # StorageIntegrityIssue (damaged data report), LossyElement

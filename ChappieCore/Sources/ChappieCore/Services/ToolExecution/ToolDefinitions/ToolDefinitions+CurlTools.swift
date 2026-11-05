@@ -14,6 +14,17 @@ extension ToolExecutionService {
             ? "No hosts are configured in this thread yet."
             : "Hosts of this thread: " + hosts.map { "\($0.name) = \($0.origin) [\($0.permission.rawValue)\($0.loginPath.isEmpty ? "" : ", login \($0.loginPath)")]" }.joined(separator: "; ") + "."
 
+        // Names only: the model has to know what to call a secret, never what it contains.
+        let keychain = CurlSecretKeychain()
+        let secretEntries = allInfos.flatMap { info -> [CurlSecretCatalog.Entry] in
+            let projectSettings = settings(of: info)
+            guard projectSettings.agentRole == .executor else { return [] }
+            return projectSettings.curlSecrets.map {
+                CurlSecretCatalog.Entry(project: info.name, secret: $0, missing: keychain.missingFields(of: $0))
+            }
+        }
+        let secretText = CurlSecretCatalog.describe(secretEntries)
+
         let project = AIToolProperty(type: "string", description: fileToolProjectArgDescription(for: allInfos) + " The project supplies the secrets.")
         let host = AIToolProperty(type: "string", description: "Host name or origin from the thread's host list. Use with `path` instead of a full `url`.")
         let url = AIToolProperty(type: "string", description: "Absolute URL on a listed host. May contain {{secret:name.field}} and {{var:name}} after the host, never inside the scheme or host.")
@@ -22,6 +33,7 @@ extension ToolExecutionService {
         let references = """
         References: {{secret:name.login}}, {{secret:name.password}}, {{secret:name.value}} (project secrets bound to the request host; names may contain spaces and any letters) \
         and {{var:name}} (values saved in the session). Values are substituted by the app and never shown to you; tokens and cookies in responses are replaced by <redacted>.
+        \(secretText)
         """
 
         return [
