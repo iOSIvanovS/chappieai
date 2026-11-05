@@ -43,8 +43,15 @@ struct ProjectSettingsSheet: View {
     /// Called when user updates the project path (manual edit or Browse picker).
     /// Separate from onSave — path lives in ThreadProjectEntry, not ProjectSettings.
     let onUpdatePath: (String) -> Void
+    /// Hosts of the current thread — the allow-list that secrets are bound to.
+    let curlHosts: [CurlHost]
+    /// Receives the secret list, typed values and removed secrets on Save, before `onSave`.
+    /// Values go to the Keychain; they never travel through ProjectSettings.
+    let onCommitCurlSecrets: ([CurlSecret], [UUID: [CurlSecretField: String]], [CurlSecret]) -> Void
 
     @State var draft: ProjectSettings
+    @State var curlValues: [UUID: [CurlSecretField: String]] = [:]
+    @State var curlSavedFields: Set<String>
     @State var pathDraft: String
     @State var showingDowngradeAlert = false
     @State var pendingRoleChange: AgentRole? = nil
@@ -58,7 +65,10 @@ struct ProjectSettingsSheet: View {
         onDismiss: @escaping () -> Void,
         onChangePlan: @escaping () -> Void = {},
         onDetectEnvironment: @escaping (@Sendable @escaping (DevEnvironment) -> Void) -> Void = { _ in },
-        onUpdatePath: @escaping (String) -> Void = { _ in }
+        onUpdatePath: @escaping (String) -> Void = { _ in },
+        curlHosts: [CurlHost] = [],
+        curlSavedFields: Set<String> = [],
+        onCommitCurlSecrets: @escaping ([CurlSecret], [UUID: [CurlSecretField: String]], [CurlSecret]) -> Void = { _, _, _ in }
     ) {
         self.project = project
         self.canExecuteTools = canExecuteTools
@@ -67,6 +77,9 @@ struct ProjectSettingsSheet: View {
         self.onChangePlan = onChangePlan
         self.onDetectEnvironment = onDetectEnvironment
         self.onUpdatePath = onUpdatePath
+        self.curlHosts = curlHosts
+        self.onCommitCurlSecrets = onCommitCurlSecrets
+        self._curlSavedFields = State(initialValue: curlSavedFields)
         self._draft = State(initialValue: project.settings)
         self._pathDraft = State(initialValue: project.absolutePath ?? "")
     }
@@ -88,6 +101,14 @@ struct ProjectSettingsSheet: View {
                     if draft.agentRole == .executor {
                         Divider().padding(.vertical, 4)
                         projectTypeSection
+
+                        Divider().padding(.vertical, 4)
+                        CurlSecretsEditor(
+                            secrets: $draft.curlSecrets,
+                            values: $curlValues,
+                            hosts: curlHosts,
+                            savedFields: curlSavedFields
+                        )
 
                         if draft.isProgrammingProject {
                             Divider().padding(.vertical, 4)
@@ -176,11 +197,16 @@ struct ProjectSettingsSheet: View {
             Spacer()
 
             Button("project.settings.save") {
-                onSave(draft)
+                var final = draft
+                final.curlSecrets = CurlValidation.normalized(CurlValidation.droppingBlank(draft.curlSecrets))
+                let keptIds = Set(final.curlSecrets.map(\.id))
+                let removed = project.settings.curlSecrets.filter { !keptIds.contains($0.id) }
+                onCommitCurlSecrets(final.curlSecrets, curlValues, removed)
+                onSave(final)
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.return, modifiers: .command)
-            .disabled(isDetecting)
+            .disabled(isDetecting || !draft.curlSecretsAreSaveable)
         }
         .padding(16)
     }

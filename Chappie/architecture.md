@@ -47,8 +47,9 @@ Chappie/
     │   ├── ChatScrollView/             # Message feed (LazyVStack, anti-jump streaming)
     │   ├── MessageBubbleView/          # Message bubble (+ attachments, terminal confirmation UI)
     │   ├── ProjectChipsView/           # Project chips + balance chip (bottom row)
-    │   ├── ProjectSettingsSheet/       # Project settings sheet
-    │   ├── ThreadSettingsSheet/        # Thread settings: name, provider+key+model, context, terminal
+    │   ├── ProjectSettingsSheet/       # Project settings sheet (+ Curl-Chappie secrets, executor only)
+    │   ├── ThreadSettingsSheet/        # Thread settings: name, provider+key+model, context, terminal, Curl-Chappie switch + hosts
+    │   ├── CurlSettings/               # Curl-Chappie UI: CurlHostsEditor (thread), CurlSecretsEditor (project), CurlDisplayNames (localized enum labels + issue messages). Dumb views over bindings; rules live in ChappieCore CurlValidation. Secret values are typed into SecureFields, written to the Keychain by ChappieViewModel+Curl.commitCurlSecrets on Save only (Cancel discards), never read back into the UI
     │   ├── Markdown/                   # Markdown rendering, CodeBlockView, SyntaxEngine/, themes
     │   ├── ModelPickerRow.swift        # Model picker (top row) + thread settings gear
     │   └── StatusBarView.swift         # Status bar (current tool, retry label)

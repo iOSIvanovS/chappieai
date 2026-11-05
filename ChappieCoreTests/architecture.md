@@ -35,6 +35,7 @@ ChappieCoreTests/
 ├── MessageTimestampTests.swift         # Time label format, gap + previous-run duration, omitted short gaps, legacy nil dates, determinism
 ├── MemoryDatesTests.swift              # Memory entry dates in the prompt: created/updated, same-day form, time zone, stability, createdAt kept on re-save, real SystemPromptBuilder path
 ├── CurlModelsTests.swift               # Curl-Chappie model: origin/path normalization, old JSON decodes with defaults, secret naming and duplicates, Keychain round trip (unique service per test)
+├── CurlValidationTests.swift           # Curl-Chappie settings rows: host/secret issues, blank rows dropped, normalization on save, save gate, Keychain apply (write/keep/remove/kind switch)
 ├── CurlPureTests.swift                 # Curl-Chappie pure parts: gate (permissions, login path, dot segments), templates (single pass, escaping, unicode names), redaction, JSON path, cookie jar, fingerprint
 ├── CurlEngineTests.swift               # Curl-Chappie engine on a stub transport: login flow, token never shown, shared sessions across projects, single-flight, 401 re-login, host binding, injection guards, rate limit, three users on one host (Cyrillic names with spaces = three independent sessions)
 ├── ToolWatchdogTests.swift             # ToolDeadlines table + messages; watchdog: fast path, hung tool cancelled, uncancellable tool abandoned, Stop forwarded

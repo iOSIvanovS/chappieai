@@ -35,6 +35,11 @@ extension ContentView {
                     },
                     onUpdatePath: { newPath in
                         viewModel.updateProjectPath(newPath, forProjectId: project.id)
+                    },
+                    curlHosts: viewModel.activeThreadSettings.curlHosts,
+                    curlSavedFields: CurlSecretKeychain().savedFields(of: project.settings.curlSecrets),
+                    onCommitCurlSecrets: { secrets, typed, removed in
+                        viewModel.commitCurlSecrets(secrets, typed: typed, removed: removed)
                     }
                 )
             }

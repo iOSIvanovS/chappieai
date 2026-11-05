@@ -66,6 +66,8 @@ extension ThreadSettingsSheet {
                 }
 
                 updatedSettings.activeKeyId = effectiveKeyId
+                // Store exactly what request matching compares against (see CurlOrigin).
+                updatedSettings.curlHosts = CurlValidation.normalized(CurlValidation.droppingBlank(updatedSettings.curlHosts))
 
                 print("[ThreadSettingsSheet] onSave: title='\(finalTitle)' maxMsgs=\(updatedSettings.maxMessagesInContext) keyId=\(effectiveKeyId?.uuidString ?? "nil") terminal=\(updatedSettings.terminalAccess.rawValue)")
 
@@ -73,6 +75,7 @@ extension ThreadSettingsSheet {
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.return, modifiers: .command)
+            .disabled(!draftSettings.curlHostsAreSaveable)
         }
         .padding(16)
     }

@@ -49,7 +49,8 @@ ChappieCore/
         │   ├── CurlContext.swift       #   hosts of the thread + secret metadata + value provider (Keychain)
         │   ├── CurlRequestModels.swift #   request/recipe/result value types, CurlError
         │   └── CurlResponse.swift      #   redacted result + text rendering for the model
-        ├── CurlSecretKeychain/         # Keychain values of Curl-Chappie secrets, account "<secretId>.<field>"; deleted with the project; not in backups (user re-enters after migration)
+        ├── CurlSecretKeychain/         # Keychain values of Curl-Chappie secrets, account "<secretId>.<field>"; deleted with the project; not in backups (user re-enters after migration). `apply` commits one settings-sheet save (empty typed value = keep stored; parts of a changed kind are dropped); `savedFields` drives "saved" hints without ever reading values into the UI
+        │   (Models/CurlChappie/CurlValidation.swift: pure row validation + normalization for the settings tables, save gates `ThreadSettings.curlHostsAreSaveable` / `ProjectSettings.curlSecretsAreSaveable`)
         ├── AIClient.swift              # OpenAI-compatible HTTP client (entry point)
         ├── AIClient+HTTP.swift         # HTTP request building + response parsing
         ├── AIClient+Streaming.swift    # SSE streaming parser

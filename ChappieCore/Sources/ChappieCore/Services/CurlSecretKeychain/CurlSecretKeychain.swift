@@ -67,6 +67,41 @@ public struct CurlSecretKeychain: Sendable {
         secrets.forEach { delete(secretId: $0.id) }
     }
 
+    /// Applies one settings-sheet save: writes typed values, drops parts the secret's kind no longer
+    /// has (login/password left over after switching to a token), and removes deleted secrets.
+    /// An empty typed value means "keep what is stored" — stored values are never shown, so the
+    /// user cannot retype them. Returns false if any write failed.
+    @discardableResult
+    public func apply(
+        secrets: [CurlSecret],
+        typed: [UUID: [CurlSecretField: String]],
+        removed: [CurlSecret]
+    ) -> Bool {
+        var ok = true
+        deleteAll(removed)
+        for secret in secrets {
+            for field in CurlSecretField.allCases where !secret.kind.fields.contains(field) {
+                SecItemDelete(baseQuery(secretId: secret.id, field: field) as CFDictionary)
+            }
+            for field in secret.kind.fields {
+                guard let value = typed[secret.id]?[field], !value.isEmpty else { continue }
+                if !save(value, secretId: secret.id, field: field) { ok = false }
+            }
+        }
+        return ok
+    }
+
+    /// "<secretId>.<field>" for every stored part of the given secrets — drives "value saved" hints.
+    public func savedFields(of secrets: [CurlSecret]) -> Set<String> {
+        var result: Set<String> = []
+        for secret in secrets {
+            for field in secret.kind.fields where load(secretId: secret.id, field: field) != nil {
+                result.insert("\(secret.id.uuidString).\(field.rawValue)")
+            }
+        }
+        return result
+    }
+
     /// Parts of `secret` that have no value in the Keychain (e.g. after a backup restore).
     public func missingFields(of secret: CurlSecret) -> [CurlSecretField] {
         secret.kind.fields.filter { load(secretId: secret.id, field: $0) == nil }

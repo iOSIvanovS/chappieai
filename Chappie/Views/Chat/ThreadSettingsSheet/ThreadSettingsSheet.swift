@@ -81,6 +81,8 @@ struct ThreadSettingsSheet: View {
                     contextSection
                     Divider().padding(.vertical, 2)
                     terminalSection
+                    Divider().padding(.vertical, 2)
+                    CurlHostsEditor(enabled: $draftSettings.curlEnabled, hosts: $draftSettings.curlHosts)
                 }
                 .padding(20)
             }

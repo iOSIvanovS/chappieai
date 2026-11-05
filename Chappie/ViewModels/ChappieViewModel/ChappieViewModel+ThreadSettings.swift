@@ -77,6 +77,9 @@ extension ChappieViewModel {
                     self.activeThread = updated
                     self.activeThreadSettings = updatedSettings
                     invalidateActiveThreadSession()
+                    // Curl-Chappie switch and hosts live in ActiveMemoryContext (read by ToolPolicy and
+                    // the tool definitions); without this the new hosts appear only after a thread switch.
+                    await syncActiveMemoryContext()
                 }
                 print("[ChappieViewModel] Thread settings saved for '\(newTitle)'")
             } catch {
