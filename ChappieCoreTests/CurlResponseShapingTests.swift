@@ -207,6 +207,50 @@ struct CurlResponseShapingTests {
         #expect(response.notes.contains { $0.contains("not applied") && $0.contains("422") })
     }
 
+    // MARK: - Header folding
+
+    private final class HeaderStub: CurlTransport, @unchecked Sendable {
+        func send(_ request: URLRequest) async throws -> CurlRawResponse {
+            CurlRawResponse(status: 200, headers: [
+                CurlHeader("Content-Type", "application/json"),
+                CurlHeader("Access-Control-Allow-Origin", "*"),
+                CurlHeader("Cache-Control", "private"),
+                CurlHeader("Date", "Thu"),
+                CurlHeader("Server", "nginx"),
+                CurlHeader("x-ratelimit-remaining", "598"),
+                CurlHeader("x-debug-message", "fastcgi")
+            ], body: Data("{}".utf8))
+        }
+    }
+
+    @Test("Routine headers are folded into a count, unknown ones stay visible")
+    func headersFolded() async throws {
+        let engine = CurlEngine(transport: HeaderStub())
+        let response = try await engine.send(
+            CurlRequestSpec(method: "GET", url: "https://dev.x.ru/a"), context: context)
+        let names = response.headers.map(\.name)
+        #expect(names == ["Content-Type", "x-ratelimit-remaining", "x-debug-message"])
+        #expect(response.notes.contains { $0.contains("4 routine headers hidden") && $0.contains("show_headers") })
+    }
+
+    @Test("show_headers=all keeps every header")
+    func headersAll() async throws {
+        let engine = CurlEngine(transport: HeaderStub())
+        let response = try await engine.send(
+            CurlRequestSpec(method: "GET", url: "https://dev.x.ru/a", showAllHeaders: true), context: context)
+        #expect(response.headers.count == 7)
+        #expect(!response.notes.contains { $0.contains("routine headers") })
+    }
+
+    @Test("Header noise matching is case-insensitive and covers the CORS family")
+    func noiseMatching() {
+        #expect(CurlHeaderNoise.isNoise("ACCESS-CONTROL-EXPOSE-HEADERS"))
+        #expect(CurlHeaderNoise.isNoise("cache-control"))
+        #expect(!CurlHeaderNoise.isNoise("Location"))
+        #expect(!CurlHeaderNoise.isNoise("Retry-After"))
+        #expect(!CurlHeaderNoise.isNoise("Content-Type"))
+    }
+
     @Test("When no pick path matches, the note lists the top-level keys")
     func pickNothingMatchedHint() async throws {
         let engine = CurlEngine(transport: Stub(#"{"id":45,"role":"admin"}"#))

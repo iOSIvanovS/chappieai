@@ -61,7 +61,8 @@ extension ToolExecutionService {
                         "text": AIToolProperty(type: "string", description: "Raw text body."),
                         "content_type": AIToolProperty(type: "string", description: "Content-Type for `text`."),
                         "session": session,
-                        "pick": AIToolProperty(type: "string", description: "Optional JSON array of paths to keep from a JSON body, e.g. [\"data.items[*].id\", \"paginate.total\"]. `[*]` takes every element of an array. A trailing `{a,b}` keeps only those fields of each object, e.g. `data.items[*].{id,name}` gives [{\"id\":1,\"name\":\"x\"}]. Returns {\"path\": value}; missing paths are null. Not applied to 4xx/5xx responses. Use it to keep large responses short; the full response stays available to curl_extract.")
+                        "pick": AIToolProperty(type: "string", description: "Optional JSON array of paths to keep from a JSON body, e.g. [\"data.items[*].id\", \"paginate.total\"]. `[*]` takes every element of an array. A trailing `{a,b}` keeps only those fields of each object, e.g. `data.items[*].{id,name}` gives [{\"id\":1,\"name\":\"x\"}]. Returns {\"path\": value}; missing paths are null. Not applied to 4xx/5xx responses. Use it to keep large responses short; the full response stays available to curl_extract."),
+                        "show_headers": AIToolProperty(type: "string", description: "Response headers: by default routine ones (CORS, cache, date, server, security) are folded into a count and every other header is shown. Pass \"all\" to see every header.")
                     ],
                     required: []
                 )

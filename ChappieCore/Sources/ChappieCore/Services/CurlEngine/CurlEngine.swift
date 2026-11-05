@@ -71,7 +71,7 @@ public actor CurlEngine {
             return buildResponse(raw, prepared: prepared, key: key, context: context,
                                  durationMs: max(elapsed, 0), relogin: relogin,
                                  hadRecipe: sessions[key]?.recipe != nil, sessionName: spec.session,
-                                 pick: spec.pick)
+                                 pick: spec.pick, showAllHeaders: spec.showAllHeaders)
         }
     }
 
@@ -199,7 +199,8 @@ public actor CurlEngine {
 
     private func buildResponse(
         _ raw: CurlRawResponse, prepared: CurlPrepared, key: CurlSessionKey, context: CurlContext,
-        durationMs: Int, relogin: Bool, hadRecipe: Bool, sessionName: String?, pick: [String]
+        durationMs: Int, relogin: Bool, hadRecipe: Bool, sessionName: String?, pick: [String],
+        showAllHeaders: Bool
     ) -> CurlResponse {
         let redactor = makeRedactor(context: context, origin: key.origin, key: key)
         var notes: [String] = []
@@ -251,11 +252,20 @@ public actor CurlEngine {
             notes.append("Redirect is not followed automatically. Location: \(redactor.redact(location))")
         }
 
+        var shownHeaders = redactor.redactHeaders(raw.headers)
+        if !showAllHeaders {
+            let split = CurlHeaderNoise.split(shownHeaders)
+            shownHeaders = split.shown
+            if split.hidden > 0 {
+                notes.append("\(split.hidden) routine headers hidden (CORS, cache, date, server...). Pass show_headers=\"all\" to see every header.")
+            }
+        }
+
         return CurlResponse(
             method: prepared.request.httpMethod ?? "",
             url: redactor.redact(prepared.url.absoluteString),
             status: raw.status,
-            headers: redactor.redactHeaders(raw.headers),
+            headers: shownHeaders,
             cookieNames: raw.cookies.map(\.name),
             body: text,
             bodyBytes: raw.body.count,

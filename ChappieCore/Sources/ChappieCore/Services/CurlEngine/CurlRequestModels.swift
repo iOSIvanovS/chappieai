@@ -43,6 +43,8 @@ public struct CurlRequestSpec: Sendable, Equatable {
     /// JSON paths to keep in the shown body (`data.items[*].id`); empty = the whole body.
     /// Applied after redaction, only to what the model sees: the stored last response stays whole.
     public var pick: [String]
+    /// false (default) = routine headers (CORS, cache, date, server...) are folded into a count.
+    public var showAllHeaders: Bool
 
     public init(
         method: String,
@@ -51,8 +53,10 @@ public struct CurlRequestSpec: Sendable, Equatable {
         query: [CurlPair] = [],
         body: CurlBody? = nil,
         session: String? = nil,
-        pick: [String] = []
+        pick: [String] = [],
+        showAllHeaders: Bool = false
     ) {
+        self.showAllHeaders = showAllHeaders
         self.method = method
         self.url = url
         self.headers = headers

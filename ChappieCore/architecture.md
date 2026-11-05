@@ -47,6 +47,7 @@ ChappieCore/
         │   ├── CurlSession.swift       #   CurlSessionKey = origin + SHA-256 fingerprint of credential VALUES; in-memory session state
         │   ├── CurlCookiesAndPaths.swift # cookie jar per session key, JSON path extraction, `pick` (paths, [*] wildcard, trailing {a,b} field projection; applied to the redacted body only, skipped on 4xx/5xx)
         │   ├── CurlUnicodeEscapes.swift  #   decodes \uXXXX above ASCII in text bodies before redaction; ASCII escapes stay so JSON structure cannot change
+        │   ├── CurlHeaderNoise.swift   #   deny-list of routine response headers (CORS, cache, date, server, security) folded into a count unless show_headers=all; unknown/custom headers stay visible
         │   ├── CurlTransport.swift     #   protocol + URLSession impl (no redirects, no cookie storage/cache, 5 MB body cap)
         │   ├── CurlContext.swift       #   hosts of the thread + secret metadata + value provider (Keychain)
         │   ├── CurlRequestModels.swift #   request/recipe/result value types, CurlError
