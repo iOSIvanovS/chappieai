@@ -108,6 +108,14 @@ struct CurlTemplateTests {
         #expect(refs.map(\.description) == ["secret:sk.login", "var:token", "secret:cid"])
     }
 
+    @Test("Names with spaces and non-Latin letters parse; the field stays after the dot")
+    func unicodeNames() {
+        let refs = CurlTemplate.references(in: "{{secret:Юлин логин.password}} {{ secret:Логин Олега }} {{var:id}}")
+        #expect(refs.map(\.name) == ["Юлин логин", "Логин Олега", "id"])
+        #expect(refs.map(\.field) == ["password", nil, nil])
+        #expect(CurlTemplate.neutralized("https://h.x/{{var:id}}/{{secret:Мой логин.login}}") == "https://h.x/_/_")
+    }
+
     @Test("Substitution encodes for the destination")
     func encoding() {
         let resolver: (CurlReference) -> String? = { _ in "a b&\"c\"\n" }

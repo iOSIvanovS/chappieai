@@ -55,6 +55,9 @@ public enum ToolCapability: Sendable {
     case tests
     /// read_build_log.
     case buildLog
+    /// curl_request / curl_session / curl_extract: thread switch AND an EXECUTOR project
+    /// (the project supplies the secrets). ADVISOR never gets them.
+    case curl
 
     /// True when the call targets one concrete project and that project's rights apply.
     public var needsProject: Bool {
@@ -118,6 +121,7 @@ public enum ToolPolicy {
         add(.build, ["build_project"])
         add(.tests, ["run_tests"])
         add(.buildLog, ["read_build_log"])
+        add(.curl, ["curl_request", "curl_session", "curl_extract"])
         return rows
     }()
 
@@ -139,11 +143,13 @@ public enum ToolPolicy {
     ///     (or when the target could not be resolved — project tools are then denied).
     ///   - terminalAccess: thread-level terminal switch.
     ///   - isStarterPlan: Starter is read-only.
+    ///   - curlEnabled: thread-level Curl-Chappie switch.
     public static func decide(
         tool: String,
         project: ProjectSettings?,
         terminalAccess: TerminalAccessLevel,
-        isStarterPlan: Bool
+        isStarterPlan: Bool,
+        curlEnabled: Bool = false
     ) -> ToolDecision {
         guard let capability = table[tool] else {
             return .denied("❌ Unknown tool '\(tool)'. It is not registered in the tool policy, so it cannot be used.")
@@ -164,6 +170,13 @@ public enum ToolPolicy {
             ❌ Tool '\(tool)' requires a Pro or Team license.
             Your current plan (Starter) provides read-only access only.
             Upgrade to Pro or Team to unlock full execution capabilities.
+            """)
+        }
+
+        if capability == .curl && !curlEnabled {
+            return .denied("""
+            ❌ Tool '\(tool)' is blocked: Curl-Chappie is switched off for this thread.
+            Open thread settings → Curl-Chappie → enable it and add the hosts it may talk to.
             """)
         }
 
@@ -215,6 +228,9 @@ public enum ToolPolicy {
 
         case .build, .tests, .buildLog:
             return decideBuild(tool: tool, capability: capability, settings: s)
+
+        case .curl:
+            return requireExecutor(tool, s)
 
         case .alwaysOn, .terminal, .forbidden:
             return .denied("❌ Tool '\(tool)' is not available.")   // handled before; unreachable

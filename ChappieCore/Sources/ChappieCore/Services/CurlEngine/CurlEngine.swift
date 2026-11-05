@@ -17,6 +17,9 @@ import Foundation
 
 public actor CurlEngine {
 
+    /// The one engine of the app: sessions are shared by every thread and project through it.
+    public static let shared = CurlEngine()
+
     public static let requestsPerMinute = 60
     static let maxDisplayedBodyChars = 60_000
     static let maxRequestBodyBytes = 1_000_000

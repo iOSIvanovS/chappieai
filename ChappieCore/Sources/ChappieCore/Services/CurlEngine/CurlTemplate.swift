@@ -39,7 +39,9 @@ public struct CurlSubstitution: Sendable, Equatable {
 
 public enum CurlTemplate {
 
-    private static let pattern = #"\{\{\s*(secret|var):([A-Za-z0-9_\-]+)(?:\.([A-Za-z0-9_\-]+))?\s*\}\}"#
+    // The name is lazy and may hold inner spaces ("Юлин логин"); the optional ".field" is always Latin
+    // (login / password / value). Keep the name class in step with CurlSecret.isValidName.
+    private static let pattern = #"\{\{\s*(secret|var):([\p{L}\p{N}\p{M}_\- ]+?)(?:\.([A-Za-z0-9_\-]+))?\s*\}\}"#
 
     private static func regex() -> NSRegularExpression {
         // The pattern is a constant, so construction cannot fail.

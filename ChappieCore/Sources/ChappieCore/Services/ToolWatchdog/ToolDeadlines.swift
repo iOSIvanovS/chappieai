@@ -14,7 +14,8 @@ public enum ToolDeadlines {
 
     // MARK: - Table (seconds)
 
-    /// Files, search, documents, memory, attachments, web, localization, read_build_log.
+    /// Files, search, documents, memory, attachments, web, curl_*, localization, read_build_log.
+    /// (The curl engine's own network timeout is 30 s per request; a login plus one retry fits.)
     static let standard: TimeInterval = 120
     /// git status/log/add/reset/checkout: local and short.
     static let gitLocal: TimeInterval = 180
@@ -71,7 +72,9 @@ public enum ToolDeadlines {
         }
         return [
             "git_add", "git_commit", "git_push", "git_reset", "git_revert", "git_checkout",
-            "memorize", "delete_memory", "send_attachment"
+            "memorize", "delete_memory", "send_attachment",
+            // A POST/PUT/DELETE may already have reached the server; a login changes the session.
+            "curl_request", "curl_session"
         ].contains(tool)
     }
 

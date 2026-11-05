@@ -18,7 +18,7 @@ public enum CurlHostPermission: String, Codable, Sendable, CaseIterable {
     case readOnly
     /// GET, HEAD and POST to the single configured login path (session acquisition is a POST).
     case readAndLogin
-    /// Any method. Non-GET requests still go through user confirmation in confirm mode.
+    /// Any method. The per-host permission is the user's consent: no per-request confirmation.
     case full
 }
 

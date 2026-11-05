@@ -50,16 +50,24 @@ public struct ActiveMemoryContext: Sendable {
     /// Starter plan forces this to .none across all threads.
     public let threadTerminalAccess: TerminalAccessLevel
 
+    /// Curl-Chappie switch and host allow-list of the thread. Secrets are per project (ProjectSettings).
+    public let curlEnabled: Bool
+    public let curlHosts: [CurlHost]
+
     public init(
         threadId: UUID? = nil,
         projects: [ProjectInfo] = [],
         projectPathMap: [String: String] = [:],
-        threadTerminalAccess: TerminalAccessLevel = .none
+        threadTerminalAccess: TerminalAccessLevel = .none,
+        curlEnabled: Bool = false,
+        curlHosts: [CurlHost] = []
     ) {
         self.threadId = threadId
         self.projects = projects
         self.projectPathMap = projectPathMap
         self.threadTerminalAccess = threadTerminalAccess
+        self.curlEnabled = curlEnabled
+        self.curlHosts = curlHosts
     }
 
     /// Fallback before ModelContainer is initialized.

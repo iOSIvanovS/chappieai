@@ -28,7 +28,7 @@ ChappieCore/
     │   ├── AppConfig.swift             # Centralized config (dynamic, per-thread). Default: 100 messages.
     │   ├── ChappieError.swift          # ChappieError enum
     │   ├── MemoryModels.swift          # MemoryEntry, MemoryScope, MemoryStorage
-    │   ├── CurlChappie/                # Curl-Chappie data model (HTTP request tool, pass 1 of 5)
+    │   ├── CurlChappie/                # Curl-Chappie data model (HTTP request tool)
     │   │   ├── CurlHost.swift          #   Thread allow-list entry (origin + permission readOnly/readAndLogin/full + loginPath); CurlOrigin = the one definition of "same host"
     │   │   └── CurlSecret.swift        #   Project secret METADATA (name, kind, host origin); values are never stored here
     │   ├── ProjectModels.swift         # ProjectSettings (incl. curlSecrets), ProjectMetadata, ThreadProjectEntry
@@ -36,12 +36,12 @@ ChappieCore/
     │   ├── StorageIntegrity.swift      # StorageIntegrityIssue (damaged data report), LossyElement
     │   └── ThreadModels.swift          # ThreadSettings (incl. curlEnabled, curlHosts; manual Codable), ThreadMetadata, ThreadPayload
     └── Services/
-        ├── CurlEngine/                 # Curl-Chappie engine (pass 2 of 5), app-wide actor, no UI/tools yet
+        ├── CurlEngine/                 # Curl-Chappie engine (pass 2), app-wide actor (CurlEngine.shared)
         │   ├── CurlEngine.swift        #   actor: send/extract/sessionInfo/reset, rate limit (60/min), 401 -> one re-login, response building
         │   ├── CurlEngine+Prepare.swift #  placeholder substitution, allow-list gate on the FINAL url, header/body/query building, session auth
         │   ├── CurlEngine+Login.swift  #   login recipe (extract rules + apply rules), single-flight, generation counter
         │   ├── CurlGate.swift          #   method x host permission x login path decision (pure)
-        │   ├── CurlTemplate.swift      #   {{secret:name.field}} / {{var:name}}, single-pass, escaping per destination
+        │   ├── CurlTemplate.swift      #   {{secret:name.field}} / {{var:name}}, single-pass, escaping per destination; names may hold spaces and any letters
         │   ├── CurlRedactor.swift      #   known values (plain/JSON/percent), credential-looking JSON keys, credential headers
         │   ├── CurlSession.swift       #   CurlSessionKey = origin + SHA-256 fingerprint of credential VALUES; in-memory session state
         │   ├── CurlCookiesAndPaths.swift # cookie jar per session key, JSON path extraction
@@ -97,6 +97,9 @@ ChappieCore/
         ├── ToolWatchdog/
         │   ├── ToolDeadlines.swift     # THE table of allowed run time per tool class (also read by the UI bar) + timeout message
         │   └── ToolWatchdog.swift      # Races a tool call against its deadline; on expiry cancels it and answers the model
+        ├── ToolExecution/CurlTools/    # Curl-Chappie tools (pass 3): curl_request / curl_session / curl_extract
+        │   ├── CurlTools.swift         #   executes the three tools on CurlEngine.shared; context = thread hosts + targeted project's secrets + Keychain
+        │   └── CurlToolArguments.swift #   flat string args -> engine types (headers/query/form objects, extract/apply rule arrays, body choice)
         ├── ToolExecution/PDFTools/
         │   ├── PDFTools.swift          # pdf_info / pdf_page_as_txt / pdf_page_as_image: picks the file (uuid or project path), calls the helper
         │   └── PDFGuidance.swift       # Refusal text every other reader returns for a PDF, pointing to the pdf_* tools
@@ -488,7 +491,7 @@ Empty sections are omitted — no wasted tokens.
 ## 12. ToolPolicy — one access table
 
 `ToolPolicy.swift` holds one row per tool (`ToolCapability`): alwaysOn, terminal, forbidden, fileRead, fileWrite,
-locRead, locWrite, git, build, tests, buildLog. **A tool without a row is denied.** `ToolPolicy.decide` is a pure
+locRead, locWrite, git, build, tests, buildLog, curl. **A tool without a row is denied.** `ToolPolicy.decide` is a pure
 function `(tool, target project's ProjectSettings, thread terminal level, Starter?) → ToolDecision`.
 
 `ToolAuthorization.swift` connects it to the live thread, for both questions with the same function:
@@ -504,6 +507,14 @@ Rules worth knowing: ADVISOR reads only (files, search, loc read tools); `build_
 Xcode project and carry a `project` argument that scopes the helper's path roots; Starter is read-only;
 arguments of project tools must be a flat string map (otherwise refused with an explanation).
 `git_diff` is permanently blocked. Tests: `ToolPolicyTests` (completeness check against `availableTools`).
+
+**Curl-Chappie (`curl`)**: allowed only when the THREAD switch (`ThreadSettings.curlEnabled`, carried in
+`ActiveMemoryContext.curlEnabled`) is on AND the targeted project is an EXECUTOR (the project supplies the secrets;
+ADVISOR never gets the tools). Host rules (allow-list, per-host readOnly/readAndLogin/full) are the engine's job,
+not the policy's: no per-request confirmation, the per-host permission is the user's consent. `curl_request` and
+`curl_session` count as mutating for the watchdog (outcome unknown after a cut-off). Console logs carry method and
+host only. `CurlSecret.isValidName` accepts letters of any script, digits, `_ - ` and single inner spaces, in step
+with the `CurlTemplate` regex.
 
 ---
 

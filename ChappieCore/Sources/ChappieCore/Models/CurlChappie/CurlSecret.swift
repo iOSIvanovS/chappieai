@@ -82,14 +82,16 @@ public struct CurlSecret: Codable, Sendable, Identifiable, Hashable {
         headerName = try c.decodeIfPresent(String.self, forKey: .headerName) ?? ""
     }
 
-    /// Reference names stay in a tiny alphabet so they parse unambiguously inside {{ }}.
+    /// Letters and digits of any script (so "Юлин логин" works), "_", "-" and single inner spaces.
+    /// "." ":" "{" "}" are excluded: they delimit a reference inside {{ }} (see CurlTemplate).
     public static func isValidName(_ name: String) -> Bool {
         guard !name.isEmpty, name.count <= 64 else { return false }
-        return name.unicodeScalars.allSatisfy {
-            ($0.value >= 0x30 && $0.value <= 0x39) ||   // 0-9
-            ($0.value >= 0x41 && $0.value <= 0x5A) ||   // A-Z
-            ($0.value >= 0x61 && $0.value <= 0x7A) ||   // a-z
-            $0 == "_" || $0 == "-"
+        guard !name.hasPrefix(" "), !name.hasSuffix(" "), !name.contains("  ") else { return false }
+        return name.unicodeScalars.allSatisfy { scalar in
+            scalar == "_" || scalar == "-" || scalar == " " ||
+            scalar.properties.isAlphabetic ||
+            scalar.properties.generalCategory == .decimalNumber ||
+            scalar.properties.generalCategory == .nonspacingMark   // decomposed accents, e.g. "й" as и + breve
         }
     }
 

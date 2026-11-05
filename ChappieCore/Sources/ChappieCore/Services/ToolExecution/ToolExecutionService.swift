@@ -10,6 +10,7 @@
 //   FileTools.swift         — file system + search + document tools + attachment tools + web_fetch
 //   GitBuildTools.swift     — git + build/test execution
 //   TerminalTools.swift     — persistent bash session (run_terminal) + stateless SSH (run_ssh)
+//   CurlTools/              — curl_request / curl_session / curl_extract (Curl-Chappie, engine in CurlEngine/)
 //
 // UNIFIED PROJECT ARG:
 // Every tool that operates within a project scope carries an explicit "project" display name arg.
@@ -273,6 +274,9 @@ public actor ToolExecutionService {
 
             case "pdf_info", "pdf_page_as_txt", "pdf_page_as_image":
                 return await executePDFTool(name: name, argsData: argsData)
+
+            case "curl_request", "curl_session", "curl_extract":
+                return try await executeCurlTool(name: name, argsData: argsData)
 
             case "memorize", "recall", "search_memory", "delete_memory":
                 return try await executeMemoryTool(name: name, argsData: argsData)

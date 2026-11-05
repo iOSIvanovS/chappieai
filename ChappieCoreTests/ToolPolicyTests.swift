@@ -42,7 +42,8 @@ private struct Rig {
     init(
         _ spec: [(String, ProjectSettings)],
         terminal: TerminalAccessLevel = .none,
-        starter: Bool = false
+        starter: Bool = false,
+        curl: Bool = false
     ) async {
         let dir = FileManager.default.temporaryDirectory
         service = ToolExecutionService(
@@ -54,7 +55,9 @@ private struct Rig {
         var settings: [UUID: ProjectSettings] = [:]
         for (info, entry) in zip(projects, spec) { settings[info.id] = entry.1 }
         await service.setMemoryContextAndSettings(
-            context: ActiveMemoryContext(threadId: UUID(), projects: projects, threadTerminalAccess: terminal),
+            context: ActiveMemoryContext(threadId: UUID(), projects: projects, threadTerminalAccess: terminal,
+                                         curlEnabled: curl,
+                                         curlHosts: [CurlHost(name: "Dev", origin: "https://dev.x.ru", permission: .readOnly)]),
             settings: settings
         )
         if starter { await service.setLicenseState(.active(plan: .starter, expiresAt: nil)) }
@@ -340,9 +343,40 @@ struct ToolExposureTests {
 
     @Test("Completeness: with maximum rights the model sees every classified tool except git_diff")
     func everyClassifiedToolHasADefinition() async {
-        let rig = await Rig([("Max", xcodeExecutor())], terminal: .auto)
+        let rig = await Rig([("Max", xcodeExecutor())], terminal: .auto, curl: true)
         let offered = await rig.names()
         #expect(offered == ToolPolicy.knownTools.subtracting(["git_diff"]))
+    }
+
+    @Test("Curl-Chappie: offered only with the thread switch ON and an EXECUTOR project")
+    func curlExposure() async {
+        let curlTools: Set<String> = ["curl_request", "curl_session", "curl_extract"]
+        #expect(await Rig([("A", xcodeExecutor())]).names().isDisjoint(with: curlTools), "switch off")
+        #expect(await Rig([("A", xcodeAdvisor)], curl: true).names().isDisjoint(with: curlTools), "advisor only")
+        #expect(await Rig([], curl: true).names().isDisjoint(with: curlTools), "no project")
+        #expect(curlTools.isSubset(of: await Rig([("A", xcodeExecutor())], curl: true).names()))
+        #expect(curlTools.isSubset(of: await Rig([("A", xcodeAdvisor), ("B", xcodeExecutor())], curl: true).names()), "one executor is enough")
+    }
+
+    @Test("Curl-Chappie: the call is judged by the project it names, the switch by the thread")
+    func curlAuthorization() async {
+        let rig = await Rig([("Exec", xcodeExecutor()), ("Adv", xcodeAdvisor)], curl: true)
+        #expect(isAllowed(await rig.authorize("curl_request", #"{"project":"Exec","host":"Dev","path":"/x"}"#)))
+        let denied = await rig.authorize("curl_request", #"{"project":"Adv","host":"Dev","path":"/x"}"#)
+        #expect(!isAllowed(denied))
+        #expect(denial(denied).contains("ADVISOR"))
+        #expect(!isAllowed(await rig.authorize("curl_request", #"{"host":"Dev"}"#)), "several projects and none named")
+
+        let off = await Rig([("Exec", xcodeExecutor())], curl: false)
+        let blocked = await off.authorize("curl_session", #"{"action":"info","host":"Dev"}"#)
+        #expect(!isAllowed(blocked))
+        #expect(denial(blocked).contains("Curl-Chappie"))
+    }
+
+    @Test("Curl-Chappie is not part of the Starter read-only set")
+    func curlNotOnStarter() {
+        #expect(!ToolPolicy.decide(tool: "curl_request", project: xcodeExecutor(), terminalAccess: .none,
+                                   isStarterPlan: true, curlEnabled: true).isAllowed)
     }
 
     @Test("Nothing the model is shown is missing from the table, at any rights level")

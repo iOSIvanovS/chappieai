@@ -487,6 +487,51 @@ struct CurlEngineTests {
         #expect(!info.exists)
     }
 
+    @Test("Three users on one host: names with spaces and Cyrillic give three independent sessions")
+    func threeUsersOneHost() async throws {
+        let names = ["Мой логин", "Юлин логин", "Логин Олега"]
+        let secrets = names.map { CurlSecret(name: $0, kind: .loginPassword, hostOrigin: dev) }
+        var values: [String: String] = [:]
+        for (index, secret) in secrets.enumerated() {
+            values["\(secret.id.uuidString).login"] = "user\(index)"
+            values["\(secret.id.uuidString).password"] = "password-\(index)-x"
+        }
+        let context = CurlContext(
+            hosts: [CurlHost(name: "Dev", origin: dev, permission: .full, loginPath: loginPath)],
+            secrets: secrets, values: MapValues(map: values))
+
+        let transport = StubTransport { request in
+            if request.url?.path == loginPath {
+                let form = String(decoding: request.httpBody ?? Data(), as: UTF8.self)
+                let user = form.split(separator: "&").first { $0.hasPrefix("login=") }.map { String($0.dropFirst(6)) } ?? "?"
+                return ok(#"{"token_type":"Bearer","access_token":"tok-\#(user)"}"#,
+                          cookies: [CurlCookie(name: "sid", value: "sid-\(user)")])
+            }
+            return ok(#"{"auth":"\#(request.value(forHTTPHeaderField: "Authorization") ?? "none")","cookie":"\#(request.value(forHTTPHeaderField: "Cookie") ?? "none")"}"#)
+        }
+        let engine = CurlEngine(transport: transport)
+
+        for name in names {
+            let recipe = CurlLoginRecipe(
+                request: CurlRequestSpec(
+                    method: "POST", url: "\(dev)\(loginPath)",
+                    body: .form([CurlPair("login", "{{secret:\(name).login}}"), CurlPair("password", "{{secret:\(name).password}}")]),
+                    session: name),
+                extract: [CurlExtractRule(name: "access_token", source: .json("access_token")),
+                          CurlExtractRule(name: "token_type", source: .json("token_type"), sensitive: false)],
+                apply: [CurlApplyRule(header: "Authorization", template: "{{var:token_type}} {{var:access_token}}")])
+            _ = try await engine.login(recipe, context: context)
+        }
+        #expect(transport.requests(path: loginPath).count == 3)
+
+        for (index, name) in names.enumerated() {
+            _ = try await engine.send(CurlRequestSpec(method: "GET", url: "\(dev)/api/notifications", session: name), context: context)
+            let sent = try #require(transport.requests(path: "/api/notifications").last)
+            #expect(sent.value(forHTTPHeaderField: "Authorization") == "Bearer tok-user\(index)", "\(name)")
+            #expect(sent.value(forHTTPHeaderField: "Cookie") == "sid=sid-user\(index)", "\(name)")
+        }
+    }
+
     @Test("Host names resolve to listed origins only")
     func resolveOrigin() {
         let engine = CurlEngine(transport: StubTransport { _ in ok("{}") })

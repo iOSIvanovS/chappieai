@@ -97,12 +97,19 @@ struct CurlModelsTests {
 
     // MARK: - Secret rules
 
-    @Test("Secret names use a tiny alphabet")
+    @Test("Secret names: letters of any script, digits, _ - and single inner spaces")
     func secretNames() {
         #expect(CurlSecret.isValidName("sk_test-1"))
+        #expect(CurlSecret.isValidName("Юлин логин"))
+        #expect(CurlSecret.isValidName("Логин Олега"))
+        #expect(CurlSecret.isValidName("a b"))
         #expect(!CurlSecret.isValidName(""))
-        #expect(!CurlSecret.isValidName("a b"))
+        #expect(!CurlSecret.isValidName(" a"))
+        #expect(!CurlSecret.isValidName("a "))
+        #expect(!CurlSecret.isValidName("a  b"))
         #expect(!CurlSecret.isValidName("a.b"))
+        #expect(!CurlSecret.isValidName("a:b"))
+        #expect(!CurlSecret.isValidName("a\nb"))
         #expect(!CurlSecret.isValidName("a}}"))
         #expect(!CurlSecret.isValidName(String(repeating: "a", count: 65)))
     }

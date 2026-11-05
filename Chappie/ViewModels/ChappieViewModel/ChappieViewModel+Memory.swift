@@ -75,7 +75,9 @@ extension ChappieViewModel {
             threadId: activeThread?.id,
             projects: projectInfos,
             projectPathMap: pathMap,
-            threadTerminalAccess: activeThreadSettings.terminalAccess
+            threadTerminalAccess: activeThreadSettings.terminalAccess,
+            curlEnabled: activeThreadSettings.curlEnabled,
+            curlHosts: activeThreadSettings.curlHosts
         )
 
         // Project settings for ToolPolicy — must arrive together with context.

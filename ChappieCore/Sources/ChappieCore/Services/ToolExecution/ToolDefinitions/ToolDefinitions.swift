@@ -85,6 +85,11 @@ extension ToolExecutionService {
             tools.append(contentsOf: localizationTools(allInfos: allInfos))
         }
 
+        // Curl-Chappie — thread switch; ToolPolicy additionally needs an EXECUTOR project
+        if activeMemoryContext.curlEnabled {
+            tools.append(contentsOf: curlTools(allInfos: allInfos))
+        }
+
         // Project management — always
         tools.append(contentsOf: projectManagementTools())
 
