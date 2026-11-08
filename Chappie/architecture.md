@@ -43,7 +43,7 @@ Chappie/
 │   └── BackupSettingsView/             # BackupExportSheet, BackupImportSheet (encrypted .chappiebackup)
 └── Views/
     ├── Chat/
-    │   ├── ContentView/                # Conductor: assembles components, manages sheets, paywall
+    │   ├── ContentView/                # Conductor: assembles components, manages sheets
     │   ├── ChatScrollView/             # Message feed (LazyVStack, anti-jump streaming)
     │   ├── MessageBubbleView/          # Message bubble (+ attachments, terminal confirmation UI)
     │   ├── ProjectChipsView/           # Project chips + balance chip (bottom row)
@@ -54,7 +54,7 @@ Chappie/
     │   ├── ModelPickerRow.swift        # Model picker (top row) + thread settings gear
     │   └── StatusBarView.swift         # Status bar (current tool, retry label)
     ├── Input/                          # InputMorphView/, text editor, attachment UI, emoji picker, layout constants
-    ├── Providers/                      # ProvidersSettingsView/, AddProviderSheet/, AddModelSheet/, NewThreadProviderSheet/, CatalogPickerSheet, EditKeySheet
+    ├── Providers/                      # ProvidersSettingsView/, AddProviderSheet/, AddModelSheet/, NewThreadProviderSheet/, CatalogPickerSheet (built-in preset picker), EditKeySheet
     ├── Sidebar/                        # SidebarView, ThreadListView, ThreadRowView
     ├── Toolbar/                        # ToolbarContent
     ├── Terminal/                       # TerminalLiveView, TerminalWindowController (live terminal window)
@@ -104,7 +104,6 @@ graph TD
         APS["AIProviderStore"]
         ASS["AppSettingsStore"]
         TES["ToolExecutionService"]
-        PRS["ProvidersRemoteService"]
         SSH["ShellSession"]
     end
 
@@ -132,7 +131,6 @@ graph TD
     VM --> APS
     VM --> ASS
     VM --> TES
-    VM --> PRS
 
     TSess --> SPB
     Orch --> TAC
@@ -253,16 +251,20 @@ User taps "Cancel" → rejectTerminalCommand() → returns cancellation to AI
 
 ---
 
-## 8. Provider Catalog Flow
+## 8. Adding a Provider
+
+No network is involved: presets come from `ChappieCore/BuiltInProviders`.
 
 ```
 ProvidersSettingsView / OnboardingView
-  → CatalogPickerSheet → ProvidersRemoteService.fetchCatalog()
-      → user picks catalog entry → AddProviderSheet(prefilledRemote:)
-      → user picks "Manual setup" → AddProviderSheet(prefilledRemote: nil)
+  → CatalogPickerSheet (lists BuiltInProviders.all, instant)
+      → user picks a preset → AddProviderSheet(prefilledPreset:)
+      → user picks "Manual setup" → AddProviderSheet(prefilledPreset: nil)
 
-AddProviderSheet (catalog): pre-filled name + baseURL (locked), key entry, models pre-selected
-AddProviderSheet (custom):  blank, user enters everything manually
+AddProviderSheet (preset): pre-filled name + baseURL (locked), key entry, empty model list
+AddProviderSheet (custom): blank, user enters everything manually
+Models step: tries the provider's /models list (not available for Anthropic); otherwise
+the user types model IDs by hand. The preset's chatPath is applied to every added model.
 ```
 
 ---
@@ -309,7 +311,7 @@ Auto-select: if provider has exactly one key → pre-selected automatically.
 
 | Date | Change |
 |------|--------|
-| 2025-07 | Provider catalog, AnthropicClient, run_terminal, multi-key provider system |
+| 2025-07 | AnthropicClient, run_terminal, multi-key provider system |
 | 2026-06 | Storage cleanup: removed DataStoreMigration, V2/V3 schema stubs |
 | 2026-06 | Onboarding: skip provider step if provider already exists |
 | 2026-07 | T-06: architecture files actualized (added DropHandler, EULAView, MemoryManagementView, ProviderIconView) |
@@ -317,3 +319,4 @@ Auto-select: if provider has exactly one key → pre-selected automatically.
 | 2026-07 | SwiftData removal: AppSettingsMigration.swift deleted. ChappieApp uses bootStorage(). |
 | 2026-07 | Legacy migration removed: ThreadStore no longer contains migrateIfNeeded logic. |
 | 2026-08 | Backup Import UI: BackupImportSheet (decrypt/preview → destructive confirm → restore), wired into both SettingsView and OnboardingView welcome step ("Restore from Backup" shortcut skips the wizard entirely). ChappieViewModel+Backup gained previewBackup/importBackup/reloadAfterImport. |
+| 2026-11 | Remote providers.json catalog removed: built-in provider presets live in ChappieCore code, models are typed by the user. Settings got a "Support the project" section (donation link). |

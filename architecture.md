@@ -13,9 +13,6 @@
 ├── ChappieMCPCore/                          # Helper logic as a local package → see ChappieMCP/architecture.md
 ├── ChappieMCPTests/                         # Helper tests → see ChappieMCP/architecture.md
 └── Scripts/                                 # Internal maintenance scripts (not part of build)
-    ├── providers_1_clear.sh                 # Initializes providers.json
-    ├── providers_2_append.sh                # Appends a batch of providers/models (≤100)
-    ├── providers_3_push.sh                  # Pushes providers.json to GitHub via API
     └── release_publish.sh                   # Publishes a release build
 ```
 
@@ -61,13 +58,8 @@ graph TD
         KC["Keychain\n(API keys + Curl-Chappie secrets)"]
     end
 
-    subgraph Remote["Remote"]
-        GH["GitHub\nproviders.json (public)"]
-    end
-
     Core --> DS
     Core --> KC
-    Core -->|HTTP GET on launch| GH
 ```
 
 ---
@@ -105,7 +97,6 @@ ChappieMCPTests
 | AIClientFactory | Picks correct client by model.providerProtocol |
 | Unix Domain Sockets | IPC with ChappieMCP |
 | Keychain | API keys + Curl-Chappie secret values |
-| GitHub (public repo) | providers.json catalog hosting |
 
 ---
 
@@ -212,17 +203,11 @@ Messages are stored in chunks of 500 per SQLite row:
 
 ---
 
-## 11. Provider Catalog Pipeline
+## 11. Built-in Providers
 
-`providers.json` hosted at:
-`https://raw.githubusercontent.com/iOSIvanovS/chappieai/main/docs/providers.json`
+There is no remote catalog and no network call to discover providers or models. Ten provider presets are hardcoded in `ChappieCore/Models/BuiltInProviders.swift` (OpenAI, Anthropic, Google Gemini, DeepSeek, Groq, Mistral, xAI, OpenRouter, AITunnel, Ollama): name, base URL, protocol, icon, colour, key requirement and chat path. Presets contain **no model names**: models change too often, so the user types any model ID by hand (or loads the list from the provider's `/models`). Users can also add fully custom providers.
 
-**Monthly update pipeline:**
-1. `Scripts/providers_1_clear.sh` — initializes empty JSON structure
-2. `Scripts/providers_2_append.sh <json>` — appends batch of ≤100 models (run multiple times)
-3. `Scripts/providers_3_push.sh` — pushes to GitHub via API (requires `$GITHUB_TOKEN`)
-
-Supported providers (10): OpenAI, Anthropic, Google Gemini, DeepSeek, Groq, Mistral, xAI (Grok), OpenRouter, AITunnel, Ollama.
+The chat path is stored per provider preset because it differs (Groq `/openai/v1/chat/completions`, OpenRouter `/api/v1/chat/completions`, Anthropic `/v1/messages`).
 
 ---
 

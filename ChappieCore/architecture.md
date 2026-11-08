@@ -33,7 +33,7 @@ ChappieCore/
     │   │   ├── CurlSecret.swift        #   Project secret METADATA (name, kind, host origin); values are never stored here
     │   │   └── CurlSecretCatalog.swift #   Names/kinds/hosts/ref syntax of EXECUTOR projects' secrets, appended to the curl tool descriptions so the model knows what to pass as `session` (never values; flags parts with no stored value)
     │   ├── ProjectModels.swift         # ProjectSettings (incl. curlSecrets), ProjectMetadata, ThreadProjectEntry
-    │   ├── RemoteProviderCatalog.swift  # DTOs for providers.json (GitHub-hosted catalog)
+    │   ├── BuiltInProviders.swift      # Hardcoded provider presets (URL, protocol, icon, chat path; no models). `AIProvider.catalogId` = preset id, kept for stored-data compatibility
     │   ├── StorageIntegrity.swift      # StorageIntegrityIssue (damaged data report), LossyElement
     │   └── ThreadModels.swift          # ThreadSettings (incl. curlEnabled, curlHosts; manual Codable), ThreadMetadata, ThreadPayload
     └── Services/
@@ -88,7 +88,6 @@ ChappieCore/
         │   └── MCPRestartPolicy.swift  # Crash restart back-off (1/2/4/8 s) and give-up rule
         ├── MemoryManager.swift         # Semantic memory (read/write/search) via DataStore
         ├── MemoryStore.swift           # Persistence CRUD for memory scopes
-        ├── ProvidersRemoteService.swift # Fetches + caches providers.json from GitHub
         ├── SaveQueue.swift             # Ordered write queue; failed write pauses until Retry/Skip
         ├── ImagePipeline/
         │   ├── ImageDownscaler.swift   # THE one place an image becomes a request part: long side ≤ 2000 px, JPEG, EXIF + alpha handled, on-disk cache of the downscaled copy
@@ -384,7 +383,6 @@ graph TD
         SSH["ShellSession\nPersistent bash (per thread)"]
         MCP["MCPToolBridge\nUnix Socket client"]
         WFS["WebFetchService\nHTTP page fetch"]
-        PRS["ProvidersRemoteService\nGitHub catalog fetch"]
         AICF["AIClientFactory\npicks client by protocol"]
         AIC["AIClient\nOpenAI-compatible HTTP"]
         AnthC["AnthropicClient\nAnthropic native HTTP"]
@@ -767,4 +765,5 @@ Tests: `MessageTimestampTests`, `MemoryDatesTests`.
 | 2026-10 | Office pictures (backlog 10b-2b): the helper extracts `word|ppt|xl/media` (and ODT `Pictures/`) pictures into a private temp folder and leaves `<!-- [image N: name] -->` XML comments in the text (valid XML, safe for `write_document`); the app validates, downscales and deletes the folder, and shows the images to the model as separate multimodal parts. `read_build_log` now returns only error/failed lines. Covered by OfficeImagesTests (15). |
 | 2026-10 | CommandSafety (backlog 11A): word-level command analysis replaces the substring blocklist (no more false positives on `rm -rf /tmp/x`, no bypass by flag order or `bash -c`); documented as a safety net, not a boundary. Covered by CommandSafetyTests (14 groups, ~190 command cases). |
 | 2026-08 | Backup import UI shipped in app layer (Chappie/architecture.md): BackupImportSheet two-step confirmation (decrypt/preview, then explicit destructive "Restore Now"), reachable from SettingsView and from OnboardingView welcome step as a "Restore from Backup" shortcut that skips the whole provider setup wizard. |
+| 2026-11 | Remote providers.json catalog removed (ProvidersRemoteService, RemoteProviderCatalog, startup sync). Replaced by hardcoded BuiltInProviders presets without models; chat path is per preset. `AIProvider.catalogId` keeps its name for stored-data compatibility and now means "preset id". |
 | 2026-11 | Localization boundary: ChappieCore holds no catalog-localized strings. Labels of AgentRole/Git/Tests/TerminalAccessLevel and the "unknown" DevEnvironment moved to the app target (Chappie/Views/Shared/ProjectModels+Display.swift), because Xcode extracts catalog keys only from app sources and marks keys used inside a Swift package as stale. `DevEnvironment.displayName` stays a stable English name for prompts; the UI uses `localizedName`. |
