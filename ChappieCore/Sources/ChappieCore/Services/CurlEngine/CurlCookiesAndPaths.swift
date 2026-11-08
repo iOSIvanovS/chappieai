@@ -71,6 +71,18 @@ public enum CurlJSONPath {
         return stringify(found)
     }
 
+    /// Like `extract`, but understands `[*]` and `{a,b}` and returns the raw JSON value
+    /// (an array for a wildcard). Used by scenario checks, never shown to the model as is.
+    static func resolve(_ path: String, in data: Data) -> Any? {
+        guard let tokens = parse(path),
+              let root = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+        else { return nil }
+        return walk(tokens, root)
+    }
+
+    /// Text form of a resolved value (nil for null).
+    static func text(of value: Any) -> String? { stringify(value) }
+
     /// Keeps only the requested paths of a JSON document and returns them as one compact JSON object
     /// `{"path": value, ...}` in the order given. `[*]` collects every element of an array, e.g.
     /// `data.items[*].id` gives `[1,2,3]`. A trailing `{a,b}` projects objects to those fields:

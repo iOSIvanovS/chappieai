@@ -37,6 +37,12 @@ public struct CurlResponse: Sendable, Equatable {
     }
 }
 
+/// The redacted answer for the model plus the raw one for the scenario runner (never shown).
+public struct CurlCapturedResponse: Sendable {
+    public var response: CurlResponse
+    public var raw: CurlRawResponse
+}
+
 public extension CurlLoginSummary {
     func render(sessionLabel: String) -> String {
         if reused {

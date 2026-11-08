@@ -84,6 +84,12 @@ enum CurlScenarioReferences {
     /// Replaces every placeholder using `resolve` (nil = keep as written). Single pass: a substituted
     /// value is never scanned again.
     static func replace(_ text: String, _ resolve: (CurlScenarioReference) -> String?) -> String {
+        replace(text) { reference, _ in resolve(reference) }
+    }
+
+    /// Same, and also tells `resolve` whether the placeholder sits INSIDE a JSON string literal (an odd
+    /// number of unescaped quotes before it). Only meaningful when `text` is a JSON body.
+    static func replace(_ text: String, _ resolve: (CurlScenarioReference, _ insideJSONString: Bool) -> String?) -> String {
         guard text.contains("{{") else { return text }
         let ns = text as NSString
         let result = NSMutableString(string: text)
@@ -100,8 +106,20 @@ enum CurlScenarioReferences {
             default:
                 reference = CurlScenarioReference(kind: .input, name: body, field: nil)
             }
-            if let value = resolve(reference) { result.replaceCharacters(in: match.range, with: value) }
+            let prefix = ns.substring(to: match.range.location)
+            if let value = resolve(reference, isInsideJSONString(prefix)) { result.replaceCharacters(in: match.range, with: value) }
         }
         return result as String
+    }
+
+    private static func isInsideJSONString(_ prefix: String) -> Bool {
+        var inside = false
+        var escaped = false
+        for character in prefix {
+            if escaped { escaped = false; continue }
+            if character == "\\" && inside { escaped = true; continue }
+            if character == "\"" { inside.toggle() }
+        }
+        return inside
     }
 }

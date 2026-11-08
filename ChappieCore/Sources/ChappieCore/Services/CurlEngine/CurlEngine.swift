@@ -45,6 +45,12 @@ public actor CurlEngine {
     // MARK: - Send
 
     public func send(_ spec: CurlRequestSpec, context: CurlContext) async throws -> CurlResponse {
+        try await sendCapturing(spec, context: context).response
+    }
+
+    /// Same as `send`, plus the raw (unredacted) answer for the scenario runner: it extracts values and
+    /// evaluates checks on it. The raw part never reaches the model.
+    public func sendCapturing(_ spec: CurlRequestSpec, context: CurlContext) async throws -> CurlCapturedResponse {
         let origin = try Self.templateOrigin(spec.url)
         let key = try sessionKey(name: spec.session, origin: origin, context: context)
 
@@ -68,10 +74,11 @@ public actor CurlEngine {
             }
 
             let elapsed = Int(now().timeIntervalSince(started) * 1000)
-            return buildResponse(raw, prepared: prepared, key: key, context: context,
-                                 durationMs: max(elapsed, 0), relogin: relogin,
-                                 hadRecipe: sessions[key]?.recipe != nil, sessionName: spec.session,
-                                 pick: spec.pick, showAllHeaders: spec.showAllHeaders)
+            let response = buildResponse(raw, prepared: prepared, key: key, context: context,
+                                         durationMs: max(elapsed, 0), relogin: relogin,
+                                         hadRecipe: sessions[key]?.recipe != nil, sessionName: spec.session,
+                                         pick: spec.pick, showAllHeaders: spec.showAllHeaders)
+            return CurlCapturedResponse(response: response, raw: raw)
         }
     }
 

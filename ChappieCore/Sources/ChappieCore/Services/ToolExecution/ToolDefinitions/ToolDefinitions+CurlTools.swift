@@ -185,6 +185,37 @@ extension ToolExecutionService {
                 )
             )),
             AITool(function: AIFunctionDefinition(
+                name: "curl_scenario_run",
+                description: """
+                Run a stored scenario on a host of this thread. The scenario names abstract slots; you map them: `actors` maps each actor slot to the name of a \
+                login+password secret bound to the host, `secrets` maps other slots (client id...) to secret names, `inputs` gives run parameters. \
+                A slot you do not map falls back to a secret of the same name.
+                Before ANY request a preflight checks: inputs, slot mapping, that every secret exists for the host and has its values, and that EVERY step \
+                (main steps of all called scenarios, plus the root cleanup) is allowed by the host's permission. If anything is refused nothing is sent, so a run \
+                never stops halfway because a cleanup DELETE is forbidden. `dry_run: true` stops after the preflight.
+                Steps run in order and stop at the first failed step (status or check). Then the ROOT scenario's cleanup runs, always, even after a failure; \
+                cleanup steps whose variable was never produced are skipped and reported. Cleanup of called scenarios never runs. \
+                A login step reuses a live shared session instead of logging in again.
+                The report has one line per step; the redacted body is shown for a failed step (or every step with `verbose: true`). A scenario that writes data is announced as WRITES DATA \
+                at the top: tell the user before running it on a shared stand. Shares the 60 requests/minute limit. Cleanup failures are reported: test data may remain.
+                Example: name "Remark_with_comment", host "Release", actors {"user": "ЛП Сергей Релиз"}, secrets {"clientId": "clientId", "clientSecret": "clientSecret"}, inputs {"companyId": "18"}.
+                """,
+                parameters: AIToolParameters(
+                    properties: [
+                        "project": project,
+                        "folder": folder,
+                        "name": AIToolProperty(type: "string", description: "Scenario to run (see curl_scenario_info)."),
+                        "host": AIToolProperty(type: "string", description: "Host name or origin from the thread's host list."),
+                        "actors": AIToolProperty(type: "object", description: "Actor slot -> name of a login+password secret bound to the host, e.g. {\"author\": \"My login\"}."),
+                        "secrets": AIToolProperty(type: "object", description: "Other secret slot -> secret name, e.g. {\"clientId\": \"clientId\"}."),
+                        "inputs": AIToolProperty(type: "object", description: "Input name -> value, e.g. {\"companyId\": \"18\"}. Inputs with defaults may be omitted."),
+                        "verbose": AIToolProperty(type: "boolean", description: "Show the redacted body of passing steps too."),
+                        "dry_run": AIToolProperty(type: "boolean", description: "Only run the preflight; send nothing.")
+                    ],
+                    required: ["folder", "name", "host"]
+                )
+            )),
+            AITool(function: AIFunctionDefinition(
                 name: "curl_scenario_delete",
                 description: "Delete a scenario file. Refused while another scenario of the folder still calls it (they are named). Never sends a request.",
                 parameters: AIToolParameters(

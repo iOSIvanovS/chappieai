@@ -34,7 +34,7 @@ extension ToolExecutionService {
 
     // MARK: - Context
 
-    private func curlContext(project: String?) -> CurlContext {
+    func curlContext(project: String?) -> CurlContext {
         let info = activeMemoryContext.projects.first { $0.name == project }
         let secrets = info.map { settings(of: $0).curlSecrets } ?? []
         return CurlContext(hosts: activeMemoryContext.curlHosts, secrets: secrets, values: CurlSecretKeychain())
@@ -53,7 +53,7 @@ extension ToolExecutionService {
         return origin + (path.isEmpty || path.hasPrefix("/") ? path : "/" + path)
     }
 
-    private func hostList(_ context: CurlContext) -> String {
+    func hostList(_ context: CurlContext) -> String {
         guard !context.hosts.isEmpty else { return " This thread has no hosts: ask the user to add one in thread settings." }
         return " Hosts: " + context.hosts.map { "\($0.name) = \($0.origin) [\($0.permission.rawValue)]" }.joined(separator: "; ")
     }

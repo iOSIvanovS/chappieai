@@ -28,7 +28,7 @@ extension ToolExecutionService {
 
     // MARK: - Folder
 
-    private func scenarioStore(_ args: [String: String]) throws -> CurlScenarioStore {
+    func scenarioStore(_ args: [String: String]) throws -> CurlScenarioStore {
         guard let project = args["project"], let path = activeMemoryContext.projectPathMap[project], !path.isEmpty else {
             throw CurlScenarioStore.Failure(message: "The project folder is not resolved yet. Wait a moment and try again.")
         }

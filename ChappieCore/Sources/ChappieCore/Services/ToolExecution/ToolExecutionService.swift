@@ -281,6 +281,9 @@ public actor ToolExecutionService {
             case "curl_scenario_info", "curl_scenario_save", "curl_scenario_delete":
                 return await executeCurlScenarioTool(name: name, argsData: argsData)
 
+            case "curl_scenario_run":
+                return try await executeCurlScenarioRun(argsData: argsData)
+
             case "memorize", "recall", "search_memory", "delete_memory":
                 return try await executeMemoryTool(name: name, argsData: argsData)
 

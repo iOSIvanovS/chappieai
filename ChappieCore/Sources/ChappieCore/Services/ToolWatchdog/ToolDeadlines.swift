@@ -29,6 +29,9 @@ public enum ToolDeadlines {
     /// so the helper's more precise handling normally fires first.
     static let gitSlow: TimeInterval = 720
 
+    /// curl_scenario_run: a chain of up to 60 requests (30 s network timeout each), plus cleanup.
+    static let scenarioRun: TimeInterval = 600
+
     /// Extra seconds on top of a requested terminal timeout, so the shell's own timeout (which
     /// reports partial output) fires before the watchdog does.
     static let terminalGrace: TimeInterval = 30
@@ -43,6 +46,8 @@ public enum ToolDeadlines {
             return min(terminalCeiling, max(terminalBase, requested + terminalGrace))
         case "build_project", "run_tests":
             return build
+        case "curl_scenario_run":
+            return scenarioRun
         case "git_commit", "git_revert", "git_push":
             return gitSlow
         case "git_status", "git_log", "git_add", "git_reset", "git_checkout":
@@ -74,7 +79,7 @@ public enum ToolDeadlines {
             "git_add", "git_commit", "git_push", "git_reset", "git_revert", "git_checkout",
             "memorize", "delete_memory", "send_attachment",
             // A POST/PUT/DELETE may already have reached the server; a login changes the session.
-            "curl_request", "curl_session",
+            "curl_request", "curl_session", "curl_scenario_run",
             // Scenario files are written and removed in the project folder.
             "curl_scenario_save", "curl_scenario_delete"
         ].contains(tool)

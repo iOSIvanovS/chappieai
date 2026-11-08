@@ -157,7 +157,10 @@ enum CurlScenarioDecoder {
         if given.count > 1 { errors.append("\(label): give only one body (json, form or text).") }
         if let json = item["json"] {
             if let text = json as? String {
-                guard (try? JSONSerialization.jsonObject(with: Data(text.utf8), options: [.fragmentsAllowed])) != nil else {
+                // A placeholder may stand UNQUOTED here ({"id": {{var:x}}}) so the server gets a number, not a
+                // string; for the syntax check every placeholder is swapped for a literal that fits both spots.
+                let probe = CurlScenarioReferences.replace(text) { _ in "0" }
+                guard (try? JSONSerialization.jsonObject(with: Data(probe.utf8), options: [.fragmentsAllowed])) != nil else {
                     errors.append("\(label).json is text but not valid JSON; write the body as a JSON object instead.")
                     return nil
                 }

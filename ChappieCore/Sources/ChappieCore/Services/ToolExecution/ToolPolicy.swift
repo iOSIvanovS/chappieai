@@ -123,7 +123,7 @@ public enum ToolPolicy {
         add(.buildLog, ["read_build_log"])
         add(.curl, [
             "curl_request", "curl_session", "curl_extract",
-            "curl_scenario_info", "curl_scenario_save", "curl_scenario_delete"
+            "curl_scenario_info", "curl_scenario_save", "curl_scenario_delete", "curl_scenario_run"
         ])
         return rows
     }()

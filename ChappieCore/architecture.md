@@ -40,6 +40,7 @@ ChappieCore/
         ├── CurlEngine/                 # Curl-Chappie engine (pass 2), app-wide actor (CurlEngine.shared)
         │   ├── CurlEngine.swift        #   actor: send/extract/sessionInfo/reset, rate limit (60/min), 401 -> one re-login, response building
         │   ├── CurlEngine+Prepare.swift #  placeholder substitution, allow-list gate on the FINAL url, header/body/query building, session auth
+        │   ├── CurlEngine+Scenario.swift #  runner entry points: sendCapturing (redacted answer + raw one that never reaches the model), session variable read/store, last stored answer, redactForDisplay
         │   ├── CurlEngine+Login.swift  #   login recipe (extract rules + apply rules), single-flight, generation counter
         │   ├── CurlGate.swift          #   method x host permission x login path decision (pure)
         │   ├── CurlTemplate.swift      #   {{secret:name.field}} / {{var:name}}, single-pass, escaping per destination; names may hold spaces and any letters
@@ -101,15 +102,17 @@ ChappieCore/
         ├── ToolWatchdog/
         │   ├── ToolDeadlines.swift     # THE table of allowed run time per tool class (also read by the UI bar) + timeout message
         │   └── ToolWatchdog.swift      # Races a tool call against its deadline; on expiry cancels it and answers the model
-        ├── CurlScenarios/              # Curl-Chappie scenarios (pass D1: files only, no runner yet). A scenario = JSON file `<folder>/<name>.json` in the PROJECT; knows no host and no secret names, only abstract slots (actors = login+password pairs, secrets = other slots) and inputs
+        ├── CurlScenarios/              # Curl-Chappie scenarios (D1 files + D2 runner). A scenario = JSON file `<folder>/<name>.json` in the PROJECT; knows no host and no secret names, only abstract slots (actors = login+password pairs, secrets = other slots) and inputs
         │   ├── CurlScenarioModels.swift #   value types: steps (request | call), expect, checks, login, inputs, cleanup
         │   ├── CurlScenarioDecoder.swift #  strict JSON -> model (unknown key = error, all problems collected)
         │   ├── CurlScenarioRules.swift #   limits (depth 5, 60 steps, 256 KB), identifier rule, `{{secret:slot.field}}` / `{{input:n}}` / `{{var:n}}` scanner
         │   ├── CurlScenarioValidator.swift # pure: slots, placeholders in order, call contract (inputs/returns/actors/secret slots), cycles, depth, `mutates` must be true if anything writes (login steps excepted, callee writes propagate)
         │   └── CurlScenarioStore.swift #   one folder of one project via PathGuard (no hidden dirs, no .xcodeproj, no symlink escape); list/load/write(atomic, pretty+sorted keys)/delete; `callers(of:)` for delete protection
-        │   Decisions: cleanup runs for the ROOT scenario only (nested cleanup never runs; root cleans everything using `returns`); a callee sees only `with`, the caller sees only `returns` (as {{var:stepId.name}}); folder is agreed with the user per project, tools take it as a parameter
-        ├── ToolExecution/CurlTools/    # Curl-Chappie tools: curl_request / curl_session / curl_extract (pass 3) + curl_scenario_info / _save / _delete (D1)
-        │   ├── CurlScenarioTools.swift #   scenario file tools; save validates everything before writing and warns about callers that stop validating; delete refuses while called
+        │   └── Runner/                 #   D2: CurlScenarioRunModels (request, scope, slot bindings), Substitution ({{input}}/{{var}} resolved by the runner, secret SLOTS rewritten to real secret names so values only ever meet the engine; values with "{{" refused), Checks (status default = any 2xx, equals/contains/exists on the RAW body), Preflight (args, secrets+values, host gate for every step that WILL run: main steps of all scenarios + ROOT cleanup), Runner (+Steps): main steps stop at first failure, ROOT cleanup always, cleanup step with a never-produced variable is skipped and reported, compact report, body only for failed steps (or verbose)
+         │   Decisions: cleanup runs for the ROOT scenario only (nested cleanup never runs; root cleans everything using `returns`); a callee sees only `with`, the caller sees only `returns` (as {{var:stepId.name}}); folder is agreed with the user per project, tools take it as a parameter
+        ├── ToolExecution/CurlTools/    # Curl-Chappie tools: curl_request / curl_session / curl_extract (pass 3) + curl_scenario_info / _save / _delete (D1) / _run (D2)
+        │   ├── CurlScenarioRunTool.swift #  curl_scenario_run: maps arguments (host, actors, secrets, inputs, verbose, dry_run) onto CurlScenarioRunner; 600 s watchdog class, counted as mutating
+         │   ├── CurlScenarioTools.swift #   scenario file tools; save validates everything before writing and warns about callers that stop validating; delete refuses while called
         │   ├── CurlTools.swift         #   executes the three tools on CurlEngine.shared; context = thread hosts + targeted project's secrets + Keychain
         │   └── CurlToolArguments.swift #   flat string args -> engine types (headers/query/form objects, extract/apply rule arrays, body choice)
         ├── ToolExecution/PDFTools/
