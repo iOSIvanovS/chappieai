@@ -3,6 +3,30 @@ import Sparkle
 
 extension SettingsView {
 
+    // MARK: - Support Section
+
+    /// Donation page on lava.top; opened in the browser, the app itself handles no payment.
+    private static let donationURL = URL(string: "https://app.lava.top/2651348976?tabId=donate")!
+
+    var supportSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("settings.support_section", systemImage: "heart.fill")
+                .font(.headline)
+
+            Text("settings.support_hint")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Spacer()
+                Link(destination: Self.donationURL) {
+                    Label("settings.support_action", systemImage: "heart")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
     // MARK: - Name Section
 
     var nameSection: some View {

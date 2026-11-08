@@ -26,6 +26,8 @@ struct SettingsView: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
+                    supportSection
+                    Divider()
                     nameSection
                     Divider()
                     providersSection
