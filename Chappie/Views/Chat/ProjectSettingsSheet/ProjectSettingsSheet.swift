@@ -16,10 +16,6 @@
 // The callback from ViewModel arrives on any thread; we hop to MainActor before
 // mutating @State (draft.devEnvironment, isDetecting).
 //
-// STARTER PLAN GUARD:
-// If canExecuteTools == false (Starter license), switching to Executor shows an alert
-// explaining the restriction and offering "Change Plan" → opens LicenseActivationView.
-//
 // TERMINAL:
 // Terminal settings have moved to ThreadSettingsSheet (thread-level).
 // ProjectSettings.terminalAccess is kept for Codable compatibility but not shown here.
@@ -36,10 +32,6 @@ struct ProjectSettingsSheet: View {
     let onDismiss: () -> Void
     /// Called when user taps "Detect". Receives a @Sendable callback to invoke with the result.
     let onDetectEnvironment: (@Sendable @escaping (DevEnvironment) -> Void) -> Void
-    /// True when the current license plan forbids Executor mode (e.g. Starter).
-    let canExecuteTools: Bool
-    /// Called when user taps "Change Plan" in the Starter restriction alert.
-    let onChangePlan: () -> Void
     /// Called when user updates the project path (manual edit or Browse picker).
     /// Separate from onSave — path lives in ThreadProjectEntry, not ProjectSettings.
     let onUpdatePath: (String) -> Void
@@ -56,14 +48,11 @@ struct ProjectSettingsSheet: View {
     @State var showingDowngradeAlert = false
     @State var pendingRoleChange: AgentRole? = nil
     @State var isDetecting = false
-    @State var showingStarterAlert = false
 
     init(
         project: ProjectMetadata,
-        canExecuteTools: Bool = true,
         onSave: @escaping (ProjectSettings) -> Void,
         onDismiss: @escaping () -> Void,
-        onChangePlan: @escaping () -> Void = {},
         onDetectEnvironment: @escaping (@Sendable @escaping (DevEnvironment) -> Void) -> Void = { _ in },
         onUpdatePath: @escaping (String) -> Void = { _ in },
         curlHosts: [CurlHost] = [],
@@ -71,10 +60,8 @@ struct ProjectSettingsSheet: View {
         onCommitCurlSecrets: @escaping ([CurlSecret], [UUID: [CurlSecretField: String]], [CurlSecret]) -> Void = { _, _, _ in }
     ) {
         self.project = project
-        self.canExecuteTools = canExecuteTools
         self.onSave = onSave
         self.onDismiss = onDismiss
-        self.onChangePlan = onChangePlan
         self.onDetectEnvironment = onDetectEnvironment
         self.onUpdatePath = onUpdatePath
         self.curlHosts = curlHosts
@@ -141,16 +128,6 @@ struct ProjectSettingsSheet: View {
             }
         } message: {
             Text("project.settings.downgrade_alert_message")
-        }
-        // Starter plan restriction alert — shown when trying to enable Executor on Starter
-        .alert("project.settings.starter_executor_alert_title", isPresented: $showingStarterAlert) {
-            Button("project.settings.starter_executor_alert_cancel", role: .cancel) {}
-            Button("project.settings.starter_executor_alert_change_plan") {
-                onDismiss()
-                onChangePlan()
-            }
-        } message: {
-            Text("project.settings.starter_executor_alert_message")
         }
     }
 

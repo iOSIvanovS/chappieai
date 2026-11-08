@@ -18,8 +18,7 @@
 //   1. Loading spinner — while viewModel.isAppReady == false
 //   2. EULAView — if AppState.shouldShowEULA (first launch only)
 //   3. OnboardingView — if AppState.shouldShowOnboarding (no provider configured)
-//   4. Paywall — if licenseState is .noLicense or .expired
-//   5. Main app
+//   4. Main app
 //
 // THREAD SWITCH OVERLAY (UX-SWITCH):
 //   While isLoadingMessages == true: a full-window dim overlay with spinner blocks input.
@@ -51,7 +50,6 @@ struct ContentView: View {
     @State var prompt: String = ""
     @State var showSettings: Bool = false
     @State var isSidebarVisible: Bool = false
-    @State var showLicenseActivation: Bool = false
 
     @State var attachments: [AttachedFile] = []
     @State var dropDelegate = SilentDropDelegate()
@@ -82,8 +80,6 @@ struct ContentView: View {
                 EULAView()
             } else if appState.shouldShowOnboarding {
                 OnboardingView(viewModel: viewModel)
-            } else if viewModel.shouldShowPaywall {
-                paywallContent
             } else {
                 mainContent
             }

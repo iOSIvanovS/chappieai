@@ -69,9 +69,6 @@ extension ProjectSettingsSheet {
                         // Executor → Advisor: confirm downgrade (clears all access flags)
                         pendingRoleChange = newRole
                         showingDowngradeAlert = true
-                    } else if newRole == .executor && !canExecuteTools {
-                        // Advisor → Executor: blocked by Starter plan
-                        showingStarterAlert = true
                     } else {
                         draft.agentRole = newRole
                     }

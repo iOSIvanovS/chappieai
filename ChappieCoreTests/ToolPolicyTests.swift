@@ -28,10 +28,9 @@ private let xcodeAdvisor = ProjectSettings(
 private func decide(
     _ tool: String,
     _ project: ProjectSettings?,
-    terminal: TerminalAccessLevel = .none,
-    starter: Bool = false
+    terminal: TerminalAccessLevel = .none
 ) -> ToolDecision {
-    ToolPolicy.decide(tool: tool, project: project, terminalAccess: terminal, isStarterPlan: starter)
+    ToolPolicy.decide(tool: tool, project: project, terminalAccess: terminal)
 }
 
 private struct Rig {
@@ -42,7 +41,6 @@ private struct Rig {
     init(
         _ spec: [(String, ProjectSettings)],
         terminal: TerminalAccessLevel = .none,
-        starter: Bool = false,
         curl: Bool = false
     ) async {
         let dir = FileManager.default.temporaryDirectory
@@ -60,7 +58,6 @@ private struct Rig {
                                          curlHosts: [CurlHost(name: "Dev", origin: "https://dev.x.ru", permission: .readOnly)]),
             settings: settings
         )
-        if starter { await service.setLicenseState(.active(plan: .starter, expiresAt: nil)) }
     }
 
     func names() async -> Set<String> {
@@ -101,12 +98,11 @@ struct ToolPolicyTableTests {
         #expect(why.contains("FORBIDDEN"))
     }
 
-    @Test("Always-on tools need no project and work on every plan")
+    @Test("Always-on tools need no project")
     func alwaysOn() {
         for tool in ["web_fetch", "memorize", "recall", "search_memory", "delete_memory",
                      "list_thread_projects", "fetch_attachment", "send_attachment"] {
             #expect(decide(tool, nil).isAllowed, "\(tool)")
-            #expect(decide(tool, nil, starter: true).isAllowed, "\(tool) on Starter")
         }
     }
 
@@ -164,16 +160,6 @@ struct ToolPolicyRoleTests {
         #expect(!decide("loc_info", python).isAllowed)
         #expect(!decide("loc_create", python).isAllowed)
         #expect(decide("read_file", python).isAllowed)
-    }
-
-    @Test("Starter keeps reads, search and loc reads; everything that changes or runs is denied")
-    func starter() {
-        let settings = xcodeExecutor()
-        for tool in reads + locReads { #expect(decide(tool, settings, starter: true).isAllowed, "\(tool)") }
-        for tool in writes + locWrites + ["git_status", "build_project", "run_tests"] {
-            #expect(!decide(tool, settings, starter: true).isAllowed, "\(tool)")
-        }
-        #expect(!decide("run_terminal", settings, terminal: .auto, starter: true).isAllowed)
     }
 }
 
@@ -327,13 +313,6 @@ struct ToolAuthorizationTests {
         #expect(!isAllowed(await rig.authorize("not_a_tool", "{}")))
         #expect(!isAllowed(await rig.authorize("git_diff", #"{"project":"One"}"#)))
     }
-
-    @Test("Starter plan is enforced on the live path")
-    func starterLive() async {
-        let rig = await Rig([("One", xcodeExecutor())], starter: true)
-        #expect(isAllowed(await rig.authorize("search_in_project", #"{"query":"x"}"#)))
-        #expect(!isAllowed(await rig.authorize("write_file", #"{"path":"a","content":"b"}"#)))
-    }
 }
 
 // MARK: - Exposure
@@ -376,12 +355,6 @@ struct ToolExposureTests {
         #expect(denial(blocked).contains("Curl-Chappie"))
     }
 
-    @Test("Curl-Chappie is not part of the Starter read-only set")
-    func curlNotOnStarter() {
-        #expect(!ToolPolicy.decide(tool: "curl_request", project: xcodeExecutor(), terminalAccess: .none,
-                                   isStarterPlan: true, curlEnabled: true).isAllowed)
-    }
-
     @Test("Nothing the model is shown is missing from the table, at any rights level")
     func offeredToolsAreAllClassified() async {
         let setups: [[(String, ProjectSettings)]] = [
@@ -410,16 +383,6 @@ struct ToolExposureTests {
         let offered = await Rig([("A", xcodeAdvisor), ("B", xcodeExecutor())]).names()
         #expect(offered.contains("write_file"))
         #expect(offered.contains("loc_create"))
-    }
-
-    @Test("Starter is offered reads, search and loc reads only")
-    func starterExposure() async {
-        let offered = await Rig([("A", xcodeExecutor())], terminal: .auto, starter: true).names()
-        #expect(offered.contains("search_in_file"))
-        #expect(offered.contains("loc_info"))
-        #expect(!offered.contains("write_file"))
-        #expect(!offered.contains("loc_create"))
-        #expect(!offered.contains("run_terminal"))
     }
 
     @Test("The terminal is offered only when the thread allows it")

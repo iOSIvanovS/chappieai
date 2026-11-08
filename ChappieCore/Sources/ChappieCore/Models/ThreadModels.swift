@@ -89,7 +89,6 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
 
     /// Terminal access level for this thread.
     /// Thread-level setting — independent of any attached project role.
-    /// Starter plan forces this to .none across all threads.
     public var terminalAccess: TerminalAccessLevel
 
     /// Curl-Chappie (HTTP request tool) switch for this thread. Off by default.

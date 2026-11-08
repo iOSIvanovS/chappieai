@@ -14,17 +14,7 @@ extension ThreadSettingsSheet {
         VStack(alignment: .leading, spacing: 10) {
             sectionLabel("thread.settings.terminal_section", systemImage: "terminal.fill")
 
-            Picker("thread.settings.terminal_picker", selection: Binding(
-                get: { draftSettings.terminalAccess },
-                set: { newLevel in
-                    if newLevel != .none && !canExecuteTools {
-                        // Starter plan blocks terminal access — show upgrade alert
-                        showingStarterAlert = true
-                    } else {
-                        draftSettings.terminalAccess = newLevel
-                    }
-                }
-            )) {
+            Picker("thread.settings.terminal_picker", selection: $draftSettings.terminalAccess) {
                 ForEach(TerminalAccessLevel.allCases, id: \.self) { level in
                     Text(level.displayName).tag(level)
                 }

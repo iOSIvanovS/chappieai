@@ -47,7 +47,6 @@ public struct ActiveMemoryContext: Sendable {
     public let projectPathMap: [String: String]
 
     /// Thread-level terminal access. Independent of project roles.
-    /// Starter plan forces this to .none across all threads.
     public let threadTerminalAccess: TerminalAccessLevel
 
     /// Curl-Chappie switch and host allow-list of the thread. Secrets are per project (ProjectSettings).

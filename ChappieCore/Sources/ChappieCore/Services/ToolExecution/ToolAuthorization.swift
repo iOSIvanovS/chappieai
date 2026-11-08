@@ -36,13 +36,12 @@ extension ToolExecutionService {
     private static let acrossProjectsTools: Set<String> = ["list_files", "search_in_project"]
 
     func authorize(toolName: String, argsData: Data) -> ToolAuthorization {
-        let starter = licenseState.isStarterPlan
         let terminal = activeMemoryContext.threadTerminalAccess
         let curl = activeMemoryContext.curlEnabled
 
         guard let capability = ToolPolicy.capability(of: toolName) else {
             // Unknown or forbidden tool: denied whatever the arguments look like.
-            let decision = ToolPolicy.decide(tool: toolName, project: nil, terminalAccess: terminal, isStarterPlan: starter, curlEnabled: curl)
+            let decision = ToolPolicy.decide(tool: toolName, project: nil, terminalAccess: terminal, curlEnabled: curl)
             return finish(decision, argsData: argsData, args: [:])
         }
 
@@ -65,7 +64,7 @@ extension ToolExecutionService {
 
         guard capability.needsProject else {
             // No project involved (always-on, terminal).
-            let decision = ToolPolicy.decide(tool: toolName, project: nil, terminalAccess: terminal, isStarterPlan: starter, curlEnabled: curl)
+            let decision = ToolPolicy.decide(tool: toolName, project: nil, terminalAccess: terminal, curlEnabled: curl)
             return finish(decision, argsData: argsData, args: args)
         }
 
@@ -83,19 +82,19 @@ extension ToolExecutionService {
             // list_files / search_in_project across all projects: allowed if any project allows it.
             let allowedSomewhere = projects.contains {
                 ToolPolicy.decide(
-                    tool: toolName, project: settings(of: $0), terminalAccess: terminal, isStarterPlan: starter, curlEnabled: curl
+                    tool: toolName, project: settings(of: $0), terminalAccess: terminal, curlEnabled: curl
                 ).isAllowed
             }
             if allowedSomewhere { return .allowed(argsData: argsData, args: args) }
             return finish(
-                ToolPolicy.decide(tool: toolName, project: nil, terminalAccess: terminal, isStarterPlan: starter, curlEnabled: curl),
+                ToolPolicy.decide(tool: toolName, project: nil, terminalAccess: terminal, curlEnabled: curl),
                 argsData: argsData,
                 args: args
             )
         }
 
         let decision = ToolPolicy.decide(
-            tool: toolName, project: settings(of: target), terminalAccess: terminal, isStarterPlan: starter, curlEnabled: curl
+            tool: toolName, project: settings(of: target), terminalAccess: terminal, curlEnabled: curl
         )
         guard case .allowed = decision else { return finish(decision, argsData: argsData, args: args) }
 
@@ -111,22 +110,21 @@ extension ToolExecutionService {
     /// True when at least one attached project (or the thread itself) lets the model use this tool.
     /// The model is never shown tools it could not run anywhere.
     func isToolExposed(_ toolName: String) -> Bool {
-        let starter = licenseState.isStarterPlan
         let terminal = activeMemoryContext.threadTerminalAccess
         let curl = activeMemoryContext.curlEnabled
 
         guard let capability = ToolPolicy.capability(of: toolName) else { return false }
         if !capability.needsProject {
-            return ToolPolicy.decide(tool: toolName, project: nil, terminalAccess: terminal, isStarterPlan: starter, curlEnabled: curl).isAllowed
+            return ToolPolicy.decide(tool: toolName, project: nil, terminalAccess: terminal, curlEnabled: curl).isAllowed
         }
 
         let projects = activeMemoryContext.projects
         if projects.isEmpty {
             // Read tools stay visible without a project so the call can explain how to attach one.
-            return capability == .fileRead && !(starter && !capability.allowedOnStarter)
+            return capability == .fileRead
         }
         return projects.contains {
-            ToolPolicy.decide(tool: toolName, project: settings(of: $0), terminalAccess: terminal, isStarterPlan: starter, curlEnabled: curl).isAllowed
+            ToolPolicy.decide(tool: toolName, project: settings(of: $0), terminalAccess: terminal, curlEnabled: curl).isAllowed
         }
     }
 
@@ -185,13 +183,3 @@ extension ToolExecutionService {
     }
 }
 
-
-// MARK: - LicenseState helpers
-
-extension LicenseState {
-    /// True when the active plan is Starter (read-only / Advisor-only).
-    var isStarterPlan: Bool {
-        if case .active(let plan, _) = self, plan == .starter { return true }
-        return false
-    }
-}

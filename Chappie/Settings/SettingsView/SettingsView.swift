@@ -14,7 +14,6 @@ struct SettingsView: View {
     @State var nameSaved: Bool = false
     @State var showOnboardingConfirm: Bool = false
     @State var showEULAConfirm: Bool = false
-    @State var showLicenseActivation: Bool = false
     @State var showBackupExport: Bool = false
     @State var showBackupImport: Bool = false
 
@@ -40,8 +39,6 @@ struct SettingsView: View {
                     securitySection
                     Divider()
                     backupSection
-                    Divider()
-                    licenseSection
                 }
                 .padding(24)
             }
@@ -54,9 +51,6 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showMemory) {
             MemoryManagementView(viewModel: viewModel)
-        }
-        .sheet(isPresented: $showLicenseActivation) {
-            LicenseActivationView(viewModel: viewModel)
         }
         .sheet(isPresented: $showBackupExport) {
             BackupExportSheet(viewModel: viewModel)

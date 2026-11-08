@@ -71,14 +71,6 @@ extension ContentView {
     var topPanel: some View {
         VStack(spacing: 6) {
 
-            if case .trial(let days) = viewModel.licenseState {
-                TrialBannerView(daysRemaining: days) {
-                    showLicenseActivation = true
-                }
-                .padding(.horizontal, 0)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-
             if viewModel.activeThread != nil && !viewModel.providers.isEmpty {
                 ModelPickerRow(
                     activeProvider: viewModel.activeProvider,

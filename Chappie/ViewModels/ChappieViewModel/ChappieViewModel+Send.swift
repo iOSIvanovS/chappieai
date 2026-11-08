@@ -13,12 +13,6 @@ extension ChappieViewModel {
     func send(prompt: String, attachments: [AttachedFile] = []) {
         guard !prompt.isEmpty || !attachments.isEmpty else { return }
 
-        // License gate: block sending if no valid license.
-        guard canSendMessages else {
-            print("[License] send() blocked — state: \(licenseState)")
-            return
-        }
-
         print("[B-04] send() entry — activeProvider: \(activeProvider?.displayName ?? "nil"), orchestrator: \(orchestrator != nil ? "set" : "nil")")
 
         guard let orchestrator = orchestrator else {

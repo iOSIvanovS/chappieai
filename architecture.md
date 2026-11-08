@@ -5,7 +5,6 @@
 ```
 /Volumes/Storage/Work/Chappie/
 ├── architecture.md                          # This file (root architecture)
-├── licensing.md                             # Licensing system: plans, flows, UI, implementation plan
 ├── Chappie.xcodeproj/
 ├── Chappie/                                 # UI target → see Chappie/architecture.md
 ├── ChappieCore/                             # Business logic → see ChappieCore/architecture.md
@@ -59,18 +58,16 @@ graph TD
 
     subgraph Storage["Persistence"]
         DS["SQLiteStorage (GRDB)\nWAL mode, DatabasePool\nstored_records table"]
-        KC["Keychain\n(API keys + license data)"]
+        KC["Keychain\n(API keys + Curl-Chappie secrets)"]
     end
 
     subgraph Remote["Remote"]
         GH["GitHub\nproviders.json (public)"]
-        LB["License Backend\napi.chappieai.ru"]
     end
 
     Core --> DS
     Core --> KC
     Core -->|HTTP GET on launch| GH
-    Core -->|license validation on launch| LB
 ```
 
 ---
@@ -107,8 +104,7 @@ ChappieMCPTests
 | Anthropic native API | /v1/messages (AnthropicClient) |
 | AIClientFactory | Picks correct client by model.providerProtocol |
 | Unix Domain Sockets | IPC with ChappieMCP |
-| Keychain | API keys + license data storage |
-| CryptoKit | Ed25519 signature verification (owner license) |
+| Keychain | API keys + Curl-Chappie secret values |
 | GitHub (public repo) | providers.json catalog hosting |
 
 ---
@@ -123,10 +119,10 @@ ChappieMCPTests
 | AI providers | `stored_records` → key `"providers"` | `[AIProvider]` JSON |
 | App settings | `stored_records` → key `"app_settings"` | `AppSettingsPayload` JSON |
 | API keys | Keychain | `apiKey.id.uuidString` |
-| License data | Keychain | `license.*` keys — see licensing.md §5 |
+| Curl-Chappie secret values | Keychain | one entry per secret part, metadata only in project settings |
 
 **Rule: SQLiteStorage (GRDB) is the ONLY persistence backend. No SwiftData anywhere.**
-**License data lives in Keychain ONLY — never in SQLite.**
+**Secret values live in Keychain ONLY — never in SQLite.**
 
 > **Projects are stored inside ThreadPayload** — no separate global project registry.
 > Each thread owns its own `[ThreadProjectEntry]` with `id`, `displayName`, `absolutePath`.
@@ -166,7 +162,6 @@ Empty sections are omitted entirely — no wasted tokens.
 | `SystemPromptBuilder` | Deterministic prompt assembly from `PromptContext`; pure value transformer |
 | `ToolPolicy` | Single access table (deny by default); `ToolAuthorization` applies it per call and per exposed tool |
 | `AppSettingsStore` | Actor-based CRUD for the singleton AppSettings record |
-| `LicenseService` | Actor; owns trial/activation/validation/grace period/owner JWT logic |
 
 **Project attachment rules:**
 - Only the user can add/remove projects (via `+` button or drag & drop). AI cannot.
@@ -231,22 +226,16 @@ Supported providers (10): OpenAI, Anthropic, Google Gemini, DeepSeek, Groq, Mist
 
 ---
 
-## 12. Licensing System
+## 12. Distribution
 
-See **`licensing.md`** for the full specification:
-- Plans: trial / starter / pro / team / owner
-- Validation flow: online on launch + 7-day grace period
-- Owner license: Ed25519 JWT, offline-only, issued via admin panel
-- UI states: trial banner, paywall sheet, activation sheet, grace period warning
-- LicenseService actor (to be added to ChappieCore)
-- Implementation plan (phased)
+The app is free and open source (GPL-3.0). There is no licensing, trial or paywall: all features are available to everyone. The first-launch screen is a Terms of Use notice (responsibility and no-warranty), not a license check.
 
 ---
 
 ## 13. 📚 Docs Group in Xcode Navigator
 
 `📚 Docs` group in `project.pbxproj` — navigation only, not included in build.
-Contains root `architecture.md` + `licensing.md` + references to 4 target architecture files.
+Contains root `architecture.md` + references to 4 target architecture files.
 **Manage manually** via `write_file` in `project.pbxproj`.
 
 ---
@@ -289,3 +278,4 @@ Contains root `architecture.md` + `licensing.md` + references to 4 target archit
 | 2026-07 | Projects refactor: removed global ProjectPayload registry + bookmarks. Projects now live inside ThreadPayload as [ThreadProjectEntry] with absolutePath. AI tools add/remove_project_to_thread removed. |
 | 2026-07 | SwiftData removal: SQLiteStorage (GRDB) is now the sole persistence backend. |
 | 2026-07 | Chunk system: messages split into 500-msg chunks. Lazy loading. Legacy migration removed after all data migrated. |
+| 2026-11 | Licensing removed entirely (LicenseService, PaymentService, paywall, trial banner, Starter plan mode, licensing.md). The app is free; EULA screen renamed Terms of Use. |

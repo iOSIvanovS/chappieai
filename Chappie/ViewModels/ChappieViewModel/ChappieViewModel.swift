@@ -5,7 +5,7 @@
 // Business logic is split into extensions:
 //   +Boot, +Workspace, +Pagination, +Threads, +ThreadProvider, +ThreadGreeting,
 //   +ThreadSettings, +ThreadSession, +Providers, +Projects, +Send,
-//   +Memory, +AppSettings, +License, +Terminal
+//   +Memory, +AppSettings, +Terminal
 
 import SwiftUI
 import ChappieCore
@@ -92,14 +92,6 @@ final class ChappieViewModel {
     var _syncTask: Task<Void, Never>? = nil
     var isFileSystemReady: Bool = true
 
-    // MARK: - License
-
-    /// Actor-based license service — offline JWT verification + online activation.
-    let licenseService = LicenseService()
-
-    /// Published license state — SwiftUI views observe this directly.
-    var licenseState: LicenseState = .loading
-
     // MARK: - Threads
 
     var threads: [ThreadMetadata] = []
@@ -160,8 +152,6 @@ final class ChappieViewModel {
 
     var memoryStore: MemoryStore?
     var threadStore: ThreadStore?
-    // ProjectStore is kept for downgradeAllProjectsToAdvisor (license enforcement).
-    var projectStore: ProjectStore?
     var providerStore: AIProviderStore?
 
     // MARK: - AppSettingsStore + caches

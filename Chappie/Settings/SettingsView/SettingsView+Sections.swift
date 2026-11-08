@@ -221,32 +221,4 @@ extension SettingsView {
             }
         }
     }
-
-    // MARK: - License Section
-
-    var licenseSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("license.section_title", systemImage: "key.fill")
-                .font(.headline)
-
-            HStack(spacing: 12) {
-                HStack(spacing: 6) {
-                    Image(systemName: licenseIcon)
-                        .foregroundStyle(licenseColor)
-                    Text(licenseBadgeText)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(licenseColor)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(licenseColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
-
-                Spacer()
-
-                Button { showLicenseActivation = true } label: {
-                    Label(licenseButtonLabel, systemImage: licenseButtonIcon)
-                }
-            }
-        }
-    }
 }

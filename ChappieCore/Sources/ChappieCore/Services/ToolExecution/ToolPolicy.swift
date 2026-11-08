@@ -33,7 +33,7 @@ public enum ToolDecision: Sendable, Equatable {
 
 /// What a tool needs in order to run. One capability per tool.
 public enum ToolCapability: Sendable {
-    /// Memory, web, attachments, project list: no project, every plan.
+    /// Memory, web, attachments, project list: no project needed.
     case alwaysOn
     /// run_terminal / run_ssh: thread-level switch, no project.
     case terminal
@@ -64,14 +64,6 @@ public enum ToolCapability: Sendable {
         switch self {
         case .alwaysOn, .terminal, .forbidden: return false
         default: return true
-        }
-    }
-
-    /// Starter plan is read-only: it may use these and nothing else.
-    var allowedOnStarter: Bool {
-        switch self {
-        case .alwaysOn, .fileRead, .locRead: return true
-        default: return false
         }
     }
 }
@@ -145,13 +137,11 @@ public enum ToolPolicy {
     ///   - project: settings of the project the call targets; nil when the tool needs none
     ///     (or when the target could not be resolved — project tools are then denied).
     ///   - terminalAccess: thread-level terminal switch.
-    ///   - isStarterPlan: Starter is read-only.
     ///   - curlEnabled: thread-level Curl-Chappie switch.
     public static func decide(
         tool: String,
         project: ProjectSettings?,
         terminalAccess: TerminalAccessLevel,
-        isStarterPlan: Bool,
         curlEnabled: Bool = false
     ) -> ToolDecision {
         guard let capability = table[tool] else {
@@ -167,14 +157,6 @@ public enum ToolPolicy {
         }
 
         if capability == .alwaysOn { return .allowed }
-
-        if isStarterPlan && !capability.allowedOnStarter {
-            return .denied("""
-            ❌ Tool '\(tool)' requires a Pro or Team license.
-            Your current plan (Starter) provides read-only access only.
-            Upgrade to Pro or Team to unlock full execution capabilities.
-            """)
-        }
 
         if capability == .curl && !curlEnabled {
             return .denied("""

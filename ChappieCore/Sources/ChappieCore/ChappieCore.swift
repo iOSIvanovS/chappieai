@@ -57,7 +57,6 @@ import Foundation
 // • FileSystemManager      — safe file system access with path traversal protection
 // • MemoryManager          — long-term memory: write, read, search entries
 // • ThreadStore            — actor, CRUD for threads via ChappieStorage
-// • ProjectStore           — actor, CRUD for projects via ChappieStorage
 // • AppSettingsStore       — actor, CRUD for app settings via ChappieStorage
 
 // MARK: - Package Version

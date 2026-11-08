@@ -16,19 +16,14 @@ extension ContentView {
             .sheet(isPresented: $showSettings) {
                 SettingsView(viewModel: viewModel)
             }
-            .sheet(isPresented: $showLicenseActivation) {
-                LicenseActivationView(viewModel: viewModel)
-            }
             .sheet(item: $selectedProjectForSettings) { project in
                 ProjectSettingsSheet(
                     project: project,
-                    canExecuteTools: viewModel.canExecuteTools,
                     onSave: { newSettings in
                         viewModel.updateProjectSettings(newSettings, forProjectId: project.id)
                         selectedProjectForSettings = nil
                     },
                     onDismiss: { selectedProjectForSettings = nil },
-                    onChangePlan: { showLicenseActivation = true },
                     onDetectEnvironment: { completion in
                         let live = viewModel.activeProjects.first(where: { $0.id == project.id }) ?? project
                         viewModel.detectDevEnvironment(for: live, completion: completion)
@@ -47,7 +42,6 @@ extension ContentView {
                 ThreadSettingsSheet(
                     thread: thread,
                     providers: viewModel.providers,
-                    canExecuteTools: viewModel.canExecuteTools,
                     onSave: { newTitle, newSettings, newProviderId, newKeyId, newModelName in
                         viewModel.updateThreadSettings(
                             newSettings,
@@ -59,8 +53,7 @@ extension ContentView {
                         )
                         selectedThreadForSettings = nil
                     },
-                    onDismiss: { selectedThreadForSettings = nil },
-                    onChangePlan: { showLicenseActivation = true }
+                    onDismiss: { selectedThreadForSettings = nil }
                 )
             }
             .sheet(isPresented: $viewModel.showNewThreadProviderPicker) {

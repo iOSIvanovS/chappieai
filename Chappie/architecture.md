@@ -33,7 +33,7 @@ Chappie/
 │   │                                   #   Send (AI request pipeline), Threads / ThreadSession / ThreadProvider / ThreadSettings / ThreadGreeting,
 │   │                                   #   Providers, AppSettings, Memory, Projects (user-only), Terminal (confirmation flow),
 │   │                                   #   Multimodal (images + Office attachments), Persistence (SaveQueue), History, Pagination,
-│   │                                   #   Backup, Boot, License, DevEnvironment, Workspace, PersonaBlock (system prompt constants)
+│   │                                   #   Backup, Boot, DevEnvironment, Workspace, PersonaBlock (system prompt constants)
 │   ├── RetryStatus+Label.swift         # RetryStatus -> localized "Provider error 500 · retry 2 of 5 in 4s"
 │   ├── StreamingState.swift            # Streaming state (isolated from ViewModel); retryLabel and toolBudget (filling pie of the running tool in place of the spinner, see ChappieCore 12a2) shown in the action bar
 │   └── TerminalLiveState.swift         # Live terminal window state
@@ -58,7 +58,6 @@ Chappie/
     ├── Sidebar/                        # SidebarView, ThreadListView, ThreadRowView
     ├── Toolbar/                        # ToolbarContent
     ├── Terminal/                       # TerminalLiveView, TerminalWindowController (live terminal window)
-    ├── License/                        # LicenseActivationView/, TrialBannerView
     ├── Onboarding/                     # OnboardingView (+ "Restore from Backup"), EULAView
     └── Shared/                         # FlowLayout, ProviderIconView, ShakeEffect, StorageIssueBanner, WindowDragArea, picker rows, ProjectModels+Display (localized labels of ChappieCore enums)
 ```

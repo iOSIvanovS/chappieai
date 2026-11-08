@@ -1,7 +1,7 @@
 // EULAView.swift
 // Chappie
 //
-// End User License Agreement shown on first launch.
+// Terms of Use shown on first launch.
 // Must be accepted before the user can proceed to onboarding or the main app.
 //
 // TRIGGER:

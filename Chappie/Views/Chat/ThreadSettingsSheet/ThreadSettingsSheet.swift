@@ -21,17 +21,12 @@ struct ThreadSettingsSheet: View {
     let providers: [AIProvider]
     let onSave: (String, ThreadSettings, UUID?, UUID?, String?) -> Void
     let onDismiss: () -> Void
-    /// True when the current license plan allows terminal access (not Starter).
-    let canExecuteTools: Bool
-    /// Called when user taps "Change Plan" in the Starter restriction alert.
-    let onChangePlan: () -> Void
 
     // MARK: - Local draft state
 
     @State var draftTitle: String
     @State var draftSettings: ThreadSettings
     @State var draftKeyId: UUID?
-    @State var showingStarterAlert = false
 
     // MARK: - Active provider (resolved from draftSettings)
 
@@ -45,17 +40,13 @@ struct ThreadSettingsSheet: View {
     init(
         thread: ThreadMetadata,
         providers: [AIProvider],
-        canExecuteTools: Bool = true,
         onSave: @escaping (String, ThreadSettings, UUID?, UUID?, String?) -> Void,
-        onDismiss: @escaping () -> Void,
-        onChangePlan: @escaping () -> Void = {}
+        onDismiss: @escaping () -> Void
     ) {
         self.thread = thread
         self.providers = providers
-        self.canExecuteTools = canExecuteTools
         self.onSave = onSave
         self.onDismiss = onDismiss
-        self.onChangePlan = onChangePlan
         self._draftTitle = State(initialValue: thread.title)
         self._draftSettings = State(initialValue: thread.settings)
         self._draftKeyId = State(initialValue: thread.settings.activeKeyId)
@@ -92,15 +83,6 @@ struct ThreadSettingsSheet: View {
         }
         .frame(width: 480)
         .frame(minHeight: 360)
-        .alert("thread.settings.starter_terminal_alert_title", isPresented: $showingStarterAlert) {
-            Button("thread.settings.starter_terminal_alert_cancel", role: .cancel) {}
-            Button("thread.settings.starter_terminal_alert_change_plan") {
-                onDismiss()
-                onChangePlan()
-            }
-        } message: {
-            Text("thread.settings.starter_terminal_alert_message")
-        }
     }
 }
 

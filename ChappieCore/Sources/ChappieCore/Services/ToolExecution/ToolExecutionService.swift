@@ -65,9 +65,6 @@ public actor ToolExecutionService {
 
     var isFileSystemReady: Bool = true
 
-    // Current license state — injected from ViewModel on every state change.
-    var licenseState: LicenseState = .loading
-
     // list_thread_projects only — add/remove are UI-only, not available to AI.
     var listProjectsHandler: (@Sendable () async -> String)?
 
@@ -154,11 +151,6 @@ public actor ToolExecutionService {
             let names = context.projectNames.joined(separator: ", ")
             print("[ToolExecutionService] 🔓 Context+Settings updated atomically: \(names) (\(settings.count) projects)")
         }
-    }
-
-    public func setLicenseState(_ state: LicenseState) {
-        self.licenseState = state
-        print("[ToolExecutionService] 🔑 License state updated: \(state)")
     }
 
     public func setOnMemoryChanged(_ callback: @escaping @MainActor () -> Void) {

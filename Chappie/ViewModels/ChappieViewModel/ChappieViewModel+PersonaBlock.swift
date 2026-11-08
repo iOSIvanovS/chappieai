@@ -167,7 +167,7 @@ extension ChappieViewModel {
         run_terminal and run_ssh are stateless by design — never rely on previous session state.
         FOUR ABSOLUTE RULES:
         A) Always specify project= parameter OR use an absolute path. Never use bare relative paths.
-           run_terminal project="chappie-license-backend" command="pip install -r requirements.txt"
+           run_terminal project="my-backend" command="pip install -r requirements.txt"
            run_terminal command="ls /tmp/exports"   ← absolute path, no project needed
         B) Never chain cd across multiple calls. Each call is independent — previous cd is gone.
            WRONG: call 1: cd /some/path  →  call 2: ls   ← ls runs in unknown directory

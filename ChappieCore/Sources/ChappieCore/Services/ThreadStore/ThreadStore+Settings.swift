@@ -1,7 +1,7 @@
 // ThreadStore+Settings.swift
 // ChappieCore
 //
-// Thread settings CRUD, Starter plan enforcement, and memory footprint reporting.
+// Thread settings CRUD and memory footprint reporting.
 
 import Foundation
 
@@ -24,30 +24,6 @@ extension ThreadStore {
               let settings = try? JSONDecoder().decode(ThreadSettings.self, from: payload.settingsJSON)
         else { return ThreadSettings() }
         return settings
-    }
-
-    // MARK: - Starter plan enforcement
-
-    /// Resets terminal access to .none across ALL threads (called on Starter plan downgrade).
-    public func downgradeTerminalInAllThreads() async throws {
-        var payloads = try await loadPayloads()
-        var changed = false
-
-        for idx in payloads.indices {
-            guard !payloads[idx].settingsJSON.isEmpty,
-                  var settings = try? JSONDecoder().decode(ThreadSettings.self, from: payloads[idx].settingsJSON),
-                  settings.terminalAccess != .none
-            else { continue }
-
-            settings.terminalAccess = .none
-            payloads[idx].settingsJSON = (try? JSONEncoder().encode(settings)) ?? payloads[idx].settingsJSON
-            changed = true
-        }
-
-        guard changed else { return }
-        try await savePayloads(payloads)
-        try await refreshCache()
-        print("[ThreadStore] ✅ Terminal access reset to .none in all threads (Starter plan)")
     }
 
     // MARK: - Memory footprint

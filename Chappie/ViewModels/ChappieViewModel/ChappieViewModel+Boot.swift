@@ -34,9 +34,6 @@ extension ChappieViewModel {
         )
         self.threadStore = tStore
 
-        let pStore = ProjectStore(dataStore: storage, threadStore: tStore)
-        self.projectStore = pStore
-
         let provStore = AIProviderStore(dataStore: storage)
         self.providerStore = provStore
 
@@ -59,8 +56,6 @@ extension ChappieViewModel {
         if let ts = toolService {
             registerProjectToolHandlers(toolService: ts)
         }
-
-        initializeLicense()
 
         Task {
             await preloadLastActiveThreadId()

@@ -5230,61 +5230,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "يجب أن يبدو العنوان مثل https://host أو http://host:port، دون بيانات دخول بداخله."
+            "value" : "يجب أن يبدو العنوان مثل https:\/\/host أو http:\/\/host:port، دون بيانات دخول بداخله."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Die Adresse muss wie https://host oder http://host:port aussehen, ohne Zugangsdaten darin."
+            "value" : "Die Adresse muss wie https:\/\/host oder http:\/\/host:port aussehen, ohne Zugangsdaten darin."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The address must look like https://host or http://host:port, without a login inside."
+            "value" : "The address must look like https:\/\/host or http:\/\/host:port, without a login inside."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "La dirección debe tener la forma https://host o http://host:port, sin credenciales dentro."
+            "value" : "La dirección debe tener la forma https:\/\/host o http:\/\/host:port, sin credenciales dentro."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "L'adresse doit ressembler à https://host ou http://host:port, sans identifiants à l'intérieur."
+            "value" : "L'adresse doit ressembler à https:\/\/host ou http:\/\/host:port, sans identifiants à l'intérieur."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "पता https://host या http://host:port जैसा होना चाहिए, उसके भीतर लॉगिन जानकारी नहीं होनी चाहिए।"
+            "value" : "पता https:\/\/host या http:\/\/host:port जैसा होना चाहिए, उसके भीतर लॉगिन जानकारी नहीं होनी चाहिए।"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "アドレスは https://host または http://host:port の形式にしてください。認証情報を含めることはできません。"
+            "value" : "アドレスは https:\/\/host または http:\/\/host:port の形式にしてください。認証情報を含めることはできません。"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "O endereço deve ter a forma https://host ou http://host:port, sem credenciais dentro."
+            "value" : "O endereço deve ter a forma https:\/\/host ou http:\/\/host:port, sem credenciais dentro."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Адрес должен выглядеть как https://host или http://host:port, без логина внутри."
+            "value" : "Адрес должен выглядеть как https:\/\/host или http:\/\/host:port, без логина внутри."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "地址应形如 https://host 或 http://host:port，且不能包含登录凭据。"
+            "value" : "地址应形如 https:\/\/host 或 http:\/\/host:port，且不能包含登录凭据。"
           }
         }
       }
@@ -5294,61 +5294,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "أدخل مسار تسجيل الدخول (مثل /api/login) أو اختر صلاحية أخرى."
+            "value" : "أدخل مسار تسجيل الدخول (مثل \/api\/login) أو اختر صلاحية أخرى."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Gib den Login-Pfad ein (z. B. /api/login) oder wähle eine andere Berechtigung."
+            "value" : "Gib den Login-Pfad ein (z. B. \/api\/login) oder wähle eine andere Berechtigung."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Enter the login path (for example /api/login), or choose another permission."
+            "value" : "Enter the login path (for example \/api\/login), or choose another permission."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Introduce la ruta de inicio de sesión (por ejemplo /api/login) o elige otro permiso."
+            "value" : "Introduce la ruta de inicio de sesión (por ejemplo \/api\/login) o elige otro permiso."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Saisissez le chemin de connexion (par exemple /api/login) ou choisissez une autre permission."
+            "value" : "Saisissez le chemin de connexion (par exemple \/api\/login) ou choisissez une autre permission."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "लॉगिन पथ दर्ज करें (उदाहरण: /api/login) या कोई अन्य अनुमति चुनें।"
+            "value" : "लॉगिन पथ दर्ज करें (उदाहरण: \/api\/login) या कोई अन्य अनुमति चुनें।"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ログインパス（例: /api/login）を入力するか、別の権限を選んでください。"
+            "value" : "ログインパス（例: \/api\/login）を入力するか、別の権限を選んでください。"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Informe o caminho de login (por exemplo /api/login) ou escolha outra permissão."
+            "value" : "Informe o caminho de login (por exemplo \/api\/login) ou escolha outra permissão."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Укажите путь для входа (например /api/login) или выберите другой уровень прав."
+            "value" : "Укажите путь для входа (например \/api\/login) или выберите другой уровень прав."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "请输入登录路径（例如 /api/login），或选择其他权限。"
+            "value" : "请输入登录路径（例如 \/api\/login），或选择其他权限。"
           }
         }
       }
@@ -5806,61 +5806,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "رمز / مفتاح API"
+            "value" : "رمز \/ مفتاح API"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Token / API-Schlüssel"
+            "value" : "Token \/ API-Schlüssel"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Token / API key"
+            "value" : "Token \/ API key"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Token / clave de API"
+            "value" : "Token \/ clave de API"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Jeton / clé d'API"
+            "value" : "Jeton \/ clé d'API"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "टोकन / API कुंजी"
+            "value" : "टोकन \/ API कुंजी"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "トークン / APIキー"
+            "value" : "トークン \/ APIキー"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Token / chave de API"
+            "value" : "Token \/ chave de API"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Токен / API-ключ"
+            "value" : "Токен \/ API-ключ"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "令牌 / API 密钥"
+            "value" : "令牌 \/ API 密钥"
           }
         }
       }
@@ -8495,61 +8495,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "اتفاقية الترخيص"
+            "value" : "شروط الاستخدام"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Lizenzvereinbarung"
+            "value" : "Nutzungsbedingungen"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "License Agreement"
+            "value" : "Terms of Use"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Acuerdo de licencia"
+            "value" : "Términos de uso"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Accord de licence"
+            "value" : "Conditions d'utilisation"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "लाइसेंस समझौता"
+            "value" : "उपयोग की शर्तें"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ライセンス契約"
+            "value" : "利用規約"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Acordo de licença"
+            "value" : "Termos de uso"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Лицензионное соглашение"
+            "value" : "Условия использования"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "许可协议"
+            "value" : "使用条款"
           }
         }
       }
@@ -9194,66 +9194,66 @@
         }
       }
     },
-    "https://..." : {
+    "https:\/\/..." : {
       "localizations" : {
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https://..."
+            "value" : "https:\/\/..."
           }
         }
       }
@@ -9895,2136 +9895,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "此工具被自动停止前的剩余时间"
-          }
-        }
-      }
-    },
-    "license.activate_button" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "تفعيل"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Aktivieren"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Activate"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Activar"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Activer"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "सक्रिय करें"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "有効化"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ativar"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Активировать"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "激活"
-          }
-        }
-      }
-    },
-    "license.activated_success" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "تم تفعيل الترخيص!"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Lizenz aktiviert!"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "License activated!"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "¡Licencia activada!"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Licence activée !"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "लाइसेंस सक्रिय हो गया!"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ライセンスが有効化されました！"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Licença ativada!"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Лицензия активирована!"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "许可证已激活！"
-          }
-        }
-      }
-    },
-    "license.activation_error" : {
-      "comment" : "Error shown when JWT activation fails",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "رمز غير صالح أو منتهي الصلاحية. تحقق من JWT وحاول مرة أخرى."
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ungültiger oder abgelaufener Token. Überprüfe das JWT und versuche es erneut."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Invalid or expired token. Check the JWT and try again."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Token inválido o expirado. Verifica el JWT e inténtalo de nuevo."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Token invalide ou expiré. Vérifiez le JWT et réessayez."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "अमान्य या समाप्त टोकन। JWT जांचें और पुनः प्रयास करें।"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "無効または期限切れのトークンです。JWTを確認して再試行してください。"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Token inválido ou expirado. Verifique o JWT e tente novamente."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Неверный или истёкший токен. Проверьте JWT и попробуйте снова."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "令牌无效或已过期。请检查 JWT 并重试。"
-          }
-        }
-      }
-    },
-    "license.buy_button" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "شراء"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kaufen"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Buy"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Comprar"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Acheter"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "खरीदें"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "購入"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Comprar"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Купить"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "购买"
-          }
-        }
-      }
-    },
-    "license.choose_plan_subtitle" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "اشترِ ترخيصاً وأدخل المفتاح أدناه للتفعيل"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kaufe eine Lizenz und gib den Schlüssel unten ein"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Buy a license and enter the key below to activate"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Compra una licencia e introduce la clave para activar"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Achetez une licence et entrez la clé ci-dessous"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "लाइसेंस खरीदें और नीचे कुंजी दर्ज करें"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ライセンスを購入して下にキーを入力してください"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Compre uma licença e insira a chave abaixo para ativar"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Купите лицензию и введите ключ ниже для активации"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "购买许可证并在下方输入密钥以激活"
-          }
-        }
-      }
-    },
-    "license.choose_plan_title" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "اختر خطة"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Plan wählen"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Choose a Plan"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Elige un plan"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Choisir un plan"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "प्लान चुनें"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "プランを選択"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Escolha um plano"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выберите план"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "选择方案"
-          }
-        }
-      }
-    },
-    "license.currency_picker_label" : {
-      "comment" : "Label for currency picker in plan selection screen",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "العملة"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Währung"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Currency"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Moneda"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Devise"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "मुद्रा"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "通貨"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Moeda"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Валюта"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "货币"
-          }
-        }
-      }
-    },
-    "license.email_dialog_message" : {
-      "comment" : "Message in email input dialog explaining why email is needed",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "سيتم إرسال مفتاح الترخيص إلى هذا البريد الإلكتروني بعد الدفع."
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ihr Lizenzschlüssel wird nach der Zahlung an diese E-Mail gesendet."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your license key will be sent to this email after payment."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tu clave de licencia será enviada a este email después del pago."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Votre clé de licence sera envoyée à cet e-mail après le paiement."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "भुगतान के बाद आपकी लाइसेंस कुंजी इस ईमेल पर भेजी जाएगी।"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "支払い後、ライセンスキーがこのメールアドレスに送信されます。"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sua chave de licença será enviada para este e-mail após o pagamento."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ключ лицензии будет отправлен на этот email после оплаты."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "付款后，您的许可证密钥将发送到此邮箱。"
-          }
-        }
-      }
-    },
-    "license.email_dialog_title" : {
-      "comment" : "Title of email input dialog shown before purchase",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "أدخل بريدك الإلكتروني"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "E-Mail eingeben"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Enter Your Email"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ingresa tu email"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Entrez votre e-mail"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "अपना ईमेल दर्ज करें"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "メールアドレスを入力"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Insira seu e-mail"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Введите email"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "输入您的邮箱"
-          }
-        }
-      }
-    },
-    "license.email_placeholder" : {
-      "comment" : "Placeholder in email input field",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "بريدك@الإلكتروني.com"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ihre@email.com"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "your@email.com"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "tu@email.com"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "votre@email.com"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "आपका@ईमेल.com"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "あなたの@メール.com"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "seu@email.com"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ваш@email.com"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "您的@邮箱.com"
-          }
-        }
-      }
-    },
-    "license.enter_key_label" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "أدخل مفتاح الترخيص"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Lizenzschlüssel eingeben"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Enter License Key"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Introduce la clave de licencia"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Entrer la clé de licence"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "लाइसेंस कुंजी दर्ज करें"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ライセンスキーを入力"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Insira a chave de licença"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Введите лицензионный ключ"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "输入许可证密钥"
-          }
-        }
-      }
-    },
-    "license.enter_key_placeholder" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "XXXXX-XXXXX-XXXXX-XXXXX"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "XXXXX-XXXXX-XXXXX-XXXXX"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "XXXXX-XXXXX-XXXXX-XXXXX"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "XXXXX-XXXXX-XXXXX-XXXXX"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "XXXXX-XXXXX-XXXXX-XXXXX"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "XXXXX-XXXXX-XXXXX-XXXXX"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "XXXXX-XXXXX-XXXXX-XXXXX"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "XXXXX-XXXXX-XXXXX-XXXXX"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "XXXXX-XXXXX-XXXXX-XXXXX"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "XXXXX-XXXXX-XXXXX-XXXXX"
-          }
-        }
-      }
-    },
-    "license.invalid_email_error" : {
-      "comment" : "Validation error for invalid email in purchase dialog",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "يرجى إدخال عنوان بريد إلكتروني صحيح."
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bitte geben Sie eine gültige E-Mail-Adresse ein."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Please enter a valid email address."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Por favor, ingresa una dirección de email válida."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Veuillez entrer une adresse e-mail valide."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "कृपया एक वैध ईमेल पता दर्ज करें।"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "有効なメールアドレスを入力してください。"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Por favor, insira um endereço de e-mail válido."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Введите корректный адрес электронной почты."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "请输入有效的电子邮件地址。"
-          }
-        }
-      }
-    },
-    "license.loading_plans" : {
-      "comment" : "Shown while fetching plan list from backend",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "جارٍ تحميل الخطط…"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Pläne werden geladen…"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Loading plans…"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cargando planes…"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Chargement des plans…"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "प्लान लोड हो रहे हैं…"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "プランを読み込み中…"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Carregando planos…"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Загрузка планов…"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在加载方案…"
-          }
-        }
-      }
-    },
-    "license.manage_plan_button" : {
-      "comment" : "Button in Settings → License section. Shown when user already has an active license (owner or active). Opens the plan picker to allow upgrading.",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "إدارة الخطة"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Plan verwalten"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Manage Plan"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Gestionar plan"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Gérer le plan"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "प्लान प्रबंधित करें"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "プランを管理"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Gerenciar plano"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Управление планом"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "管理套餐"
-          }
-        }
-      }
-    },
-    "license.payment_error" : {
-      "comment" : "Error shown when payment link creation fails",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "فشل إنشاء الدفع. يرجى المحاولة مجدداً."
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Zahlung konnte nicht erstellt werden. Bitte erneut versuchen."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Failed to create payment. Please try again."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No se pudo crear el pago. Por favor, inténtalo de nuevo."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Impossible de créer le paiement. Veuillez réessayer."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "भुगतान बनाने में विफल। कृपया पुनः प्रयास करें।"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "支払いの作成に失敗しました。もう一度お試しください。"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Falha ao criar pagamento. Tente novamente."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось создать платёж. Попробуйте ещё раз."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无法创建支付，请重试。"
-          }
-        }
-      }
-    },
-    "license.paywall_activate_button" : {
-      "comment" : "Button on paywall screen to open activation sheet",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "تفعيل الترخيص"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Lizenz aktivieren"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Activate License"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Activar licencia"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Activer la licence"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "लाइसेंस सक्रिय करें"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ライセンスをアクティベート"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ativar licença"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Активировать лицензию"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "激活许可证"
-          }
-        }
-      }
-    },
-    "license.paywall_subtitle" : {
-      "comment" : "Paywall screen subtitle",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "انتهت صلاحية ترخيصك أو لم يتم تفعيله. يرجى تفعيل ترخيص لمواصلة استخدام Chappie."
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ihre Lizenz ist abgelaufen oder nicht aktiviert. Bitte aktivieren Sie eine Lizenz, um Chappie weiter zu verwenden."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your license has expired or is not activated. Please activate a license to continue using Chappie."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tu licencia ha expirado o no está activada. Por favor, activa una licencia para continuar usando Chappie."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Votre licence a expiré ou n'est pas activée. Veuillez activer une licence pour continuer à utiliser Chappie."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "आपका लाइसेंस समाप्त हो गया है या सक्रिय नहीं है। Chappie का उपयोग जारी रखने के लिए कृपया लाइसेंस सक्रिय करें।"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ライセンスが期限切れか未アクティベートです。Chappie の使用を続けるにはライセンスをアクティベートしてください。"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sua licença expirou ou não está ativada. Por favor, ative uma licença para continuar usando o Chappie."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ваша лицензия истекла или не активирована. Пожалуйста, активируйте лицензию, чтобы продолжить использование Chappie."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "您的许可证已过期或未激活。请激活许可证以继续使用 Chappie。"
-          }
-        }
-      }
-    },
-    "license.paywall_title" : {
-      "comment" : "Paywall screen title shown when license is expired or missing",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "مطلوب ترخيص"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Lizenz erforderlich"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "License Required"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Licencia requerida"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Licence requise"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "लाइसेंस आवश्यक है"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ライセンスが必要です"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Licença necessária"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Требуется лицензия"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "需要许可证"
-          }
-        }
-      }
-    },
-    "license.plan_popular_badge" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "شائع"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Beliebt"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Popular"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Popular"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Populaire"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "लोकप्रिय"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "人気"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Popular"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Популярный"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "热门"
-          }
-        }
-      }
-    },
-    "license.plans_load_error" : {
-      "comment" : "Error shown when plan list fails to load from backend",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "فشل تحميل الخطط. اضغط للمحاولة مجدداً."
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Pläne konnten nicht geladen werden. Tippen zum Wiederholen."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Failed to load plans. Tap to retry."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No se pudieron cargar los planes. Toca para reintentar."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Impossible de charger les plans. Appuyez pour réessayer."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "प्लान लोड नहीं हो सके। पुनः प्रयास के लिए टैप करें।"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "プランの読み込みに失敗しました。タップして再試行。"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Falha ao carregar planos. Toque para tentar novamente."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось загрузить планы. Нажмите для повтора."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无法加载方案。点击重试。"
-          }
-        }
-      }
-    },
-    "license.proceed_to_payment_button" : {
-      "comment" : "Button in email dialog that opens payment page",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "المتابعة للدفع"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Zur Zahlung"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Proceed to Payment"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ir al pago"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Procéder au paiement"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "भुगतान पर जाएं"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "支払いへ進む"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ir para pagamento"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Перейти к оплате"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "前往支付"
-          }
-        }
-      }
-    },
-    "license.section_title" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "الترخيص"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Lizenz"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "License"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Licencia"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Licence"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "लाइसेंस"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ライセンス"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Licença"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Лицензия"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "许可证"
-          }
-        }
-      }
-    },
-    "license.state_active" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "نشط"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Aktiv"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Active"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Activa"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Active"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "सक्रिय"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "有効"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ativa"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Активна"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已激活"
-          }
-        }
-      }
-    },
-    "license.state_checking" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "جارٍ التحقق..."
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Wird geprüft..."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Checking..."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Verificando..."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Vérification..."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "जाँच हो रही है..."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "確認中..."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Verificando..."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Проверка..."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "检查中..."
-          }
-        }
-      }
-    },
-    "license.state_expired" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "منتهية الصلاحية"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Abgelaufen"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Expired"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Expirada"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Expirée"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "समाप्त"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "期限切れ"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Expirada"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Истекла"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已过期"
-          }
-        }
-      }
-    },
-    "license.state_grace_period" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "فترة السماح"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kulanzzeit"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Grace Period"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Período de gracia"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Période de grâce"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "अनुग्रह अवधि"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "猶予期間"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Período de carência"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Льготный период"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "宽限期"
-          }
-        }
-      }
-    },
-    "license.state_no_license" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "لا يوجد ترخيص"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Keine Lizenz"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No License"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sin licencia"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Pas de licence"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "कोई लाइसेंस नहीं"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ライセンスなし"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sem licença"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Нет лицензии"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无许可证"
-          }
-        }
-      }
-    },
-    "license.state_trial" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "تجريبي"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Testversion"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Trial"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Prueba"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Essai"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "परीक्षण"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "トライアル"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Avaliação"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Пробная"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "试用"
-          }
-        }
-      }
-    },
-    "license.trial_days_remaining" : {
-      "comment" : "Trial banner: shows how many days remain. %d = number of days",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "باقي %d أيام في الفترة التجريبية"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Noch %d Tage im Testzeitraum"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%d days left in trial"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%d días restantes en el periodo de prueba"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%d jours restants dans l'essai"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "परीक्षण में %d दिन शेष"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "トライアル残り %d 日"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%d dias restantes no período de teste"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%d дней осталось в пробном периоде"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "试用期还剩 %d 天"
-          }
-        }
-      }
-    },
-    "license.trial_expired" : {
-      "comment" : "Trial banner: shown when trial period is over",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "انتهت الفترة التجريبية"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Testzeitraum abgelaufen"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Trial has expired"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "El periodo de prueba ha expirado"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "La période d'essai a expiré"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "परीक्षण अवधि समाप्त हो गई"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "トライアル期間が終了しました"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "O período de teste expirou"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Пробный период истёк"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "试用期已到期"
-          }
-        }
-      }
-    },
-    "license.trial_last_day" : {
-      "comment" : "Trial banner: shown when only 1 day remains",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "آخر يوم في الفترة التجريبية"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Letzter Tag des Testzeitraums"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Last day of trial"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Último día del periodo de prueba"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dernier jour de l'essai"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "परीक्षण का अंतिम दिन"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "トライアル最終日"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Último dia do período de teste"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Последний день пробного периода"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "试用期最后一天"
-          }
-        }
-      }
-    },
-    "license.upgrade_button" : {
-      "comment" : "Trial banner button: opens license activation",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ترقية"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Upgraden"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Upgrade"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Actualizar"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mettre à niveau"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "अपग्रेड करें"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アップグレード"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Atualizar"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Обновить"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "升级"
           }
         }
       }
@@ -17928,61 +15798,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "/path/to/project"
+            "value" : "\/path\/to\/project"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "/pfad/zum/projekt"
+            "value" : "\/pfad\/zum\/projekt"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "/path/to/project"
+            "value" : "\/path\/to\/project"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "/ruta/al/proyecto"
+            "value" : "\/ruta\/al\/proyecto"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "/chemin/vers/projet"
+            "value" : "\/chemin\/vers\/projet"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "/path/to/project"
+            "value" : "\/path\/to\/project"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "/path/to/project"
+            "value" : "\/path\/to\/project"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "/caminho/para/projeto"
+            "value" : "\/caminho\/para\/projeto"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "/путь/к/проекту"
+            "value" : "\/путь\/к\/проекту"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "/项目/路径"
+            "value" : "\/项目\/路径"
           }
         }
       }
@@ -18368,266 +16238,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "保存"
-          }
-        }
-      }
-    },
-    "project.settings.starter_executor_alert_cancel" : {
-      "comment" : "Cancel button in Starter plan Executor restriction alert",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "إلغاء"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Abbrechen"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cancel"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cancelar"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Annuler"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "रद्द करें"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "キャンセル"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cancelar"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Отмена"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "取消"
-          }
-        }
-      }
-    },
-    "project.settings.starter_executor_alert_change_plan" : {
-      "comment" : "Change plan button in Starter plan Executor restriction alert — opens LicenseActivationView",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "تغيير الخطة"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Plan wechseln"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Change Plan"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cambiar plan"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Changer de plan"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "प्लान बदलें"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "プランを変更"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mudar plano"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сменить план"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "更改计划"
-          }
-        }
-      }
-    },
-    "project.settings.starter_executor_alert_message" : {
-      "comment" : "Alert message explaining Executor mode is not available on Starter plan",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "وضع المنفذ متاح في خطتَي Pro وTeam. قم بترقية خطتك لفتح وصول الوكيل الكامل."
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Der Ausführungsmodus ist in den Plänen Pro und Team verfügbar. Upgraden Sie Ihren Plan, um vollen Agentenzugriff freizuschalten."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Executor mode is available on Pro and Team plans. Upgrade your plan to unlock full agent access."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "El modo ejecutor está disponible en los planes Pro y Team. Actualiza tu plan para desbloquear el acceso completo al agente."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Le mode exécuteur est disponible avec les plans Pro et Team. Mettez à niveau votre plan pour débloquer l'accès complet à l'agent."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "एक्जीक्यूटर मोड Pro और Team प्लान में उपलब्ध है। पूर्ण एजेंट एक्सेस अनलॉक करने के लिए अपना प्लान अपग्रेड करें।"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "エグゼキューターモードはProおよびTeamプランで利用できます。フルエージェントアクセスを解除するにはプランをアップグレードしてください。"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "O modo executor está disponível nos planos Pro e Team. Faça upgrade do seu plano para desbloquear o acesso completo ao agente."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Режим исполнителя доступен в планах «Про» и «Тим». Обновите план, чтобы разблокировать полный доступ агента."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "执行者模式适用于 Pro 和 Team 计划。升级您的计划以解锁完整的代理访问权限。"
-          }
-        }
-      }
-    },
-    "project.settings.starter_executor_alert_title" : {
-      "comment" : "Alert title when Starter plan user tries to enable Executor role",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "وضع المنفذ غير متاح"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ausführungsmodus nicht verfügbar"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Executor Mode Unavailable"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Modo ejecutor no disponible"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mode exécuteur indisponible"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "एक्जीक्यूटर मोड उपलब्ध नहीं है"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "エグゼキューターモードは利用できません"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Modo executor indisponível"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Режим исполнителя недоступен"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "执行者模式不可用"
           }
         }
       }
@@ -19666,61 +17276,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "بدون مسار، مثال: https://api.openai.com"
+            "value" : "بدون مسار، مثال: https:\/\/api.openai.com"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Kein Pfad, z.B.: https://api.openai.com"
+            "value" : "Kein Pfad, z.B.: https:\/\/api.openai.com"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No path, e.g.: https://api.openai.com"
+            "value" : "No path, e.g.: https:\/\/api.openai.com"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sin ruta, p. ej.: https://api.openai.com"
+            "value" : "Sin ruta, p. ej.: https:\/\/api.openai.com"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sans chemin, ex.: https://api.openai.com"
+            "value" : "Sans chemin, ex.: https:\/\/api.openai.com"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "कोई पाथ नहीं, जैसे: https://api.openai.com"
+            "value" : "कोई पाथ नहीं, जैसे: https:\/\/api.openai.com"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "パスなし、例: https://api.openai.com"
+            "value" : "パスなし、例: https:\/\/api.openai.com"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sem caminho, ex.: https://api.openai.com"
+            "value" : "Sem caminho, ex.: https:\/\/api.openai.com"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Без пути, например: https://api.openai.com"
+            "value" : "Без пути, например: https:\/\/api.openai.com"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "无路径，例如：https://api.openai.com"
+            "value" : "无路径，例如：https:\/\/api.openai.com"
           }
         }
       }
@@ -20665,7 +18275,7 @@
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "(%d / %d)"
+            "value" : "(%d \/ %d)"
           }
         },
         "pt-BR" : {
@@ -20683,7 +18293,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "(%d / %d)"
+            "value" : "(%d \/ %d)"
           }
         }
       }
@@ -22294,61 +19904,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "تنسيق /v1/messages الأصلي. جسم الطلب وفق معيار Anthropic."
+            "value" : "تنسيق \/v1\/messages الأصلي. جسم الطلب وفق معيار Anthropic."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Natives /v1/messages-Format. Anfragekörper nach Anthropic-Standard."
+            "value" : "Natives \/v1\/messages-Format. Anfragekörper nach Anthropic-Standard."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Native /v1/messages format. Request body per Anthropic standard."
+            "value" : "Native \/v1\/messages format. Request body per Anthropic standard."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Formato nativo /v1/messages. Cuerpo de solicitud según estándar Anthropic."
+            "value" : "Formato nativo \/v1\/messages. Cuerpo de solicitud según estándar Anthropic."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Format natif /v1/messages. Corps de requête selon le standard Anthropic."
+            "value" : "Format natif \/v1\/messages. Corps de requête selon le standard Anthropic."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "नेटिव /v1/messages फॉर्मेट। Anthropic मानक के अनुसार अनुरोध बॉडी।"
+            "value" : "नेटिव \/v1\/messages फॉर्मेट। Anthropic मानक के अनुसार अनुरोध बॉडी।"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ネイティブ/v1/messagesフォーマット。Anthropic標準のリクエストボディ。"
+            "value" : "ネイティブ\/v1\/messagesフォーマット。Anthropic標準のリクエストボディ。"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Formato nativo /v1/messages. Corpo de requisição conforme padrão Anthropic."
+            "value" : "Formato nativo \/v1\/messages. Corpo de requisição conforme padrão Anthropic."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Нативный формат /v1/messages. Тело запроса по стандарту Anthropic."
+            "value" : "Нативный формат \/v1\/messages. Тело запроса по стандарту Anthropic."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "原生 /v1/messages 格式。请求体符合 Anthropic 标准。"
+            "value" : "原生 \/v1\/messages 格式。请求体符合 Anthropic 标准。"
           }
         }
       }
@@ -22842,7 +20452,7 @@
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ステップ1/2 — プロバイダー"
+            "value" : "ステップ1\/2 — プロバイダー"
           }
         },
         "pt-BR" : {
@@ -22906,7 +20516,7 @@
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ステップ2/2 — モデル"
+            "value" : "ステップ2\/2 — モデル"
           }
         },
         "pt-BR" : {
@@ -25014,13 +22624,13 @@
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ · पुनः प्रयास %2$d/%3$d…"
+            "value" : "%1$@ · पुनः प्रयास %2$d\/%3$d…"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ · 再試行中 (%2$d/%3$d)…"
+            "value" : "%1$@ · 再試行中 (%2$d\/%3$d)…"
           }
         },
         "pt-BR" : {
@@ -25038,7 +22648,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ · 正在进行第 %2$d/%3$d 次重试…"
+            "value" : "%1$@ · 正在进行第 %2$d\/%3$d 次重试…"
           }
         }
       }
@@ -25079,13 +22689,13 @@
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ · पुनः प्रयास %2$d/%3$d, %4$d सेकंड में"
+            "value" : "%1$@ · पुनः प्रयास %2$d\/%3$d, %4$d सेकंड में"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ · %4$d 秒後に再試行 (%2$d/%3$d)"
+            "value" : "%1$@ · %4$d 秒後に再試行 (%2$d\/%3$d)"
           }
         },
         "pt-BR" : {
@@ -25103,7 +22713,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ · 第 %2$d/%3$d 次重试，%4$d 秒后"
+            "value" : "%1$@ · 第 %2$d\/%3$d 次重试，%4$d 秒后"
           }
         }
       }
@@ -26267,7 +23877,7 @@
       }
     },
     "settings.backup_section" : {
-      "comment" : "Settings section header for export/import backup feature",
+      "comment" : "Settings section header for export\/import backup feature",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -26528,61 +24138,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "سيفتح اتفاقية الترخيص مجدداً. بياناتك غير متأثرة."
+            "value" : "ستُفتح شروط الاستخدام مجدداً. بياناتك غير متأثرة."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Die Lizenzvereinbarung wird erneut geöffnet. Ihre Daten sind nicht betroffen."
+            "value" : "Die Nutzungsbedingungen werden erneut geöffnet. Ihre Daten sind nicht betroffen."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The license agreement will open again. Your data is not affected."
+            "value" : "The terms of use will open again. Your data is not affected."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "El acuerdo de licencia se abrirá de nuevo. Tus datos no se ven afectados."
+            "value" : "Los términos de uso se abrirán de nuevo. Tus datos no se ven afectados."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "L'accord de licence s'ouvrira à nouveau. Vos données ne sont pas affectées."
+            "value" : "Les conditions d'utilisation s'ouvriront à nouveau. Vos données ne sont pas affectées."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "लाइसेंस समझौता फिर से खुलेगा। आपका डेटा प्रभावित नहीं होता।"
+            "value" : "उपयोग की शर्तें फिर से खुलेंगी। आपका डेटा प्रभावित नहीं होता।"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ライセンス契約が再度開きます。データには影響しません。"
+            "value" : "利用規約が再度開きます。データには影響しません。"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "O acordo de licença será aberto novamente. Seus dados não são afetados."
+            "value" : "Os termos de uso serão abertos novamente. Seus dados não são afetados."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Лицензионное соглашение откроется снова. Ваши данные не затронуты."
+            "value" : "Условия использования откроются снова. Ваши данные не затронуты."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "许可协议将再次打开。您的数据不受影响。"
+            "value" : "使用条款将再次打开。您的数据不受影响。"
           }
         }
       }
@@ -26656,61 +24266,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "عرض الاتفاقية؟"
+            "value" : "عرض الشروط؟"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Vereinbarung anzeigen?"
+            "value" : "Bedingungen anzeigen?"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Show Agreement?"
+            "value" : "Show Terms?"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "¿Mostrar acuerdo?"
+            "value" : "¿Mostrar términos?"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Afficher l'accord ?"
+            "value" : "Afficher les conditions ?"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "समझौता दिखाएं?"
+            "value" : "शर्तें दिखाएं?"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "契約を表示しますか？"
+            "value" : "規約を表示しますか？"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mostrar acordo?"
+            "value" : "Mostrar termos?"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Показать соглашение?"
+            "value" : "Показать условия?"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "显示协议？"
+            "value" : "显示条款？"
           }
         }
       }
@@ -28323,61 +25933,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "عرض الاتفاقية"
+            "value" : "عرض الشروط"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Vereinbarung anzeigen"
+            "value" : "Bedingungen anzeigen"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Show Agreement"
+            "value" : "Show Terms of Use"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mostrar acuerdo"
+            "value" : "Mostrar términos"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Afficher l'accord"
+            "value" : "Afficher les conditions"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "समझौता दिखाएं"
+            "value" : "शर्तें दिखाएं"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "契約を表示"
+            "value" : "規約を表示"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mostrar acordo"
+            "value" : "Mostrar termos"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Показать соглашение"
+            "value" : "Показать условия"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "显示协议"
+            "value" : "显示条款"
           }
         }
       }
@@ -32230,262 +29840,6 @@
         }
       }
     },
-    "thread.settings.starter_terminal_alert_cancel" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "إلغاء"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Abbrechen"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cancel"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cancelar"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Annuler"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "रद्द करें"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "キャンセル"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cancelar"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Отмена"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "取消"
-          }
-        }
-      }
-    },
-    "thread.settings.starter_terminal_alert_change_plan" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "تغيير الخطة"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Plan wechseln"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Change Plan"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cambiar plan"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Changer de plan"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "प्लान बदलें"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "プランを変更"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mudar plano"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сменить план"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "更改计划"
-          }
-        }
-      }
-    },
-    "thread.settings.starter_terminal_alert_message" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "الوصول إلى الطرفية متاح في خطط Pro وUltra. قم بالترقية لفتح هذه الميزة."
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Terminal-Zugriff ist in Pro- und Ultra-Plänen verfügbar. Upgrade durchführen, um diese Funktion freizuschalten."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Terminal access is available on Pro and Ultra plans. Upgrade to unlock this feature."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "El acceso al terminal está disponible en los planes Pro y Ultra. Actualiza para desbloquear esta función."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "L'accès au terminal est disponible dans les plans Pro et Ultra. Mettez à niveau pour débloquer cette fonctionnalité."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "टर्मिनल एक्सेस Pro और Ultra प्लान में उपलब्ध है। इस सुविधा को अनलॉक करने के लिए अपग्रेड करें।"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ターミナルアクセスはProおよびUltraプランで利用できます。この機能を解放するにはアップグレードしてください。"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "O acesso ao terminal está disponível nos planos Pro e Ultra. Faça upgrade para desbloquear este recurso."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Доступ к терминалу доступен в планах Pro и Ultra. Обновите план, чтобы разблокировать эту функцию."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "终端访问在 Pro 和 Ultra 计划中可用。升级以解锁此功能。"
-          }
-        }
-      }
-    },
-    "thread.settings.starter_terminal_alert_title" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "الطرفية تتطلب الاشتراك المميز"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Terminal erfordert Pro"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Terminal Requires Pro"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "El terminal requiere Pro"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Le terminal nécessite Pro"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "टर्मिनल के लिए Pro आवश्यक है"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ターミナルにはProが必要です"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Terminal requer Pro"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Терминал требует Pro"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "终端需要 Pro"
-          }
-        }
-      }
-    },
     "thread.settings.terminal_auto_warning" : {
       "localizations" : {
         "ar" : {
@@ -33387,61 +30741,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "إظهار / إخفاء الخيوط"
+            "value" : "إظهار \/ إخفاء الخيوط"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Threads anzeigen / ausblenden"
+            "value" : "Threads anzeigen \/ ausblenden"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Show / hide threads"
+            "value" : "Show \/ hide threads"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mostrar / ocultar hilos"
+            "value" : "Mostrar \/ ocultar hilos"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Afficher / masquer les fils"
+            "value" : "Afficher \/ masquer les fils"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "थ्रेड दिखाएं / छुपाएं"
+            "value" : "थ्रेड दिखाएं \/ छुपाएं"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "スレッドを表示 / 非表示"
+            "value" : "スレッドを表示 \/ 非表示"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mostrar / ocultar tópicos"
+            "value" : "Mostrar \/ ocultar tópicos"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Показать / скрыть треды"
+            "value" : "Показать \/ скрыть треды"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "显示/隐藏线程"
+            "value" : "显示\/隐藏线程"
           }
         }
       }

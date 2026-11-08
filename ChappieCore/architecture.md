@@ -88,7 +88,6 @@ ChappieCore/
         │   └── MCPRestartPolicy.swift  # Crash restart back-off (1/2/4/8 s) and give-up rule
         ├── MemoryManager.swift         # Semantic memory (read/write/search) via DataStore
         ├── MemoryStore.swift           # Persistence CRUD for memory scopes
-        ├── ProjectStore.swift          # downgradeAllProjectsToAdvisor() only — no CRUD
         ├── ProvidersRemoteService.swift # Fetches + caches providers.json from GitHub
         ├── SaveQueue.swift             # Ordered write queue; failed write pauses until Retry/Skip
         ├── ImagePipeline/
@@ -130,7 +129,7 @@ ChappieCore/
         ├── ThreadStore.swift               # Core: init, create/rename/delete, payload cache
         ├── ThreadStore+Chunks.swift        # Chunked message storage: read/write/lazy-load/pagination
         ├── ThreadStore+Projects.swift      # Thread-scoped project CRUD
-        ├── ThreadStore+Settings.swift      # Settings CRUD, Starter plan enforcement, memory footprint
+        ├── ThreadStore+Settings.swift      # Settings CRUD, memory footprint
         ├── ThreadStore+Backup.swift        # exportAllPayloads/exportChunks — read-only, for BackupService
         ├── ThreadStore+Recovery.swift      # Damaged list repair: rebuild threads from message chunks
         ├── BackupService/
@@ -363,7 +362,6 @@ graph TD
         MS["MemoryStore"]
         APS["AIProviderStore"]
         ASS["AppSettingsStore"]
-        PS["ProjectStore\n(downgradeAllProjectsToAdvisor only)"]
     end
 
     TS --> Proto
@@ -507,7 +505,7 @@ Empty sections are omitted — no wasted tokens.
 
 `ToolPolicy.swift` holds one row per tool (`ToolCapability`): alwaysOn, terminal, forbidden, fileRead, fileWrite,
 locRead, locWrite, git, build, tests, buildLog, curl. **A tool without a row is denied.** `ToolPolicy.decide` is a pure
-function `(tool, target project's ProjectSettings, thread terminal level, Starter?) → ToolDecision`.
+function `(tool, target project's ProjectSettings, thread terminal level, curl switch) → ToolDecision`.
 
 `ToolAuthorization.swift` connects it to the live thread, for both questions with the same function:
 - **Execution** — `authorize()` picks the call's target project (explicit `project` arg, else the only attached
@@ -519,7 +517,7 @@ function `(tool, target project's ProjectSettings, thread terminal level, Starte
 
 Rules worth knowing: ADVISOR reads only (files, search, loc read tools); `build_project` needs only
 `buildEnabled`, `run_tests` also needs test access; `git_log` is allowed at the read-only git level; loc_* need an
-Xcode project and carry a `project` argument that scopes the helper's path roots; Starter is read-only;
+Xcode project and carry a `project` argument that scopes the helper's path roots;
 arguments of project tools must be a flat string map (otherwise refused with an explanation).
 `git_diff` is permanently blocked. Tests: `ToolPolicyTests` (completeness check against `availableTools`).
 
