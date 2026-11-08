@@ -23,13 +23,6 @@ extension ProviderDetailView {
                     Text(currentProvider.displayName)
                         .font(.system(size: 15, weight: .semibold))
 
-                    if currentProvider.isFromCatalog {
-                        Image(systemName: "checkmark.seal.fill")
-                            .font(.system(size: 11))
-                            .foregroundStyle(Color.accentColor.opacity(0.7))
-                            .help("providers.catalog_from")
-                    }
-
                     if currentProvider.origin == .custom {
                         Text("Custom")
                             .font(.system(size: 10, weight: .medium))

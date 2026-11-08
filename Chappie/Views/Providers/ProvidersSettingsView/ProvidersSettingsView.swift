@@ -54,7 +54,6 @@ struct ProvidersSettingsView: View {
         .sheet(isPresented: $showAddProvider) {
             CatalogPickerSheet(
                 providerStore: viewModel.providerStore,
-                remoteService: viewModel.providersRemoteService,
                 onSaved: {
                     viewModel.reloadProviders()
                     showAddProvider = false

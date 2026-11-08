@@ -4,12 +4,12 @@
 // Two-step sheet for adding or editing an AI provider.
 //
 // ENTRY POINTS:
-// 1. From CatalogPickerSheet (catalog row) → prefilledRemote is set.
-//    Step 1 is pre-filled: name, baseURL, catalogId, providerProtocol, models.
-//    Models step shows catalog models pre-selected — no network fetch to provider.
+// 1. From CatalogPickerSheet (preset row) → prefilledPreset is set.
+//    Step 1 is pre-filled: name, baseURL, catalogId (preset id), providerProtocol.
+//    Models step starts empty: the user loads the provider's list or types model IDs by hand.
 //
-// 2. From CatalogPickerSheet ("Ручная настройка") → prefilledRemote is nil.
-//    Blank step 1. No catalog link. User enters everything manually.
+// 2. From CatalogPickerSheet ("Manual setup") → prefilledPreset is nil.
+//    Blank step 1. No preset link. User enters everything manually.
 //    Protocol picker + Auth scheme picker shown — deterministic flow.
 //    Auth scheme auto-switches when protocol changes, but user can override.
 //    Models step: user fetches from provider or adds manually.
@@ -31,7 +31,7 @@ struct AddProviderSheet: View {
     // MARK: - Input
 
     let providerStore: AIProviderStore?
-    var prefilledRemote: RemoteProvider? = nil
+    var prefilledPreset: BuiltInProvider? = nil
     var editingProvider: AIProvider? = nil
     var isOnboarding: Bool = false
     let onSaved: () -> Void
@@ -79,12 +79,15 @@ struct AddProviderSheet: View {
     // MARK: - Computed
 
     var isEditing: Bool { editingProvider != nil }
-    var isCatalog: Bool { prefilledRemote != nil }
+    var isPreset: Bool { prefilledPreset != nil }
 
-    var showCustomPickers: Bool { !isCatalog && !isEditing }
+    /// Path prefix of /models for presets such as Groq ("/openai") and OpenRouter ("/api").
+    var discoveryPrefix: String { (prefilledPreset ?? editingProvider?.builtIn)?.pathPrefix ?? "" }
+
+    var showCustomPickers: Bool { !isPreset && !isEditing }
 
     var requiresApiKey: Bool {
-        editingProvider?.requiresApiKey ?? prefilledRemote?.requiresApiKey ?? true
+        editingProvider?.requiresApiKey ?? prefilledPreset?.requiresApiKey ?? true
     }
 
     var showKeyField: Bool {
@@ -97,9 +100,7 @@ struct AddProviderSheet: View {
 
     var effectiveProtocol: ProviderProtocol {
         if showCustomPickers { return customProtocol }
-        if let remote = prefilledRemote {
-            return remote.models.contains { $0.protocol == "anthropic" } ? .anthropic : .openai
-        }
+        if let preset = prefilledPreset { return preset.providerProtocol }
         return editingProvider?.providerProtocol ?? .openai
     }
 

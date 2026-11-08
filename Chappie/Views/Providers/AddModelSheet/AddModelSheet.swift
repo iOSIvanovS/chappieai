@@ -16,13 +16,11 @@ struct AddModelSheet: View {
     let provider: AIProvider
     let existingModels: [AIModel]
     let providerStore: AIProviderStore?
-    let remoteService: ProvidersRemoteService?
     let onSaved: ([AIModel]) -> Void
     let onCancel: () -> Void
 
     // MARK: - State
 
-    @State var catalogModels: [AIModel] = []
     @State var fetchedModels: [AIModel] = []
     @State var manualModels: [AIModel] = []
     @State var selectedModelIds: Set<String> = []
@@ -51,7 +49,6 @@ struct AddModelSheet: View {
         }
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
-        .onAppear { loadModels() }
     }
 
     // MARK: - Header

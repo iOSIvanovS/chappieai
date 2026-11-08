@@ -1,7 +1,7 @@
 // AddProviderSheet+Step1.swift
 // Chappie
 //
-// Step 1 UI: provider URL, name, key fields, catalog badge, error banner.
+// Step 1 UI: provider URL, name, key fields, error banner.
 
 import SwiftUI
 import ChappieCore
@@ -14,10 +14,6 @@ extension AddProviderSheet {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
 
-                if let remote = prefilledRemote {
-                    catalogBadge(remote)
-                }
-
                 fieldSection(label: String(localized: "provider.name_label"), icon: "tag", hint: String(localized: "provider.name_hint")) {
                     TextField("provider.name_placeholder", text: $providerName)
                         .textFieldStyle(.roundedBorder)
@@ -27,8 +23,8 @@ extension AddProviderSheet {
                     TextField("https://...", text: $baseURL)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.body, design: .monospaced))
-                        .disabled(isCatalog && !isEditing)
-                        .foregroundStyle(isCatalog && !isEditing ? .secondary : .primary)
+                        .disabled(isPreset && !isEditing)
+                        .foregroundStyle(isPreset && !isEditing ? .secondary : .primary)
                 }
 
                 // Protocol + Auth pickers — only in Custom mode.
@@ -131,25 +127,6 @@ extension AddProviderSheet {
             .buttonStyle(.plain)
             .foregroundStyle(Color.accentColor)
         }
-    }
-
-    // MARK: - Catalog Badge
-
-    @ViewBuilder
-    func catalogBadge(_ remote: RemoteProvider) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "checkmark.seal.fill").foregroundStyle(Color.accentColor)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(String(format: String(localized: "provider.catalog_badge"), remote.name))
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-                Text(String(format: String(localized: "provider.catalog_models_count"), remote.models.count))
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(10)
-        .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - Shared Field Builder

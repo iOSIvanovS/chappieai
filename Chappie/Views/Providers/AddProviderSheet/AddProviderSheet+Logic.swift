@@ -16,19 +16,9 @@ extension AddProviderSheet {
             baseURL = provider.baseURL
             selectedModelIds = Set(provider.models.map { $0.id })
             apiKeyName = provider.keys.first?.name ?? ""
-        } else if let remote = prefilledRemote {
-            providerName = remote.name
-            baseURL = remote.baseURL
-            let catalogModels = remote.models.map { rm in
-                AIModel(
-                    id: rm.id,
-                    name: rm.name,
-                    endpoint: rm.endpoint,
-                    providerProtocol: rm.protocol == "anthropic" ? .anthropic : .openai
-                )
-            }
-            fetchedModels = catalogModels
-            selectedModelIds = Set(catalogModels.map { $0.id })
+        } else if let preset = prefilledPreset {
+            providerName = preset.name
+            baseURL = preset.baseURL
         }
     }
 
@@ -49,8 +39,8 @@ extension AddProviderSheet {
         validationError = nil
 
         Task {
-            // Duplicate host check only for catalog providers.
-            if isCatalog && !isEditing, let store = providerStore {
+            // Duplicate host check only for presets; custom providers may share a host.
+            if isPreset && !isEditing, let store = providerStore {
                 let hostExists = await store.providerHostExists(trimmedURL)
                 if hostExists {
                     await MainActor.run { isValidating = false; duplicateHostAlert = true }
@@ -74,7 +64,7 @@ extension AddProviderSheet {
             }
 
             let client = AIClientFactory.makeForValidation(
-                baseURL: trimmedURL,
+                baseURL: trimmedURL + discoveryPrefix,
                 apiKey: keyToUse,
                 providerProtocol: effectiveProtocol,
                 authScheme: effectiveAuthScheme
@@ -87,7 +77,7 @@ extension AddProviderSheet {
                     id: editingProvider?.id ?? UUID(),
                     name: providerName.trimmingCharacters(in: .whitespaces),
                     baseURL: trimmedURL,
-                    catalogId: editingProvider?.catalogId ?? prefilledRemote?.id,
+                    catalogId: editingProvider?.catalogId ?? prefilledPreset?.id,
                     providerProtocol: effectiveProtocol,
                     authScheme: effectiveAuthScheme,
                     origin: editingProvider?.origin ?? effectiveOrigin,
@@ -100,8 +90,7 @@ extension AddProviderSheet {
                     isValidating = false
                     validatedProvider = provisional
                     withAnimation { step = .models }
-                    // For custom providers only — fetch models if list is empty.
-                    if !isCatalog && fetchedModels.isEmpty {
+                    if fetchedModels.isEmpty {
                         fetchModels()
                     }
                 }
@@ -144,7 +133,7 @@ extension AddProviderSheet {
             }
 
             let client = AIClientFactory.makeForValidation(
-                baseURL: provider.baseURL,
+                baseURL: provider.discoveryBaseURL,
                 apiKey: keyToUse,
                 providerProtocol: provider.providerProtocol,
                 authScheme: provider.authScheme
@@ -162,7 +151,7 @@ extension AddProviderSheet {
                     fetchedModels = modelIds.map { modelId in
                         if let existing = existingModels.first(where: { $0.id == modelId }) { return existing }
                         if let existing = provider.models.first(where: { $0.id == modelId }) { return existing }
-                        return AIModel(id: modelId, name: modelId, endpoint: "/v1/chat/completions", providerProtocol: provider.providerProtocol)
+                        return AIModel(id: modelId, name: modelId, endpoint: provider.defaultChatPath, providerProtocol: provider.providerProtocol)
                     }
                     fetchError = nil
                     if selectedModelIds.isEmpty { selectedModelIds = Set(modelIds) }
@@ -178,7 +167,9 @@ extension AddProviderSheet {
         guard !trimmed.isEmpty else { return }
         if !fetchedModels.contains(where: { $0.id == trimmed }) {
             let proto = validatedProvider?.providerProtocol ?? effectiveProtocol
-            let endpoint = proto == .anthropic ? "/v1/messages" : "/v1/chat/completions"
+            let endpoint = validatedProvider?.defaultChatPath
+                ?? prefilledPreset?.chatPath
+                ?? (proto == .anthropic ? "/v1/messages" : "/v1/chat/completions")
             fetchedModels.insert(AIModel(id: trimmed, name: trimmed, endpoint: endpoint, providerProtocol: proto), at: 0)
         }
         selectedModelIds.insert(trimmed)

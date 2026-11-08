@@ -11,22 +11,21 @@
 // API keys are stored in Keychain, NOT in SQLite.
 // Each APIKey is stored under its own apiKey.id.uuidString — not under provider.id.
 //
-// CATALOG INTEGRATION:
-// catalogId links a user-added provider to a RemoteProvider entry (e.g. "openai", "groq").
-// nil means the provider was added manually ("Custom" mode) — no catalog entry.
+// BUILT-IN PRESETS:
+// catalogId links a provider to a BuiltInProvider preset (e.g. "openai", "groq"). The field name is
+// historical (stored JSON key "catalog_id") — never rename it. nil means "Custom" mode, no preset.
 // providerProtocol tells the AI client which wire protocol to use (OpenAI vs Anthropic).
 // authScheme tells the client which Authorization header format to use.
 // requiresApiKey = false for local providers (Ollama) — no key needed, empty string passed.
 //
 // ICONS:
-// iconName = SF Symbol name synced from catalog (e.g. "brain", "sparkles").
-// iconColor = hex string synced from catalog (e.g. "#10A37F"). nil = use accent color.
+// iconName = SF Symbol name copied from the preset at creation (e.g. "brain", "sparkles").
+// iconColor = hex string copied from the preset (e.g. "#10A37F"). nil = use accent color.
 // Custom providers get "wrench.and.screwdriver" + nil (accent color).
-// Icons are synced from catalog on every app launch via AIProviderStore.syncIcons().
 //
 // ORIGIN:
-// origin = .catalog → added from catalog, deduplication by catalogId is enforced.
-// origin = .custom  → added manually, no deduplication, created freely.
+// origin = .catalog → created from a built-in preset.
+// origin = .custom  → added manually.
 // Old providers without origin field default to .catalog via decodeIfPresent.
 //
 // MULTI-KEY STRUCTURE:
@@ -137,7 +136,18 @@ public struct AIProvider: Codable, Sendable, Identifiable, Equatable, Hashable {
 
     public var displayHost: String { URL(string: baseURL)?.host ?? baseURL }
     public var displayName: String { name.isEmpty ? displayHost : name }
-    public var isFromCatalog: Bool { catalogId != nil }
+    /// Built-in preset this provider was created from, if any.
+    public var builtIn: BuiltInProvider? { catalogId.flatMap(BuiltInProviders.find(id:)) }
+
+    /// Chat path for models added by hand. Presets differ (Groq, OpenRouter), custom providers use the protocol default.
+    public var defaultChatPath: String {
+        if let builtIn { return builtIn.chatPath }
+        return providerProtocol == .anthropic ? "/v1/messages" : "/v1/chat/completions"
+    }
+
+    /// Base URL for /v1/models discovery and key validation: presets with a path prefix
+    /// (Groq "/openai", OpenRouter "/api") serve /models under that prefix.
+    public var discoveryBaseURL: String { baseURL + (builtIn?.pathPrefix ?? "") }
 
     public init(
         id: UUID = UUID(),

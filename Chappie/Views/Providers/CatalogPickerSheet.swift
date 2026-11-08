@@ -1,16 +1,14 @@
 // CatalogPickerSheet.swift
 // Chappie
 //
-// First screen when adding a provider: choose from the remote catalog or enter manually.
+// First screen when adding a provider: choose a built-in preset or enter manually.
 //
 // FLOW:
-// 1. Sheet opens → catalog loads via the shared ProvidersRemoteService (cached for the session).
-// 2. User sees a list of known providers (OpenAI, Anthropic, Groq, …)
-//    + a "Custom settings" row at the bottom.
-// 3. Tapping a catalog row → opens AddProviderSheet pre-filled with
-//    baseURL, catalogId, providerProtocol and all known models pre-selected.
-// 4. Tapping "Custom settings" → opens AddProviderSheet with blank fields.
-// 5. On save → calls onSaved() to reload the parent view.
+// 1. User sees the hardcoded presets (OpenAI, Anthropic, Groq, …) + a "Manual setup" row.
+// 2. Tapping a preset → opens AddProviderSheet pre-filled with baseURL, preset id and protocol.
+//    Models are never preloaded: the user loads them from the provider or types them in.
+// 3. Tapping "Manual setup" → opens AddProviderSheet with blank fields.
+// 4. On save → calls onSaved() to reload the parent view.
 
 import SwiftUI
 import ChappieCore
@@ -22,19 +20,14 @@ struct CatalogPickerSheet: View {
     // MARK: - Input
 
     let providerStore: AIProviderStore?
-    /// Shared remote service — injected from ChappieViewModel to reuse the in-memory cache.
-    let remoteService: ProvidersRemoteService
     var isOnboarding: Bool = false
     let onSaved: () -> Void
     let onCancel: () -> Void
 
     // MARK: - State
 
-    @State private var catalog: [RemoteProvider] = []
-    @State private var isLoading: Bool = false
-    @State private var loadError: String? = nil
-    @State private var selectedRemote: RemoteProvider? = nil  // catalog pick → AddProviderSheet
-    @State private var showCustom: Bool = false               // custom pick → AddProviderSheet
+    @State private var selectedPreset: BuiltInProvider? = nil  // preset pick → AddProviderSheet
+    @State private var showCustom: Bool = false                // custom pick → AddProviderSheet
 
     // MARK: - Body
 
@@ -44,7 +37,7 @@ struct CatalogPickerSheet: View {
 
             Divider()
 
-            content
+            catalogList
 
             Divider()
 
@@ -52,18 +45,17 @@ struct CatalogPickerSheet: View {
         }
         .frame(width: 480)
         .fixedSize(horizontal: false, vertical: true)
-        .onAppear { loadCatalog() }
-        // Catalog provider selected
-        .sheet(item: $selectedRemote) { remote in
+        // Preset selected
+        .sheet(item: $selectedPreset) { preset in
             AddProviderSheet(
                 providerStore: providerStore,
-                prefilledRemote: remote,
+                prefilledPreset: preset,
                 isOnboarding: isOnboarding,
                 onSaved: {
-                    selectedRemote = nil
+                    selectedPreset = nil
                     onSaved()
                 },
-                onCancel: { selectedRemote = nil }
+                onCancel: { selectedPreset = nil }
             )
         }
         // Custom provider selected
@@ -109,61 +101,18 @@ struct CatalogPickerSheet: View {
 
     // MARK: - Content
 
-    @ViewBuilder
-    private var content: some View {
-        if isLoading {
-            loadingState
-        } else if let err = loadError {
-            errorState(err)
-        } else {
-            catalogList
-        }
-    }
-
-    private var loadingState: some View {
-        HStack(spacing: 10) {
-            ProgressView().controlSize(.small)
-            Text("catalog.loading")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 40)
-    }
-
-    private func errorState(_ message: String) -> some View {
-        VStack(spacing: 12) {
-            Image(systemName: "wifi.exclamationmark")
-                .font(.system(size: 32))
-                .foregroundStyle(.orange)
-            Text("catalog.error_title")
-                .font(.subheadline.bold())
-            Text(message)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button("catalog.retry") { loadCatalog() }
-                .buttonStyle(.bordered)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 32)
-        .padding(.horizontal, 24)
-    }
-
     private var catalogList: some View {
         ScrollView {
             LazyVStack(spacing: 4) {
-                ForEach(catalog) { remote in
-                    CatalogProviderRow(remote: remote) {
-                        selectedRemote = remote
+                ForEach(BuiltInProviders.all) { preset in
+                    CatalogProviderRow(preset: preset) {
+                        selectedPreset = preset
                     }
                 }
 
-                if !catalog.isEmpty {
-                    Divider()
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 4)
-                }
+                Divider()
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 4)
 
                 CustomProviderRow {
                     showCustom = true
@@ -185,27 +134,5 @@ struct CatalogPickerSheet: View {
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 16)
-    }
-
-    // MARK: - Load Catalog
-
-    private func loadCatalog() {
-        isLoading = true
-        loadError = nil
-
-        Task {
-            do {
-                let result = try await remoteService.fetchCatalog()
-                await MainActor.run {
-                    catalog = result.providers
-                    isLoading = false
-                }
-            } catch {
-                await MainActor.run {
-                    loadError = error.localizedDescription
-                    isLoading = false
-                }
-            }
-        }
     }
 }

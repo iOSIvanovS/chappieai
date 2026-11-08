@@ -134,11 +134,6 @@ final class ChappieViewModel {
     var aiClient: (any AIClientProtocol)?
     var orchestrator: AIOrchestrator?
 
-    // MARK: - Shared remote services
-
-    /// Single shared instance — caches the catalog for the entire app session.
-    let providersRemoteService = ProvidersRemoteService()
-
     // MARK: - Storage
 
     var chappieDataStore: (any ChappieStorage)?
@@ -192,16 +187,6 @@ final class ChappieViewModel {
 
     public init() {
         saveQueue.onFailureChanged = { [weak self] failure in self?.saveFailure = failure }
-
-        // Pre-warm catalog cache at startup so CatalogPickerSheet opens instantly.
-        Task {
-            do {
-                let catalog = try await providersRemoteService.fetchCatalog(forceRefresh: true)
-                print("[ChappieViewModel] Catalog pre-loaded: \(catalog.providers.count) providers, \(catalog.meta.modelsCount) models")
-            } catch {
-                print("[ChappieViewModel] Catalog pre-load failed: \(error.localizedDescription)")
-            }
-        }
     }
 
     // MARK: - Draft Management

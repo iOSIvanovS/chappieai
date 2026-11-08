@@ -125,10 +125,6 @@ public actor AIProviderStore {
         })) ?? false
     }
 
-    public func providerCatalogIdExists(_ catalogId: String) async -> Bool {
-        return (try? await getProviders().contains(where: { $0.catalogId == catalogId })) ?? false
-    }
-
     public func keyValueExists(_ value: String, inProviderId providerId: UUID) async -> Bool {
         guard let provider = (try? await getProviders().first(where: { $0.id == providerId })) else {
             return false

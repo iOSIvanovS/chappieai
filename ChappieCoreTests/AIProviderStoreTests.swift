@@ -8,7 +8,6 @@
 // - deleteProvider: removes provider + keychain entries, reassigns default
 // - updateProvider: persists changes
 // - mergeProvider: merge by host — adds new key if value unique, skips duplicate
-// - addFromCatalog: new provider, re-add existing (merge path)
 // - Key deduplication: same value not added twice to same provider
 // - Key management: addKey, updateKey, deleteKey
 // - Model management: addModel (dedup), deleteModel
@@ -45,25 +44,6 @@ private func makeProvider(
 
 private func makeModel(id: String = "gpt-test", name: String = "GPT Test") -> AIModel {
     AIModel(id: id, name: name)
-}
-
-// RemoteProvider is Codable-only — no public memberwise init, build via JSON decode.
-private func remoteProvider(id: String, baseURL: String, withModel: Bool) throws -> RemoteProvider {
-    let modelJSON = withModel
-        ? #"[{"id":"gpt-4o","name":"GPT-4o","endpoint":"/v1/chat/completions","protocol":"openai"}]"#
-        : "[]"
-    let json = """
-    {
-      "id": "\(id)",
-      "name": "Test Provider",
-      "base_url": "\(baseURL)",
-      "requires_api_key": true,
-      "icon_name": "sparkles",
-      "icon_color": "#10A37F",
-      "models": \(modelJSON)
-    }
-    """
-    return try JSONDecoder().decode(RemoteProvider.self, from: Data(json.utf8))
 }
 
 // MARK: - Suite
@@ -409,33 +389,5 @@ struct AIProviderStoreTests {
 
         let has = await store.hasProviders()
         #expect(has == true)
-    }
-
-    // MARK: - addFromCatalog
-
-    @Test("addFromCatalog creates new provider from remote")
-    func addFromCatalogNew() async throws {
-        let store = try makeStore()
-        let remote = try remoteProvider(id: "openai", baseURL: "https://api.openai.com", withModel: true)
-
-        let id = try await store.addFromCatalog(remote, keyName: "Default", keyValue: "sk-test")
-        let provider = try await store.loadProvider(id: id)
-
-        #expect(provider?.catalogId == "openai")
-        #expect(provider?.models.count == 1)
-    }
-
-    @Test("addFromCatalog merges into existing catalog provider")
-    func addFromCatalogMerges() async throws {
-        let store = try makeStore()
-        let remote = try remoteProvider(id: "openai", baseURL: "https://api.openai.com", withModel: false)
-
-        let id = try await store.addFromCatalog(remote, keyName: "Key1", keyValue: "sk-first")
-        _ = try await store.addFromCatalog(remote, keyName: "Key2", keyValue: "sk-second")
-
-        let providers = try await store.loadProviders()
-        #expect(providers.count == 1)
-        #expect(providers[0].id == id)
-        #expect(providers[0].keys.count == 2)
     }
 }

@@ -2,7 +2,7 @@
 // Chappie
 //
 // Row components for CatalogPickerSheet:
-// - CatalogProviderRow: known provider from remote catalog
+// - CatalogProviderRow: built-in provider preset
 // - CustomProviderRow: manual setup fallback
 
 import SwiftUI
@@ -12,7 +12,7 @@ import ChappieCore
 
 struct CatalogProviderRow: View {
 
-    let remote: RemoteProvider
+    let preset: BuiltInProvider
     let onTap: () -> Void
 
     @State private var isHovered = false
@@ -21,28 +21,19 @@ struct CatalogProviderRow: View {
         Button(action: onTap) {
             HStack(spacing: 14) {
                 ProviderIconView(
-                    iconName: remote.iconName,
-                    iconColor: Color(hex: remote.iconColor ?? "") ?? .accentColor,
+                    iconName: preset.iconName,
+                    iconColor: Color(hex: preset.iconColor) ?? .accentColor,
                     size: 36
                 )
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(remote.name)
+                    Text(preset.name)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.primary)
 
-                    HStack(spacing: 6) {
-                        Text(URL(string: remote.baseURL)?.host ?? remote.baseURL)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-
-                        Text("common.separator_dot")
-                            .foregroundStyle(.secondary.opacity(0.4))
-
-                        Text(verbatim: "\(remote.models.count) \(modelsLabel(remote.models.count))")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
+                    Text(URL(string: preset.baseURL)?.host ?? preset.baseURL)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                 }
 
                 Spacer()
@@ -60,14 +51,6 @@ struct CatalogProviderRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
-    }
-
-    private func modelsLabel(_ count: Int) -> String {
-        switch count % 10 {
-        case 1 where count % 100 != 11: return String(localized: "format.model_singular")
-        case 2...4 where !(11...14).contains(count % 100): return String(localized: "format.model_few")
-        default: return String(localized: "format.model_many")
-        }
     }
 }
 

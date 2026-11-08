@@ -63,13 +63,6 @@ extension ChappieViewModel {
 
             await loadWorkspaceFromStore(settingsStore)
 
-            if let catalog = try? await providersRemoteService.fetchCatalog() {
-                try? await provStore.syncRequiresApiKey(from: catalog.providers)
-                print("[ChappieViewModel] requiresApiKey synced from catalog")
-                try? await provStore.syncIcons(from: catalog.providers)
-                print("[ChappieViewModel] Icons synced from catalog")
-            }
-
             await loadProvidersAndSetActive(from: provStore)
             await loadThreadsAndSelectActive(from: tStore)
         }

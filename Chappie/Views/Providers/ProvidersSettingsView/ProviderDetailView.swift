@@ -131,7 +131,6 @@ struct ProviderDetailView: View {
                 provider: currentProvider,
                 existingModels: currentProvider.models,
                 providerStore: viewModel.providerStore,
-                remoteService: viewModel.providersRemoteService,
                 onSaved: { newModels in
                     showAddModel = false
                     addModels(newModels)

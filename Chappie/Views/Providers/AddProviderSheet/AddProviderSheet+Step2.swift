@@ -44,50 +44,34 @@ extension AddProviderSheet {
         }
     }
 
-    // MARK: - Header (fetch controls or catalog info)
+    // MARK: - Header (fetch controls)
 
     private var modelsHeader: some View {
-        Group {
-            if !isCatalog {
-                HStack(spacing: 12) {
-                    Button { fetchModels() } label: {
-                        HStack(spacing: 6) {
-                            if isFetchingModels { ProgressView().controlSize(.small) }
-                            else { Image(systemName: "arrow.clockwise") }
-                            Text(isFetchingModels ? String(localized: "provider.models_fetching") : String(localized: "provider.models_fetch"))
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(isFetchingModels)
-
-                    if !fetchedModels.isEmpty {
-                        Text(String(format: String(localized: "provider.models_fetched_count"), allModels.count))
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-
-                    Spacer()
-
-                    Text(String(format: String(localized: "provider.models_selected_count"), selectedModelIds.count))
-                        .font(.caption)
-                        .foregroundStyle(selectedModelIds.isEmpty ? .orange : .secondary)
+        HStack(spacing: 12) {
+            Button { fetchModels() } label: {
+                HStack(spacing: 6) {
+                    if isFetchingModels { ProgressView().controlSize(.small) }
+                    else { Image(systemName: "arrow.clockwise") }
+                    Text(isFetchingModels ? String(localized: "provider.models_fetching") : String(localized: "provider.models_fetch"))
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 16)
-                .padding(.bottom, 8)
-            } else {
-                HStack {
-                    Text(String(format: String(localized: "provider.catalog_models_header"), allModels.count))
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Text(String(format: String(localized: "provider.models_selected_count"), selectedModelIds.count))
-                        .font(.caption)
-                        .foregroundStyle(selectedModelIds.isEmpty ? .orange : .secondary)
-                }
-                .padding(.horizontal, 24)
-                .padding(.top, 16)
-                .padding(.bottom, 8)
             }
+            .buttonStyle(.bordered)
+            .disabled(isFetchingModels)
+
+            if !fetchedModels.isEmpty {
+                Text(String(format: String(localized: "provider.models_fetched_count"), allModels.count))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Text(String(format: String(localized: "provider.models_selected_count"), selectedModelIds.count))
+                .font(.caption)
+                .foregroundStyle(selectedModelIds.isEmpty ? .orange : .secondary)
         }
+        .padding(.horizontal, 24)
+        .padding(.top, 16)
+        .padding(.bottom, 8)
     }
 
     // MARK: - Search Bar

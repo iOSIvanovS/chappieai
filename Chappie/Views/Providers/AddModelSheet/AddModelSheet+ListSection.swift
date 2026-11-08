@@ -10,13 +10,11 @@ extension AddModelSheet {
 
     // MARK: - Computed
 
-    var isCatalog: Bool { provider.catalogId != nil }
     var existingIds: Set<String> { Set(existingModels.map { $0.id }) }
 
     var allModels: [AIModel] {
         var result = manualModels
-        let source = isCatalog ? catalogModels : fetchedModels
-        for m in source where !result.contains(where: { $0.id == m.id }) {
+        for m in fetchedModels where !result.contains(where: { $0.id == m.id }) {
             result.append(m)
         }
         return result
@@ -40,13 +38,7 @@ extension AddModelSheet {
     // MARK: - Load Controls
 
     var loadControlsView: some View {
-        Group {
-            if !isCatalog {
-                customLoadControls
-            } else {
-                catalogLoadControls
-            }
-        }
+        customLoadControls
     }
 
     private var customLoadControls: some View {
@@ -68,28 +60,6 @@ extension AddModelSheet {
 
             if !allModels.isEmpty {
                 Text(String(format: String(localized: "provider.models_count"), allModels.count))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Text(String(format: String(localized: "add_models.selected"), selectedModelIds.count))
-                .font(.caption)
-                .foregroundStyle(selectedModelIds.isEmpty ? .orange : .secondary)
-        }
-        .padding(.horizontal, 24)
-        .padding(.top, 16)
-        .padding(.bottom, 8)
-    }
-
-    private var catalogLoadControls: some View {
-        HStack {
-            if isLoading {
-                ProgressView().controlSize(.small)
-                Text("catalog.loading")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text(String(format: String(localized: "add_models.from_catalog"), allModels.count))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -203,9 +173,7 @@ extension AddModelSheet {
             Text("new_thread.no_models")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            Text(isCatalog
-                 ? String(localized: "add_models.empty_catalog")
-                 : String(localized: "add_models.empty_custom"))
+            Text("add_models.empty_custom")
                 .font(.caption)
                 .foregroundStyle(.secondary.opacity(0.7))
                 .multilineTextAlignment(.center)
