@@ -1,0 +1,361 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+    <channel>
+        <title>ChappieAI</title>
+        <link>https://iosivanovs.github.io/chappieai/releases/appcast.xml</link>
+        <description>ChappieAI releases</description>
+        <language>en</language>
+
+        <item>
+            <title>Version 1.0.0</title>
+            <pubDate>Wed, 10 Jun 2026 18:17:40 +0000</pubDate>
+            <sparkle:version>1</sparkle:version>
+            <sparkle:shortVersionString>1.0.0</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.0.dmg"
+                sparkle:edSignature="AYZ/u7dW3vaPYnfqhK4kemkBcZKgb/3zYrnz6h+binrw8iDH5NG+D45LHteOlRmpfa0W4c6si+ET6bD68o37Cw=="
+                length="7433151"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.1</title>
+            <pubDate>Wed, 10 Jun 2026 21:04:42 +0000</pubDate>
+            <sparkle:version>2</sparkle:version>
+            <sparkle:shortVersionString>1.0.1</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.1.dmg"
+                sparkle:edSignature="texiKvrKFplP9m0oFsT0TNMeQmmEGsxKZpfrE7TVgaJru7zPMmeBOU2BXiEYPTUap1rjWcEIyFemO9Y0nuO1Bg=="
+                length="7436840"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.2</title>
+            <pubDate>Wed, 10 Jun 2026 22:05:22 +0000</pubDate>
+            <sparkle:version>3</sparkle:version>
+            <sparkle:shortVersionString>1.0.2</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.2.dmg"
+                sparkle:edSignature="z3yXu2fPhrxBy4F/FUtQrZuCwrFbsvRXMovwXHxso781Tpl93NPFTo9YWId6dEK+6U3ZgAGNIKWVW97lgb37DA=="
+                length="7436151"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.3</title>
+            <pubDate>Wed, 10 Jun 2026 23:59:12 +0000</pubDate>
+            <sparkle:version>4</sparkle:version>
+            <sparkle:shortVersionString>1.0.3</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.3.dmg"
+                sparkle:edSignature="Rby/qqa1omcOOnoM38mQ2Bylwc/sWgl3QAcjzU/O7zdKD6BfOEI0MPp/K3UchKiCnnvr2zgZm0c02+FdpQh4BA=="
+                length="7439185"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.4</title>
+            <pubDate>Thu, 11 Jun 2026 17:13:58 +0000</pubDate>
+            <sparkle:version>5</sparkle:version>
+            <sparkle:shortVersionString>1.0.4</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.4.dmg"
+                sparkle:edSignature="Cffgv5RcP3LgyPWo4ACGIkjD+CrM2A1WbC4WeeRcOLd3zpxnuyJz6wyoRMsDc7B2YHAC1yvpE0wGrOksabuxDg=="
+                length="7437092"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.5</title>
+            <pubDate>Sun, 14 Jun 2026 08:50:21 +0000</pubDate>
+            <sparkle:version>6</sparkle:version>
+            <sparkle:shortVersionString>1.0.5</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.5.dmg"
+                sparkle:edSignature="YZi91+obXhEJQ2HfW3/IrGygrWSFtmpluiXwt0WlwzzleUodk2TuB6WnxgHRwgdUh2pXqR5mVufM6TuJVLJzCQ=="
+                length="7373979"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.6</title>
+            <pubDate>Sun, 14 Jun 2026 12:14:41 +0000</pubDate>
+            <sparkle:version>7</sparkle:version>
+            <sparkle:shortVersionString>1.0.6</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.6.dmg"
+                sparkle:edSignature="ktH8+VGStJVNrIZA9ETcr1BIupna30nIuMH1Gn8YCZyRxn/AnUsajpb4kjSB6ya8KbJ6mDWWs6znscDl09oeBw=="
+                length="7382243"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.7</title>
+            <pubDate>Sun, 14 Jun 2026 12:47:41 +0000</pubDate>
+            <sparkle:version>8</sparkle:version>
+            <sparkle:shortVersionString>1.0.7</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.7.dmg"
+                sparkle:edSignature="Tk9SKJgWxFhdPQQWKwtFjGu7M2IwgH7aeNjANvv3ydDPaTGI5LesPnf9KQzCCBd6g+aTLVBI92G48t3AyizRBA=="
+                length="7380421"
+                type="application/octet-stream"
+            />
+        </item>
+
+
+        <item>
+            <title>Version 1.0.8</title>
+            <pubDate>Mon, 15 Jun 2026 20:34:31 +0000</pubDate>
+            <sparkle:version>9</sparkle:version>
+            <sparkle:shortVersionString>1.0.8</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.8.dmg"
+                sparkle:edSignature="r71LtJJ7FE/+0AIQ9FGeXizJQ81Kr0HXq01f09b+9E/7QFhPp7Gg3Y6jZTvtnxF1UbR5sAw8QboQzu3S96HiBg=="
+                length="7375781"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.9</title>
+            <pubDate>Mon, 22 Jun 2026 11:02:30 +0000</pubDate>
+            <sparkle:version>10</sparkle:version>
+            <sparkle:shortVersionString>1.0.9</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.9.dmg"
+                sparkle:edSignature="Gk31YUYJBNPFsuM8r136U7nGppNXncO6gradzCO90J0IymPk7OCe/Mn5FKAKHhul960/9ASRumPqtEU378zPDw=="
+                length="9651858"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.10</title>
+            <pubDate>Mon, 22 Jun 2026 12:18:31 +0000</pubDate>
+            <sparkle:version>11</sparkle:version>
+            <sparkle:shortVersionString>1.0.10</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.10.dmg"
+                sparkle:edSignature="BLonIyGjb7aDzugset06saIkKqYhtEgksZbo8qP1HU/2NQ+bWSKOS/F4Rd72SjfuJi4MFKLHB7RFZwkXYSjLDQ=="
+                length="9639889"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.11</title>
+            <pubDate>Mon, 22 Jun 2026 13:26:46 +0000</pubDate>
+            <sparkle:version>12</sparkle:version>
+            <sparkle:shortVersionString>1.0.11</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.11.dmg"
+                sparkle:edSignature="oZ7ze+3Rp/Zlk6WM2pK/EjqEgopASQ5kWuDKR7hTPd4mWdBH8UqCKW+hgDFDjnGFXzVbF5S4IYdzV9xyZnwmCQ=="
+                length="9640401"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.12</title>
+            <pubDate>Mon, 22 Jun 2026 18:09:58 +0000</pubDate>
+            <sparkle:version>13</sparkle:version>
+            <sparkle:shortVersionString>1.0.12</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.12.dmg"
+                sparkle:edSignature="OlHgb8KDpj5qGY9fGHXFBfu/rq23106CpwK7LWt72Q4I+ZMNFqfQh+/wW29IU+SLzjMMy4z3okzcWC0gyA2UDQ=="
+                length="9646383"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.13</title>
+            <pubDate>Sat, 27 Jun 2026 09:40:00 +0000</pubDate>
+            <sparkle:version>14</sparkle:version>
+            <sparkle:shortVersionString>1.0.13</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.13.dmg"
+                sparkle:edSignature="+58VuqOcjF3KSPuu/bJnhjlg5FbXj/sZxyoZ10nBkV1AudwdSX3wFWBNgMSb/nctEPNj8HmRprsT9eUubLrDDQ=="
+                length="9644840"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.14</title>
+            <pubDate>Tue, 07 Jul 2026 07:13:53 +0000</pubDate>
+            <sparkle:version>15</sparkle:version>
+            <sparkle:shortVersionString>1.0.14</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.14.dmg"
+                sparkle:edSignature="o8PfbIJzYvrcPcFizePy9LMSJkOhg20CDEaYu/fTN8sKlngxVB8YuvJ1gYzUA7i8NlvBcGuK2IpRrqhU8ju6Ag=="
+                length="9646474"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.15</title>
+            <pubDate>Sat, 18 Jul 2026 10:59:29 +0000</pubDate>
+            <sparkle:version>16</sparkle:version>
+            <sparkle:shortVersionString>1.0.15</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.15.dmg"
+                sparkle:edSignature="QH8JXVNggSVxgZ7SIde+jBvdq6xwGTFKZ85l9UDM9tvTFSox23VFqmnf7tU1x+6wKp8N8nkEBMbp26qv4XqeCQ=="
+                length="9671545"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.16</title>
+            <pubDate>Mon, 20 Jul 2026 17:31:50 +0000</pubDate>
+            <sparkle:version>17</sparkle:version>
+            <sparkle:shortVersionString>1.0.16</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.16.dmg"
+                sparkle:edSignature="hhjbuQ8ZftQeXhtFNQXli2iJTolNgoV7/tfav+AEzsx/s1F9rHvfTgYDQhBVPUp/CDJjU87y7fSoYhWY+281Dw=="
+                length="9675754"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.17</title>
+            <pubDate>Tue, 21 Jul 2026 10:02:12 +0000</pubDate>
+            <sparkle:version>18</sparkle:version>
+            <sparkle:shortVersionString>1.0.17</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.17.dmg"
+                sparkle:edSignature="BDpv3WF5IVGERIY2oR8Opjju9XZ+fh67xIff2slSR8D/LqWZlcfCzcqcBNbmofW4GtKylnerL0DaYRPCYyxzBA=="
+                length="9675636"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.18</title>
+            <pubDate>Mon, 03 Aug 2026 10:15:55 +0000</pubDate>
+            <sparkle:version>19</sparkle:version>
+            <sparkle:shortVersionString>1.0.18</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.18.dmg"
+                sparkle:edSignature="pc7nnR92Dj8vWTfqfLniNa3XWgIlF3bCcjSSyZSM80xAqYjCmUzZwqwQ1tw+f+9Lea5u2yZp3fgjf8KPC8OVBg=="
+                length="9675632"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.19</title>
+            <pubDate>Tue, 04 Aug 2026 10:28:04 +0000</pubDate>
+            <sparkle:version>20</sparkle:version>
+            <sparkle:shortVersionString>1.0.19</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.19.dmg"
+                sparkle:edSignature="2O2gaKQJkIBcDmWpwBADbDCUNZs5DZs4s9cPcEI6AbbdQnQFHhbxSp9lNZx6ciG4IceCW14hhBXmNgRX+M6HDA=="
+                length="9692834"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.20</title>
+            <pubDate>Wed, 05 Aug 2026 08:43:30 +0000</pubDate>
+            <sparkle:version>21</sparkle:version>
+            <sparkle:shortVersionString>1.0.20</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.20.dmg"
+                sparkle:edSignature="n4guMaS9evfZmeM3qmjNgsqKUgwtn2ShOfs91YgIPVZ+zMsauWtNsEuNtbStqbMrdgnBXzsnwgPNsnGFemc2Dw=="
+                length="9698757"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.21</title>
+            <pubDate>Thu, 22 Oct 2026 23:33:53 +0000</pubDate>
+            <sparkle:version>22</sparkle:version>
+            <sparkle:shortVersionString>1.0.21</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.21.dmg"
+                sparkle:edSignature="AmtMiY+qBrLfugvkfkf2pITmskvH+CqDx3kYSin10YowswCfHQNEfS9rtX6+R2faevyy1ttNtV9VJPOWR8smDQ=="
+                length="9872986"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.22</title>
+            <pubDate>Mon, 26 Oct 2026 13:54:46 +0000</pubDate>
+            <sparkle:version>23</sparkle:version>
+            <sparkle:shortVersionString>1.0.22</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.22.dmg"
+                sparkle:edSignature="G8/JRvDYr7L4YRaJAIoqIqEPDOdbUDE3SfrTGFGY6wdz0NVUVN62KEGmZA5RXHB51fWBVwIk6zoeLlyvOljRAg=="
+                length="10038946"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.23</title>
+            <pubDate>Tue, 27 Oct 2026 10:12:08 +0000</pubDate>
+            <sparkle:version>24</sparkle:version>
+            <sparkle:shortVersionString>1.0.23</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.23.dmg"
+                sparkle:edSignature="j9sW0+cWrLfFG1Kl62WApTtpBVeMiugErTkCdH8agzy+DFsQZ6UoVQY6hoIbPS7WiVtxPAFP3aCZAfgr78qjCw=="
+                length="10054742"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.24</title>
+            <pubDate>Tue, 27 Oct 2026 10:31:41 +0000</pubDate>
+            <sparkle:version>25</sparkle:version>
+            <sparkle:shortVersionString>1.0.24</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.24.dmg"
+                sparkle:edSignature="m0gDH2Xp2hZowKpIf2tAjYasvLFT9CtW9Zm693NeV8VSGpvKnBDcM72JsNH2fkRVsZ9nInUWDEzNEZt84D9BAw=="
+                length="10058061"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.25</title>
+            <pubDate>Tue, 27 Oct 2026 10:43:33 +0000</pubDate>
+            <sparkle:version>26</sparkle:version>
+            <sparkle:shortVersionString>1.0.25</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.25.dmg"
+                sparkle:edSignature="N1vehChfn/BbootSLxVQkOv+WZ51eJUDfzuByDCDcAOMOAAT6ZN4Y/GwnZsURNX2c71KBOtXpeXyubMcMS2KAg=="
+                length="10056471"
+                type="application/octet-stream"
+            />
+        </item>
+
+        <item>
+            <title>Version 1.0.28</title>
+            <pubDate>Tue, 27 Oct 2026 12:10:16 +0000</pubDate>
+            <sparkle:version>27</sparkle:version>
+            <sparkle:shortVersionString>1.0.28</sparkle:shortVersionString>
+            <enclosure
+                url="https://iosivanovs.github.io/chappieai/releases/ChappieAI-1.0.28.dmg"
+                sparkle:edSignature="d9jkKbRoxRx/Wivgc26ga64PTAU9mZHgaj96de3+kAJPwkoATtwX7mNYbb9Y9GZHFmobhjrm9yFFgLslcvroCA=="
+                length="10090332"
+                type="application/octet-stream"
+            />
+        </item>
+    </channel>
+</rss>
