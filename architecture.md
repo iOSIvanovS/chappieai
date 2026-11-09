@@ -11,9 +11,7 @@
 ├── ChappieCoreTests/                        # Tests → see ChappieCoreTests/architecture.md
 ├── ChappieMCP/                              # Helper process (thin main.swift) → see ChappieMCP/architecture.md
 ├── ChappieMCPCore/                          # Helper logic as a local package → see ChappieMCP/architecture.md
-├── ChappieMCPTests/                         # Helper tests → see ChappieMCP/architecture.md
-└── Scripts/                                 # Internal maintenance scripts (not part of build)
-    └── release_publish.sh                   # Publishes a release build
+└── ChappieMCPTests/                         # Helper tests → see ChappieMCP/architecture.md
 ```
 
 ---
@@ -214,6 +212,8 @@ The chat path is stored per provider preset because it differs (Groq `/openai/v1
 ## 12. Distribution
 
 The app is free and open source (GPL-3.0). There is no licensing, trial or paywall: all features are available to everyone. The first-launch screen is a Terms of Use notice (responsibility and no-warranty), not a license check.
+
+Release tooling (DMG build, signing, GitHub Release upload, `appcast.xml` on `gh-pages`) lives outside this repository in the private `chappieai-publisher` project. Sparkle updates are served from the `gh-pages` branch of the public repo.
 
 ---
 
