@@ -1,67 +1,65 @@
-# Opening ChappieAI on macOS — Gatekeeper Guide
+# Opening ChappieAI on macOS: Gatekeeper Guide
 
-ChappieAI is distributed outside the Mac App Store and is not notarized by Apple.
-This is completely safe — macOS just needs a one-time confirmation from you.
+ChappieAI is distributed outside the Mac App Store and is not signed with an Apple Developer ID or notarized by Apple.
+macOS therefore asks for a one-time confirmation the first time you open it.
 
 ---
 
 ## What you might see
 
-When you double-click `ChappieAI.dmg` or the app for the first time, macOS may show one of these dialogs:
+When you open the app for the first time, macOS may show a dialog like one of these:
 
-> **"ChappieAI cannot be opened because the developer cannot be verified."**
-> macOS cannot verify that this app is free from malware.
+> **"ChappieAI" cannot be opened because Apple cannot check it for malicious software.**
+>
+> **"ChappieAI" cannot be opened because the developer cannot be verified.**
 
-This is a standard Gatekeeper warning for any app distributed outside the App Store. It does **not** mean the app is dangerous.
+This is the standard Gatekeeper warning for any app that is not notarized. It means Apple has not reviewed the app. It says nothing about what the app does. The source code is public, so you can read it or build the app yourself (see the [README](../README.md#build-from-source)).
 
 ---
 
 ## How to open the app
 
-### Method 1 — Right-click (recommended, 2 steps)
+Drag `ChappieAI.app` to **Applications** first, then use the method that matches your macOS version.
 
-1. In **Finder**, locate `ChappieAI.app`
-2. **Right-click** (or Control-click) the app icon → choose **Open**
-3. A new dialog appears — click **Open** to confirm
+### Method 1: System Settings (works on every supported macOS)
 
-Done. macOS remembers your choice — you won't see this again.
+1. Double-click `ChappieAI.app`. macOS blocks it. Close the dialog.
+2. Open **System Settings** → **Privacy & Security**.
+3. Scroll down to the **Security** section.
+4. Next to the message about ChappieAI, click **Open Anyway**.
+5. Confirm with your password or Touch ID, then click **Open** in the dialog that appears.
 
----
+macOS remembers your choice, so you will not see this again for this copy of the app.
 
-### Method 2 — System Settings
+### Method 2: Right-click (macOS 14 Sonoma and earlier)
 
-1. Try to open the app normally (double-click) — macOS will block it
-2. Open **System Settings** → **Privacy & Security**
-3. Scroll down to the **Security** section
-4. You will see: *"ChappieAI was blocked from use because it is not from an identified developer"*
-5. Click **Open Anyway**
-6. Confirm in the dialog that appears
+1. In **Finder**, find `ChappieAI.app`.
+2. **Right-click** (or Control-click) the icon and choose **Open**.
+3. Click **Open** in the dialog.
 
----
+On macOS 15 Sequoia and later this shortcut no longer bypasses the warning. Use Method 1 there.
 
-### Method 3 — Terminal (advanced)
+### Method 3: Terminal (advanced)
 
-If neither method works, open **Terminal** and run:
+If the methods above do not work, remove the quarantine flag that macOS puts on downloaded files:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/ChappieAI.app
 ```
 
-This removes the quarantine flag that macOS sets on downloaded files.
+---
+
+## Updates
+
+After the first launch, updates arrive inside the app through Sparkle and are verified with the project's own signature key. You do not need to repeat these steps for updates.
 
 ---
 
 ## Why does this happen?
 
-Apple requires developers to pay for a Developer ID certificate ($99/year) and submit apps for notarization.
-ChappieAI is a free, open-source indie app — we skip the App Store and the paid developer program to ship updates faster.
+Notarization requires Apple's paid Developer Program ($99 per year). ChappieAI is a free, open-source project and does not use it.
 
-The app contains no malware. You can verify this yourself:
-
-```bash
-codesign -dv --verbose=4 /Applications/ChappieAI.app
-spctl --assess --verbose /Applications/ChappieAI.app
-```
+If you would rather not bypass the warning, build the app from source with your own signing identity. The steps are in the [README](../README.md#build-from-source).
 
 ---
 
