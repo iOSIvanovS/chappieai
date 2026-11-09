@@ -76,6 +76,8 @@ cd chappieai
 open Chappie.xcodeproj
 ```
 
+**Signing team.** The project is configured with the author's Apple Developer team. To build it yourself, open the project in Xcode, select the `Chappie` target, go to *Signing & Capabilities* and choose your own Team (a free personal team works for local builds). Do the same for the `ChappieMCP` helper target if Xcode reports a signing error.
+
 Swift packages (GRDB, ZIPFoundation, Sparkle) are resolved by Xcode. Sparkle updates are signed with the author's private key, so a build from source will not receive official updates.
 
 Architecture notes live in [`architecture.md`](architecture.md) and next to each module.
