@@ -7,62 +7,51 @@ import Foundation
 
 extension ToolExecutionService {
 
-    func buildTools(
-        progInfos: [ActiveMemoryContext.ProjectInfo],
-        allInfos: [ActiveMemoryContext.ProjectInfo]
-    ) -> [AITool] {
-        var tools: [AITool] = []
+    func buildTools(allInfos: [ActiveMemoryContext.ProjectInfo]) -> [AITool] {
+        // Which projects can actually build/test is ToolStatus's business; the description only
+        // names the tool chain of the programming projects so the model knows what runs where.
+        let progInfos = allInfos.filter { settings(of: $0).isProgrammingProject }
+        let buildable = progInfos.filter { settings(of: $0).devEnvironment.specificTools.contains("build_project") }
+        let projectArgDesc = buildProjectArgDescription(for: allInfos)
+        let multi = allInfos.count > 1
 
-        // Compilation gate: projects with buildEnabled = false are excluded from
-        // build_project/run_tests/read_build_log entirely — too slow to compile,
-        // user builds and tests manually and reports results back in chat.
-        let buildGatedInfos = progInfos.filter {
-            (projectSettingsCache[$0.id] ?? ProjectSettings()).buildEnabled
-        }
-        let projectArgDesc = buildProjectArgDescription(for: buildGatedInfos)
-
-        let buildableInfos = buildGatedInfos.filter {
-            (projectSettingsCache[$0.id] ?? ProjectSettings()).devEnvironment.specificTools.contains("build_project")
-        }
-        if !buildableInfos.isEmpty {
-            tools.append(AITool(function: AIFunctionDefinition(
+        return [
+            AITool(function: AIFunctionDefinition(
                 name: "build_project",
-                description: buildProjectDescription(for: buildableInfos),
+                description: buildable.isEmpty
+                    ? "Build the project with its native build tool. Returns success or a list of compilation errors."
+                    : buildProjectDescription(for: buildable),
                 parameters: AIToolParameters(
                     properties: ["project": AIToolProperty(type: "string", description: projectArgDesc)],
-                    required: buildableInfos.count > 1 ? ["project"] : []
+                    required: multi ? ["project"] : []
                 )
-            )))
-        }
-
-        if !buildGatedInfos.isEmpty {
-            tools.append(AITool(function: AIFunctionDefinition(
+            )),
+            AITool(function: AIFunctionDefinition(
                 name: "run_tests",
-                description: runTestsDescription(for: buildGatedInfos),
+                description: progInfos.isEmpty
+                    ? "Run automated tests with the project's test runner. Specify target/pattern or leave empty for all tests."
+                    : runTestsDescription(for: progInfos),
                 parameters: AIToolParameters(
                     properties: [
                         "project": AIToolProperty(type: "string", description: projectArgDesc),
                         "target": AIToolProperty(type: "string", description: "Test target name or file/pattern. Empty = all tests.")
                     ],
-                    required: buildGatedInfos.count > 1 ? ["project"] : []
+                    required: multi ? ["project"] : []
                 )
-            )))
-
-            tools.append(AITool(function: AIFunctionDefinition(
+            )),
+            AITool(function: AIFunctionDefinition(
                 name: "read_build_log",
                 description: "Read the diagnostic lines of the last build or test run log: only lines containing 'error:' or 'failed' (case-insensitive, duplicates removed, with line numbers). The full log is not returned — it is mostly progress noise.",
                 parameters: AIToolParameters(
                     properties: ["project": AIToolProperty(type: "string", description: projectArgDesc)],
-                    required: []
+                    required: multi ? ["project"] : []
                 )
-            )))
-        }
-
-        return tools
+            ))
+        ]
     }
 
-    func terminalTools(progInfos: [ActiveMemoryContext.ProjectInfo]) -> [AITool] {
-        let terminalProjectArgDesc = terminalProjectArgDescription(for: progInfos)
+    func terminalTools(allInfos: [ActiveMemoryContext.ProjectInfo]) -> [AITool] {
+        let terminalProjectArgDesc = terminalProjectArgDescription(for: allInfos)
 
         return [
             AITool(function: AIFunctionDefinition(

@@ -4,57 +4,44 @@
 // Orchestrator: assembles the final tool list from category-specific extensions.
 // See ToolDefinitions+*.swift for individual tool groups.
 //
-// TOOL ORDER MATTERS: LLMs tend to reach for tools listed first.
-// Specialized tools are listed before terminal — run_terminal/run_ssh are last resort.
+// EVERY tool is always offered. Its description starts with a status line built by ToolPolicy.status
+// (always available / available in projects X / unavailable because … to enable: …), so the model knows
+// its whole toolbox, why a tool is closed, and what to ask the user to switch on.
+// Ordering and compression of closed tools: see ToolCatalog.
 //
-// INJECTION RULES:
-// - File, memory, document, attachment, web, project mgmt — always injected.
-// - search_in_file / search_in_project / patch_file / move_file / rename_file / get_file_info
-//     — when at least one project is attached.
-// - Git, build, test — when any programming project is attached.
-// - loc_* — when any Xcode project is attached.
-// - run_terminal / run_ssh — when thread-level terminal access is enabled.
-// - git_diff is intentionally OMITTED: dumps entire project into AI context.
-//
-// MULTI-PROJECT ACCESS CONTROL:
-// The lists above decide what is DESCRIBED; the final filter (isToolExposed → ToolPolicy) decides
-// what is OFFERED: a tool appears only if some attached project (or the thread) lets it run.
+// The `project` argument lists ALL attached projects and is required when more than one is attached,
+// exactly as ToolExecutionService.authorize demands. git_diff is offered only as FORBIDDEN.
 // Per-call authorization uses the same policy against the single project the call targets.
 
 import Foundation
 
 extension ToolExecutionService {
 
-    /// Filtered list of tools available to the AI agent based on active project settings.
+    /// EVERY tool, each with its availability status; see ToolCatalog for ordering and compression.
     public var availableTools: [AITool] {
         let allInfos = activeMemoryContext.projects
+        let terminal = activeMemoryContext.threadTerminalAccess
+        let curl = activeMemoryContext.curlEnabled
+        let statusProjects = allInfos.map { ToolStatusProject(name: $0.name, settings: settings(of: $0)) }
 
-        let anyProg = allInfos.contains {
-            (projectSettingsCache[$0.id] ?? ProjectSettings()).isProgrammingProject
+        let entries: [ToolCatalog.Entry] = allToolDefinitions(allInfos: allInfos).map { tool in
+            let status = ToolPolicy.status(
+                of: tool.function.name, projects: statusProjects, terminalAccess: terminal, curlEnabled: curl
+            )
+            return (tool, status)
         }
-        let anyTerminalEnabled = activeMemoryContext.threadTerminalAccess.isEnabled
+        return ToolCatalog.compose(entries)
+    }
 
-        let progInfos = allInfos.filter {
-            (projectSettingsCache[$0.id] ?? ProjectSettings()).isProgrammingProject
-        }
-
-        let hasXcodeProject = allInfos.contains {
-            let s = projectSettingsCache[$0.id] ?? ProjectSettings()
-            return s.isProgrammingProject && s.devEnvironment == .xcode
-        }
-
+    /// Full definitions of every tool, regardless of whether it can run in this thread.
+    private func allToolDefinitions(allInfos: [ActiveMemoryContext.ProjectInfo]) -> [AITool] {
         var tools: [AITool] = []
 
-        // File system — always
         tools.append(contentsOf: fileSystemTools(allInfos: allInfos))
+        tools.append(contentsOf: fileMetaAndEditTools(allInfos: allInfos))
+        tools.append(contentsOf: searchTools(allInfos: allInfos))
 
-        // File meta, patch, move, rename, search — when projects are attached
-        if !allInfos.isEmpty {
-            tools.append(contentsOf: fileMetaAndEditTools(allInfos: allInfos))
-            tools.append(contentsOf: searchTools(allInfos: allInfos))
-        }
-
-        // Office documents + attachments + web — always
+        // Office documents + attachments + web
         tools.append(contentsOf: documentTools(allInfos: allInfos))
         tools.append(contentsOf: pdfTools(allInfos: allInfos))
         tools.append(contentsOf: attachmentTools())
@@ -71,36 +58,24 @@ extension ToolExecutionService {
             )
         )))
 
-        // Memory — always
         tools.append(contentsOf: memoryTools())
-
-        // Git — any programming project
-        if anyProg {
-            tools.append(contentsOf: gitTools(progInfos: progInfos))
-            tools.append(contentsOf: buildTools(progInfos: progInfos, allInfos: allInfos))
-        }
-
-        // Localization — any Xcode project
-        if hasXcodeProject {
-            tools.append(contentsOf: localizationTools(allInfos: allInfos))
-        }
-
-        // Curl-Chappie — thread switch; ToolPolicy additionally needs an EXECUTOR project
-        if activeMemoryContext.curlEnabled {
-            tools.append(contentsOf: curlTools(allInfos: allInfos))
-        }
-
-        // Project management — always
+        tools.append(contentsOf: gitTools(allInfos: allInfos))
+        tools.append(gitDiffTool())
+        tools.append(contentsOf: buildTools(allInfos: allInfos))
+        tools.append(contentsOf: localizationTools(allInfos: allInfos))
+        tools.append(contentsOf: curlTools(allInfos: allInfos))
         tools.append(contentsOf: projectManagementTools())
+        tools.append(contentsOf: terminalTools(allInfos: allInfos))
+        return tools
+    }
 
-        // Terminal — last resort, thread-level access required
-        if anyTerminalEnabled {
-            tools.append(contentsOf: terminalTools(progInfos: progInfos))
-        }
-
-        // The model only sees tools that ToolPolicy lets it run somewhere in this thread.
-        // Same decision function as execution, so what is offered and what works cannot drift apart.
-        return tools.filter { isToolExposed($0.function.name) }
+    /// Present only so the model sees it is banned and why; ToolPolicy refuses every call.
+    private func gitDiffTool() -> AITool {
+        AITool(function: AIFunctionDefinition(
+            name: "git_diff",
+            description: "Show the git diff of the working tree.",
+            parameters: AIToolParameters(properties: [:], required: [])
+        ))
     }
 
     // MARK: - Dynamic project arg descriptions

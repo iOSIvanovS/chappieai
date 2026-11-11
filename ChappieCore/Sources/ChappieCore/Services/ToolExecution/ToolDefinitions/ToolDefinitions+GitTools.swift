@@ -1,16 +1,16 @@
 // ToolDefinitions+GitTools.swift
 // ChappieCore
 //
-// Git tool definitions. Injected only when at least one programming project is attached.
-// git_diff is intentionally absent — it dumps the entire project into AI context.
+// Git tool definitions. Always offered; ToolStatus tells the model where they work.
+// git_diff has no definition here — see ToolDefinitions.gitDiffTool (offered only as FORBIDDEN).
 
 import Foundation
 
 extension ToolExecutionService {
 
-    func gitTools(progInfos: [ActiveMemoryContext.ProjectInfo]) -> [AITool] {
-        let multiProg = progInfos.count > 1
-        let projectArg = AIToolProperty(type: "string", description: gitProjectArgDescription(for: progInfos))
+    func gitTools(allInfos: [ActiveMemoryContext.ProjectInfo]) -> [AITool] {
+        let multiProg = allInfos.count > 1
+        let projectArg = AIToolProperty(type: "string", description: gitProjectArgDescription(for: allInfos))
 
         return [
             AITool(function: AIFunctionDefinition(

@@ -140,9 +140,11 @@ ChappieCore/
             ├── ToolPolicy.swift                     # THE access table (deny by default) + ToolBlock (reason + fix) + decide()
             ├── ToolPolicy+Rules.swift               # The rules: thread layer (terminal/curl switches, bans) and project layer; return ToolBlock, nil = allowed
             ├── ToolStatus.swift                     # `[AVAILABLE in … / UNAVAILABLE in … — reason. To enable: fix]` label for tool descriptions, built from the same rules
-            ├── ToolAuthorization.swift              # Target-project resolution, canonical project arg, exposure filter
+            ├── ToolPolicy+Order.swift               # dangerOrder (harmless → dangerous, every classified tool once) and groupTitle (tools switched by the same setting)
+            ├── ToolCatalog.swift                    # Pure: status line in front of each description, open tools first, closed ones compressed and grouped
+            ├── ToolAuthorization.swift              # Target-project resolution, canonical project arg
             ├── ToolArguments.swift                  # Lenient arguments parser: 30 → "30", true → "true", null dropped, nested → JSON text
-            ├── ToolDefinitions.swift                # Orchestrator: assembles availableTools from extensions
+            ├── ToolDefinitions.swift                # Orchestrator: collects EVERY tool definition, adds status, hands over to ToolCatalog
             ├── ToolDefinitions+FileTools.swift      # File system, search, document, attachment tool defs
             ├── ToolDefinitions+MemoryTools.swift    # Memory tool definitions (IT-08)
             ├── ToolDefinitions+GitTools.swift       # Git tool definitions
@@ -512,8 +514,10 @@ function `(tool, target project's ProjectSettings, thread terminal level, curl s
   project, else a `ProjectName/` path prefix for file tools; `list_files`/`search_in_project` may span all).
   Several projects and no way to tell → refused with the list, never "the first one". Rights of OTHER projects
   never apply. The canonical project name is written back into the arguments.
-- **Exposure** — `availableTools` is filtered by `isToolExposed`: a tool is shown only if some attached project
-  (or the thread, for the terminal) lets it run.
+- **Exposure** — `availableTools` offers EVERY classified tool (git_diff as FORBIDDEN). The old filter that hid tools
+  nobody could run is gone: the model must know its whole toolbox, why a tool is closed, and what to ask the user to
+  switch on. The status line (see below) carries that. The `project` argument of project tools lists all attached
+  projects and is required when more than one is attached, exactly like `authorize`.
 
 Rules worth knowing: ADVISOR reads only (files, search, loc read tools); `build_project` needs only
 `buildEnabled`, `run_tests` also needs test access; `git_log` is allowed at the read-only git level; loc_* need an
@@ -525,7 +529,16 @@ arguments of project tools must be a flat string map (otherwise refused with an 
 (reason, fix, permanent) instead of prose. `decide` renders it as the call-time refusal; `ToolPolicy.status` renders the
 same block into the label that opens a tool description (`ToolStatus`): `[ALWAYS AVAILABLE]`, `[AVAILABLE in: A. UNAVAILABLE
 in: B, C — reason. To enable: fix]`, `[FORBIDDEN — …]`. Projects with an identical block are merged into one clause. Tests:
-`ToolStatusTests`. (Rolling out in steps: the label is not yet injected into `availableTools`.)
+`ToolStatusTests`.
+
+**What the model receives (`ToolCatalog`).** Two lists, open tools first, then closed ones; each list goes from the
+most harmless to the most dangerous tool (`ToolPolicy.dangerOrder`), so a safe tool is preferred over a risky one
+that can do the same job (`write_file` before a shell redirect). An open tool keeps its full definition with the
+status line in front of the description. A closed tool is compressed: empty parameters plus status and the first
+sentence of its description; closed tools of one group with an identical status (`groupTitle`: Git, Build and
+tests, Localization, Curl-Chappie, …) share one description carried by the first member, the others refer to it.
+Full definitions return as soon as the settings open the tool. Tests: `ToolPolicyTests` (exposure, order,
+compression, project argument), `ToolStatusTests`.
 
 **Curl-Chappie (`curl`)**: allowed only when the THREAD switch (`ThreadSettings.curlEnabled`, carried in
 `ActiveMemoryContext.curlEnabled`) is on AND the targeted project is an EXECUTOR (the project supplies the secrets;

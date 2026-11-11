@@ -50,7 +50,7 @@ ChappieCoreTests/
 ├── MemoryManagerTests.swift            # Semantic memory CRUD via SQLiteStorage
 ├── ThreadIsolationTests.swift          # SystemPromptBuilder: sections, memory isolation, terminal lines
 ├── ToolArgumentsTests.swift            # Lenient argument parsing: scalars, null, nested, double-encoded, errors
-├── ToolPolicyTests.swift               # Access table: roles, plans, git/build rules, per-project resolution, exposure completeness
+├── ToolPolicyTests.swift               # Access table: roles, plans, git/build rules, per-project resolution; every tool offered with a status line, danger order, compression of closed groups
 ├── ToolStatusTests.swift               # Availability label of tool descriptions (per project/thread, merged reasons) and shared ToolBlock wording
 ├── ThreadStoreTests.swift              # Chunk system: roundtrip, lazy load, pagination, boundary, delete
 ├── ThreadStoreWindowSaveTests.swift    # saveLoadedMessages: older chunks survive, atomic failure, boundaries

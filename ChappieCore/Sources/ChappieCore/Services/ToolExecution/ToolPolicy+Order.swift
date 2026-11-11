@@ -1,0 +1,70 @@
+// ToolPolicy+Order.swift
+// ChappieCore
+//
+// Two pieces of presentation knowledge about tools, kept next to the policy table:
+//   - dangerOrder: the order the model sees tools in, from the most harmless to the most dangerous.
+//     Models tend to reach for tools listed first, so a safe tool wins over a risky one that can do
+//     the same job (write_file before "echo > file" through the terminal).
+//   - groupTitle: tools that are switched on and off by the same setting share one title; when they are
+//     all closed the model gets one group description instead of a full definition per tool.
+//
+// A completeness test fails when a classified tool is missing from dangerOrder.
+
+import Foundation
+
+extension ToolPolicy {
+
+    /// Harmless → dangerous. Within a family the order follows the damage a mistake can do.
+    public static let dangerOrder: [String] = [
+        // Orientation and memory
+        "list_thread_projects", "recall", "search_memory", "memorize", "delete_memory",
+        // Attachments, documents and the web (read-only)
+        "fetch_attachment", "pdf_info", "pdf_page_as_txt", "pdf_page_as_image", "web_fetch",
+        // Reading project files
+        "list_files", "get_file_info", "read_file", "view_image", "search_in_file", "search_in_project", "read_document",
+        // Reading localization
+        "loc_info", "loc_key_check", "loc_list_keys", "loc_next_batch", "loc_dead_keys",
+        // Changing project files
+        "send_attachment", "write_file", "patch_file", "write_document", "rename_file", "move_file", "delete_file",
+        // Changing localization
+        "loc_add_key", "loc_add_language", "loc_submit_batch", "loc_create",
+        "loc_rename_key", "loc_rename_keys", "loc_rename", "loc_remove_key", "loc_remove_language", "loc_delete",
+        // Build and tests
+        "read_build_log", "build_project", "run_tests",
+        // Git
+        "git_status", "git_log", "git_add", "git_commit", "git_reset", "git_push", "git_checkout", "git_revert",
+        // Network requests
+        "curl_scenario_info", "curl_extract", "curl_session", "curl_request",
+        "curl_scenario_save", "curl_scenario_delete", "curl_scenario_run",
+        // Arbitrary commands
+        "run_terminal", "run_ssh",
+        // Never allowed
+        "git_diff"
+    ]
+
+    private static let rankTable: [String: Int] = {
+        var table: [String: Int] = [:]
+        for (index, name) in dangerOrder.enumerated() { table[name] = index }
+        return table
+    }()
+
+    /// Position in `dangerOrder`; an unlisted tool sorts last.
+    public static func dangerRank(of tool: String) -> Int { rankTable[tool] ?? dangerOrder.count }
+
+    /// Title of the group a tool belongs to; tools of one group are switched by the same settings.
+    public static func groupTitle(of tool: String) -> String {
+        guard let capability = capability(of: tool) else { return tool }
+        switch capability {
+        case .alwaysOn:   return "General tools"
+        case .terminal:   return "Terminal and SSH"
+        case .forbidden:  return tool
+        case .fileRead:   return "Project file reading"
+        case .fileWrite:  return "Project file changes"
+        case .locRead:    return "Localization (read-only)"
+        case .locWrite:   return "Localization (changing)"
+        case .git:        return "Git"
+        case .build, .tests, .buildLog: return "Build and tests"
+        case .curl:       return "Curl-Chappie (HTTP requests and scenarios)"
+        }
+    }
+}

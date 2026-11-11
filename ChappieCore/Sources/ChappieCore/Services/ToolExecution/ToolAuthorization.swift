@@ -105,29 +105,6 @@ extension ToolExecutionService {
         return .allowed(argsData: canonical, args: args)
     }
 
-    // MARK: - Exposure
-
-    /// True when at least one attached project (or the thread itself) lets the model use this tool.
-    /// The model is never shown tools it could not run anywhere.
-    func isToolExposed(_ toolName: String) -> Bool {
-        let terminal = activeMemoryContext.threadTerminalAccess
-        let curl = activeMemoryContext.curlEnabled
-
-        guard let capability = ToolPolicy.capability(of: toolName) else { return false }
-        if !capability.needsProject {
-            return ToolPolicy.decide(tool: toolName, project: nil, terminalAccess: terminal, curlEnabled: curl).isAllowed
-        }
-
-        let projects = activeMemoryContext.projects
-        if projects.isEmpty {
-            // Read tools stay visible without a project so the call can explain how to attach one.
-            return capability == .fileRead
-        }
-        return projects.contains {
-            ToolPolicy.decide(tool: toolName, project: settings(of: $0), terminalAccess: terminal, curlEnabled: curl).isAllowed
-        }
-    }
-
     // MARK: - Helpers
 
     /// Settings of a project; a missing cache entry falls back to the safe default (ADVISOR).

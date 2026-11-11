@@ -79,6 +79,16 @@ private func denial(_ auth: ToolAuthorization) -> String {
     return ""
 }
 
+private func description(of tool: String, in tools: [AITool]) -> String {
+    tools.first { $0.function.name == tool }?.function.description ?? "<missing \(tool)>"
+}
+
+/// A closed tool's status line starts with UNAVAILABLE or FORBIDDEN (a partly open one starts with AVAILABLE).
+private func isClosed(_ tool: AITool) -> Bool {
+    let d = tool.function.description
+    return d.hasPrefix("[UNAVAILABLE") || d.hasPrefix("[FORBIDDEN")
+}
+
 // MARK: - Table
 
 @Suite("ToolPolicy — deny by default")
@@ -320,24 +330,48 @@ struct ToolAuthorizationTests {
 @Suite("ToolPolicy — what the model is shown")
 struct ToolExposureTests {
 
-    @Test("Completeness: with maximum rights the model sees every classified tool except git_diff")
-    func everyClassifiedToolHasADefinition() async {
-        let rig = await Rig([("Max", xcodeExecutor())], terminal: .auto, curl: true)
-        let offered = await rig.names()
-        #expect(offered == ToolPolicy.knownTools.subtracting(["git_diff"]))
+    @Test("Every classified tool is offered at any rights level, git_diff included")
+    func everyClassifiedToolIsOffered() async {
+        let setups: [[(String, ProjectSettings)]] = [
+            [], [("A", xcodeAdvisor)], [("A", xcodeExecutor())], [("A", xcodeAdvisor), ("B", xcodeExecutor())]
+        ]
+        for setup in setups {
+            let rig = await Rig(setup, terminal: .none)
+            #expect(await rig.names() == ToolPolicy.knownTools)
+            let maxRig = await Rig(setup, terminal: .auto, curl: true)
+            #expect(await maxRig.names() == ToolPolicy.knownTools)
+        }
     }
 
-    @Test("Curl-Chappie: offered only with the thread switch ON and an EXECUTOR project")
+    @Test("dangerOrder lists every classified tool exactly once")
+    func dangerOrderIsComplete() {
+        #expect(Set(ToolPolicy.dangerOrder) == ToolPolicy.knownTools)
+        #expect(ToolPolicy.dangerOrder.count == ToolPolicy.knownTools.count)
+    }
+
+    @Test("Every description opens with a status line")
+    func everyDescriptionHasStatus() async {
+        let tools = await Rig([("A", xcodeAdvisor)]).service.availableTools
+        for tool in tools {
+            #expect(tool.function.description.hasPrefix("["), "\(tool.function.name)")
+        }
+    }
+
+    @Test("Curl-Chappie: closed without the thread switch or without an EXECUTOR project, open with both")
     func curlExposure() async {
         let curlTools: Set<String> = [
             "curl_request", "curl_session", "curl_extract",
             "curl_scenario_info", "curl_scenario_save", "curl_scenario_delete", "curl_scenario_run"
         ]
-        #expect(await Rig([("A", xcodeExecutor())]).names().isDisjoint(with: curlTools), "switch off")
-        #expect(await Rig([("A", xcodeAdvisor)], curl: true).names().isDisjoint(with: curlTools), "advisor only")
-        #expect(await Rig([], curl: true).names().isDisjoint(with: curlTools), "no project")
-        #expect(curlTools.isSubset(of: await Rig([("A", xcodeExecutor())], curl: true).names()))
-        #expect(curlTools.isSubset(of: await Rig([("A", xcodeAdvisor), ("B", xcodeExecutor())], curl: true).names()), "one executor is enough")
+        func openCurl(_ rig: Rig) async -> Set<String> {
+            Set(await rig.service.availableTools
+                .filter { curlTools.contains($0.function.name) && !isClosed($0) }.map(\.function.name))
+        }
+        #expect(await openCurl(await Rig([("A", xcodeExecutor())])).isEmpty, "switch off")
+        #expect(await openCurl(await Rig([("A", xcodeAdvisor)], curl: true)).isEmpty, "advisor only")
+        #expect(await openCurl(await Rig([], curl: true)).isEmpty, "no project")
+        #expect(await openCurl(await Rig([("A", xcodeExecutor())], curl: true)) == curlTools)
+        #expect(await openCurl(await Rig([("A", xcodeAdvisor), ("B", xcodeExecutor())], curl: true)) == curlTools, "one executor is enough")
     }
 
     @Test("Curl-Chappie: the call is judged by the project it names, the switch by the thread")
@@ -355,40 +389,89 @@ struct ToolExposureTests {
         #expect(denial(blocked).contains("Curl-Chappie"))
     }
 
-    @Test("Nothing the model is shown is missing from the table, at any rights level")
-    func offeredToolsAreAllClassified() async {
-        let setups: [[(String, ProjectSettings)]] = [
-            [], [("A", xcodeAdvisor)], [("A", xcodeExecutor())], [("A", xcodeAdvisor), ("B", xcodeExecutor(git: .statusOnly))]
-        ]
-        for setup in setups {
-            let rig = await Rig(setup, terminal: .confirm)
-            #expect(await rig.names().isSubset(of: ToolPolicy.knownTools))
-        }
-    }
-
-    @Test("An advisor-only thread is not offered write, git, build or loc-mutation tools")
-    func advisorThreadHidesMutations() async {
-        let offered = await Rig([("A", xcodeAdvisor)]).names()
+    @Test("An advisor-only thread sees mutations as closed, with the reason, and reads as open")
+    func advisorThreadClosesMutations() async {
+        let tools = await Rig([("A", xcodeAdvisor)]).service.availableTools
         for tool in ["write_file", "patch_file", "delete_file", "write_document", "git_status", "git_commit",
                      "build_project", "run_tests", "loc_create", "loc_submit_batch", "run_terminal"] {
-            #expect(!offered.contains(tool), "\(tool) must be hidden")
+            let found = description(of: tool, in: tools)
+            #expect(found.hasPrefix("[UNAVAILABLE"), "\(tool) must be closed: \(found)")
         }
-        for tool in ["read_file", "search_in_project", "loc_info", "loc_list_keys", "memorize"] {
-            #expect(offered.contains(tool), "\(tool) must be visible")
+        #expect(description(of: "write_file", in: tools).contains("ADVISOR"))
+        #expect(description(of: "run_terminal", in: tools).contains("Terminal"))
+        for tool in ["read_file", "search_in_project", "loc_info", "loc_list_keys"] {
+            #expect(description(of: tool, in: tools).hasPrefix("[AVAILABLE in: A"), "\(tool)")
         }
+        #expect(description(of: "memorize", in: tools).hasPrefix("[ALWAYS AVAILABLE]"))
     }
 
-    @Test("One executor project among advisors is enough to offer write tools")
-    func mixedThreadOffersWrite() async {
-        let offered = await Rig([("A", xcodeAdvisor), ("B", xcodeExecutor())]).names()
-        #expect(offered.contains("write_file"))
-        #expect(offered.contains("loc_create"))
+    @Test("A mixed thread names the projects where a tool works and where it does not")
+    func mixedThreadNamesProjects() async {
+        let tools = await Rig([("Adv", xcodeAdvisor), ("Exec", xcodeExecutor())]).service.availableTools
+        let text = description(of: "write_file", in: tools)
+        #expect(text.hasPrefix("[AVAILABLE in: Exec. UNAVAILABLE in: Adv"), "\(text)")
+        #expect(text.contains("ADVISOR"))
     }
 
-    @Test("The terminal is offered only when the thread allows it")
+    @Test("The terminal status shows the thread mode when open")
     func terminalExposure() async {
-        #expect(!(await Rig([("A", xcodeExecutor())], terminal: .none).names()).contains("run_terminal"))
-        #expect((await Rig([("A", xcodeExecutor())], terminal: .confirm).names()).contains("run_ssh"))
+        let open = await Rig([("A", xcodeExecutor())], terminal: .confirm).service.availableTools
+        #expect(description(of: "run_ssh", in: open).hasPrefix("[AVAILABLE"))
+        #expect(description(of: "run_ssh", in: open).contains("confirmation"))
+        let shut = await Rig([("A", xcodeExecutor())], terminal: .none).service.availableTools
+        #expect(description(of: "run_terminal", in: shut).hasPrefix("[UNAVAILABLE"))
+    }
+
+    @Test("git_diff is offered only as FORBIDDEN")
+    func gitDiffIsForbidden() async {
+        let tools = await Rig([("A", xcodeExecutor())], terminal: .auto).service.availableTools
+        let text = description(of: "git_diff", in: tools)
+        #expect(text.hasPrefix("[FORBIDDEN"), "\(text)")
+        #expect(text.contains("git_status"))
+    }
+
+    @Test("Available tools come first, closed ones after; each list goes from harmless to dangerous")
+    func orderingByDanger() async {
+        let tools = await Rig([("A", xcodeAdvisor), ("B", xcodeExecutor(git: .statusOnly))], curl: false).service.availableTools
+        let flags = tools.map(isClosed)
+        if let firstClosed = flags.firstIndex(of: true) {
+            #expect(!flags[firstClosed...].contains(false), "an open tool follows a closed one")
+        }
+        for group in [tools.filter { !isClosed($0) }, tools.filter(isClosed)] {
+            let ranks = group.map { ToolPolicy.dangerRank(of: $0.function.name) }
+            #expect(ranks == ranks.sorted())
+        }
+        let names = tools.map(\.function.name)
+        #expect(names.firstIndex(of: "write_file")! < names.firstIndex(of: "git_status")!)
+        #expect(names.last == "git_diff")
+    }
+
+    @Test("Closed tools are compressed: no parameters, one group description with the shared reason")
+    func closedGroupsAreCompressed() async {
+        let tools = await Rig([("A", xcodeAdvisor)]).service.availableTools
+        let git = tools.filter { $0.function.name.hasPrefix("git_") && $0.function.name != "git_diff" }
+        #expect(git.count == 8)
+        for tool in git { #expect(tool.function.parameters.properties.isEmpty, "\(tool.function.name)") }
+        let heads = git.filter { $0.function.description.contains("Group «Git»") }
+        #expect(heads.count == 1)
+        #expect(heads[0].function.description.contains("git_status, git_log"))
+        let followers = git.filter { !$0.function.description.contains("Group «Git»") }
+        for tool in followers { #expect(tool.function.description.contains("same reason and fix as git_status")) }
+    }
+
+    @Test("Every project is listed in the project argument and required when several are attached")
+    func projectArgumentCoversEveryProject() async {
+        let docs = ProjectSettings(agentRole: .executor, isProgrammingProject: false)
+        let rig = await Rig([("Code", xcodeExecutor()), ("Docs", docs)])
+        let tools = await rig.service.availableTools
+        for name in ["git_status", "git_commit", "build_project", "run_tests", "read_build_log"] {
+            guard let tool = tools.first(where: { $0.function.name == name }) else { Issue.record("\(name) missing"); continue }
+            let arg = tool.function.parameters.properties["project"]?.description ?? ""
+            #expect(arg.contains("'Code'") && arg.contains("'Docs'"), "\(name): \(arg)")
+            #expect(tool.function.parameters.required?.contains("project") == true, "\(name)")
+        }
+        #expect(description(of: "git_status", in: tools).contains("AVAILABLE in: Code"))
+        #expect(description(of: "git_status", in: tools).contains("Docs"))
     }
 
     @Test("loc_* definitions carry a project argument, required when several projects are attached")
