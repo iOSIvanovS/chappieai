@@ -8,9 +8,6 @@
 // Each attachment is one row: icon + filename + file size.
 // All files open via QuickLook on click — native preview + built-in Share button.
 // File size is read from disk via localURL (no bytes stored in AttachedFile).
-//
-// TERMINAL CONFIRMATION (TERMINAL-CONFIRM):
-// .terminalConfirmation case renders an inline Run/Cancel prompt.
 
 import SwiftUI
 import QuickLook
@@ -28,9 +25,6 @@ struct MessageBubbleView: View {
         switch msg {
         case .message(_, let isUser, let text, let cost, let attachments, _):
             messageBubble(isUser: isUser, text: text, cost: cost, attachments: attachments)
-
-        case .terminalConfirmation(let id, let command, let threadId):
-            terminalConfirmationBubble(id: id, command: command, threadId: threadId)
 
         case .toolCall:
             EmptyView()

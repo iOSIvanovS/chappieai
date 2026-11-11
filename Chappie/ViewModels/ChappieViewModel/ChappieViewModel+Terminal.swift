@@ -1,95 +1,90 @@
 // ChappieViewModel+Terminal.swift
 // Chappie
 //
-// Terminal confirmation flow: intercept PendingTerminalCommand, show inline UI,
-// execute or reject based on user choice.
+// Terminal confirmation flow. The orchestrator PAUSES the run_terminal call and asks us (through
+// `terminalConfirmHandler`); we show a modal Run/Cancel sheet and suspend until the user decides.
+// The orchestrator then continues with the real outcome: command output, or "user declined".
 //
 // FLOW:
-//   1. Orchestrator returns a response containing PendingTerminalCommand marker.
-//   2. ChappieViewModel+Send detects the marker and calls insertTerminalConfirmation().
-//   3. A .terminalConfirmation message is appended — MessageBubbleView renders Run/Cancel.
-//   4. User taps Run → approveTerminalCommand() → executes via ToolExecutionService,
-//      replaces the confirmation bubble with the result.
-//   5. User taps Cancel → rejectTerminalCommand() → replaces bubble with cancelled note.
+//   1. Orchestrator meets the confirmation marker of run_terminal and calls the handler.
+//   2. presentTerminalConfirmation() queues a TerminalPrompt and registers a gate; ContentView shows the sheet.
+//   3. Run  → gate.resolve(.run)     → orchestrator runs the command and feeds the output to the model.
+//   4. Cancel / Esc → gate.resolve(.decline) → orchestrator tells the model the user declined.
+//   5. Stop button → the request task is cancelled → the gate resolves .decline by itself.
 //
-// WHY NOT A SHEET/ALERT:
-// Inline UI keeps the confirmation in context — the user sees the command and the
-// preceding AI message together. Sheets break flow and lose context.
+// WHY A SHEET, NOT A CHAT BUBBLE:
+// A bubble lives in the message list of the active thread: it landed below the input bar without
+// scrolling and vanished from view when the user switched threads while the request kept waiting.
+// A sheet cannot be missed, does not depend on scrolling and survives thread switches.
 
 import SwiftUI
 import ChappieCore
 
+/// One command waiting for the user's decision.
+struct TerminalPrompt: Identifiable, Equatable {
+    let id = UUID()
+    let command: String
+    let threadId: UUID
+}
+
 extension ChappieViewModel {
 
-    // MARK: - Insert confirmation bubble
+    // MARK: - Handler passed to the orchestrator
 
-    /// Called by ChappieViewModel+Send when a PendingTerminalCommand is detected.
-    /// Replaces the AI text response with the confirmation bubble.
-    func insertTerminalConfirmation(command: String, threadId: UUID) {
-        let bubble = ChatMessage.terminalConfirmation(command: command, threadId: threadId)
-        messages.append(bubble)
-        appendToDisplayed(bubble)
-        scrollToBottomTrigger += 1
-    }
-
-    // MARK: - Approve
-
-    /// User tapped "Run" — execute the command and replace the confirmation bubble with the result.
-    func approveTerminalCommand(messageId: UUID, command: String) {
-        guard let toolService = toolService else {
-            replaceConfirmation(id: messageId, with: "❌ Terminal service not available.")
-            return
-        }
-
-        // Show thinking state while the command runs.
-        isThinking = true
-        setToolBudget(ToolDeadlines.seconds(tool: "run_terminal", arguments: "{}"))
-
-        // Held in currentRequestTask so the Stop button reaches the command like any other request.
-        currentRequestTask = Task {
-            let result = await toolService.executeConfirmedCommand(command)
-            await MainActor.run {
-                self.setToolBudget(nil)
-                self.isThinking = false
-                self.currentRequestTask = nil
-                self.replaceConfirmation(id: messageId, with: result)
-                self.saveMessagesIfNeeded()
-            }
+    /// Builds the handler for one request. Runs off the main actor, so every UI touch hops to it.
+    func terminalConfirmHandler() -> TerminalConfirmationHandler {
+        { [weak self] pending in
+            guard let self else { return .decline }
+            let gate = TerminalDecisionGate()
+            let promptId = await MainActor.run { self.presentTerminalConfirmation(pending, gate: gate) }
+            let decision = await gate.wait()
+            await MainActor.run { self.dismissTerminalConfirmation(id: promptId) }
+            return decision
         }
     }
 
-    // MARK: - Reject
+    // MARK: - Sheet state
 
-    /// User tapped "Cancel" — replace the confirmation bubble with a cancelled note.
-    func rejectTerminalCommand(messageId: UUID, command: String) {
-        let note = "*[Terminal command cancelled by user: `\(command)`]*"
-        replaceConfirmation(id: messageId, with: note)
-        saveMessagesIfNeeded()
+    /// The prompt the sheet shows now; later ones wait in the queue.
+    var currentTerminalPrompt: TerminalPrompt? { terminalPrompts.first }
+
+    /// Title of the thread that asked, so the user knows which conversation the command belongs to.
+    func terminalPromptThreadTitle(_ prompt: TerminalPrompt) -> String? {
+        threads.first(where: { $0.id == prompt.threadId })?.title
     }
 
-    // MARK: - Helpers
-
-    /// Replaces a .terminalConfirmation bubble with a .message containing the given text.
-    private func replaceConfirmation(id: UUID, with text: String) {
-        let resultMessage = ChatMessage.message(isUser: false, text: text)
-
-        // Replace in full messages array.
-        if let idx = messages.firstIndex(where: { $0.id == id }) {
-            messages[idx] = resultMessage
-        }
-
-        // Replace in displayed slice.
-        if let idx = displayedMessages.firstIndex(where: { $0.id == id }) {
-            displayedMessages[idx] = resultMessage
-        }
-
-        scrollToBottomTrigger += 1
+    /// Queues the prompt and remembers the gate its buttons will resolve.
+    private func presentTerminalConfirmation(_ pending: PendingTerminalCommand, gate: TerminalDecisionGate) -> UUID {
+        let prompt = TerminalPrompt(command: pending.command, threadId: pending.threadId)
+        pendingTerminalGates[prompt.id] = gate
+        terminalPrompts.append(prompt)
+        return prompt.id
     }
 
-    /// Persists messages to disk, filtering out ephemeral confirmation bubbles.
-    private func saveMessagesIfNeeded() {
-        guard let threadId = activeThread?.id else { return }
-        // Filter out ephemeral .terminalConfirmation cases before saving.
-        persistMessages(messages.filter { !$0.isTerminalConfirmation }, threadId: threadId)
+    /// Removes the prompt after the decision (or after Stop). The result reaches the user through
+    /// the live terminal window and the model's next message.
+    private func dismissTerminalConfirmation(id: UUID) {
+        pendingTerminalGates[id] = nil
+        terminalPrompts.removeAll { $0.id == id }
+    }
+
+    // MARK: - Buttons
+
+    /// User chose "Run".
+    func approveTerminalCommand(_ prompt: TerminalPrompt) {
+        pendingTerminalGates[prompt.id]?.resolve(.run)
+    }
+
+    /// User chose "Cancel" or pressed Esc: leave a visible note in the chat when the asking thread is open;
+    /// the model is told by the orchestrator.
+    func rejectTerminalCommand(_ prompt: TerminalPrompt) {
+        guard let gate = pendingTerminalGates[prompt.id] else { return }
+        if activeThread?.id == prompt.threadId {
+            let note = ChatMessage.message(isUser: false, text: "*[Terminal command declined by user: `\(prompt.command)`]*")
+            messages.append(note)
+            appendToDisplayed(note)
+            scrollToBottomTrigger += 1
+        }
+        gate.resolve(.decline)
     }
 }

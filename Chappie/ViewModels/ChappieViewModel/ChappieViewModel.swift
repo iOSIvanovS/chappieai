@@ -88,6 +88,10 @@ final class ChappieViewModel {
     var isLoadingMessages: Bool = false
     var isAppReady: Bool = false
     var currentRequestTask: Task<Void, Never>? = nil
+    /// Gates of terminal commands that wait for the user's Run/Cancel, keyed by prompt id.
+    @ObservationIgnored var pendingTerminalGates: [UUID: TerminalDecisionGate] = [:]
+    /// Terminal commands awaiting approval; the first one is shown in the confirmation sheet.
+    var terminalPrompts: [TerminalPrompt] = []
     var showNoProviderAlert: Bool = false
     var _syncTask: Task<Void, Never>? = nil
     var isFileSystemReady: Bool = true

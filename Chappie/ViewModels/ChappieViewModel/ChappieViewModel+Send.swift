@@ -91,23 +91,11 @@ extension ChappieViewModel {
                     },
                     onToolBudget: { seconds in
                         Task { @MainActor in self.setToolBudget(seconds) }
-                    }
+                    },
+                    onTerminalConfirm: self.terminalConfirmHandler()
                 )
 
                 let rawResponse = self.cleanAIResponse(result.finalResponse)
-
-                if let pending = PendingTerminalCommand.decode(from: rawResponse) {
-                    Task { @MainActor in
-                        withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
-                            self.streamingText = ""
-                            self.currentToolCall = nil
-                            self.isThinking = false
-                        }
-                        self.insertTerminalConfirmation(command: pending.command, threadId: pending.threadId)
-                    }
-                    self.currentRequestTask = nil
-                    return
-                }
 
                 // Build output file attachments from write_document / send_attachment results.
                 let aiMessageId = UUID()

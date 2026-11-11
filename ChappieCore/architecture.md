@@ -154,7 +154,8 @@ ChappieCore/
             ├── FileTools.swift                      # File tool implementations
             ├── GitBuildTools.swift                  # Git/build tool implementations
             ├── MemoryTools.swift                    # Memory tool implementations
-            └── TerminalTools.swift                  # run_terminal implementation (ShellSession)
+            ├── TerminalTools.swift                  # run_terminal implementation (ShellSession), PendingTerminalCommand marker, declined/unconfirmable answers
+            └── TerminalConfirmation.swift           # TerminalDecision, TerminalDecisionGate, TerminalConfirmationFlow.resolve (pause for the user's Run/Cancel)
 ```
 
 ---
@@ -492,14 +493,25 @@ process(prompt, history, config, memoryContext)
 
 Pure value transformer — no async, no storage, no side effects.
 
-1. Persona block
+1. Persona block (identity + rules), then a single `---` separator. No wrapper header such as "Memory Context".
 2. `userName` if set
-3. Global memory block if not empty
-4. Thread memory block if not empty
-5. Per-project: `ProjectSettings.formatForSystemPrompt()` + project memory
-6. Tool manifest (injected separately by AIOrchestrator)
+3. Project settings: one `ProjectSettings.formatForSystemPrompt()` block per project
+4. Global memory block if not empty
+5. Thread memory block (`## Thread Memory`) if not empty
+6. Project memory: one block per project, if not empty
+7. Tool manifest (injected separately by AIOrchestrator)
 
-Empty sections are omitted — no wasted tokens.
+Order rule: **stable first, volatile last.** Rules and settings rarely change, memory changes often; providers cache
+the request prefix, so a long unchanged prefix keeps the cache valid, and the task-specific memory sits at the end where
+a model reads most attentively. Empty sections are omitted — no wasted tokens. Test: `blockOrderAndNoWrapper`.
+
+**Project settings block (`ProjectSettings.formatForSystemPrompt`) carries only facts that no tool status carries:**
+absolute path; for an EXECUTOR programming project also dev environment, test-writing permission (writing tests
+goes through the shared write tools, so no tool status can express it), and the architecture / comment switches with
+their language. Role, git level, compilation and test-run access are NOT repeated: the status line of each tool
+states them (`ToolPolicy.status`). The thread's terminal setting is not injected either (the `run_terminal` /
+`run_ssh` statuses carry it), and neither is the legacy per-project `terminalAccess`. Behavioural rules (comment
+style, how to handle architecture files) live in the persona rules, not in this block. Tests: `ThreadIsolationTests`.
 
 ---
 
@@ -631,8 +643,8 @@ uncancellable system call is abandoned and its late result is dropped.
 
 The message tells the model the outcome: mutating tools (`ToolDeadlines.isMutating`) are reported as
 "RESULT IS UNKNOWN, check state, no automatic retry"; readers as "nothing was changed". The clock starts at real
-execution, so waiting for a manual terminal approval does not count; `approveTerminalCommand` runs the command
-through the same watchdog and under `currentRequestTask`, so Stop reaches it. The UI shows the allowed time as a
+execution, so waiting for a manual terminal approval does not count; the approved command runs through the same
+watchdog inside the paused tool call (`TerminalConfirmationFlow`), so Stop reaches it. The UI shows the allowed time as a
 pie that fills clockwise in the tint colour in place of the spinner of the agent action bar (`StreamingState.toolBudget`;
 no number; a bar under the row was rejected because it made the label jump). Tests: `ToolWatchdogTests`.
 
@@ -706,6 +718,14 @@ runaway, end-to-end through `execute`).
 - `.none` — terminal unavailable (default)
 - `.confirm` — every command requires user approval
 - `.auto` — commands execute immediately
+
+**Confirmation mode (`TerminalConfirmation.swift`).** In `.confirm`, `run_terminal` returns a `PendingTerminalCommand`
+marker (command, thread id, requested timeout) instead of running. `AIOrchestrator.executeToolCalls` passes the result
+through `TerminalConfirmationFlow.resolve`: with a marker it awaits `onTerminalConfirm` (supplied by the app) and then
+either runs the command via `executeConfirmedCommand` (output goes to the model) or answers "user declined, NOT
+executed, do not retry as is". No handler = "NOT executed" answer, never a silent run. `TerminalDecisionGate` is the
+suspension point: first answer wins, a decision made before `wait()` is kept, task cancellation (Stop) resolves
+`.decline`. The live terminal window opens only after approval. Tests: `TerminalConfirmationTests`.
 
 **CommandSafety — a net for mistakes, NOT a security boundary.** Decision (backlog 11): the old substring blocklist
 is gone. It blocked harmless commands (`rm -rf /tmp/x` contains "rm -rf /"; "reboot" inside a commit message) and was

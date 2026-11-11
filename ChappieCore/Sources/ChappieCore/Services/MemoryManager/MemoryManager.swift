@@ -16,7 +16,7 @@
 // 1. Project Settings (agent rights — injected first)
 // 2. Global Memory
 // 3. Project Memory (one block per project)
-// 4. Thread Context
+// 4. Thread Memory
 
 import Foundation
 

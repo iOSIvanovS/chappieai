@@ -57,12 +57,10 @@ struct SystemPromptBuilderTests {
 
     // MARK: - Basic structure
 
-    @Test("Empty context contains persona block and terminal section")
-    func emptyContextContainsPersonaAndTerminal() {
+    @Test("Empty context is exactly the persona block")
+    func emptyContextIsPersonaOnly() {
         let prompt = makeBuilder().build(context: .empty)
-        // Terminal block is always injected (even for .none) — persona must be first
-        #expect(prompt.hasPrefix(persona))
-        #expect(prompt.contains("Terminal:"))
+        #expect(prompt == persona)
     }
 
     @Test("userName is injected when present")
@@ -106,14 +104,43 @@ struct SystemPromptBuilderTests {
     func threadMemorySectionAppearsWhenNonEmpty() {
         let ctx = PromptContext(threadMemory: [makeEntry(key: "task_context")])
         let prompt = makeBuilder().build(context: ctx)
-        #expect(prompt.contains("## Thread Context"))
+        #expect(prompt.contains("## Thread Memory"))
         #expect(prompt.contains("task_context"))
     }
 
     @Test("Thread memory section is OMITTED when empty")
     func threadMemorySectionOmittedWhenEmpty() {
         let prompt = makeBuilder().build(context: PromptContext(threadMemory: []))
-        #expect(!prompt.contains("## Thread Context"))
+        #expect(!prompt.contains("## Thread Memory"))
+    }
+
+    @Test("Block order: user, project settings, global, thread, project memory; no wrapper header")
+    func blockOrderAndNoWrapper() throws {
+        let project = PromptContext.ProjectContext(
+            name: "P",
+            settings: ProjectSettings(agentRole: .executor, isProgrammingProject: true),
+            memory: [makeEntry(key: "proj_key")],
+            absolutePath: "/tmp/p"
+        )
+        let ctx = PromptContext(
+            userName: "Ann",
+            globalMemory: [makeEntry(key: "glob_key")],
+            threadMemory: [makeEntry(key: "thr_key")],
+            projects: [project]
+        )
+        let prompt = makeBuilder().build(context: ctx)
+
+        #expect(!prompt.contains("Memory Context"))
+        #expect(prompt.hasPrefix(persona + "\n\n---\n\n"))
+
+        let markers = ["The user's name is Ann.", "## Project Settings: P", "## Global Memory",
+                       "## Thread Memory", "## Project Memory: P"]
+        var last = prompt.startIndex
+        for marker in markers {
+            let range = try #require(prompt.range(of: marker))
+            #expect(range.lowerBound >= last, "\(marker) is out of order")
+            last = range.lowerBound
+        }
     }
 
     // MARK: - Project isolation (KEY: no cross-thread leakage)
@@ -218,67 +245,69 @@ struct SystemPromptBuilderTests {
 
     // MARK: - Thread terminal access
 
-    @Test("Terminal BLOCKED → prompt contains BLOCKED message")
-    func terminalBlockedIsInjected() {
-        let ctx = PromptContext(threadTerminalAccess: .none)
+    @Test("Thread terminal access is never injected into the prompt (the tool status carries it)",
+          arguments: [TerminalAccessLevel.none, .confirm, .auto])
+    func threadTerminalNotInjected(access: TerminalAccessLevel) {
+        let ctx = PromptContext(threadTerminalAccess: access)
         let prompt = makeBuilder().build(context: ctx)
-        #expect(prompt.contains("Terminal: BLOCKED"))
+        #expect(!prompt.contains("Thread Settings"))
+        #expect(!prompt.contains("Terminal:"))
     }
 
-    @Test("Terminal confirm → prompt contains confirmation requirement")
-    func terminalConfirmIsInjected() {
-        let ctx = PromptContext(threadTerminalAccess: .confirm)
-        let prompt = makeBuilder().build(context: ctx)
-        #expect(prompt.contains("enabled with confirmation"))
-        #expect(prompt.contains("ask the user for explicit approval"))
-    }
+    // MARK: - Project settings block (facts only; tool statuses carry access state)
 
-    @Test("Terminal auto → prompt contains auto-execute message")
-    func terminalAutoIsInjected() {
-        let ctx = PromptContext(threadTerminalAccess: .auto)
-        let prompt = makeBuilder().build(context: ctx)
-        #expect(prompt.contains("auto-execute"))
-    }
-
-    @Test("Terminal section always present — even for empty context")
-    func terminalSectionAlwaysPresent() {
-        let prompt = makeBuilder().build(context: .empty)
-        #expect(prompt.contains("## Thread Settings: Terminal"))
-    }
-
-    // MARK: - Project-level terminal access
-
-    @Test("Project terminal .none → BLOCKED not injected into project settings")
-    func projectTerminalNoneNotInjected() {
-        // WHY: thread-level terminal takes precedence; project should stay silent when blocked
+    @Test("Project terminal setting never reaches the prompt",
+          arguments: [TerminalAccessLevel.none, .confirm, .auto])
+    func projectTerminalNotInjected(access: TerminalAccessLevel) {
         var settings = ProjectSettings()
-        settings.terminalAccess = .none
+        settings.terminalAccess = access
         let project = makeProject(settings: settings)
-        let ctx = PromptContext(projects: [project])
-        let prompt = makeBuilder().build(context: ctx)
-        // thread section may say BLOCKED, but project section must not repeat it
-        let projectSection = extractProjectSection(from: prompt, projectName: project.name)
-        #expect(!projectSection.contains("Terminal: BLOCKED"))
+        let prompt = makeBuilder().build(context: PromptContext(projects: [project]))
+        let section = extractProjectSection(from: prompt, projectName: project.name)
+        #expect(!section.contains("Terminal"))
     }
 
-    @Test("Project terminal .confirm → confirmation message in project settings")
-    func projectTerminalConfirmIsInjected() {
-        var settings = ProjectSettings()
-        settings.terminalAccess = .confirm
-        let project = makeProject(settings: settings)
-        let ctx = PromptContext(projects: [project])
-        let prompt = makeBuilder().build(context: ctx)
-        #expect(prompt.contains("enabled with confirmation"))
+    @Test("Advisor project block is the header and the path only")
+    func advisorBlockIsPathOnly() {
+        let block = ProjectSettings(agentRole: .advisor, isProgrammingProject: true)
+            .formatForSystemPrompt(projectName: "Docs", absolutePath: "/tmp/docs")
+        #expect(block == "## Project Settings: Docs\n- Absolute path: /tmp/docs")
     }
 
-    @Test("Project terminal .auto → auto-execute message in project settings")
-    func projectTerminalAutoIsInjected() {
-        var settings = ProjectSettings()
-        settings.terminalAccess = .auto
-        let project = makeProject(settings: settings)
-        let ctx = PromptContext(projects: [project])
-        let prompt = makeBuilder().build(context: ctx)
-        let projectSection = extractProjectSection(from: prompt, projectName: project.name)
-        #expect(projectSection.contains("auto-execute"))
+    @Test("Executor without programming flag is the header and the path only")
+    func nonProgrammingExecutorBlockIsPathOnly() {
+        let block = ProjectSettings(agentRole: .executor, isProgrammingProject: false)
+            .formatForSystemPrompt(projectName: "Notes", absolutePath: "/tmp/notes")
+        #expect(block == "## Project Settings: Notes\n- Absolute path: /tmp/notes")
+    }
+
+    @Test("Programming executor block holds only facts, no role, git, compilation or rule text")
+    func programmingExecutorBlockIsCompact() {
+        var settings = ProjectSettings(agentRole: .executor, isProgrammingProject: true)
+        settings.devEnvironment = .xcode
+        settings.testsAccess = .write
+        settings.architectureEnabled = true
+        settings.commentsEnabled = true
+        let block = settings.formatForSystemPrompt(projectName: "App", absolutePath: "/tmp/app")
+        #expect(block.contains("- Absolute path: /tmp/app"))
+        #expect(block.contains("- Dev environment:"))
+        #expect(block.contains("- Tests: creating tests allowed"))
+        #expect(block.contains("- Architecture files: enabled ("))
+        #expect(block.contains("- Code comments: enabled ("))
+        for gone in ["Role:", "Programming project:", "Git:", "Compilation:", "Access:", "Discuss file paths", "Be concise"] {
+            #expect(!block.contains(gone), "\(gone) must not be in the block")
+        }
+    }
+
+    @Test("Disabled switches say how to enable them")
+    func disabledSwitchesHintAtSettings() {
+        var settings = ProjectSettings(agentRole: .executor, isProgrammingProject: true)
+        settings.testsAccess = .run
+        settings.architectureEnabled = false
+        settings.commentsEnabled = false
+        let block = settings.formatForSystemPrompt(projectName: "App")
+        #expect(block.contains("- Tests: creating new tests not allowed"))
+        #expect(block.contains("- Architecture files: read-only (enable write in project settings)"))
+        #expect(block.contains("- Code comments: disabled (enable in project settings)"))
     }
 }

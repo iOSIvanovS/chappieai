@@ -7,19 +7,22 @@
 // CONTRACT: same inputs → same output. No side effects, no external calls.
 // Callers: ThreadSession, ChappieViewModel.
 //
-// Injection order (matches architecture-thread-isolation.md §3):
+// Injection order: stable first, volatile last (providers cache the prefix).
 //   [1] Persona + 14 rules       — hardcoded, always present
 //   [2] userName                 — if set in AppSettings
-//   [3] Global memory            — if not empty
-//   [4] Thread memory            — if not empty
-//   [5] Per-project block        — settings + memory, one block per valid project
-//   [6] (Tool manifest injected separately by AIOrchestrator, not here)
+//   [3] Project settings         — one block per project
+//   [4] Global memory            — if not empty
+//   [5] Thread memory            — if not empty
+//   [6] Project memory           — one block per project, if not empty
+//   (Tool manifest injected separately by AIOrchestrator, not here)
+// A single "---" separates the persona from everything else; no wrapper header.
 //
 // Empty sections are omitted — no wasted tokens.
 //
 // TERMINAL:
-// Thread-level terminal access is injected as a standalone line in the Memory Context block.
-// It is independent of any project settings — the AI reads it from the thread context.
+// Thread-level terminal access is NOT injected here: the run_terminal / run_ssh tool
+// descriptions carry that status (see ToolPolicy.status). The value stays in PromptContext
+// only for tool gating.
 
 import Foundation
 
@@ -86,71 +89,43 @@ public struct SystemPromptBuilder {
 
     /// Assembles the complete system prompt string.
     public func build(context: PromptContext) -> String {
-        var sections: [String] = [personaBlock]
+        var sections: [String] = []
 
         // [2] User name
         if let name = context.userName, !name.isEmpty {
             sections.append("The user's name is \(name).")
         }
 
-        // [3] Global memory
+        // [3] Settings of every project: stable, rarely changes (keeps the cacheable prefix long).
+        for project in context.projects {
+            sections.append(project.settings.formatForSystemPrompt(
+                projectName: project.name,
+                absolutePath: project.absolutePath
+            ))
+        }
+
+        // [4] Global memory
         if let block = memoryBlock(title: "Global Memory", entries: context.globalMemory) {
             sections.append(block)
         }
 
-        // [4] Thread memory
-        if let block = memoryBlock(title: "Thread Context", entries: context.threadMemory) {
+        // [5] Thread memory
+        if let block = memoryBlock(title: "Thread Memory", entries: context.threadMemory) {
             sections.append(block)
         }
 
-        // [4b] Thread-level terminal access — injected as a standalone line.
-        // WHY HERE: terminal is thread-scoped, not project-scoped.
-        // The AI must know the terminal mode before deciding whether to call run_terminal.
-        let terminalLine = threadTerminalLine(context.threadTerminalAccess)
-        sections.append(terminalLine)
-
-        // [5] Per-project blocks
+        // [6] Project memories: the most volatile part goes last.
         for project in context.projects {
-            var projectSections: [String] = []
-
-            // Pass absolutePath so AI sees it in the project settings block.
-            projectSections.append(project.settings.formatForSystemPrompt(
-                projectName: project.name,
-                absolutePath: project.absolutePath
-            ))
-
-            if let memBlock = memoryBlock(
-                title: "Project Memory: \(project.name)",
-                entries: project.memory
-            ) {
-                projectSections.append(memBlock)
+            if let block = memoryBlock(title: "Project Memory: \(project.name)", entries: project.memory) {
+                sections.append(block)
             }
-
-            sections.append(projectSections.joined(separator: "\n\n"))
         }
 
-        // Wrap memory context in a separator block if anything beyond persona was added.
-        if sections.count > 1 {
-            let memoryHeader = "---\n## Memory Context"
-            let tail = sections.dropFirst().joined(separator: "\n\n")
-            return personaBlock + "\n\n" + memoryHeader + "\n\n" + tail
-        }
-
-        return personaBlock
+        guard !sections.isEmpty else { return personaBlock }
+        return personaBlock + "\n\n---\n\n" + sections.joined(separator: "\n\n")
     }
 
     // MARK: - Private helpers
-
-    private func threadTerminalLine(_ access: TerminalAccessLevel) -> String {
-        switch access {
-        case .none:
-            return "## Thread Settings: Terminal\n- Terminal: BLOCKED (enable in thread settings)"
-        case .confirm:
-            return "## Thread Settings: Terminal\n- Terminal: enabled with confirmation. BEFORE running any command you MUST ask the user for explicit approval in chat. Do NOT call run_terminal until user says 'yes', 'go ahead', or equivalent."
-        case .auto:
-            return "## Thread Settings: Terminal\n- Terminal: enabled, auto-execute (no confirmation needed). Use responsibly."
-        }
-    }
 
     private func memoryBlock(title: String, entries: [MemoryEntry]) -> String? {
         guard !entries.isEmpty else { return nil }

@@ -40,8 +40,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
 
     /// Controls availability of build_project / run_tests for this specific project.
     /// Default true — preserves existing behavior for projects created before this setting existed.
-    /// WHY GATE BOTH TOOLS: running tests without a fresh build is unsafe
-    /// (see rule "FORBIDDEN: run_tests before build_project"). Disabling compile must disable testing too.
+    /// WHY GATE BOTH TOOLS: tests run against a fresh build, so disabling compile disables testing too.
     /// Useful for large projects where compilation is too slow for the AI to wait on —
     /// user builds/tests manually and reports results back in chat instead.
     public var buildEnabled: Bool

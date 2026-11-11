@@ -3,8 +3,8 @@
 //
 // System prompt assembly with injected memory context (IT-08, IT-09).
 //
-// Block order (IT-09): Project Settings → Global Memory → Project Memory → Thread Context.
-// Project Settings is first so the agent knows its rights before reading memory.
+// Legacy path: the app builds prompts through SystemPromptBuilder (see its header for the
+// current block order). Only the block titles are kept in sync here.
 
 import Foundation
 
@@ -65,11 +65,11 @@ extension MemoryManager {
             }
         }
 
-        // Thread context.
+        // Thread memory.
         if let threadId = memoryContext.threadId {
             let threadEntries = entriesByScope[threadId.uuidString] ?? []
             if !threadEntries.isEmpty {
-                if let block = formatEntriesForPrompt(threadEntries, title: "Thread Context") {
+                if let block = formatEntriesForPrompt(threadEntries, title: "Thread Memory") {
                     memoryBlocks.append(block)
                 }
             }

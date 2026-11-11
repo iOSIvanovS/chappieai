@@ -40,6 +40,8 @@ public struct PendingTerminalCommand: Codable, Sendable {
 
     public let command: String
     public let threadId: UUID
+    /// Timeout the model asked for; kept so the approved run honours it. Absent in older markers.
+    public var timeout: Double? = nil
 
     public var encoded: String {
         let json = (try? JSONEncoder().encode(self)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
@@ -91,6 +93,30 @@ extension ToolExecutionService {
         The command was NOT run. If this was a mistake, fix the command (use a narrower, explicit path). \
         If it is really intended, tell the user to run it manually in Terminal.app.
         """
+    }
+
+    /// What the model is told when the user pressed Cancel: unambiguous, so it neither retries the same
+    /// command nor assumes anything changed.
+    static func declinedMessage(_ command: String) -> String {
+        """
+        🚫 The user declined to run this command: \(command)
+        It was NOT executed and nothing changed. Do not retry it as is: ask the user what they prefer, \
+        or propose a different approach.
+        """
+    }
+
+    /// Confirmation mode is on but the caller has no way to ask the user (nothing was run).
+    static func unconfirmableMessage(_ command: String) -> String {
+        """
+        ⚠️ The command was NOT executed: this thread requires confirmation, but no confirmation prompt \
+        could be shown to the user. Command: \(command)
+        Tell the user, and ask them to run it manually or to switch the thread terminal mode.
+        """
+    }
+
+    /// True when run_terminal currently waits for the user's confirmation (thread setting).
+    func terminalRequiresConfirmation() -> Bool {
+        activeMemoryContext.threadTerminalAccess.requiresConfirmation
     }
 
     // MARK: - run_terminal
@@ -155,7 +181,8 @@ extension ToolExecutionService {
         if terminalAccess.requiresConfirmation {
             let pending = PendingTerminalCommand(
                 command: command,
-                threadId: activeMemoryContext.threadId ?? UUID()
+                threadId: activeMemoryContext.threadId ?? UUID(),
+                timeout: timeout
             )
             return pending.encoded
         }

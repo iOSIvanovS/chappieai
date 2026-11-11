@@ -44,8 +44,9 @@ Chappie/
 └── Views/
     ├── Chat/
     │   ├── ContentView/                # Conductor: assembles components, manages sheets
+    │   ├── TerminalConfirmationSheet.swift # Modal Run/Cancel prompt for a terminal command awaiting approval
     │   ├── ChatScrollView/             # Message feed (LazyVStack, anti-jump streaming)
-    │   ├── MessageBubbleView/          # Message bubble (+ attachments, terminal confirmation UI)
+    │   ├── MessageBubbleView/          # Message bubble (+ attachments)
     │   ├── ProjectChipsView/           # Project chips + balance chip (bottom row)
     │   ├── ProjectSettingsSheet/       # Project settings sheet (+ Curl-Chappie secrets, executor only)
     │   ├── ThreadSettingsSheet/        # Thread settings: name, provider+key+model, context, terminal, Curl-Chappie switch + hosts
@@ -171,7 +172,7 @@ graph TD
 | `+AppSettings.swift` | `AppSettingsStore` read/write |
 | `+Memory.swift` | Memory tool callbacks |
 | `+Projects.swift` | Project add/remove/settings via `ThreadStore` — **user-only, no AI** |
-| `+Terminal.swift` | Terminal confirmation flow — approve/reject pending commands |
+| `+Terminal.swift` | Terminal confirmation flow — `TerminalPrompt` queue, approve/reject pending commands |
 | `+PersonaBlock.swift` | `v2PersonaBlock` + `baseSystemPrompt` constants |
 
 ### Project Attachment Rules
@@ -234,20 +235,28 @@ the editable `absolutePath` field above).
 
 ## 7. Terminal Confirmation Flow
 
-When `TerminalAccessLevel == .confirmAll`, the `run_terminal` tool inserts a
-`.terminalConfirmation` message into the chat before executing.
+When the thread terminal level is `.confirm`, the orchestrator PAUSES the `run_terminal` call, asks the user,
+and continues with the real outcome. The model never sees the internal marker, and no extra turn is needed.
 
 ```
 AI calls run_terminal
-  → TerminalTools detects .confirmAll
-  → inserts PendingTerminalCommand marker into result
-  → +Send intercepts marker
-  → appends ChatMessage(.terminalConfirmation) to messages
-  → waits for user action
+  → TerminalTools (confirm mode) returns a PendingTerminalCommand marker instead of running
+  → AIOrchestrator+ToolExecution sees the marker (TerminalConfirmationFlow.resolve) and calls onTerminalConfirm
+  → ChappieViewModel+Terminal.terminalConfirmHandler(): queues a TerminalPrompt in `terminalPrompts`,
+    registers a TerminalDecisionGate, suspends; ContentView shows TerminalConfirmationSheet for the first prompt
 
-User taps "Run"    → approveTerminalCommand() → executes → resumes streaming
-User taps "Cancel" → rejectTerminalCommand() → returns cancellation to AI
+User chooses "Run" (click or ⌘↩) → gate.resolve(.run)     → executeConfirmedCommand (live terminal window) → output goes to the model
+User chooses "Cancel" / Esc     → gate.resolve(.decline) → note "declined" in the chat; model gets "user declined, NOT executed"
+Stop button                     → request task cancelled → gate resolves .decline by itself
 ```
+
+**Why a sheet, not a chat bubble.** A bubble lived in the message list of the active thread: it appeared below the
+input bar without scrolling and vanished from view when the user switched threads while the request kept waiting.
+The sheet cannot be missed, does not depend on scrolling and survives thread switches. Plain Enter does not run the
+command (only click or ⌘↩), so a dangerous command never starts by a stray keypress. The prompt is never persisted.
+The live terminal window opens only after approval. No watchdog runs while the user thinks: the clock for the command
+starts at approval. A caller that supplies no handler gets an explicit "not executed" answer, never a silent run.
+Tests: `TerminalConfirmationTests`.
 
 ---
 
@@ -303,6 +312,7 @@ Auto-select: if provider has exactly one key → pre-selected automatically.
 .sheet(item: $selectedThreadForSettings) { ThreadSettingsSheet(...) }
 .sheet(isPresented: $viewModel.showNewThreadProviderPicker) { NewThreadProviderSheet(...) }
 .sheet(isPresented: $showProvidersSettings) { ProvidersSettingsView(...) }
+.sheet(item: terminalPromptBinding) { TerminalConfirmationSheet(...) }   // shows viewModel.currentTerminalPrompt
 ```
 
 ---
