@@ -253,6 +253,38 @@ struct ToolAuthorizationTests {
         #expect(denial(result).contains("'One'") && denial(result).contains("'Two'"))
     }
 
+    @Test("A refusal names the attached projects where the tool does work")
+    func refusalSaysWhereToolWorks() async {
+        let rig = await Rig([("Writable", xcodeExecutor()), ("ReadOnly", xcodeAdvisor)])
+        let denied = await rig.authorize("write_file", #"{"path":"a.txt","content":"x","project":"ReadOnly"}"#)
+        #expect(denial(denied).contains("works in: Writable"))
+        #expect(!denial(denied).contains("works in: ReadOnly"))
+        #expect(denial(denied).contains("To enable"))
+    }
+
+    @Test("A refusal says so when no attached project allows the tool")
+    func refusalWhenNowhere() async {
+        let rig = await Rig([("OnlyAdvisor", xcodeAdvisor)])
+        let denied = await rig.authorize("write_file", #"{"path":"a.txt","content":"x"}"#)
+        #expect(denial(denied).contains("No attached project allows this tool"))
+    }
+
+    @Test("A thread-level refusal does not point at projects (none of them can help)")
+    func threadRefusalHasNoProjectHint() async {
+        let rig = await Rig([("Exec", xcodeExecutor())], curl: false)
+        let denied = await rig.authorize("curl_request", #"{"host":"Dev","path":"/x"}"#)
+        #expect(denial(denied).contains("Curl-Chappie"))
+        #expect(!denial(denied).contains("works in"))
+    }
+
+    @Test("An ambiguous call lists the projects where the tool works")
+    func ambiguousCallHint() async {
+        let rig = await Rig([("Exec", xcodeExecutor()), ("Adv", xcodeAdvisor)])
+        let denied = await rig.authorize("git_status", "{}")
+        #expect(denial(denied).contains("which one"))
+        #expect(denial(denied).contains("works in: Exec"))
+    }
+
     @Test("A single attached project is used when none is named, and the name is written back")
     func singleProjectDefault() async {
         let rig = await Rig([("Solo", xcodeExecutor())])

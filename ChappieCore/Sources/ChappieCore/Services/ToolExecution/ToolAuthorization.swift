@@ -73,7 +73,7 @@ extension ToolExecutionService {
 
         switch resolveTarget(toolName: toolName, args: args, projects: projects) {
         case .failure(let error):
-            return .denied(error.description)
+            return .denied(error.description + whereItWorks(toolName, capability, excluding: nil, terminal: terminal, curl: curl))
         case .success(let resolved):
             target = resolved
         }
@@ -96,7 +96,10 @@ extension ToolExecutionService {
         let decision = ToolPolicy.decide(
             tool: toolName, project: settings(of: target), terminalAccess: terminal, curlEnabled: curl
         )
-        guard case .allowed = decision else { return finish(decision, argsData: argsData, args: args) }
+        if case .denied(let message) = decision {
+            let hint = whereItWorks(toolName, capability, excluding: target.name, terminal: terminal, curl: curl)
+            return .denied(message + hint)
+        }
 
         args["project"] = target.name
         guard let canonical = try? JSONEncoder().encode(args) else {
@@ -110,6 +113,31 @@ extension ToolExecutionService {
     /// Settings of a project; a missing cache entry falls back to the safe default (ADVISOR).
     func settings(of project: ActiveMemoryContext.ProjectInfo) -> ProjectSettings {
         projectSettingsCache[project.id] ?? ProjectSettings()
+    }
+
+    /// Tail for a refusal: the attached projects where this very tool does work, so the model can retarget
+    /// the call instead of giving up. Empty when the thread itself blocks the tool (no project helps then).
+    func whereItWorks(
+        _ toolName: String,
+        _ capability: ToolCapability,
+        excluding: String?,
+        terminal: TerminalAccessLevel,
+        curl: Bool
+    ) -> String {
+        guard capability.needsProject,
+              ToolPolicy.threadBlock(capability, terminalAccess: terminal, curlEnabled: curl) == nil
+        else { return "" }
+
+        let projects = activeMemoryContext.projects
+        guard !projects.isEmpty else {
+            return "\nNo project is attached; attach one ('+' in the projects bar, or drop a folder into the chat)."
+        }
+        let working = projects.filter {
+            $0.name != excluding
+                && ToolPolicy.projectBlock(tool: toolName, capability: capability, settings: settings(of: $0)) == nil
+        }.map(\.name)
+        guard !working.isEmpty else { return "\nNo attached project allows this tool right now." }
+        return "\nThis tool works in: \(working.joined(separator: ", ")). Pass one of them in the 'project' argument."
     }
 
     private func finish(_ decision: ToolDecision, argsData: Data, args: [String: String]) -> ToolAuthorization {

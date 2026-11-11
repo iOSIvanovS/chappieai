@@ -514,6 +514,9 @@ function `(tool, target project's ProjectSettings, thread terminal level, curl s
   project, else a `ProjectName/` path prefix for file tools; `list_files`/`search_in_project` may span all).
   Several projects and no way to tell → refused with the list, never "the first one". Rights of OTHER projects
   never apply. The canonical project name is written back into the arguments.
+  A refusal of a project tool ends with `whereItWorks`: the attached projects where THIS tool is allowed ("This tool
+  works in: A, B. Pass one of them in the 'project' argument"), or "No attached project allows this tool right now",
+  or "No project is attached…". A thread-level refusal (terminal/curl switch off) gets no such tail, since no project helps.
 - **Exposure** — `availableTools` offers EVERY classified tool (git_diff as FORBIDDEN). The old filter that hid tools
   nobody could run is gone: the model must know its whole toolbox, why a tool is closed, and what to ask the user to
   switch on. The status line (see below) carries that. The `project` argument of project tools lists all attached
