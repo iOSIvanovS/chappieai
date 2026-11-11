@@ -51,6 +51,7 @@ ChappieCoreTests/
 ├── ThreadIsolationTests.swift          # SystemPromptBuilder: sections, memory isolation, terminal lines
 ├── ToolArgumentsTests.swift            # Lenient argument parsing: scalars, null, nested, double-encoded, errors
 ├── ToolPolicyTests.swift               # Access table: roles, plans, git/build rules, per-project resolution, exposure completeness
+├── ToolStatusTests.swift               # Availability label of tool descriptions (per project/thread, merged reasons) and shared ToolBlock wording
 ├── ThreadStoreTests.swift              # Chunk system: roundtrip, lazy load, pagination, boundary, delete
 ├── ThreadStoreWindowSaveTests.swift    # saveLoadedMessages: older chunks survive, atomic failure, boundaries
 ├── ThreadStoreIntegrityTests.swift     # Damaged thread list: backup, per-thread salvage, report-once; corrupt-record backup

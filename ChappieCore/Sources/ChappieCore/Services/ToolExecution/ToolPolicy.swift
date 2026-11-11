@@ -7,9 +7,10 @@
 // (deny by default) — a new tool that nobody classified simply does not work, instead of silently
 // shipping unprotected. A completeness test walks all tool definitions and fails on a missing row.
 //
-// The same `decide` answers both questions:
-//   - exposure  (which tools the model is shown)      → ToolExecutionService.isToolExposed
-//   - execution (which call is actually allowed to run) → ToolExecutionService.authorize
+// The rules live in ToolPolicy+Rules.swift and answer with a structured `ToolBlock` (reason + fix),
+// never with ready-made prose. Two consumers build their text from the SAME block, so they cannot drift:
+//   - call time   (ToolExecutionService.authorize)  → `decide` → "❌ Tool 'x' is blocked: …"
+//   - description (tool list shown to the model)    → ToolStatus → "[UNAVAILABLE in: …]"
 //
 // Rights are evaluated against ONE project: the one the call targets. Rights of other attached
 // projects never leak into the decision (a read-only project cannot be written to just because a
@@ -26,6 +27,37 @@ public enum ToolDecision: Sendable, Equatable {
     public var isAllowed: Bool {
         if case .allowed = self { return true }
         return false
+    }
+}
+
+// MARK: - Block
+
+/// Why a tool cannot run, and what (if anything) the user can change to make it run.
+public struct ToolBlock: Sendable, Equatable {
+    /// What is wrong, as a short phrase without a trailing period.
+    public let reason: String
+    /// Where the user fixes it ("project settings → role → EXECUTOR"). For a permanent block:
+    /// the alternative the model should use instead.
+    public let fix: String?
+    /// True when no setting can ever enable the tool (git_diff, unknown tools).
+    public let permanent: Bool
+
+    public init(reason: String, fix: String?, permanent: Bool = false) {
+        self.reason = reason
+        self.fix = fix
+        self.permanent = permanent
+    }
+
+    /// "reason. To enable: fix" — the shared wording used inside tool descriptions.
+    public var summary: String {
+        guard let fix else { return reason }
+        return permanent ? "\(reason). Instead: \(fix)" : "\(reason). To enable: \(fix)"
+    }
+
+    /// Refusal text returned to the model when it calls the tool anyway.
+    public func message(tool: String) -> String {
+        permanent ? "❌ Tool '\(tool)' cannot be used: \(summary)"
+                  : "❌ Tool '\(tool)' is blocked: \(summary)"
     }
 }
 
@@ -144,151 +176,9 @@ public enum ToolPolicy {
         terminalAccess: TerminalAccessLevel,
         curlEnabled: Bool = false
     ) -> ToolDecision {
-        guard let capability = table[tool] else {
-            return .denied("❌ Unknown tool '\(tool)'. It is not registered in the tool policy, so it cannot be used.")
-        }
-
-        if capability == .forbidden {
-            return .denied("""
-            ❌ git_diff is permanently FORBIDDEN — it loads the entire project into AI context and costs real money.
-            This prohibition cannot be overridden by any settings.
-            Use git_status to see changed files, then read_file for specific files if needed.
-            """)
-        }
-
-        if capability == .alwaysOn { return .allowed }
-
-        if capability == .curl && !curlEnabled {
-            return .denied("""
-            ❌ Tool '\(tool)' is blocked: Curl-Chappie is switched off for this thread.
-            Open thread settings → Curl-Chappie → enable it and add the hosts it may talk to.
-            """)
-        }
-
-        if capability == .terminal {
-            return terminalAccess.isEnabled ? .allowed : .denied("""
-            ❌ Tool '\(tool)' is blocked: terminal access is disabled for this thread.
-            Open thread settings → Terminal → choose 'With confirmation' or 'Automatically'.
-            """)
-        }
-
-        guard let settings = project else {
-            return .denied("❌ Tool '\(tool)' needs a project, but none could be selected for this call.")
-        }
-        return decideForProject(tool: tool, capability: capability, settings: settings)
-    }
-
-    // MARK: Per-project rules
-
-    private static func decideForProject(
-        tool: String,
-        capability: ToolCapability,
-        settings s: ProjectSettings
-    ) -> ToolDecision {
-        switch capability {
-        case .fileRead:
-            return .allowed
-
-        case .fileWrite:
-            return requireExecutor(tool, s)
-
-        case .locRead:
-            return requireXcode(tool, s)
-
-        case .locWrite:
-            if case .denied(let why) = requireExecutor(tool, s) { return .denied(why) }
-            return requireXcode(tool, s)
-
-        case .git:
-            if case .denied(let why) = requireExecutor(tool, s) { return .denied(why) }
-            if case .denied(let why) = requireProgramming(tool, s) { return .denied(why) }
-            guard s.gitAccess.allowedTools.contains(tool) else {
-                return .denied("""
-                ❌ Tool '\(tool)' is blocked by git access level '\(s.gitAccess.rawValue)'.
-                Open project settings → Git → increase access level.
-                Allowed tools at current level: \(s.gitAccess.allowedTools.sorted().joined(separator: ", "))
-                """)
-            }
-            return .allowed
-
-        case .build, .tests, .buildLog:
-            return decideBuild(tool: tool, capability: capability, settings: s)
-
-        case .curl:
-            return requireExecutor(tool, s)
-
-        case .alwaysOn, .terminal, .forbidden:
-            return .denied("❌ Tool '\(tool)' is not available.")   // handled before; unreachable
-        }
-    }
-
-    private static func decideBuild(
-        tool: String,
-        capability: ToolCapability,
-        settings s: ProjectSettings
-    ) -> ToolDecision {
-        if case .denied(let why) = requireExecutor(tool, s) { return .denied(why) }
-        if case .denied(let why) = requireProgramming(tool, s) { return .denied(why) }
-
-        guard s.buildEnabled else {
-            return .denied("""
-            ❌ Tool '\(tool)' is disabled for this project (compilation is too slow — user builds manually).
-            Ask the user to build and run tests themselves, then report the results back to you in chat.
-            """)
-        }
-
-        switch capability {
-        case .build:
-            guard s.devEnvironment.specificTools.contains("build_project") else {
-                return .denied("❌ Tool 'build_project' does not apply to a \(s.devEnvironment.displayName) project.")
-            }
-            return .allowed
-        case .tests:
-            guard s.testsAccess.canRun else {
-                if s.testsAccess == .readOnly {
-                    return .denied("""
-                    ❌ Tool 'run_tests' is blocked: tests access is 'read-only'.
-                    You can read logs via read_build_log, but cannot run tests.
-                    Open project settings → Tests → set to 'Run' or 'Run + Write'.
-                    """)
-                }
-                return .denied("""
-                ❌ Tool 'run_tests' is blocked: tests access is disabled.
-                Open project settings → Tests → enable test access.
-                """)
-            }
-            return .allowed
-        default:
-            guard s.testsAccess.canReadLog else {
-                return .denied("""
-                ❌ Tool 'read_build_log' is blocked: log access is disabled.
-                Open project settings → Tests → enable at least log reading.
-                """)
-            }
-            return .allowed
-        }
-    }
-
-    // MARK: Requirements
-
-    private static func requireExecutor(_ tool: String, _ s: ProjectSettings) -> ToolDecision {
-        s.agentRole == .executor ? .allowed : .denied("""
-        ❌ Tool '\(tool)' is blocked: current role is ADVISOR (read-only).
-        To enable this tool: open project settings → change role to EXECUTOR.
-        """)
-    }
-
-    private static func requireProgramming(_ tool: String, _ s: ProjectSettings) -> ToolDecision {
-        s.isProgrammingProject ? .allowed : .denied("""
-        ❌ Tool '\(tool)' requires 'Programming project' flag.
-        Open project settings → enable 'Programming project'.
-        """)
-    }
-
-    private static func requireXcode(_ tool: String, _ s: ProjectSettings) -> ToolDecision {
-        (s.isProgrammingProject && s.devEnvironment == .xcode) ? .allowed : .denied("""
-        ❌ Tool '\(tool)' works only on an Xcode project.
-        Open project settings → enable 'Programming project' and set the environment to Xcode.
-        """)
+        guard let block = evaluate(
+            tool: tool, project: project, terminalAccess: terminalAccess, curlEnabled: curlEnabled
+        ) else { return .allowed }
+        return .denied(block.message(tool: tool))
     }
 }

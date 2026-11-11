@@ -137,7 +137,9 @@ ChappieCore/
         │   └── BackupService.swift         # Assembles bundle from Stores (incl. Keychain secrets), encrypts
         ├── WebFetchService.swift       # Fetches web pages and extracts clean text
         └── ToolExecution/
-            ├── ToolPolicy.swift                     # THE access table (deny by default) + pure decide()
+            ├── ToolPolicy.swift                     # THE access table (deny by default) + ToolBlock (reason + fix) + decide()
+            ├── ToolPolicy+Rules.swift               # The rules: thread layer (terminal/curl switches, bans) and project layer; return ToolBlock, nil = allowed
+            ├── ToolStatus.swift                     # `[AVAILABLE in … / UNAVAILABLE in … — reason. To enable: fix]` label for tool descriptions, built from the same rules
             ├── ToolAuthorization.swift              # Target-project resolution, canonical project arg, exposure filter
             ├── ToolArguments.swift                  # Lenient arguments parser: 30 → "30", true → "true", null dropped, nested → JSON text
             ├── ToolDefinitions.swift                # Orchestrator: assembles availableTools from extensions
@@ -518,6 +520,12 @@ Rules worth knowing: ADVISOR reads only (files, search, loc read tools); `build_
 Xcode project and carry a `project` argument that scopes the helper's path roots;
 arguments of project tools must be a flat string map (otherwise refused with an explanation).
 `git_diff` is permanently blocked. Tests: `ToolPolicyTests` (completeness check against `availableTools`).
+
+**One wording for refusals and statuses.** The rules (`ToolPolicy+Rules`) answer with a structured `ToolBlock`
+(reason, fix, permanent) instead of prose. `decide` renders it as the call-time refusal; `ToolPolicy.status` renders the
+same block into the label that opens a tool description (`ToolStatus`): `[ALWAYS AVAILABLE]`, `[AVAILABLE in: A. UNAVAILABLE
+in: B, C — reason. To enable: fix]`, `[FORBIDDEN — …]`. Projects with an identical block are merged into one clause. Tests:
+`ToolStatusTests`. (Rolling out in steps: the label is not yet injected into `availableTools`.)
 
 **Curl-Chappie (`curl`)**: allowed only when the THREAD switch (`ThreadSettings.curlEnabled`, carried in
 `ActiveMemoryContext.curlEnabled`) is on AND the targeted project is an EXECUTOR (the project supplies the secrets;
