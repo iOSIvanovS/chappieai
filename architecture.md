@@ -240,17 +240,17 @@ Contains root `architecture.md` + references to 4 target architecture files.
 
 ## 15. Inviolable Agent Rules
 
-**RULE-01: One task per pass** — decompose into backlog, execute one item, commit, repeat.
+These are the development rules for working on this repository. The rules injected into the agent's own system prompt live in `Chappie/ViewModels/ChappieViewModel/ChappieViewModel+PersonaBlock.swift` (14 rules; roles and tool limits are described by per-tool status labels, not by rules).
+
+**RULE-01: One task per pass** — decompose into backlog, execute one item, report, commit after acceptance, repeat.
 
 **RULE-02: Read architecture files first** — before any feature or refactor.
 
-**RULE-03: git_diff is always forbidden** — loads entire project into context, costs money.
+**RULE-03: git_diff is always forbidden** — loads entire project into context, costs money. Enforced by `ToolPolicy`, shown to the model as a `[FORBIDDEN]` status.
 
-**RULE-04: Never run tests before build** — causes double compilation.
+**RULE-04: No final commit if build or tests are red** — a broken commit is worse than none.
 
-**RULE-05: No final commit if build or tests are red** — a broken commit is worse than none.
-
-**RULE-06: Commit only after user acceptance** — never commit autonomously after task completion.
+**RULE-05: Commit and other irreversible actions only after user acceptance** — never commit or push autonomously after task completion.
 
 ---
 
