@@ -93,6 +93,27 @@ struct ProcessRunnerTests {
         #expect(await eventually(6) { !ProcessTree.exists(pid) || isZombie(pid) })
     }
 
+    @Test func cancelDoesNotWaitForAnEscapedChildHoldingThePipe() async {
+        // The inner subshell exits at once, so its `sleep` is re-parented to launchd: it is no longer
+        // in the process tree, yet still holds our stdout pipe open (like a build daemon would).
+        let task = Task { await shell("(sleep 40 &); sleep 40", timeout: nil) }
+        try? await Task.sleep(nanoseconds: 600_000_000)
+
+        let started = Date()
+        task.cancel()
+        let run = await task.value
+
+        #expect(run.stopReason == .cancelled)
+        #expect(Date().timeIntervalSince(started) < 10, "Stop hung on a pipe held by an escaped child")
+    }
+
+    @Test func timeoutDoesNotWaitForAnEscapedChildHoldingThePipe() async {
+        let started = Date()
+        let run = await shell("(sleep 40 &); sleep 40", timeout: 0.5)
+        #expect(run.stopReason == .timedOut)
+        #expect(Date().timeIntervalSince(started) < 10, "Timeout hung on a pipe held by an escaped child")
+    }
+
     @Test func nonCancellableCommandFinishesDespiteCancel() async {
         // Mutating git commands must not be killed halfway: cancellable: false ignores "Stop".
         let task = Task { await shell("sleep 1; echo finished", timeout: 20, cancellable: false) }

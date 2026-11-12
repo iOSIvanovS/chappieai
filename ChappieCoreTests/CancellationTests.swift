@@ -257,3 +257,74 @@ struct MCPToolBridgeCancellationTests {
 
     private actor RecoveryCounter { var n = 0; func bump() { n += 1 }; func value() -> Int { n } }
 }
+
+@Suite("Stop through the whole tool chain")
+struct FullChainCancellationTests {
+
+    /// Accepts a request and then stays silent, like a helper running a long build.
+    private final class SilentHelper: @unchecked Sendable {
+        private var listener: Int32 = -1
+        private let lock = NSLock()
+        private var hungUp = false
+        var sawHangUp: Bool { lock.withLock { hungUp } }
+
+        func start(at path: String) throws {
+            listener = try MCPSocketTests.listen(on: path)
+            let fd = listener
+            DispatchQueue.global().async { [self] in
+                let client = accept(fd, nil, nil)
+                guard client >= 0 else { return }
+                defer { close(client) }
+                var header = [UInt8](repeating: 0, count: 4)
+                _ = recv(client, &header, 4, MSG_WAITALL)
+                let length = Int(header[0]) << 24 | Int(header[1]) << 16 | Int(header[2]) << 8 | Int(header[3])
+                var body = [UInt8](repeating: 0, count: length)
+                _ = recv(client, &body, length, MSG_WAITALL)
+                var byte: UInt8 = 0
+                _ = recv(client, &byte, 1, 0)
+                lock.withLock { hungUp = true }
+            }
+        }
+
+        func stop(_ path: String) {
+            if listener >= 0 { close(listener) }
+            unlink(path)
+        }
+    }
+
+    @Test("Stop while run_tests waits for the helper returns at once and hangs up on it")
+    func stopDuringRunTests() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("chain-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let path = "/tmp/mcpchain-\(getpid())-\(Int.random(in: 1000...9999)).sock"
+        let helper = SilentHelper()
+        try helper.start(at: path)
+        defer { helper.stop(path) }
+
+        let service = ToolExecutionService(
+            fileSystem: FileSystemManager(workspaces: [(name: "P", url: root)]),
+            memoryManager: MemoryManager(workspaceURL: root),
+            socketPath: path
+        )
+        let info = ActiveMemoryContext.ProjectInfo(id: UUID(), name: "P")
+        let settings = ProjectSettings(agentRole: .executor, isProgrammingProject: true, devEnvironment: .xcode, testsAccess: .run)
+        await service.setMemoryContextAndSettings(
+            context: ActiveMemoryContext(threadId: UUID(), projects: [info], threadTerminalAccess: .none),
+            settings: [info.id: settings]
+        )
+        let call = AIToolCall(
+            id: "t1", type: "function",
+            function: AIToolCallFunction(name: "run_tests", arguments: #"{"project":"P"}"#)
+        )
+
+        let started = Date()
+        let task = Task { await service.execute(call: call) }
+        try await Task.sleep(nanoseconds: 700_000_000)
+        task.cancel()
+        let result = await task.value
+
+        #expect(Date().timeIntervalSince(started) < 5, "Stop must not wait for the helper; got: \(result)")
+        #expect(await waitUntil(timeout: 3) { helper.sawHangUp }, "the helper never saw the hang-up; result: \(result)")
+    }
+}

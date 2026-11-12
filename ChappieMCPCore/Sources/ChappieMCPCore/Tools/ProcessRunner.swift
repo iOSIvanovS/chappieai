@@ -109,16 +109,18 @@ enum ProcessRunner {
         // Read both pipes in parallel while waiting: a full pipe would block the child forever.
         let stdoutBox = DataBox()
         let stderrBox = DataBox()
+        let processExited = ExitFlag()
         let readers = DispatchGroup()
         for (pipe, box) in [(stdoutPipe, stdoutBox), (stderrPipe, stderrBox)] {
             readers.enter()
             DispatchQueue.global(qos: .utility).async {
-                box.set(pipe.fileHandleForReading.readDataToEndOfFile())
+                box.set(readUntilEndOrAbandoned(fd: pipe.fileHandleForReading.fileDescriptor, exit: processExited))
                 readers.leave()
             }
         }
 
         exited.wait()
+        processExited.set()
         timeoutItem?.cancel()
         readers.wait()
 
@@ -129,6 +131,55 @@ enum ProcessRunner {
             stopReason: canceller.stopReason,
             launchError: nil
         )
+    }
+}
+
+// MARK: - Pipe reading
+
+/// Set once the child process has exited.
+final class ExitFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var exitedAt: Date?
+
+    func set() { lock.withLock { if exitedAt == nil { exitedAt = Date() } } }
+    var secondsSinceExit: TimeInterval? { lock.withLock { exitedAt.map { Date().timeIntervalSince($0) } } }
+}
+
+/// How long the reader keeps waiting for end-of-file after the process itself has exited.
+/// Output the process wrote is already in the pipe by then, so this only has to cover the reader
+/// draining it. A longer wait would only serve a stray grandchild that holds the pipe open.
+let pipeDrainGrace: TimeInterval = 1.5
+
+/// Reads a pipe until EOF, but gives up `pipeDrainGrace` seconds after the process exited.
+///
+/// WHY NOT readDataToEndOfFile():
+/// EOF arrives only when EVERY holder of the write end has closed it. A build daemon that outlived
+/// the build (testmanagerd, a compiler server, `cmd &`) keeps the pipe open, so a blocking read
+/// never returned: the process was long dead, yet Stop and the timeout "did nothing" and the
+/// tool hung until the whole watchdog expired. Polling with a short timeout lets the reader notice
+/// that the process is gone.
+func readUntilEndOrAbandoned(fd: Int32, exit: ExitFlag) -> Data {
+    var result = Data()
+    var buffer = [UInt8](repeating: 0, count: 65_536)
+    while true {
+        var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+        let ready = poll(&pfd, 1, 100)
+        if ready < 0 {
+            if errno == EINTR { continue }
+            return result
+        }
+        if ready == 0 {
+            if let waited = exit.secondsSinceExit, waited >= pipeDrainGrace { return result }
+            continue
+        }
+        let count = read(fd, &buffer, buffer.count)
+        if count > 0 {
+            result.append(buffer, count: count)
+        } else if count == 0 {
+            return result
+        } else if errno != EINTR && errno != EAGAIN {
+            return result
+        }
     }
 }
 
