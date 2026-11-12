@@ -11,13 +11,11 @@ import Foundation
 // MARK: - Fixtures
 
 private func xcodeExecutor(
-    git: GitAccessLevel = .full,
-    tests: TestsAccessLevel = .run,
-    build: Bool = true
+    git: GitAccessLevel = .full
 ) -> ProjectSettings {
     ProjectSettings(
         agentRole: .executor, isProgrammingProject: true, devEnvironment: .xcode,
-        gitAccess: git, testsAccess: tests, buildEnabled: build
+        gitAccess: git
     )
 }
 
@@ -148,7 +146,7 @@ struct ToolPolicyRoleTests {
     func advisor() {
         for tool in reads + locReads { #expect(decide(tool, xcodeAdvisor).isAllowed, "\(tool)") }
         for tool in writes + locWrites { #expect(!decide(tool, xcodeAdvisor).isAllowed, "\(tool)") }
-        for tool in ["git_status", "git_log", "git_commit", "build_project", "run_tests", "read_build_log"] {
+        for tool in ["git_status", "git_log", "git_commit"] {
             #expect(!decide(tool, xcodeAdvisor).isAllowed, "\(tool)")
         }
     }
@@ -201,25 +199,12 @@ struct ToolPolicyGitBuildTests {
         #expect(!decide("git_status", docs).isAllowed)
     }
 
-    @Test("build_project needs only the build switch; run_tests also needs test access")
-    func buildVersusTests() {
-        let noTests = xcodeExecutor(tests: .none)
-        #expect(decide("build_project", noTests).isAllowed)
-        #expect(!decide("run_tests", noTests).isAllowed)
-        #expect(!decide("run_tests", xcodeExecutor(tests: .readOnly)).isAllowed)
-        #expect(decide("run_tests", xcodeExecutor(tests: .run)).isAllowed)
-    }
-
-    @Test("buildEnabled = false disables build, tests and the build log")
-    func buildSwitchOff() {
-        let off = xcodeExecutor(tests: .write, build: false)
-        for tool in ["build_project", "run_tests", "read_build_log"] { #expect(!decide(tool, off).isAllowed, "\(tool)") }
-    }
-
-    @Test("read_build_log needs log access")
-    func buildLog() {
-        #expect(!decide("read_build_log", xcodeExecutor(tests: .none)).isAllowed)
-        #expect(decide("read_build_log", xcodeExecutor(tests: .readOnly)).isAllowed)
+    @Test("The build and test tools are gone: they are not classified, so they are denied")
+    func buildToolsRemoved() {
+        for tool in ["build_project", "run_tests", "read_build_log"] {
+            #expect(ToolPolicy.capability(of: tool) == nil, "\(tool)")
+            #expect(!decide(tool, xcodeExecutor()).isAllowed, "\(tool)")
+        }
     }
 
     @Test("Terminal is a thread switch, independent of the project role")
@@ -248,7 +233,7 @@ struct ToolAuthorizationTests {
     @Test("Several projects and no project named: refused with the list, never 'the first one'")
     func ambiguousProjectIsRefused() async {
         let rig = await Rig([("One", xcodeExecutor()), ("Two", xcodeExecutor())])
-        let result = await rig.authorize("run_tests", "{}")
+        let result = await rig.authorize("git_status", "{}")
         #expect(!isAllowed(result))
         #expect(denial(result).contains("'One'") && denial(result).contains("'Two'"))
     }
@@ -354,7 +339,7 @@ struct ToolAuthorizationTests {
     @Test("Numbers and booleans no longer lose the project: they become strings")
     func nonStringArguments() async {
         let rig = await Rig([("One", xcodeExecutor()), ("Two", xcodeExecutor())])
-        let result = await rig.authorize("run_tests", #"{"project":"One","timeout":30,"verbose":true}"#)
+        let result = await rig.authorize("git_status", #"{"project":"One","timeout":30,"verbose":true}"#)
         guard case .allowed(_, let args) = result else { Issue.record("expected allowed"); return }
         #expect(args["project"] == "One")
         #expect(args["timeout"] == "30")
@@ -450,7 +435,7 @@ struct ToolExposureTests {
     func advisorThreadClosesMutations() async {
         let tools = await Rig([("A", xcodeAdvisor)]).service.availableTools
         for tool in ["write_file", "patch_file", "delete_file", "write_document", "git_status", "git_commit",
-                     "build_project", "run_tests", "loc_create", "loc_submit_batch", "run_terminal"] {
+                     "loc_create", "loc_submit_batch", "run_terminal"] {
             let found = description(of: tool, in: tools)
             #expect(found.hasPrefix("[UNAVAILABLE"), "\(tool) must be closed: \(found)")
         }
@@ -521,7 +506,7 @@ struct ToolExposureTests {
         let docs = ProjectSettings(agentRole: .executor, isProgrammingProject: false)
         let rig = await Rig([("Code", xcodeExecutor()), ("Docs", docs)])
         let tools = await rig.service.availableTools
-        for name in ["git_status", "git_commit", "build_project", "run_tests", "read_build_log"] {
+        for name in ["git_status", "git_commit"] {
             guard let tool = tools.first(where: { $0.function.name == name }) else { Issue.record("\(name) missing"); continue }
             let arg = tool.function.parameters.properties["project"]?.description ?? ""
             #expect(arg.contains("'Code'") && arg.contains("'Docs'"), "\(name): \(arg)")

@@ -2,8 +2,7 @@
 //
 // Routes tool calls to the appropriate handler classes.
 //
-// Both git_* and build_project/run_tests use projectPathMap to resolve per-project paths.
-// build_project/run_tests additionally use projectEnvMap to pick the correct build tool.
+// git_*, document and localization tools use projectPathMap to resolve per-project paths.
 // loc_* tools are scoped to the project named in the call (see localizationTools(for:)).
 
 import Foundation
@@ -14,17 +13,13 @@ private struct ToolFailure: Error {
 
 final class ToolDispatcher: Sendable {
     private let gitTools: GitTools
-    private let buildTools: BuildTools
     private let locTools: LocalizationTools
     private let docTools: DocumentTools
     private let projectPathMap: [String: String]
 
-    init(projectPath: String, projectEnvMap: [String: String], projectPathMap: [String: String] = [:]) {
+    init(projectPath: String, projectPathMap: [String: String] = [:]) {
         self.projectPathMap = projectPathMap
         self.gitTools   = GitTools(projectPath: projectPath, projectPathMap: projectPathMap)
-        // WHY projectPathMap here: BuildTools must run xcodebuild in the correct project directory.
-        // Without it, xcodeProjectName() scans defaultProjectPath and finds the wrong .xcodeproj.
-        self.buildTools = BuildTools(projectPath: projectPath, projectEnvMap: projectEnvMap, projectPathMap: projectPathMap)
         self.locTools   = LocalizationTools(projectPath: projectPath, projectPathMap: projectPathMap)
         self.docTools   = DocumentTools(projectPath: projectPath, projectPathMap: projectPathMap)
     }
@@ -97,18 +92,6 @@ final class ToolDispatcher: Sendable {
                 return .failure("Argument 'paths' is required (space-separated file paths)")
             }
             return await gitTools.checkout(ref: ref, paths: paths, projectName: args["project"])
-
-        // MARK: - Build tools
-        // "project" arg routes to the correct env (projectEnvMap) and path (projectPathMap).
-
-        case "build_project":
-            return await buildTools.build(projectName: args["project"])
-
-        case "run_tests":
-            return await buildTools.runTests(projectName: args["project"], target: args["target"])
-
-        case "read_build_log":
-            return await buildTools.readLastLog()
 
         // MARK: - Document tools
 

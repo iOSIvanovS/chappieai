@@ -34,7 +34,7 @@ struct SystemPromptBuilderTests {
     /// then overlays the provided settings on top (agent role, etc.).
     private func makeProject(settings: ProjectSettings) -> PromptContext.ProjectContext {
         var base = ProjectSettings(agentRole: .executor, isProgrammingProject: true)
-        base.buildEnabled = settings.buildEnabled
+        base.testsWriteEnabled = settings.testsWriteEnabled
         return PromptContext.ProjectContext(name: "TestProject", settings: base, memory: [])
     }
 
@@ -282,7 +282,7 @@ struct SystemPromptBuilderTests {
     func programmingExecutorBlockIsCompact() {
         var settings = ProjectSettings(agentRole: .executor, isProgrammingProject: true)
         settings.devEnvironment = .xcode
-        settings.testsAccess = .write
+        settings.testsWriteEnabled = true
         settings.architectureEnabled = true
         settings.commentsEnabled = true
         let block = settings.formatForSystemPrompt(projectName: "App", absolutePath: "/tmp/app")
@@ -299,7 +299,7 @@ struct SystemPromptBuilderTests {
     @Test("Disabled switches say how to enable them")
     func disabledSwitchesHintAtSettings() {
         var settings = ProjectSettings(agentRole: .executor, isProgrammingProject: true)
-        settings.testsAccess = .run
+        settings.testsWriteEnabled = false
         settings.architectureEnabled = false
         settings.commentsEnabled = false
         let block = settings.formatForSystemPrompt(projectName: "App")

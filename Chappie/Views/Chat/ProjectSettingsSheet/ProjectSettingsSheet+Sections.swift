@@ -173,14 +173,7 @@ extension ProjectSettingsSheet {
                 .help("project.settings.detect_help")
             }
 
-            if draft.devEnvironment != .unknown {
-                let tools = draft.devEnvironment.specificTools
-                if !tools.isEmpty {
-                    Text(String(format: String(localized: "project.settings.env_tools_hint"), tools.joined(separator: ", ")))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } else {
+            if draft.devEnvironment == .unknown {
                 Text("project.settings.env_unknown_hint")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -220,73 +213,22 @@ extension ProjectSettingsSheet {
         }
     }
 
-    // MARK: - Build section
-
-    var buildSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("project.settings.build_section", systemImage: "hammer.circle.fill")
-
-            Toggle(isOn: $draft.buildEnabled) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("project.settings.build_allow")
-                        .font(.callout)
-                    Text("project.settings.build_allow_hint")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .toggleStyle(.switch)
-
-            if !draft.buildEnabled {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.orange)
-                        .padding(.top, 1)
-                    Text("project.settings.build_disabled_hint")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-
     // MARK: - Tests section
 
     var testsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeader("project.settings.tests_section", systemImage: "checkmark.shield.fill")
 
-            Picker("project.settings.tests_picker", selection: $draft.testsAccess) {
-                ForEach(TestsAccessLevel.allCases, id: \.self) { level in
-                    Text(level.displayName).tag(level)
-                }
-            }
-            .pickerStyle(.menu)
-            .disabled(!draft.buildEnabled)
-
-            if !draft.buildEnabled {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "hammer.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 1)
-                    Text("project.settings.tests_build_disabled_hint")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } else if draft.testsAccess == .readOnly {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "eye.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.orange)
-                        .padding(.top, 1)
-                    Text("project.settings.tests_readonly_hint")
+            Toggle(isOn: $draft.testsWriteEnabled) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("project.settings.tests_write_allow")
+                        .font(.callout)
+                    Text("project.settings.tests_write_allow_hint")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
+            .toggleStyle(.switch)
         }
     }
 

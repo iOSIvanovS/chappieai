@@ -31,18 +31,14 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
     public var devEnvironment: DevEnvironment
 
     public var gitAccess: GitAccessLevel
-    public var testsAccess: TestsAccessLevel
+
+    /// May the agent create and change tests. Only a prompt line states it: writing tests goes
+    /// through the shared file tools, so no tool status can express this permission.
+    public var testsWriteEnabled: Bool
     public var architectureEnabled: Bool
     public var architectureLanguage: ProjectLanguage
     public var commentsEnabled: Bool
     public var commentsLanguage: ProjectLanguage
-
-    /// Controls availability of build_project / run_tests for this specific project.
-    /// Default true — preserves existing behavior for projects created before this setting existed.
-    /// WHY GATE BOTH TOOLS: tests run against a fresh build, so disabling compile disables testing too.
-    /// Useful for large projects where compilation is too slow for the AI to wait on —
-    /// user builds/tests manually and reports results back in chat instead.
-    public var buildEnabled: Bool
 
     /// Curl-Chappie secrets of this project: metadata only, values are in the Keychain
     /// (CurlSecretKeychain). Empty by default.
@@ -53,24 +49,22 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         isProgrammingProject: Bool = false,
         devEnvironment: DevEnvironment = .unknown,
         gitAccess: GitAccessLevel = .none,
-        testsAccess: TestsAccessLevel = .none,
+        testsWriteEnabled: Bool = false,
         architectureEnabled: Bool = false,
         architectureLanguage: ProjectLanguage = .english,
         commentsEnabled: Bool = false,
         commentsLanguage: ProjectLanguage = .english,
-        buildEnabled: Bool = true,
         curlSecrets: [CurlSecret] = []
     ) {
         self.agentRole = agentRole
         self.isProgrammingProject = isProgrammingProject
         self.devEnvironment = devEnvironment
         self.gitAccess = gitAccess
-        self.testsAccess = testsAccess
+        self.testsWriteEnabled = testsWriteEnabled
         self.architectureEnabled = architectureEnabled
         self.architectureLanguage = architectureLanguage
         self.commentsEnabled = commentsEnabled
         self.commentsLanguage = commentsLanguage
-        self.buildEnabled = buildEnabled
         self.curlSecrets = curlSecrets
     }
 
@@ -78,7 +72,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
     public mutating func downgradeToAdvisor() {
         agentRole = .advisor
         gitAccess = .none
-        testsAccess = .none
+        testsWriteEnabled = false
         architectureEnabled = false
         commentsEnabled = false
         // Curl-Chappie is not available to advisors at all. Secret metadata is kept so that
@@ -88,9 +82,11 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
     // MARK: - Codable (manual — new fields must decode safely from old stored JSON)
 
     private enum CodingKeys: String, CodingKey {
-        case agentRole, isProgrammingProject, devEnvironment, gitAccess, testsAccess
+        case agentRole, isProgrammingProject, devEnvironment, gitAccess, testsWriteEnabled
         case architectureEnabled, architectureLanguage, commentsEnabled, commentsLanguage
-        case buildEnabled, curlSecrets
+        case curlSecrets
+        // Legacy key, read as a plain String so that any stored value decodes.
+        case legacyTestsAccess = "testsAccess"
     }
 
     public init(from decoder: Decoder) throws {
@@ -99,14 +95,19 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         isProgrammingProject = try c.decodeIfPresent(Bool.self, forKey: .isProgrammingProject) ?? false
         devEnvironment = try c.decodeIfPresent(DevEnvironment.self, forKey: .devEnvironment) ?? .unknown
         gitAccess = try c.decodeIfPresent(GitAccessLevel.self, forKey: .gitAccess) ?? .none
-        testsAccess = try c.decodeIfPresent(TestsAccessLevel.self, forKey: .testsAccess) ?? .none
+        // The new key wins; otherwise only the old "write" level carries over, everything else is off.
+        if let enabled = (try? c.decodeIfPresent(Bool.self, forKey: .testsWriteEnabled)) ?? nil {
+            testsWriteEnabled = enabled
+        } else {
+            let legacy = (try? c.decodeIfPresent(String.self, forKey: .legacyTestsAccess)) ?? nil
+            testsWriteEnabled = legacy == "write"
+        }
         architectureEnabled = try c.decodeIfPresent(Bool.self, forKey: .architectureEnabled) ?? false
         architectureLanguage = try c.decodeIfPresent(ProjectLanguage.self, forKey: .architectureLanguage) ?? .english
         commentsEnabled = try c.decodeIfPresent(Bool.self, forKey: .commentsEnabled) ?? false
         commentsLanguage = try c.decodeIfPresent(ProjectLanguage.self, forKey: .commentsLanguage) ?? .english
-        // A legacy "terminalAccess" key in old records is simply ignored (unknown keys never fail decoding).
-        // Old records predate this field — default to true (build was always allowed before).
-        buildEnabled = try c.decodeIfPresent(Bool.self, forKey: .buildEnabled) ?? true
+        // Legacy "terminalAccess" and "buildEnabled" keys in old records are simply ignored
+        // (unknown keys never fail decoding).
         curlSecrets = try c.decodeIfPresent([CurlSecret].self, forKey: .curlSecrets) ?? []
     }
 
@@ -116,12 +117,11 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         try c.encode(isProgrammingProject, forKey: .isProgrammingProject)
         try c.encode(devEnvironment, forKey: .devEnvironment)
         try c.encode(gitAccess, forKey: .gitAccess)
-        try c.encode(testsAccess, forKey: .testsAccess)
+        try c.encode(testsWriteEnabled, forKey: .testsWriteEnabled)
         try c.encode(architectureEnabled, forKey: .architectureEnabled)
         try c.encode(architectureLanguage, forKey: .architectureLanguage)
         try c.encode(commentsEnabled, forKey: .commentsEnabled)
         try c.encode(commentsLanguage, forKey: .commentsLanguage)
-        try c.encode(buildEnabled, forKey: .buildEnabled)
         try c.encode(curlSecrets, forKey: .curlSecrets)
     }
 }

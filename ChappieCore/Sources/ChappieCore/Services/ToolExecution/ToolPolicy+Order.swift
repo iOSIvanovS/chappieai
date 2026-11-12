@@ -29,8 +29,6 @@ extension ToolPolicy {
         // Changing localization
         "loc_add_key", "loc_add_language", "loc_submit_batch", "loc_create",
         "loc_rename_key", "loc_rename_keys", "loc_rename", "loc_remove_key", "loc_remove_language", "loc_delete",
-        // Build and tests
-        "read_build_log", "build_project", "run_tests",
         // Git
         "git_status", "git_log", "git_add", "git_commit", "git_reset", "git_push", "git_checkout", "git_revert",
         // Network requests
@@ -63,7 +61,6 @@ extension ToolPolicy {
         case .locRead:    return "Localization (read-only)"
         case .locWrite:   return "Localization (changing)"
         case .git:        return "Git"
-        case .build, .tests, .buildLog: return "Build and tests"
         case .curl:       return "Curl-Chappie (HTTP requests and scenarios)"
         }
     }

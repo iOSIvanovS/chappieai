@@ -81,12 +81,6 @@ public enum ToolCapability: Sendable {
     case locWrite
     /// git_*: EXECUTOR on a programming project, limited by the project's git level.
     case git
-    /// build_project.
-    case build
-    /// run_tests.
-    case tests
-    /// read_build_log.
-    case buildLog
     /// curl_request / curl_session / curl_extract: thread switch AND an EXECUTOR project
     /// (the project supplies the secrets). ADVISOR never gets them.
     case curl
@@ -142,9 +136,6 @@ public enum ToolPolicy {
             "git_status", "git_log", "git_add", "git_commit", "git_push",
             "git_reset", "git_revert", "git_checkout"
         ])
-        add(.build, ["build_project"])
-        add(.tests, ["run_tests"])
-        add(.buildLog, ["read_build_log"])
         add(.curl, [
             "curl_request", "curl_session", "curl_extract",
             "curl_scenario_info", "curl_scenario_save", "curl_scenario_delete", "curl_scenario_run"

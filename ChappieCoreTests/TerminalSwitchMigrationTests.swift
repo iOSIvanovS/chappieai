@@ -67,7 +67,7 @@ struct TerminalSwitchMigrationTests {
     func projectSettingsLegacy(raw: String) throws {
         let entryJSON = """
         [{"id":"\(UUID().uuidString)","display_name":"P","absolute_path":"/tmp/p",
-          "settings":{"agentRole":"executor","terminalAccess":"\(raw)","buildEnabled":false},
+          "settings":{"agentRole":"executor","terminalAccess":"\(raw)","buildEnabled":false,"testsAccess":"run"},
           "created_at":0}]
         """
         let decoder = JSONDecoder()
@@ -75,6 +75,45 @@ struct TerminalSwitchMigrationTests {
         let entries = try decoder.decode([ThreadProjectEntry].self, from: Data(entryJSON.utf8))
         #expect(entries.count == 1)
         #expect(entries[0].settings.agentRole == .executor)
-        #expect(entries[0].settings.buildEnabled == false)
+        #expect(!entries[0].settings.testsWriteEnabled)
+    }
+
+    @Test("The old tests level maps to the new switch: only 'write' turns it on",
+          arguments: [("write", true), ("run", false), ("readOnly", false), ("none", false), ("garbage", false)])
+    func legacyTestsAccess(raw: String, expected: Bool) throws {
+        let json = #"{"agentRole":"executor","testsAccess":"\#(raw)"}"#
+        let settings = try JSONDecoder().decode(ProjectSettings.self, from: Data(json.utf8))
+        #expect(settings.testsWriteEnabled == expected)
+        #expect(settings.agentRole == .executor)
+    }
+
+    @Test("The old tests level in an unexpected type does not break decoding")
+    func legacyTestsAccessWrongType() throws {
+        let json = #"{"agentRole":"executor","testsAccess":42,"gitAccess":"full"}"#
+        let settings = try JSONDecoder().decode(ProjectSettings.self, from: Data(json.utf8))
+        #expect(!settings.testsWriteEnabled)
+        #expect(settings.gitAccess == .full)
+    }
+
+    @Test("The new key wins over the old one, and only the new key is written")
+    func newTestsKeyWins() throws {
+        let json = #"{"testsWriteEnabled":false,"testsAccess":"write"}"#
+        let settings = try JSONDecoder().decode(ProjectSettings.self, from: Data(json.utf8))
+        #expect(!settings.testsWriteEnabled)
+
+        var on = ProjectSettings()
+        on.testsWriteEnabled = true
+        let text = String(decoding: try JSONEncoder().encode(on), as: UTF8.self)
+        #expect(text.contains("testsWriteEnabled"))
+        #expect(!text.contains("testsAccess"))
+        #expect(!text.contains("buildEnabled"))
+        #expect(try JSONDecoder().decode(ProjectSettings.self, from: Data(text.utf8)).testsWriteEnabled)
+    }
+
+    @Test("Downgrading to advisor switches test writing off")
+    func downgradeClearsTests() {
+        var s = ProjectSettings(agentRole: .executor, testsWriteEnabled: true)
+        s.downgradeToAdvisor()
+        #expect(!s.testsWriteEnabled)
     }
 }

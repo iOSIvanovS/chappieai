@@ -41,7 +41,7 @@ public enum OutputGuard {
     /// Tools whose result is the output of a process: its size is unknown until it has run, and it
     /// cannot be refused up front (the command already executed).
     static let commandTools: Set<String> = [
-        "run_terminal", "run_ssh", "build_project", "run_tests",
+        "run_terminal", "run_ssh",
         "git_status", "git_log", "git_add", "git_commit", "git_push",
         "git_reset", "git_revert", "git_checkout"
     ]

@@ -17,7 +17,7 @@ import ZIPFoundation
 final class DocumentTools: Sendable {
 
     let projectPath: String
-    // WHY: supports multi-project threads — resolves path by project name, same pattern as GitTools/BuildTools.
+    // WHY: supports multi-project threads — resolves path by project name, same pattern as GitTools.
     let projectPathMap: [String: String]
 
     init(projectPath: String, projectPathMap: [String: String] = [:]) {

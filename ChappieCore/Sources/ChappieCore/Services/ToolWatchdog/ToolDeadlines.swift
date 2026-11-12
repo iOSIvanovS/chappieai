@@ -14,7 +14,7 @@ public enum ToolDeadlines {
 
     // MARK: - Table (seconds)
 
-    /// Files, search, documents, memory, attachments, web, curl_*, localization, read_build_log.
+    /// Files, search, documents, memory, attachments, web, curl_*, localization.
     /// (The curl engine's own network timeout is 30 s per request; a login plus one retry fits.)
     static let standard: TimeInterval = 120
     /// git status/log/add/reset/checkout: local and short.
@@ -23,8 +23,6 @@ public enum ToolDeadlines {
     static let terminalBase: TimeInterval = 300
     /// A terminal call that asks for a longer timeout gets it, up to this ceiling.
     static let terminalCeiling: TimeInterval = 1800
-    /// build_project / run_tests.
-    static let build: TimeInterval = 1200
     /// git commit / revert (hooks) and push (network). Just above the helper's own 10 min cap,
     /// so the helper's more precise handling normally fires first.
     static let gitSlow: TimeInterval = 720
@@ -44,8 +42,6 @@ public enum ToolDeadlines {
         case "run_terminal", "run_ssh":
             guard let requested = requestedTimeout(in: arguments) else { return terminalBase }
             return min(terminalCeiling, max(terminalBase, requested + terminalGrace))
-        case "build_project", "run_tests":
-            return build
         case "curl_scenario_run":
             return scenarioRun
         case "git_commit", "git_revert", "git_push":

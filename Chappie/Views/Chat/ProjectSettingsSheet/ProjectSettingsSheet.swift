@@ -102,7 +102,6 @@ struct ProjectSettingsSheet: View {
                             devEnvironmentSection
                             Divider().padding(.vertical, 4)
                             gitSection
-                            buildSection
                             testsSection
                             architectureSection
                             commentsSection
@@ -221,7 +220,7 @@ struct ProjectSettingsSheet: View {
                 isProgrammingProject: true,
                 devEnvironment: .xcode,
                 gitAccess: .write,
-                testsAccess: .write,
+                testsWriteEnabled: true,
                 architectureEnabled: true,
                 architectureLanguage: .english,
                 commentsEnabled: true,

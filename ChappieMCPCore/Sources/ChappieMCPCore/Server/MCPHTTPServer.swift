@@ -21,12 +21,8 @@
 // connections still sending their request is capped.
 //
 // MULTI-PROJECT ROUTING:
-// ToolDispatcher holds:
-//   - projectEnvMap  [projectName → devEnvironment rawValue] — for build/test env routing
-//   - projectPathMap [projectName → absolutePath]            — for git AND build path routing
-// Both maps are populated from CLI argv[3] and argv[4] respectively.
-// git_* tools use projectPathMap to resolve working directory per project.
-// build_project/run_tests use BOTH maps: projectEnvMap for env, projectPathMap for path.
+// ToolDispatcher holds projectPathMap [projectName → absolutePath], populated from CLI argv[3].
+// git_*, document and localization tools use it to resolve the root of the project named in the call.
 
 import Foundation
 
@@ -35,7 +31,7 @@ import Foundation
 final class MCPUnixServer: @unchecked Sendable {
 
     /// The app sends its request right after connecting, so this is generous. It bounds only
-    /// reading the request, never running the tool (a build may legitimately take minutes).
+    /// reading the request, never running the tool (a git push may legitimately take minutes).
     static let requestReadTimeout: TimeInterval = 10
     static let responseWriteTimeout: TimeInterval = 10
     /// Connections that are still delivering their request. Extra ones are dropped immediately.
@@ -55,13 +51,11 @@ final class MCPUnixServer: @unchecked Sendable {
 
     init(socketPath: String,
          projectPath: String,
-         projectEnvMap: [String: String] = [:],
          projectPathMap: [String: String] = [:]) {
         self.socketPath = socketPath
         self.projectPath = projectPath
         self.toolDispatcher = ToolDispatcher(
             projectPath: projectPath,
-            projectEnvMap: projectEnvMap,
             projectPathMap: projectPathMap
         )
     }

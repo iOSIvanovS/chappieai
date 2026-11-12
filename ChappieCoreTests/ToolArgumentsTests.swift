@@ -68,6 +68,6 @@ struct ToolArgumentsTests {
     @Test("The explanation names the tool")
     func explanation() {
         #expect(ToolArguments.explanation(for: .invalidJSON, tool: "read_file").contains("read_file"))
-        #expect(ToolArguments.explanation(for: .notAnObject, tool: "run_tests").contains("run_tests"))
+        #expect(ToolArguments.explanation(for: .notAnObject, tool: "run_terminal").contains("run_terminal"))
     }
 }

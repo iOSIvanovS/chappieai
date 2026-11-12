@@ -6,7 +6,7 @@
 //
 // Evaluation is split in two layers because the descriptions need them separately:
 //   threadBlock  — settings of the THREAD (terminal switch, Curl-Chappie switch)
-//   projectBlock — settings of ONE project (role, programming flag, git level, build, tests)
+//   projectBlock — settings of ONE project (role, programming flag, git level)
 
 import Foundation
 
@@ -97,46 +97,8 @@ extension ToolPolicy {
                 )
             }
             return nil
-        case .build, .tests, .buildLog:
-            return buildBlock(capability, s)
         case .alwaysOn, .terminal, .forbidden:
             return nil   // thread-level; never reaches the project layer
-        }
-    }
-
-    private static func buildBlock(_ capability: ToolCapability, _ s: ProjectSettings) -> ToolBlock? {
-        if let block = executorBlock(s) ?? programmingBlock(s) { return block }
-        guard s.buildEnabled else {
-            return ToolBlock(
-                reason: "compilation is disabled for this project (the user builds manually). Ask the user to build and run tests, then report the result in chat. Do not bypass this through the terminal",
-                fix: "project settings → Tests/Build → enable compilation"
-            )
-        }
-        switch capability {
-        case .build:
-            guard s.devEnvironment.specificTools.contains("build_project") else {
-                return ToolBlock(
-                    reason: "no build tool exists for a \(s.devEnvironment.displayName) project",
-                    fix: nil, permanent: true
-                )
-            }
-            return nil
-        case .tests:
-            guard s.testsAccess.canRun else {
-                return ToolBlock(
-                    reason: s.testsAccess == .readOnly ? "tests access is 'read-only' (logs only, no runs)" : "tests access is off",
-                    fix: "project settings → Tests → 'Run' or 'Run + Write'"
-                )
-            }
-            return nil
-        default:
-            guard s.testsAccess.canReadLog else {
-                return ToolBlock(
-                    reason: "build log access is off",
-                    fix: "project settings → Tests → at least 'Read-only'"
-                )
-            }
-            return nil
         }
     }
 

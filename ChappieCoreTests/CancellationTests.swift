@@ -229,7 +229,7 @@ struct MCPToolBridgeCancellationTests {
         let bridge = MCPToolBridge(socketPath: path, timeoutSeconds: 120)
 
         let started = Date()
-        let task = Task { await bridge.execute(tool: "build_project") }
+        let task = Task { await bridge.execute(tool: "git_log") }
         try await Task.sleep(nanoseconds: 500_000_000)
         task.cancel()
         let result = await task.value
@@ -292,8 +292,8 @@ struct FullChainCancellationTests {
         }
     }
 
-    @Test("Stop while run_tests waits for the helper returns at once and hangs up on it")
-    func stopDuringRunTests() async throws {
+    @Test("Stop while git_log waits for the helper returns at once and hangs up on it")
+    func stopDuringGitLog() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("chain-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -308,14 +308,14 @@ struct FullChainCancellationTests {
             socketPath: path
         )
         let info = ActiveMemoryContext.ProjectInfo(id: UUID(), name: "P")
-        let settings = ProjectSettings(agentRole: .executor, isProgrammingProject: true, devEnvironment: .xcode, testsAccess: .run)
+        let settings = ProjectSettings(agentRole: .executor, isProgrammingProject: true, devEnvironment: .xcode, gitAccess: .statusOnly)
         await service.setMemoryContextAndSettings(
             context: ActiveMemoryContext(threadId: UUID(), projects: [info], threadTerminalEnabled: false),
             settings: [info.id: settings]
         )
         let call = AIToolCall(
             id: "t1", type: "function",
-            function: AIToolCallFunction(name: "run_tests", arguments: #"{"project":"P"}"#)
+            function: AIToolCallFunction(name: "git_log", arguments: #"{"project":"P"}"#)
         )
 
         let started = Date()

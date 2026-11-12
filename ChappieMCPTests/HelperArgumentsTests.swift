@@ -26,7 +26,6 @@ struct HelperArgumentsTests {
         let parsed = try #require(HelperArguments.parse(["bin", "", "/tmp/x.sock"]))
         #expect(parsed.socketPath == "/tmp/x.sock")
         #expect(parsed.projectPath == "")
-        #expect(parsed.projectEnvMap.isEmpty)
         #expect(parsed.projectPathMap.isEmpty)
     }
 
@@ -48,18 +47,15 @@ struct HelperArgumentsTests {
     @Test func decodesProjectMaps() throws {
         let parsed = try #require(HelperArguments.parse([
             "bin", "", "/tmp/x.sock",
-            #"{"Chappie":"xcode","Bot":"python"}"#,
             #"{"Chappie":"/a","Bot":"/b"}"#
         ]))
-        #expect(parsed.projectEnvMap == ["Chappie": "xcode", "Bot": "python"])
         #expect(parsed.projectPathMap == ["Chappie": "/a", "Bot": "/b"])
     }
 
     @Test func malformedMapsBecomeEmpty() throws {
         let parsed = try #require(HelperArguments.parse([
-            "bin", "", "/tmp/x.sock", "not json", #"{"a":1}"#
+            "bin", "", "/tmp/x.sock", "not json"
         ]))
-        #expect(parsed.projectEnvMap.isEmpty)
         #expect(parsed.projectPathMap.isEmpty)
     }
 }

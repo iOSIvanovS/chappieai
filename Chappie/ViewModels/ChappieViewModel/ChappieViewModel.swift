@@ -162,16 +162,6 @@ final class ChappieViewModel {
 
     // MARK: - Project maps for MCP routing
 
-    /// Map of project display name → DevEnvironment rawValue.
-    /// WHY loop instead of uniqueKeysWithValues: duplicate displayNames crash with preconditionFailure.
-    var activeProjectEnvMap: [String: String] {
-        var map: [String: String] = [:]
-        for project in activeProjects where project.settings.isProgrammingProject && project.settings.devEnvironment != .unknown {
-            map[project.displayName] = project.settings.devEnvironment.rawValue
-        }
-        return map
-    }
-
     /// Map of project display name → absolute path on disk.
     /// WHY loop instead of uniqueKeysWithValues: duplicate displayNames crash with preconditionFailure.
     var activeProjectPathMap: [String: String] {

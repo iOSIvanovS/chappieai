@@ -4,8 +4,8 @@
 // Formats ProjectSettings into the system prompt block injected into every AI request.
 //
 // Only facts that no tool status carries live here: path, dev environment, the test-writing
-// permission, and the architecture/comment switches with their language. Role, git level,
-// compilation and test-run access are stated by the tool statuses (ToolPolicy.status).
+// permission, and the architecture/comment switches with their language. Role and git level
+// are stated by the tool statuses (ToolPolicy.status).
 
 import Foundation
 
@@ -29,7 +29,7 @@ extension ProjectSettings {
         }
 
         // Writing tests goes through the shared write tools, so no tool status can express this.
-        lines.append(testsAccess == .write
+        lines.append(testsWriteEnabled
                      ? "- Tests: creating tests allowed"
                      : "- Tests: creating new tests not allowed")
 

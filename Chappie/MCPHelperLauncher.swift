@@ -7,8 +7,7 @@
 // CLI ARGUMENTS PASSED TO ChappieMCP:
 // argv[1] = workspacePath  — workspace root (may be empty: no folder chosen)
 // argv[2] = socketPath     — Unix Domain Socket path, one per app instance (MCPSocket)
-// argv[3] = projectEnvMap  — JSON {"ProjectName": "envRawValue"} for build/test routing
-// argv[4] = projectPathMap — JSON {"ProjectName": "/absolute/path"} for git routing and path roots
+// argv[3] = projectPathMap — JSON {"ProjectName": "/absolute/path"} for git routing and path roots
 //
 // LIFECYCLE:
 // - launch() starts the helper; "running" is only reported once the socket accepts connections.
@@ -18,7 +17,7 @@
 // - The helper exits by itself when this app dies (it watches its parent), so a killed app
 //   (Xcode "Stop") does not leave orphans. Sockets of dead app instances are removed at start-up.
 //
-// RESTART TRIGGERS: workspacePath, projectEnvMap or projectPathMap changed.
+// RESTART TRIGGERS: workspacePath or projectPathMap changed.
 //
 // PIPE LEAK PREVENTION:
 // readabilityHandler must be set to nil on both pipes before the process goes away —
@@ -48,7 +47,6 @@ final class MCPHelperLauncher {
     private var stdoutPipe: Pipe?
     private var stderrPipe: Pipe?
     private var currentWorkspacePath: String = ""
-    private var currentProjectEnvMap: [String: String] = [:]
     private var currentProjectPathMap: [String: String] = [:]
 
     /// False after terminateHelper(): an exit is then expected, not a crash to recover from.
@@ -69,10 +67,9 @@ final class MCPHelperLauncher {
 
     // MARK: - Public Interface
 
-    /// Launches ChappieMCP with the given workspace path, env map, and path map.
+    /// Launches ChappieMCP with the given workspace path and path map.
     /// Does nothing if a helper with identical arguments is already running; restarts otherwise.
     func launch(workspacePath: String? = nil,
-                projectEnvMap: [String: String] = [:],
                 projectPathMap: [String: String] = [:]) {
         // No workspace chosen → empty root. The launch directory used to be substituted here,
         // which is "/" under Xcode and turned the helper's path guard into a no-op.
@@ -81,7 +78,6 @@ final class MCPHelperLauncher {
 
         if let process = helperProcess, process.isRunning,
            currentWorkspacePath == path,
-           currentProjectEnvMap == projectEnvMap,
            currentProjectPathMap == projectPathMap {
             print("[MCPHelperLauncher] ℹ️ Helper already running for: \(path)")
             return
@@ -96,15 +92,13 @@ final class MCPHelperLauncher {
 
         restartPolicy.reset()
         currentWorkspacePath = path
-        currentProjectEnvMap = projectEnvMap
         currentProjectPathMap = projectPathMap
         startHelper()
     }
 
     func restartWithWorkspace(_ url: URL,
-                              projectEnvMap: [String: String] = [:],
                               projectPathMap: [String: String] = [:]) {
-        launch(workspacePath: url.path, projectEnvMap: projectEnvMap, projectPathMap: projectPathMap)
+        launch(workspacePath: url.path, projectPathMap: projectPathMap)
     }
 
     func terminateHelper() {
@@ -188,7 +182,6 @@ final class MCPHelperLauncher {
         let process = Process()
         process.executableURL = url
         process.arguments = [currentWorkspacePath, socketPath,
-                             jsonString(from: currentProjectEnvMap),
                              jsonString(from: currentProjectPathMap)]
 
         let outPipe = Pipe()

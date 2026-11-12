@@ -157,11 +157,10 @@ extension ChappieViewModel {
 
     // MARK: - MCP Restart
 
-    /// Restarts MCP helper with the current workspace, env map, and path map.
+    /// Restarts MCP helper with the current workspace and path map.
     func restartMCPIfNeeded() {
         MCPHelperLauncher.shared.launch(
             workspacePath: workspaceURL?.path,
-            projectEnvMap: activeProjectEnvMap,
             projectPathMap: activeProjectPathMap
         )
     }

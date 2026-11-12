@@ -35,17 +35,6 @@ extension GitAccessLevel {
     }
 }
 
-extension TestsAccessLevel {
-    var displayName: String {
-        switch self {
-        case .none:     return String(localized: "tests.access.none")
-        case .readOnly: return String(localized: "tests.access.read_only")
-        case .run:      return String(localized: "tests.access.run")
-        case .write:    return String(localized: "tests.access.write")
-        }
-    }
-}
-
 extension DevEnvironment {
     /// UI label. Only `.unknown` needs translation; the rest are proper names.
     var localizedName: String {

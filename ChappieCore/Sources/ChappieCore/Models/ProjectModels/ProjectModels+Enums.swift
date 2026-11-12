@@ -40,19 +40,6 @@ public enum GitAccessLevel: String, Codable, Sendable, CaseIterable {
     }
 }
 
-// MARK: - TestsAccessLevel
-
-public enum TestsAccessLevel: String, Codable, Sendable, CaseIterable {
-    case none
-    case readOnly
-    case run
-    case write
-
-    public var canRun: Bool { self == .run || self == .write }
-    public var canWrite: Bool { self == .write }
-    public var canReadLog: Bool { self != .none }
-}
-
 // MARK: - ProjectLanguage
 
 /// Language for architecture files and code comments.
@@ -116,7 +103,7 @@ public enum ProjectLanguage: String, Codable, Sendable, CaseIterable {
 // MARK: - DevEnvironment
 
 /// Development environment / language stack for a programming project.
-/// Controls which env-specific tools are injected into the system prompt.
+/// A hint for the model and the UI (name, detection markers); it never gates a tool.
 /// .unknown means not yet detected or selected.
 public enum DevEnvironment: String, Codable, Sendable, CaseIterable {
     case unknown         = "unknown"
@@ -168,26 +155,6 @@ public enum DevEnvironment: String, Codable, Sendable, CaseIterable {
         case .reacttypescript: return ["tsconfig.json", "vite.config.ts", "next.config.ts", ".tsx"]
         case .dotnet:          return [".csproj", ".sln", ".cs"]
         case .html:            return ["index.html", ".html", ".css", ".js"]
-        }
-    }
-
-    /// Env-specific tools injected into the system prompt when this env is active.
-    /// Universal tools (git, memory, web_fetch) are always injected regardless.
-    /// HTML/CSS/JS has no dedicated build/test tools — run_terminal is sufficient.
-    public var specificTools: [String] {
-        switch self {
-        case .unknown:         return []
-        case .xcode:           return ["build_project", "run_tests", "read_build_log"]
-        case .nodejs:          return ["build_project", "run_tests", "read_build_log"]
-        case .python:          return ["run_tests", "read_build_log"]
-        case .go:              return ["build_project", "run_tests", "read_build_log"]
-        case .rust:            return ["build_project", "run_tests", "read_build_log"]
-        case .java:            return ["build_project", "run_tests", "read_build_log"]
-        case .kotlin:          return ["build_project", "run_tests", "read_build_log"]
-        case .flutter:         return ["build_project", "run_tests", "read_build_log"]
-        case .reacttypescript: return ["run_tests", "read_build_log"]
-        case .dotnet:          return ["build_project", "run_tests", "read_build_log"]
-        case .html:            return []
         }
     }
 }

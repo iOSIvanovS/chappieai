@@ -8,8 +8,7 @@
 // CLI ARGUMENTS:
 // argv[1] = workspace path (may be "" or "/" meaning "none")
 // argv[2] = Unix Domain Socket path (required; owned by the launching app instance)
-// argv[3] = JSON map projectName → devEnvironment rawValue, e.g. {"Chappie":"xcode"}
-// argv[4] = JSON map projectName → absolute path on disk (defaults to "{}")
+// argv[3] = JSON map projectName → absolute path on disk (defaults to "{}")
 
 import Foundation
 import Darwin
@@ -20,14 +19,13 @@ import Darwin
 struct HelperArguments: Equatable {
     var projectPath: String
     var socketPath: String
-    var projectEnvMap: [String: String]
     var projectPathMap: [String: String]
 
     /// nil when the mandatory socket path is missing.
     static func parse(_ args: [String]) -> HelperArguments? {
         // "/" and "" mean "no workspace folder chosen" (the app used to pass the launch
         // directory, which is "/" under Xcode). Such a root would make every path "inside the
-        // project", so it is dropped; the per-project roots from argv[4] are the real boundaries.
+        // project", so it is dropped; the per-project roots from argv[3] are the real boundaries.
         let projectPath = (args.count > 1 && PathGuard.isUsableRoot(args[1])) ? args[1] : ""
 
         // No default socket path: a fixed fallback is what let two app instances trample each other.
@@ -36,8 +34,7 @@ struct HelperArguments: Equatable {
         return HelperArguments(
             projectPath: projectPath,
             socketPath: args[2],
-            projectEnvMap: decodeMap(args, at: 3),
-            projectPathMap: decodeMap(args, at: 4)
+            projectPathMap: decodeMap(args, at: 3)
         )
     }
 
@@ -63,20 +60,18 @@ public enum ChappieMCPHelper {
         signal(SIGPIPE, SIG_IGN)
 
         guard let parsed = HelperArguments.parse(arguments) else {
-            print("[ChappieMCP] ❌ Usage: ChappieMCP <workspace> <socketPath> [envMapJSON] [pathMapJSON]")
+            print("[ChappieMCP] ❌ Usage: ChappieMCP <workspace> <socketPath> [pathMapJSON]")
             exit(2)
         }
 
         print("[ChappieMCP] 🚀 Starting server (Unix Domain Socket)")
         print("[ChappieMCP] 📁 Workspace: \(parsed.projectPath.isEmpty ? "(none)" : parsed.projectPath)")
         print("[ChappieMCP] 🔌 Socket:    \(parsed.socketPath)")
-        print("[ChappieMCP] 🗺️  Envs:     \(parsed.projectEnvMap.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ", "))")
         print("[ChappieMCP] 📂 Paths:    \(parsed.projectPathMap.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ", "))")
 
         let server = MCPUnixServer(
             socketPath: parsed.socketPath,
             projectPath: parsed.projectPath,
-            projectEnvMap: parsed.projectEnvMap,
             projectPathMap: parsed.projectPathMap
         )
 

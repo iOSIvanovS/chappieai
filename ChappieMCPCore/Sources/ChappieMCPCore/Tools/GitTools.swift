@@ -8,7 +8,7 @@
 // GitTools holds a projectPathMap [projectName → absolutePath].
 // When a "project" arg is provided, the correct working directory is resolved from the map.
 // When omitted — falls back to the single entry in the map (single-project threads).
-// This mirrors BuildTools routing so git commands are always deterministic per project.
+// Git commands are therefore always deterministic per project.
 //
 // WHY Process() INSTEAD OF libgit2 OR SwiftGit2:
 // 1. No dependencies — no need to pull in C libraries.

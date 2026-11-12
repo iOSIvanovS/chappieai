@@ -8,7 +8,7 @@
 //   ToolAuthorization.swift — picks the call's target project, applies ToolPolicy, exposure filter
 //   MemoryTools.swift       — IT-08 scope resolution + memory execution cases
 //   FileTools.swift         — file system + search + document tools + attachment tools + web_fetch
-//   GitBuildTools.swift     — git + build/test execution
+//   GitToolExecution.swift  — git execution
 //   TerminalTools.swift     — persistent bash session (run_terminal) + stateless SSH (run_ssh)
 //   CurlTools/              — curl_request / curl_session / curl_extract (Curl-Chappie, engine in CurlEngine/)
 //
@@ -280,9 +280,8 @@ public actor ToolExecutionService {
                 return try await executeMemoryTool(name: name, argsData: argsData)
 
             case "git_status", "git_diff", "git_add", "git_commit", "git_push",
-                 "git_log", "git_reset", "git_revert", "git_checkout",
-                 "build_project", "run_tests", "read_build_log":
-                return try await executeGitBuildTool(name: name, argsData: argsData)
+                 "git_log", "git_reset", "git_revert", "git_checkout":
+                return try await executeGitTool(name: name, argsData: argsData)
 
             case "run_terminal":
                 return try await executeTerminalTool(argsData: argsData, onOutput: onOutput)

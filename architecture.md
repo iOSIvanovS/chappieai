@@ -230,8 +230,8 @@ Contains root `architecture.md` + references to 4 target architecture files.
 1. `git_status` — check for uncommitted changes
 2. Implement (one task per pass)
 3. Add unit tests if needed (business logic, not trivial UI)
-4. `build_project`
-5. `run_tests` (only after green build)
+4. Build via `run_terminal` (`xcodebuild … build > /tmp/build.log 2>&1`, then grep the log)
+5. Tests via `run_terminal` (scheme `ChappieCoreTests`, `xcodebuild … test`, only after a green build)
 6. Fix until green
 7. Report to user → wait for acceptance
 8. `git_commit` (only after user acceptance)

@@ -24,8 +24,6 @@ struct ToolDeadlinesTests {
         #expect(ToolDeadlines.seconds(tool: "git_status", arguments: "{}") == 180)
         #expect(ToolDeadlines.seconds(tool: "git_commit", arguments: "{}") == 720)
         #expect(ToolDeadlines.seconds(tool: "git_push", arguments: "{}") == 720)
-        #expect(ToolDeadlines.seconds(tool: "build_project", arguments: "{}") == 1200)
-        #expect(ToolDeadlines.seconds(tool: "run_tests", arguments: "{}") == 1200)
         #expect(ToolDeadlines.seconds(tool: "run_terminal", arguments: "{}") == 300)
     }
 
@@ -54,7 +52,6 @@ struct ToolDeadlinesTests {
         #expect(ToolDeadlines.isMutating("loc_delete"))
         #expect(!ToolDeadlines.isMutating("read_file"))
         #expect(!ToolDeadlines.isMutating("git_status"))
-        #expect(!ToolDeadlines.isMutating("build_project"))
 
         let unknown = ToolDeadlines.timeoutMessage(tool: "git_push", seconds: 720)
         #expect(unknown.contains("RESULT IS UNKNOWN"))

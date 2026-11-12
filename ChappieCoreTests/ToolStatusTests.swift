@@ -9,14 +9,12 @@ import Foundation
 
 private func executor(
     git: GitAccessLevel = .full,
-    tests: TestsAccessLevel = .run,
-    build: Bool = true,
     env: DevEnvironment = .xcode,
     programming: Bool = true
 ) -> ProjectSettings {
     ProjectSettings(
         agentRole: .executor, isProgrammingProject: programming, devEnvironment: env,
-        gitAccess: git, testsAccess: tests, buildEnabled: build
+        gitAccess: git
     )
 }
 
@@ -101,28 +99,6 @@ struct ToolStatusLabelTests {
         let s = status("git_status", [("Docs", executor(programming: false))])
         #expect(!s.isAvailable)
         #expect(s.label.contains("Programming project"))
-    }
-
-    @Test("Build disabled: tells the model to ask the user instead of using the terminal")
-    func buildDisabled() {
-        let s = status("build_project", [("Big", executor(build: false))])
-        #expect(!s.isAvailable)
-        #expect(s.label.contains("user builds manually"))
-        #expect(s.label.contains("Do not bypass"))
-    }
-
-    @Test("Tests: read-only level blocks run_tests but not read_build_log")
-    func testsLevels() {
-        let p = executor(tests: .readOnly)
-        #expect(!status("run_tests", [("A", p)]).isAvailable)
-        #expect(status("read_build_log", [("A", p)]).isAvailable)
-    }
-
-    @Test("A project without a build tool for its environment is permanently closed for build_project")
-    func buildNoTool() {
-        let s = status("build_project", [("Py", executor(env: .python))])
-        #expect(!s.isAvailable)
-        #expect(s.label.contains("no build tool exists"))
     }
 
     @Test("loc_*: needs Xcode; the reason says which environment the project has")

@@ -120,8 +120,9 @@ graph TD
 1. Switch scheme to **"ChappieCoreTests"** in toolbar
 2. Press **⌘+U**
 
-### ⚠️ run_tests(target:) works correctly
-`run_tests(target: "ChappieCoreTests")` calls `xcodebuild test` — tests run green.
+### From the terminal
+`xcodebuild -project Chappie.xcodeproj -scheme ChappieCoreTests -destination 'platform=macOS' test > /tmp/t.log 2>&1`
+(the `Chappie` and `ChappieMCP` schemes are not configured for `test`; `ChappieMCPTests` runs under this scheme too).
 
 ---
 

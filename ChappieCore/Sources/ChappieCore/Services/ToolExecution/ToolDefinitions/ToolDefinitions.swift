@@ -61,7 +61,6 @@ extension ToolExecutionService {
         tools.append(contentsOf: memoryTools())
         tools.append(contentsOf: gitTools(allInfos: allInfos))
         tools.append(gitDiffTool())
-        tools.append(contentsOf: buildTools(allInfos: allInfos))
         tools.append(contentsOf: localizationTools(allInfos: allInfos))
         tools.append(contentsOf: curlTools(allInfos: allInfos))
         tools.append(contentsOf: projectManagementTools())
@@ -98,16 +97,6 @@ extension ToolExecutionService {
         guard !infos.isEmpty else { return "Project display name to target." }
         if infos.count == 1 { return "Project name. Only one project: '\(infos[0].name)'. Required." }
         let list = infos.map { "'\($0.name)'" }.joined(separator: ", ")
-        return "Project display name (required). Available: \(list)."
-    }
-
-    func buildProjectArgDescription(for infos: [ActiveMemoryContext.ProjectInfo]) -> String {
-        guard !infos.isEmpty else { return "Project display name to target." }
-        if infos.count == 1 {
-            let env = (projectSettingsCache[infos[0].id] ?? ProjectSettings()).devEnvironment
-            return "Project name. Only one project: '\(infos[0].name)' (\(env.displayName)). Required."
-        }
-        let list = infos.map { "'\($0.name)' (\((projectSettingsCache[$0.id] ?? ProjectSettings()).devEnvironment.displayName))" }.joined(separator: ", ")
         return "Project display name (required). Available: \(list)."
     }
 

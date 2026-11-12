@@ -33,7 +33,6 @@ ChappieMCP/
 ChappieMCPCore/                        # Local Swift package: ALL helper logic (so tests can @testable import it)
 └── Sources/ChappieMCPCore/
     ├── HelperEntry.swift              # HelperArguments.parse + ChappieMCPHelper.run (signals, parent watch, server start)
-    ├── DevEnvironment.swift           # Mirrors ChappieCore.DevEnvironment (rawValues must stay in sync)
     ├── Server/
     │   ├── MCPHTTPServer.swift        # Unix Domain Socket server + ToolDispatcher; socket I/O on a private GCD queue
     │   ├── MCPModels.swift            # Wire models (MCPRequest / MCPResponse)
@@ -44,7 +43,6 @@ ChappieMCPCore/                        # Local Swift package: ALL helper logic (
         ├── ProcessRunner.swift        # Shared child-process runner: parallel pipes, timeout, cancel = stop the whole process tree
         ├── ProcessTree.swift          # Identical copy of ChappieCore's file (SIGTERM tree, SIGKILL after 2 s); parity is tested
         ├── GitTools.swift             # git_status, git_add, git_commit, git_log, git_reset, git_revert, git_checkout
-        ├── BuildTools/                # build_project, run_tests, read_build_log (env-aware routing)
         ├── PathGuard.swift            # Byte-identical copy of ChappieCore's PathGuard (parity test) — project containment
         ├── LocalizationTools/         # loc_* tools (Xcode / xcstrings only); create/rename/delete accept only .xcstrings
         └── DocumentTools/             # read_document, write_document (Office formats via ZIPFoundation)
@@ -56,14 +54,14 @@ ChappieMCPTests/                       # Xcode unit-test bundle (Swift Testing),
 ├── ProcessRunnerTests.swift           # pipe deadlock, timeout, cancel kills the tree, non-cancellable commands
 ├── SocketIOTests.swift                # deadlines for silent / dripping / non-reading peers (socketpair)
 ├── GitCommandKindTests.swift          # timeout classes and cancellability of git commands
-├── HelperArgumentsTests.swift         # argv contract (mandatory socket path, env maps)
+├── HelperArgumentsTests.swift         # argv contract (mandatory socket path, path map)
 ├── OfficeMediaTests.swift             # picture extraction, markers, write-safe XML
 └── PDFToolsTests.swift                # generated PDFs: page text, ranges, scan pages, 2000 px JPEG render, argument rules
 ```
 
 **Why the library split:** an executable target cannot be imported by a test bundle reliably, so the
 executable is only `main.swift` and everything else lives in `ChappieMCPCore`. Live scenarios that need
-real processes and sockets (parent death, client hang-up during `run_tests`) are still checked by hand on a
+real processes and sockets (parent death, client hang-up during a long `git_push`) are still checked by hand on a
 temporary socket path, never on the app's own socket.
 
 **macOS socket pitfall (found by `SocketIOTests`):** `send(..., MSG_DONTWAIT)` is ignored on macOS; a blocking
@@ -86,7 +84,6 @@ graph TD
         Main["main.swift\nparses argv[1..3]"]
         Server["MCPHTTPServer\nUnix Domain Socket + ToolDispatcher"]
         Git["GitTools"]
-        Build["BuildTools\n(env-aware router)"]
         Loc["LocalizationTools"]
         Doc["DocumentTools\n(ZIPFoundation)"]
     end
@@ -97,11 +94,10 @@ graph TD
 
     TES --> Bridge
     Bridge -->|4-byte len + JSON| Socket
-    Launcher -->|"argv[1]=path argv[2]=socket argv[3]=envMap"| Main
+    Launcher -->|"argv[1]=path argv[2]=socket argv[3]=pathMap"| Main
     Socket --> Server
     Main --> Server
     Server --> Git
-    Server --> Build
     Server --> Loc
     Server --> Doc
 ```
@@ -119,12 +115,12 @@ Response: [4 bytes UInt32 BE length] [JSON: {"result": "...", "error": null}]
 
 | Argument | Value |
 |---|---|
-| `argv[1]` | Workspace path (working directory for git/build) |
+| `argv[1]` | Workspace path (working directory for git) |
 | `argv[2]` | Socket file path |
-| `argv[3]` | JSON map `{"ProjectName": "xcode", ...}` — project→env routing |
+| `argv[3]` | JSON map `{"ProjectName": "/abs/path", ...}` — project→root (git routing, path roots) |
 
-**MCPHelperLauncher** restarts the helper when workspace or devEnvironment changes.
-**MCPToolBridge** connects per call (no persistent connection). Timeout: 1800s (must stay >= the longest `ToolDeadlines` value, 1200s for build/test, so the bridge never cuts a call before the watchdog does).
+**MCPHelperLauncher** restarts the helper when the workspace or the project path map changes.
+**MCPToolBridge** connects per call (no persistent connection). Timeout: 1800s (must stay >= the longest `ToolDeadlines` value, 1800s for a long terminal call, so the bridge never cuts a call before the watchdog does).
 
 ### Helper lifecycle
 
@@ -186,30 +182,9 @@ All git commands run with: `GIT_PAGER=cat`, `GIT_TERMINAL_PROMPT=0`, `TERM=dumb`
 - The kill uses `ProcessTree` (SIGTERM first, so git removes its own locks, SIGKILL after 2 s), which also takes down hook children.
 - `CHAPPIE_MCP_TIMEOUT_SCALE` (0 to 1) shrinks all git timeouts. It exists only for live checks; the app never sets it.
 
-**Discovery helpers** (`BuildTools+Helpers`: `ls` for the `.xcodeproj`, `xcodebuild -list`, `xcrun simctl`) run through `ProcessRunner` with timeouts of 10 / 60 / 20 s and fall back to defaults on timeout. The project name is resolved once per call instead of about five times.
-
-### Build (BuildTools.swift) — env-aware routing
-
-`BuildTools` receives `projectEnvMap` at init and routes each tool to the correct shell command.
-
-| Environment | `build_project` | `run_tests` |
-|---|---|---|
-| `xcode` | `xcodebuild -scheme <App> build` | `xcodebuild -scheme <App>CoreTests test` |
-| `nodejs` | `npm run build` | `npm test [pattern]` |
-| `python` | — (not available) | `python -m pytest [pattern]` |
-| `go` | `go build ./...` | `go test [pkg]` |
-| `rust` | `cargo build` | `cargo test [filter]` |
-| `java` | `mvn compile` or `gradle build` | `mvn test` or `gradle test` |
-| `kotlin` | `gradlew build` | `gradlew test` |
-| `flutter` | `flutter build` | `flutter test [file]` |
-| `react_typescript` | — (not available) | `npm test [pattern]` |
-| `dotnet` | `dotnet build` | `dotnet test [proj]` |
-
-Build log saved to `<workspacePath>/.build_log.txt`.
-
 ### Path safety (PathGuard.swift)
 
-All path-taking tools (`loc_*`, `read_document`, `write_document` incl. `output_path`) resolve paths through `PathGuard`: relative only, no `..`, symlinks leading outside the project root are refused. The single exception is an absolute path inside `~/Library/Application Support/Chappie/Attachments` (the app hands those over for attachments). Git/build tools take no file paths from the model.
+All path-taking tools (`loc_*`, `read_document`, `write_document` incl. `output_path`) resolve paths through `PathGuard`: relative only, no `..`, symlinks leading outside the project root are refused. The single exception is an absolute path inside `~/Library/Application Support/Chappie/Attachments` (the app hands those over for attachments). Git tools take no file paths from the model.
 
 **Roots.** `loc_*` and documents check paths against the attached projects' roots (`projectPathMap`), never against the workspace folder alone. A root of `/`, empty or non-existent is unusable (`PathGuard.isUsableRoot`): `main.swift` turns such an `argv[1]` into an empty workspace, and `MCPHelperLauncher` no longer substitutes the launch directory (which is `/` under Xcode and made the guard a no-op). With several projects, `loc_create` needs a path whose folder already exists in exactly one project; `loc_rename` keeps the destination in the source's project; `loc_dead_keys` scans only the project that owns the file.
 

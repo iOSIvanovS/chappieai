@@ -17,7 +17,6 @@ extension ChappieViewModel {
         saveWorkspaceWithSecurityScope(url)
         MCPHelperLauncher.shared.restartWithWorkspace(
             url,
-            projectEnvMap: activeProjectEnvMap,
             projectPathMap: activeProjectPathMap
         )
 
@@ -131,8 +130,7 @@ extension ChappieViewModel {
             if isStale { saveWorkspaceWithSecurityScope(url) }
             MCPHelperLauncher.shared.launch(
                 workspacePath: url.path,
-                projectEnvMap: activeProjectEnvMap,
-                projectPathMap: activeProjectPathMap
+                    projectPathMap: activeProjectPathMap
             )
         } else if let url = try? URL(resolvingBookmarkData: data, options: [], relativeTo: nil, bookmarkDataIsStale: &isStale) {
             await MainActor.run {
@@ -141,8 +139,7 @@ extension ChappieViewModel {
             }
             MCPHelperLauncher.shared.launch(
                 workspacePath: url.path,
-                projectEnvMap: activeProjectEnvMap,
-                projectPathMap: activeProjectPathMap
+                    projectPathMap: activeProjectPathMap
             )
         }
     }

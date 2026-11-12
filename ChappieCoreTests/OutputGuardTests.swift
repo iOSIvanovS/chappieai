@@ -53,7 +53,7 @@ struct OutputGuardThresholdTests {
         #expect(read.contains("ask them to give you less data"))
         #expect(read.contains("Do not pretend"))
 
-        let command = OutputGuard.oversizeNotice(toolName: "run_tests", bytes: 2_500_000)
+        let command = OutputGuard.oversizeNotice(toolName: "run_terminal", bytes: 2_500_000)
         #expect(command.contains("has finished"))
         #expect(command.contains("do not re-run it blindly"))
     }
@@ -69,7 +69,7 @@ struct OutputGuardThresholdTests {
         #expect(OutputGuard.commandTools.isSubset(of: ToolPolicy.knownTools))
         #expect(OutputGuard.kind(of: "run_terminal") == .command)
         #expect(OutputGuard.kind(of: "git_push") == .command)
-        #expect(OutputGuard.kind(of: "read_build_log") == .read)
+        #expect(OutputGuard.kind(of: "read_file") == .read)
         #expect(OutputGuard.kind(of: "a_future_tool") == .read)
     }
 }

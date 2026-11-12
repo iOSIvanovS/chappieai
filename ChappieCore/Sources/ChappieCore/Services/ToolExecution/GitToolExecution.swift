@@ -1,23 +1,20 @@
-// GitBuildTools.swift
+// GitToolExecution.swift
 // ChappieCore
 //
 // WHY THIS FILE:
-// Execution of all git_* and build/test tools via MCPToolBridge.
+// Execution of all git_* tools via MCPToolBridge.
 // git_diff is blocked here as a safety net (primary block is in ToolPolicy).
 //
 // MULTI-PROJECT GIT:
 // All git_* tools accept an optional "project" arg. When provided, it is forwarded
-// to MCP so git runs in the correct project directory (via projectEnvMap routing).
+// to MCP so git runs in the correct project directory (via projectPathMap routing).
 // When omitted — MCP uses the default (single attached) project path.
-//
-// build_project / run_tests pass the "project" arg through to MCP unchanged.
-// MCP resolves the correct DevEnvironment from its projectEnvMap using that name.
 
 import Foundation
 
 extension ToolExecutionService {
 
-    func executeGitBuildTool(name: String, argsData: Data) async throws -> String {
+    func executeGitTool(name: String, argsData: Data) async throws -> String {
         // Decode args once — used by most tools below
         let args = (try? JSONDecoder().decode([String: String].self, from: argsData)) ?? [:]
 
@@ -72,20 +69,8 @@ extension ToolExecutionService {
             }
             return await mcpBridge.execute(tool: "git_checkout", args: args)
 
-        // MARK: - Build & test tools
-        // "project" arg is passed through from argsData — MCP routes to the correct env per project.
-
-        case "build_project":
-            return await mcpBridge.execute(tool: "build_project", args: args)
-
-        case "run_tests":
-            return await mcpBridge.execute(tool: "run_tests", args: args)
-
-        case "read_build_log":
-            return await mcpBridge.execute(tool: "read_build_log")
-
         default:
-            return "Error: Unknown git/build tool '\(name)'"
+            return "Error: Unknown git tool '\(name)'"
         }
     }
 }

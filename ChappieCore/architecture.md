@@ -150,11 +150,11 @@ ChappieCore/
             ├── ToolDefinitions+FileTools.swift      # File system, search, document, attachment tool defs
             ├── ToolDefinitions+MemoryTools.swift    # Memory tool definitions (IT-08)
             ├── ToolDefinitions+GitTools.swift       # Git tool definitions
-            ├── ToolDefinitions+BuildTools.swift     # Build, test, terminal, project mgmt tool defs
+            ├── ToolDefinitions+TerminalTools.swift   # Terminal, SSH, project mgmt tool defs
             ├── ToolDefinitions+LocalizationTools.swift # loc_* tool definitions (Xcode only)
             ├── ToolExecutionService.swift           # Dispatches tool calls from AIOrchestrator
             ├── FileTools.swift                      # File tool implementations
-            ├── GitBuildTools.swift                  # Git/build tool implementations
+            ├── GitToolExecution.swift               # Git tool execution
             ├── MemoryTools.swift                    # Memory tool implementations
             └── TerminalTools.swift                  # run_terminal / run_ssh implementation (ShellSession), safety-net refusal text
 ```
@@ -537,8 +537,7 @@ function `(tool, target project's ProjectSettings, thread terminal level, curl s
   switch on. The status line (see below) carries that. The `project` argument of project tools lists all attached
   projects and is ALWAYS in `required` for project tools (loc_*, curl_*, pdf path form excepted by `uuid`), exactly like `authorize`.
 
-Rules worth knowing: ADVISOR reads only (files, search, loc read tools); `build_project` needs only
-`buildEnabled`, `run_tests` also needs test access; `git_log` is allowed at the read-only git level; loc_* need an
+Rules worth knowing: ADVISOR reads only (files, search, loc read tools); `git_log` is allowed at the read-only git level; loc_* need an
 Xcode project and carry a `project` argument that scopes the helper's path roots;
 arguments of project tools must be a flat string map (otherwise refused with an explanation).
 `git_diff` is permanently blocked. Tests: `ToolPolicyTests` (completeness check against `availableTools`).
@@ -619,8 +618,6 @@ folded into it). Only the model request is repeated; tools run outside the loop.
   (labelled images); the ViewModel does the same for attached documents (`multimodalParts(for:)`). `OutputGuard`
   judges the TEXT by the 200 KB limit; the pictures are bounded by the pipeline (≤ 20 per document) and by a 40 MB
   cap on the whole marker form.
-- `read_build_log` returns only the lines containing `error:` or `failed` (deduplicated, with line numbers) plus the
-  size of the full log: the full log is progress noise, and `run_tests` already carries the summary.
 - Source files up to 50 MB are read (`FileSystemManager.maxImageBytes`); this only guards memory.
 
 Tests: `ImagePipelineTests`.
@@ -638,10 +635,9 @@ uncancellable system call is abandoned and its late result is dropped.
 
 | Class | Deadline |
 |---|---|
-| files, search, documents, memory, attachments, web, localization, read_build_log | 2 min |
+| files, search, documents, memory, attachments, web, localization | 2 min |
 | git status/log/add/reset/checkout | 3 min |
 | run_terminal / run_ssh | 5 min; a longer requested `timeout` is honoured (+30 s grace) up to 30 min |
-| build_project / run_tests | 20 min |
 | git commit / revert / push | 12 min (above the helper's own 10 min cap, which normally fires first) |
 
 The message tells the model the outcome: mutating tools (`ToolDeadlines.isMutating`) are reported as
@@ -687,8 +683,8 @@ pipeline has its own rules).
 
 | Kind | Tools | Limit |
 |---|---|---|
-| read | everything not listed as command: files, documents, search, memory, web, attachments, `read_build_log` | 200 KB |
-| command | `run_terminal`, `run_ssh`, `build_project`, `run_tests`, `git_*` | 100 KB |
+| read | everything not listed as command: files, documents, search, memory, web, attachments | 200 KB |
+| command | `run_terminal`, `run_ssh`, `git_*` | 100 KB |
 
 **Over the limit nothing is cut.** No head/tail/middle: the model gets a notice with the real size and the limit
 and is told to ask the user for less data (read) or to narrow the command and check state before re-running
@@ -819,3 +815,15 @@ Tests: `MessageTimestampTests`, `MemoryDatesTests`.
 | 2026-11 | `project` is required for every project tool (file, search, document, git, build, loc, curl, pdf by path), with one project or several. Removed: single-project default, `ProjectName/` path-prefix routing (a project with a same-named inner folder, e.g. `Chappie/Chappie/`, silently redirected calls to the root), all-projects mode of `list_files`/`search_in_project`; schemas no longer depend on the number of projects. Covered by ToolPathRoutingTests, ToolAuthorizationTests, ToolExposureTests. |
 | 2026-11 | Remote providers.json catalog removed (ProvidersRemoteService, RemoteProviderCatalog, startup sync). Replaced by hardcoded BuiltInProviders presets without models; chat path is per preset. `AIProvider.catalogId` keeps its name for stored-data compatibility and now means "preset id". |
 | 2026-11 | Localization boundary: ChappieCore holds no catalog-localized strings. Labels of AgentRole/Git/Tests and the "unknown" DevEnvironment moved to the app target (Chappie/Views/Shared/ProjectModels+Display.swift), because Xcode extracts catalog keys only from app sources and marks keys used inside a Swift package as stale. `DevEnvironment.displayName` stays a stable English name for prompts; the UI uses `localizedName`. |
+
+### Build and test tools removed (2026-11)
+
+`build_project`, `run_tests`, `read_build_log`, the `buildEnabled` setting, `TestsAccessLevel`,
+`DevEnvironment.specificTools` and the helper's `projectEnvMap` (argv[3]) are gone. WHY: they were per-language
+wrappers around commands the terminal already runs, and they hid the real output behind a summary. The agent now
+runs `xcodebuild`, `npm test`, `pytest` etc. through `run_terminal`; a long output is spilled to a file (see
+OutputSpool) and read with `grep`/`sed`. The dev-environment setting stays as a hint only and never gates a tool.
+`testsAccess` became `ProjectSettings.testsWriteEnabled` (one switch, only a prompt line states it); a stored legacy
+`"testsAccess":"write"` turns it on, every other value (or type) turns it off. Tests: `TerminalSwitchMigrationTests`.
+Recipe for Xcode: `xcodebuild -project P.xcodeproj -scheme S -destination 'platform=macOS' test > /tmp/x.log 2>&1`;
+for iOS pick a simulator from `xcodebuild -showdestinations`; a cold simulator may fail the first launch, retry once.
