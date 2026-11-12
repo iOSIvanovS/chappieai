@@ -40,6 +40,7 @@ extension ToolExecutionService {
         tools.append(contentsOf: fileSystemTools(allInfos: allInfos))
         tools.append(contentsOf: fileMetaAndEditTools(allInfos: allInfos))
         tools.append(contentsOf: searchTools(allInfos: allInfos))
+        tools.append(contentsOf: jsonTools(allInfos: allInfos))
 
         // Office documents + attachments + web
         tools.append(contentsOf: documentTools(allInfos: allInfos))

@@ -70,6 +70,10 @@ public struct JSONDocument: Sendable {
 
     // MARK: Parsing
 
+    /// Largest number of values a document may hold. A node costs about 100 bytes, so the limit keeps
+    /// the memory of one parse bounded even for a file made of millions of tiny values.
+    public static let maxNodes = 4_000_000
+
     public static func parse(_ data: Data) throws -> JSONDocument {
         var parser = JSONParser(bytes: [UInt8](data))
         return try parser.parseDocument()

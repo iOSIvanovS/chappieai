@@ -48,6 +48,8 @@ ChappieCoreTests/
 ├── ImagePipelineTests.swift            # ImageDownscaler (2000 px cap, JPEG, alpha, pass-through, cache reuse/invalidation), ImageValve, image marker restriction
 ├── OfficeImagesTests.swift             # ToolImageResult marker, OfficeMediaIntake (foreign folder/file/symlink refused, folder deleted), OutputGuard on documents with pictures
 ├── PDFToolsRoutingTests.swift          # pdf_* classified/exposed, page mandatory, other readers refuse a PDF, picture result through OutputGuard
+├── JSONDocumentTests.swift             # JSON parser with byte positions, style detection (fixtures: xcstrings, package.json, tsconfig, minified, tabs, CRLF, BOM), deep nesting on a worker thread
+├── JSONToolsTests.swift                # paths/globs, json_info/schema/get/find on a generated 300-key catalog, answer size ceilings, UTF-16, deep file, service wiring
 ├── MemoryManagerTests.swift            # Semantic memory CRUD via SQLiteStorage
 ├── TerminalSwitchMigrationTests.swift   # Legacy terminalAccess values -> terminalEnabled switch, wrong types, new key wins, round trip, project list survives
 ├── ThreadIsolationTests.swift          # SystemPromptBuilder: sections, memory isolation, compact project settings block, no terminal lines

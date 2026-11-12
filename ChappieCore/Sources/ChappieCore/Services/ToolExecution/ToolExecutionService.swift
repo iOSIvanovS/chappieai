@@ -267,6 +267,9 @@ public actor ToolExecutionService {
             case "pdf_info", "pdf_page_as_txt", "pdf_page_as_image":
                 return await executePDFTool(name: name, argsData: argsData)
 
+            case "json_info", "json_schema", "json_get", "json_find":
+                return await executeJSONTool(name: name, argsData: argsData)
+
             case "curl_request", "curl_session", "curl_extract":
                 return try await executeCurlTool(name: name, argsData: argsData)
 

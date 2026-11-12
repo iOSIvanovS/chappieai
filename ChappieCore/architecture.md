@@ -113,6 +113,18 @@ ChappieCore/
          │   ├── CurlScenarioTools.swift #   scenario file tools; save validates everything before writing and warns about callers that stop validating; delete refuses while called
         │   ├── CurlTools.swift         #   executes the three tools on CurlEngine.shared; context = thread hosts + targeted project's secrets + Keychain
         │   └── CurlToolArguments.swift #   flat string args -> engine types (headers/query/form objects, extract/apply rule arrays, body choice)
+        ├── JSONTools/                  # read-only json_* engine: parse with byte positions, no values built (see section 12a3)
+        │   ├── JSONDocument.swift      #   flat node array in file order, ranges, lookup, line numbers; JSONParser.swift (iterative, maxDepth 512, maxNodes 4M)
+        │   ├── JSONStyle.swift         #   indent, separator, EOL, escaping, key order, empty forms (used by json_info; json_edit will copy it)
+        │   ├── JSONPath.swift          #   path = array of segments (key, index, glob * ?, "**"), resolve, path(of:), JSONToolError
+        │   ├── JSONText.swift          #   quoting, counts, line spans, JSONOutput.fit (the size ceiling), JSONToolArgs
+        │   ├── JSONInfo.swift          #   json_info report
+        │   ├── JSONSchema.swift        #   JSONShape + builder: merge nodes into shapes, dictionary detection
+        │   ├── JSONSchemaRenderer.swift #  json_schema text from a shape
+        │   ├── JSONFragment.swift      #   json_get: raw numbered lines when they fit, otherwise a collapsed view; missing-path diagnosis
+        │   ├── JSONFinder.swift        #   json_find: subjects (at) + conditions (key, kind, has, missing, value_at, equals, not_equals, contains) + output/group_by
+        │   └── JSONToolEngine.swift    #   pure entry point (bytes + args -> text), UTF-16/32 refusal
+        ├── ToolExecution/JSONTools/JSONTools.swift  # executor: reads bytes via FileSystemManager.readData (path guard, 64 MB cap), parses on a detached task
         ├── ToolExecution/PDFTools/
         │   ├── PDFTools.swift          # pdf_info / pdf_page_as_txt / pdf_page_as_image: picks the file (uuid or project path), calls the helper
         │   └── PDFGuidance.swift       # Refusal text every other reader returns for a PDF, pointing to the pdf_* tools
@@ -666,6 +678,25 @@ no number; a bar under the row was rejected because it made the label jump). Tes
 - **A chat attachment of a PDF** is inlined as a reference line with its uuid (`pdfReferenceText`) instead of its
   bytes; the model reads it with the pdf tools.
 - Standard deadline (2 min), not mutating. Tests: `PDFToolsRoutingTests` (here) and `PDFToolsTests` (helper).
+
+## 12a3. JSON tools — read big JSON files without reading them
+
+`json_info`, `json_schema`, `json_get`, `json_find` (definitions in `ToolDefinitions+JSONTools`, policy: `fileRead`, ordered
+right after `get_file_info`). They run in the app, not in the helper: bytes come from `FileSystemManager.readData`
+(same `PathGuard` as `read_file`, size checked before reading), the engine is pure (`JSONToolEngine.run`).
+Decisions:
+
+- **Positions, not values.** The parser records byte ranges only. The same document will let `json_edit` (pass J3)
+  splice a fragment and leave every other byte alone.
+- **Paths are JSON arrays of segments**, never dotted strings, because keys contain dots. `*`/`?` glob, `**` any depth,
+  integers index arrays (negative from the end).
+- **Every answer is bounded**: `max_chars` default 8000, clamped 1000..40000, enforced by `JSONOutput.fit` and by the
+  collapsed view choosing the deepest level that still fits. Per-level member caps (40/12/5/3) keep a big map readable.
+- **Errors teach**: a missing path says where it stops and lists the keys there, closest first.
+- **Absence is a first-class question** (`json_find` `missing`), the thing `search_in_file` cannot answer.
+- No recursion over document depth anywhere in tool code (small worker stacks): parser and renderer use explicit stacks;
+  the schema builder recurses only `depth` levels (max 20).
+- Standard deadline, not mutating. Tests: `JSONToolsTests`, `JSONDocumentTests`.
 
 ## 12b. OutputGuard — the one size gate for tool results
 

@@ -111,6 +111,9 @@ struct JSONParser {
         let depth = stack.count
         guard depth <= Self.maxDepth else { throw fail("Nesting is deeper than \(Self.maxDepth) levels") }
         guard pos < bytes.count else { throw fail("Unexpected end of file, a value was expected") }
+        guard nodes.count < JSONDocument.maxNodes else {
+            throw fail("The file holds more than \(JSONDocument.maxNodes) values, too many to index")
+        }
 
         let kind: JSONKind
         switch bytes[pos] {

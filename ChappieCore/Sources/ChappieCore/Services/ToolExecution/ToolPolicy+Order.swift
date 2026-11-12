@@ -21,7 +21,8 @@ extension ToolPolicy {
         // Attachments, documents and the web (read-only)
         "fetch_attachment", "pdf_info", "pdf_page_as_txt", "pdf_page_as_image", "web_fetch",
         // Reading project files
-        "list_files", "get_file_info", "read_file", "view_image", "search_in_file", "search_in_project", "read_document",
+        "list_files", "get_file_info", "json_info", "json_schema", "json_get", "json_find",
+        "read_file", "view_image", "search_in_file", "search_in_project", "read_document",
         // Reading localization
         "loc_info", "loc_key_check", "loc_list_keys", "loc_next_batch", "loc_dead_keys",
         // Changing project files

@@ -119,7 +119,8 @@ public enum ToolPolicy {
         add(.forbidden, ["git_diff"])
         add(.fileRead, [
             "list_files", "read_file", "get_file_info", "view_image",
-            "read_document", "search_in_file", "search_in_project"
+            "read_document", "search_in_file", "search_in_project",
+            "json_info", "json_schema", "json_get", "json_find"
         ])
         add(.fileWrite, [
             "write_file", "patch_file", "delete_file", "move_file", "rename_file",
