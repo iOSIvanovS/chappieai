@@ -11,9 +11,8 @@ extension ToolExecutionService {
         let pathArg = AIToolProperty(type: "string", description: "Relative path to the .xcstrings file (e.g. 'Chappie/Localizable.xcstrings')")
         let keyArg  = AIToolProperty(type: "string", description: "Localization key string")
         let projectArg = AIToolProperty(type: "string", description: fileToolProjectArgDescription(for: allInfos))
-        let multiProject = allInfos.count > 1
 
-        return Self.withProjectArg(projectArg, required: multiProject, to: [
+        return Self.withProjectArg(projectArg, required: true, to: [
             AITool(function: AIFunctionDefinition(
                 name: "loc_info",
                 description: "Returns a map of all .xcstrings files in the project with per-language coverage stats.\nUse at the start of any localization session to understand current state.",

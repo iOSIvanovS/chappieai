@@ -13,7 +13,6 @@ extension ToolExecutionService {
         let progInfos = allInfos.filter { settings(of: $0).isProgrammingProject }
         let buildable = progInfos.filter { settings(of: $0).devEnvironment.specificTools.contains("build_project") }
         let projectArgDesc = buildProjectArgDescription(for: allInfos)
-        let multi = allInfos.count > 1
 
         return [
             AITool(function: AIFunctionDefinition(
@@ -23,7 +22,7 @@ extension ToolExecutionService {
                     : buildProjectDescription(for: buildable),
                 parameters: AIToolParameters(
                     properties: ["project": AIToolProperty(type: "string", description: projectArgDesc)],
-                    required: multi ? ["project"] : []
+                    required: ["project"]
                 )
             )),
             AITool(function: AIFunctionDefinition(
@@ -36,7 +35,7 @@ extension ToolExecutionService {
                         "project": AIToolProperty(type: "string", description: projectArgDesc),
                         "target": AIToolProperty(type: "string", description: "Test target name or file/pattern. Empty = all tests.")
                     ],
-                    required: multi ? ["project"] : []
+                    required: ["project"]
                 )
             )),
             AITool(function: AIFunctionDefinition(
@@ -44,7 +43,7 @@ extension ToolExecutionService {
                 description: "Read the diagnostic lines of the last build or test run log: only lines containing 'error:' or 'failed' (case-insensitive, duplicates removed, with line numbers). The full log is not returned — it is mostly progress noise.",
                 parameters: AIToolParameters(
                     properties: ["project": AIToolProperty(type: "string", description: projectArgDesc)],
-                    required: multi ? ["project"] : []
+                    required: ["project"]
                 )
             ))
         ]

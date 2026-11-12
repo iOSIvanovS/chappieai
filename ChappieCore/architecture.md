@@ -76,7 +76,7 @@ ChappieCore/
         ├── AIProviderStore.swift       # CRUD for AI providers + Keychain (multi-key)
         ├── AppSettingsStore.swift      # Actor-based CRUD for singleton AppSettings
         ├── FileSystemManager.swift             # Secure FS: init, routing, read/write/delete/move
-        ├── FileSystemManager+Listing.swift     # listFiles (all: prefixed; project: relative to root)
+        ├── FileSystemManager+Listing.swift     # listFiles (project: paths relative to its root; the tools always pass a project)
         ├── FileSystemManager+Search.swift      # searchInFile, searchInProject, grep helpers
         ├── FileSystemManager+Patch.swift       # patchFile (exactlyOne policy), getFileInfo
         ├── FileSystemManager+Image.swift       # readImageData (view_image) — raw bytes, no UTF-8 decode
@@ -522,17 +522,19 @@ locRead, locWrite, git, build, tests, buildLog, curl. **A tool without a row is 
 function `(tool, target project's ProjectSettings, thread terminal level, curl switch) → ToolDecision`.
 
 `ToolAuthorization.swift` connects it to the live thread, for both questions with the same function:
-- **Execution** — `authorize()` picks the call's target project (explicit `project` arg, else the only attached
-  project, else a `ProjectName/` path prefix for file tools; `list_files`/`search_in_project` may span all).
-  Several projects and no way to tell → refused with the list, never "the first one". Rights of OTHER projects
-  never apply. The canonical project name is written back into the arguments.
+- **Execution** — `authorize()` takes the call's target project ONLY from the explicit `project` argument, which is
+  required for every project tool, even when one project is attached (decision 2026-11-12: one strict rule instead of
+  behaviour that changes with the number of projects). Missing or empty → refused with the list of attached projects,
+  never "the first one". No path-prefix hints and no all-projects mode for `list_files`/`search_in_project`: a path is
+  always relative to the project root, because a project may contain a folder with its own name (`Chappie/Chappie/`).
+  Rights of OTHER projects never apply. The canonical project name is written back into the arguments.
   A refusal of a project tool ends with `whereItWorks`: the attached projects where THIS tool is allowed ("This tool
   works in: A, B. Pass one of them in the 'project' argument"), or "No attached project allows this tool right now",
   or "No project is attached…". A thread-level refusal (terminal/curl switch off) gets no such tail, since no project helps.
 - **Exposure** — `availableTools` offers EVERY classified tool (git_diff as FORBIDDEN). The old filter that hid tools
   nobody could run is gone: the model must know its whole toolbox, why a tool is closed, and what to ask the user to
   switch on. The status line (see below) carries that. The `project` argument of project tools lists all attached
-  projects and is required when more than one is attached, exactly like `authorize`.
+  projects and is ALWAYS in `required` for project tools (loc_*, curl_*, pdf path form excepted by `uuid`), exactly like `authorize`.
 
 Rules worth knowing: ADVISOR reads only (files, search, loc read tools); `build_project` needs only
 `buildEnabled`, `run_tests` also needs test access; `git_log` is allowed at the read-only git level; loc_* need an
@@ -809,5 +811,6 @@ Tests: `MessageTimestampTests`, `MemoryDatesTests`.
 | 2026-10 | Office pictures (backlog 10b-2b): the helper extracts `word|ppt|xl/media` (and ODT `Pictures/`) pictures into a private temp folder and leaves `<!-- [image N: name] -->` XML comments in the text (valid XML, safe for `write_document`); the app validates, downscales and deletes the folder, and shows the images to the model as separate multimodal parts. `read_build_log` now returns only error/failed lines. Covered by OfficeImagesTests (15). |
 | 2026-10 | CommandSafety (backlog 11A): word-level command analysis replaces the substring blocklist (no more false positives on `rm -rf /tmp/x`, no bypass by flag order or `bash -c`); documented as a safety net, not a boundary. Covered by CommandSafetyTests (14 groups, ~190 command cases). |
 | 2026-08 | Backup import UI shipped in app layer (Chappie/architecture.md): BackupImportSheet two-step confirmation (decrypt/preview, then explicit destructive "Restore Now"), reachable from SettingsView and from OnboardingView welcome step as a "Restore from Backup" shortcut that skips the whole provider setup wizard. |
+| 2026-11 | `project` is required for every project tool (file, search, document, git, build, loc, curl, pdf by path), with one project or several. Removed: single-project default, `ProjectName/` path-prefix routing (a project with a same-named inner folder, e.g. `Chappie/Chappie/`, silently redirected calls to the root), all-projects mode of `list_files`/`search_in_project`; schemas no longer depend on the number of projects. Covered by ToolPathRoutingTests, ToolAuthorizationTests, ToolExposureTests. |
 | 2026-11 | Remote providers.json catalog removed (ProvidersRemoteService, RemoteProviderCatalog, startup sync). Replaced by hardcoded BuiltInProviders presets without models; chat path is per preset. `AIProvider.catalogId` keeps its name for stored-data compatibility and now means "preset id". |
 | 2026-11 | Localization boundary: ChappieCore holds no catalog-localized strings. Labels of AgentRole/Git/Tests/TerminalAccessLevel and the "unknown" DevEnvironment moved to the app target (Chappie/Views/Shared/ProjectModels+Display.swift), because Xcode extracts catalog keys only from app sources and marks keys used inside a Swift package as stale. `DevEnvironment.displayName` stays a stable English name for prompts; the UI uses `localizedName`. |

@@ -9,7 +9,6 @@ extension ToolExecutionService {
 
     func fileSystemTools(allInfos: [ActiveMemoryContext.ProjectInfo]) -> [AITool] {
         var tools: [AITool] = []
-        let multiProject = allInfos.count > 1
         let projectArg = AIToolProperty(type: "string", description: fileToolProjectArgDescription(for: allInfos))
 
         tools.append(AITool(function: AIFunctionDefinition(
@@ -17,7 +16,7 @@ extension ToolExecutionService {
             description: "Get the list of all files in the project (relative paths).",
             parameters: AIToolParameters(
                 properties: ["project": AIToolProperty(type: "string", description: listFilesProjectArgDescription(for: allInfos))],
-                required: multiProject ? ["project"] : []
+                required: ["project"]
             )
         )))
 
@@ -35,7 +34,7 @@ extension ToolExecutionService {
                     "path": AIToolProperty(type: "string", description: "Relative path to the file"),
                     "project": projectArg
                 ],
-                required: multiProject ? ["path", "project"] : ["path"]
+                required: ["path", "project"]
             )
         )))
 
@@ -54,7 +53,7 @@ extension ToolExecutionService {
                     "content": AIToolProperty(type: "string", description: "Full code or text to write into the file"),
                     "project": projectArg
                 ],
-                required: multiProject ? ["path", "content", "project"] : ["path", "content"]
+                required: ["path", "content", "project"]
             )
         )))
 
@@ -66,7 +65,7 @@ extension ToolExecutionService {
                     "path": AIToolProperty(type: "string", description: "Relative path to the file to delete"),
                     "project": projectArg
                 ],
-                required: multiProject ? ["path", "project"] : ["path"]
+                required: ["path", "project"]
             )
         )))
 
@@ -84,7 +83,7 @@ extension ToolExecutionService {
                     "path": AIToolProperty(type: "string", description: "Relative path to the image file"),
                     "project": projectArg
                 ],
-                required: multiProject ? ["path", "project"] : ["path"]
+                required: ["path", "project"]
             )
         )))
 
@@ -92,7 +91,6 @@ extension ToolExecutionService {
     }
 
     func fileMetaAndEditTools(allInfos: [ActiveMemoryContext.ProjectInfo]) -> [AITool] {
-        let multiProject = allInfos.count > 1
         let projectArg = AIToolProperty(type: "string", description: fileToolProjectArgDescription(for: allInfos))
 
         return [
@@ -104,7 +102,7 @@ extension ToolExecutionService {
                         "path": AIToolProperty(type: "string", description: "Relative path to the file"),
                         "project": projectArg
                     ],
-                    required: multiProject ? ["path", "project"] : ["path"]
+                    required: ["path", "project"]
                 )
             )),
             AITool(function: AIFunctionDefinition(
@@ -126,7 +124,7 @@ extension ToolExecutionService {
                         "replace": AIToolProperty(type: "string", description: "Text to replace the found block with. Can be empty string to delete the block."),
                         "project": projectArg
                     ],
-                    required: multiProject ? ["path", "find", "replace", "project"] : ["path", "find", "replace"]
+                    required: ["path", "find", "replace", "project"]
                 )
             )),
             AITool(function: AIFunctionDefinition(
@@ -138,7 +136,7 @@ extension ToolExecutionService {
                         "to": AIToolProperty(type: "string", description: "New relative path (destination). Subdirectories are created automatically."),
                         "project": projectArg
                     ],
-                    required: multiProject ? ["from", "to", "project"] : ["from", "to"]
+                    required: ["from", "to", "project"]
                 )
             )),
             AITool(function: AIFunctionDefinition(
@@ -150,14 +148,13 @@ extension ToolExecutionService {
                         "to": AIToolProperty(type: "string", description: "New relative path with the new filename"),
                         "project": projectArg
                     ],
-                    required: multiProject ? ["from", "to", "project"] : ["from", "to"]
+                    required: ["from", "to", "project"]
                 )
             ))
         ]
     }
 
     func searchTools(allInfos: [ActiveMemoryContext.ProjectInfo]) -> [AITool] {
-        let multiProject = allInfos.count > 1
         let projectArg = AIToolProperty(type: "string", description: fileToolProjectArgDescription(for: allInfos))
 
         return [
@@ -179,7 +176,7 @@ extension ToolExecutionService {
                         "context_lines": AIToolProperty(type: "string", description: "Number of lines to show before and after each match (default: 2)"),
                         "project": projectArg
                     ],
-                    required: multiProject ? ["path", "query", "project"] : ["path", "query"]
+                    required: ["path", "query", "project"]
                 )
             )),
             AITool(function: AIFunctionDefinition(
@@ -192,14 +189,13 @@ extension ToolExecutionService {
                         "context_lines": AIToolProperty(type: "string", description: "Number of lines to show before and after each match (default: 2)"),
                         "project": projectArg
                     ],
-                    required: ["query"]
+                    required: ["query", "project"]
                 )
             ))
         ]
     }
 
     func documentTools(allInfos: [ActiveMemoryContext.ProjectInfo]) -> [AITool] {
-        let multiProject = allInfos.count > 1
         let projectArg = AIToolProperty(type: "string", description: fileToolProjectArgDescription(for: allInfos))
 
         return [
@@ -211,7 +207,7 @@ extension ToolExecutionService {
                         "path": AIToolProperty(type: "string", description: "Relative path to the document file (e.g. 'contract.docx', 'report.xlsx')"),
                         "project": projectArg
                     ],
-                    required: multiProject ? ["path", "project"] : ["path"]
+                    required: ["path", "project"]
                 )
             )),
             AITool(function: AIFunctionDefinition(
@@ -225,7 +221,7 @@ extension ToolExecutionService {
                         "entry_name": AIToolProperty(type: "string", description: "Optional: override which ZIP entry to replace (e.g. 'ppt/slides/slide2.xml'). Defaults to the primary entry for each format."),
                         "project": projectArg
                     ],
-                    required: multiProject ? ["path", "content", "project"] : ["path", "content"]
+                    required: ["path", "content", "project"]
                 )
             ))
         ]

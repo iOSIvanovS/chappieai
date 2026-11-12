@@ -9,7 +9,6 @@ import Foundation
 extension ToolExecutionService {
 
     func gitTools(allInfos: [ActiveMemoryContext.ProjectInfo]) -> [AITool] {
-        let multiProg = allInfos.count > 1
         let projectArg = AIToolProperty(type: "string", description: gitProjectArgDescription(for: allInfos))
 
         return [
@@ -18,7 +17,7 @@ extension ToolExecutionService {
                 description: "Show the current git repository status: modified, new, and deleted files.",
                 parameters: AIToolParameters(
                     properties: ["project": projectArg],
-                    required: multiProg ? ["project"] : []
+                    required: ["project"]
                 )
             )),
             AITool(function: AIFunctionDefinition(
@@ -29,7 +28,7 @@ extension ToolExecutionService {
                         "paths": AIToolProperty(type: "string", description: "Space-separated paths, or '.' for all files (default '.')"),
                         "project": projectArg
                     ],
-                    required: multiProg ? ["project"] : []
+                    required: ["project"]
                 )
             )),
             AITool(function: AIFunctionDefinition(
@@ -40,7 +39,7 @@ extension ToolExecutionService {
                         "message": AIToolProperty(type: "string", description: "Commit message"),
                         "project": projectArg
                     ],
-                    required: multiProg ? ["message", "project"] : ["message"]
+                    required: ["message", "project"]
                 )
             )),
             AITool(function: AIFunctionDefinition(
@@ -52,7 +51,7 @@ extension ToolExecutionService {
                         "branch": AIToolProperty(type: "string", description: "Branch name (default: 'main')"),
                         "project": projectArg
                     ],
-                    required: multiProg ? ["project"] : []
+                    required: ["project"]
                 )
             )),
             AITool(function: AIFunctionDefinition(
@@ -63,7 +62,7 @@ extension ToolExecutionService {
                         "count": AIToolProperty(type: "string", description: "Number of commits to show (default 10)"),
                         "project": projectArg
                     ],
-                    required: multiProg ? ["project"] : []
+                    required: ["project"]
                 )
             )),
             AITool(function: AIFunctionDefinition(
@@ -71,7 +70,7 @@ extension ToolExecutionService {
                 description: "Remove all files from the staging area (git reset HEAD).",
                 parameters: AIToolParameters(
                     properties: ["project": projectArg],
-                    required: multiProg ? ["project"] : []
+                    required: ["project"]
                 )
             )),
             AITool(function: AIFunctionDefinition(
@@ -83,7 +82,7 @@ extension ToolExecutionService {
                         "message": AIToolProperty(type: "string", description: "Message for the resulting revert commit"),
                         "project": projectArg
                     ],
-                    required: multiProg ? ["hashes", "message", "project"] : ["hashes", "message"]
+                    required: ["hashes", "message", "project"]
                 )
             )),
             AITool(function: AIFunctionDefinition(
@@ -95,7 +94,7 @@ extension ToolExecutionService {
                         "paths": AIToolProperty(type: "string", description: "Space-separated file paths to restore"),
                         "project": projectArg
                     ],
-                    required: multiProg ? ["ref", "paths", "project"] : ["ref", "paths"]
+                    required: ["ref", "paths", "project"]
                 )
             ))
         ]

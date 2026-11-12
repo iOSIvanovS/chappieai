@@ -64,7 +64,7 @@ extension ToolExecutionService {
                         "pick": AIToolProperty(type: "string", description: "Optional JSON array of paths to keep from a JSON body, e.g. [\"data.items[*].id\", \"paginate.total\"]. `[*]` takes every element of an array. A trailing `{a,b}` keeps only those fields of each object, e.g. `data.items[*].{id,name}` gives [{\"id\":1,\"name\":\"x\"}]. Returns {\"path\": value}; missing paths are null. Not applied to 4xx/5xx responses. Use it to keep large responses short; the full response stays available to curl_extract."),
                         "show_headers": AIToolProperty(type: "string", description: "Response headers: by default routine ones (CORS, cache, date, server, security) are folded into a count and every other header is shown. Pass \"all\" to see every header.")
                     ],
-                    required: []
+                    required: ["project"]
                 )
             )),
             AITool(function: AIFunctionDefinition(
@@ -100,7 +100,7 @@ extension ToolExecutionService {
                         "apply": AIToolProperty(type: "string", description: "JSON array of rules: [{header, template}] applied to every later request of the session."),
                         "force": AIToolProperty(type: "boolean", description: "Log in again even if the session already exists.")
                     ],
-                    required: []
+                    required: ["project"]
                 )
             )),
             AITool(function: AIFunctionDefinition(
@@ -119,7 +119,7 @@ extension ToolExecutionService {
                         "from": AIToolProperty(type: "string", description: "json:dotted.path, header:Name or cookie:name."),
                         "sensitive": AIToolProperty(type: "boolean", description: "Hide the value everywhere. Default: true for credential-like names, false otherwise.")
                     ],
-                    required: ["host", "name", "from"]
+                    required: ["project", "host", "name", "from"]
                 )
             ))
         ] + curlScenarioTools(project: project)
@@ -143,7 +143,7 @@ extension ToolExecutionService {
                         "folder": folder,
                         "name": AIToolProperty(type: "string", description: "Scenario to show in full. Omit to list all.")
                     ],
-                    required: ["folder"]
+                    required: ["project", "folder"]
                 )
             )),
             AITool(function: AIFunctionDefinition(
@@ -181,7 +181,7 @@ extension ToolExecutionService {
                         "scenario": AIToolProperty(type: "string", description: "The whole scenario as a JSON object (text). Its `name` is the file name."),
                         "name": AIToolProperty(type: "string", description: "Optional: must equal scenario.name; a guard against saving under the wrong name.")
                     ],
-                    required: ["folder", "scenario"]
+                    required: ["project", "folder", "scenario"]
                 )
             )),
             AITool(function: AIFunctionDefinition(
@@ -212,7 +212,7 @@ extension ToolExecutionService {
                         "verbose": AIToolProperty(type: "boolean", description: "Show the redacted body of passing steps too."),
                         "dry_run": AIToolProperty(type: "boolean", description: "Only run the preflight; send nothing.")
                     ],
-                    required: ["folder", "name", "host"]
+                    required: ["project", "folder", "name", "host"]
                 )
             )),
             AITool(function: AIFunctionDefinition(
@@ -224,7 +224,7 @@ extension ToolExecutionService {
                         "folder": folder,
                         "name": AIToolProperty(type: "string", description: "Scenario to delete.")
                     ],
-                    required: ["folder", "name"]
+                    required: ["project", "folder", "name"]
                 )
             ))
         ]

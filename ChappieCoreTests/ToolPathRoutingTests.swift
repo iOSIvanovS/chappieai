@@ -65,16 +65,19 @@ struct ToolPathRoutingTests {
         let fixture = try await makeFixture(projects: 1)
         defer { try? FileManager.default.removeItem(at: fixture.rootA.deletingLastPathComponent()) }
 
-        #expect(await call(fixture.service, "read_file", #"{"path":"Chappie/x.txt"}"#).contains("inner-file"))
+        #expect(await call(fixture.service, "read_file", #"{"path":"Chappie/x.txt","project":"Chappie"}"#).contains("inner-file"))
     }
 
-    @Test("Several projects, no project argument: the name prefix routes and is removed")
-    func prefixRoutesWithoutProject() async throws {
-        let fixture = try await makeFixture(projects: 2)
-        defer { try? FileManager.default.removeItem(at: fixture.rootA.deletingLastPathComponent()) }
+    @Test("No project argument is refused, with one project and with several; the path prefix is not a hint")
+    func missingProjectIsRefused() async throws {
+        for count in [1, 2] {
+            let fixture = try await makeFixture(projects: count)
+            defer { try? FileManager.default.removeItem(at: fixture.rootA.deletingLastPathComponent()) }
 
-        #expect(await call(fixture.service, "read_file", #"{"path":"Chappie/x.txt"}"#).contains("root-file"))
-        #expect(await call(fixture.service, "read_file", #"{"path":"Chappie/Chappie/x.txt"}"#).contains("inner-file"))
+            let result = await call(fixture.service, "read_file", #"{"path":"Chappie/x.txt"}"#)
+            #expect(result.contains("'project' argument is required"))
+            #expect(!result.contains("inner-file") && !result.contains("root-file"))
+        }
     }
 
     @Test("write_file with an explicit project lands in the inner folder, not the root")

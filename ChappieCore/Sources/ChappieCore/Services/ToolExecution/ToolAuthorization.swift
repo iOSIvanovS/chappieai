@@ -5,12 +5,12 @@
 // asks the policy about that project only, and hands the executor arguments in which the project
 // name is canonical (exact spelling of the attached project).
 //
-// PROJECT RESOLUTION (in order):
-//   1. explicit "project" arg — exact match, then case-insensitive; unknown name → denied with the list.
-//   2. exactly one project attached → that one.
-//   3. file tools only: a "ProjectName/…" path prefix (the file system routes by prefix too).
-//   4. list_files / search_in_project without a project → every project (read-only, rights identical).
-//   5. otherwise → denied, asking the model to name the project. Never "silently the first one".
+// PROJECT RESOLUTION: the "project" argument is REQUIRED for every project tool, even when only one
+// project is attached. One strict rule instead of behaviour that changes with the number of projects.
+//   1. "project" given — exact match, then case-insensitive; unknown name → denied with the list.
+//   2. "project" missing or empty → denied, asking the model to name it. Never "silently the first one".
+// Paths are always relative to the project root; a "ProjectName/…" prefix is never interpreted,
+// because a project may contain a folder with its own name.
 
 import Foundation
 
@@ -25,15 +25,6 @@ enum ToolAuthorization {
 // MARK: - Authorization
 
 extension ToolExecutionService {
-
-    /// File tools that the FileSystemManager routes by "ProjectName/…" prefix when no project is given.
-    private static let prefixRoutedTools: Set<String> = [
-        "read_file", "write_file", "patch_file", "delete_file", "get_file_info",
-        "move_file", "rename_file", "view_image", "search_in_file"
-    ]
-
-    /// Read-only tools that legitimately span all attached projects when none is named.
-    private static let acrossProjectsTools: Set<String> = ["list_files", "search_in_project"]
 
     func authorize(toolName: String, argsData: Data) -> ToolAuthorization {
         let terminal = activeMemoryContext.threadTerminalAccess
@@ -69,7 +60,7 @@ extension ToolExecutionService {
         }
 
         let projects = activeMemoryContext.projects
-        let target: ActiveMemoryContext.ProjectInfo?
+        let target: ActiveMemoryContext.ProjectInfo
 
         switch resolveTarget(toolName: toolName, args: args, projects: projects) {
         case .failure(let error):
@@ -78,38 +69,12 @@ extension ToolExecutionService {
             target = resolved
         }
 
-        guard let target else {
-            // list_files / search_in_project across all projects: allowed if any project allows it.
-            let allowedSomewhere = projects.contains {
-                ToolPolicy.decide(
-                    tool: toolName, project: settings(of: $0), terminalAccess: terminal, curlEnabled: curl
-                ).isAllowed
-            }
-            if allowedSomewhere { return .allowed(argsData: argsData, args: args) }
-            return finish(
-                ToolPolicy.decide(tool: toolName, project: nil, terminalAccess: terminal, curlEnabled: curl),
-                argsData: argsData,
-                args: args
-            )
-        }
-
         let decision = ToolPolicy.decide(
             tool: toolName, project: settings(of: target), terminalAccess: terminal, curlEnabled: curl
         )
         if case .denied(let message) = decision {
             let hint = whereItWorks(toolName, capability, excluding: target.name, terminal: terminal, curl: curl)
             return .denied(message + hint)
-        }
-
-        // Only here is a "ProjectName/…" prefix a routing hint: several projects, no explicit project, file tool.
-        // With an explicit project (or a single one) the path is relative to the project root and stays as is,
-        // because a project may contain a folder with its own name.
-        let explicitProject = !(args["project"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        if !explicitProject, projects.count > 1, Self.prefixRoutedTools.contains(toolName) {
-            let prefix = target.name + "/"
-            for key in ["path", "from", "to"] {
-                if let value = args[key], value.hasPrefix(prefix) { args[key] = String(value.dropFirst(prefix.count)) }
-            }
         }
 
         args["project"] = target.name
@@ -160,37 +125,25 @@ extension ToolExecutionService {
         }
     }
 
-    /// `.success(nil)` means "all projects" (read-only fan-out tools only).
     private func resolveTarget(
         toolName: String,
         args: [String: String],
         projects: [ActiveMemoryContext.ProjectInfo]
-    ) -> Result<ActiveMemoryContext.ProjectInfo?, ResolutionError> {
+    ) -> Result<ActiveMemoryContext.ProjectInfo, ResolutionError> {
+        if projects.isEmpty { return .failure(ResolutionError("❌ Tool '\(toolName)' needs a project, but none is attached.")) }
         let names = projects.map { "'\($0.name)'" }.joined(separator: ", ")
 
-        if let requested = args["project"]?.trimmingCharacters(in: .whitespacesAndNewlines), !requested.isEmpty {
-            if let exact = projects.first(where: { $0.name == requested }) { return .success(exact) }
-            let folded = projects.filter { $0.name.lowercased() == requested.lowercased() }
-            if folded.count == 1 { return .success(folded[0]) }
-            return .failure(ResolutionError("❌ Project '\(requested)' is not attached to this thread. Attached: \(names)."))
+        guard let requested = args["project"]?.trimmingCharacters(in: .whitespacesAndNewlines), !requested.isEmpty else {
+            return .failure(ResolutionError("""
+            ❌ Tool '\(toolName)': the 'project' argument is required, even when only one project is attached. \
+            Pass one of: \(names).
+            """))
         }
 
-        if projects.count == 1 { return .success(projects[0]) }
-        if projects.isEmpty { return .failure(ResolutionError("❌ Tool '\(toolName)' needs a project, but none is attached.")) }
-
-        if Self.prefixRoutedTools.contains(toolName) {
-            let pathValue = args["path"] ?? args["from"] ?? ""
-            if let byPrefix = projects.first(where: { pathValue == $0.name || pathValue.hasPrefix($0.name + "/") }) {
-                return .success(byPrefix)
-            }
-        }
-
-        if Self.acrossProjectsTools.contains(toolName) { return .success(nil) }
-
-        return .failure(ResolutionError("""
-        ❌ Tool '\(toolName)': several projects are attached, so you must say which one. \
-        Pass the 'project' argument — one of: \(names).
-        """))
+        if let exact = projects.first(where: { $0.name == requested }) { return .success(exact) }
+        let folded = projects.filter { $0.name.lowercased() == requested.lowercased() }
+        if folded.count == 1 { return .success(folded[0]) }
+        return .failure(ResolutionError("❌ Project '\(requested)' is not attached to this thread. Attached: \(names)."))
     }
 
     private struct ResolutionError: Error, CustomStringConvertible {
@@ -198,4 +151,3 @@ extension ToolExecutionService {
         init(_ description: String) { self.description = description }
     }
 }
-

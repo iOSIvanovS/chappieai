@@ -34,20 +34,12 @@ extension ToolExecutionService {
             mcpArgs["path"] = url.path
         } else if let path = args["path"], !path.isEmpty {
             guard PDFGuidance.isPDF(path: path) else { return "Error: '\(path)' is not a .pdf file." }
-            var effectivePath = path
             switch projectForPDF(path: path, requested: args["project"]) {
             case .failure(let message): return message
             case .success(let project):
-                if let project {
-                    mcpArgs["project"] = project
-                    // A "ProjectName/…" prefix is only a routing hint when several projects are attached and none is named.
-                    let named = !(args["project"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    if !named, activeMemoryContext.projects.count > 1, path.hasPrefix(project + "/") {
-                        effectivePath = String(path.dropFirst(project.count + 1))
-                    }
-                }
+                if let project { mcpArgs["project"] = project }
             }
-            mcpArgs["path"] = effectivePath
+            mcpArgs["path"] = path
         } else {
             return "Error: Pass 'path' (with 'project') or the 'uuid' of an attachment."
         }
@@ -63,7 +55,7 @@ extension ToolExecutionService {
     }
 
     /// The canonical project name for a relative path. An absolute path (the attachments folder)
-    /// needs no project; several projects without a name is an error, not a guess.
+    /// needs no project; a relative path without a project name is an error, not a guess.
     private func projectForPDF(path: String, requested: String?) -> PDFProject {
         if path.hasPrefix("/") { return .success(nil) }
         let projects = activeMemoryContext.projects
@@ -75,11 +67,9 @@ extension ToolExecutionService {
             if folded.count == 1 { return .success(folded[0].name) }
             return .failure("❌ Project '\(requested)' is not attached to this thread. Attached: \(names.isEmpty ? "(none)" : names).")
         }
-        if projects.count == 1 { return .success(projects[0].name) }
         if projects.isEmpty {
             return .failure("❌ No project is attached, so a path cannot be resolved. Use the 'uuid' of an attached PDF, or attach the project.")
         }
-        if let byPrefix = projects.first(where: { path.hasPrefix($0.name + "/") }) { return .success(byPrefix.name) }
-        return .failure("❌ Several projects are attached, so you must say which one. Pass the 'project' argument — one of: \(names).")
+        return .failure("❌ The 'project' argument is required with 'path', even when only one project is attached. Pass one of: \(names).")
     }
 }

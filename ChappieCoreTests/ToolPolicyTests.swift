@@ -265,30 +265,41 @@ struct ToolAuthorizationTests {
     @Test("A refusal says so when no attached project allows the tool")
     func refusalWhenNowhere() async {
         let rig = await Rig([("OnlyAdvisor", xcodeAdvisor)])
-        let denied = await rig.authorize("write_file", #"{"path":"a.txt","content":"x"}"#)
+        let denied = await rig.authorize("write_file", #"{"path":"a.txt","content":"x","project":"OnlyAdvisor"}"#)
         #expect(denial(denied).contains("No attached project allows this tool"))
     }
 
     @Test("A thread-level refusal does not point at projects (none of them can help)")
     func threadRefusalHasNoProjectHint() async {
         let rig = await Rig([("Exec", xcodeExecutor())], curl: false)
-        let denied = await rig.authorize("curl_request", #"{"host":"Dev","path":"/x"}"#)
+        let denied = await rig.authorize("curl_request", #"{"project":"Exec","host":"Dev","path":"/x"}"#)
         #expect(denial(denied).contains("Curl-Chappie"))
         #expect(!denial(denied).contains("works in"))
     }
 
-    @Test("An ambiguous call lists the projects where the tool works")
+    @Test("A call without a project is refused and lists the projects where the tool works")
     func ambiguousCallHint() async {
         let rig = await Rig([("Exec", xcodeExecutor()), ("Adv", xcodeAdvisor)])
         let denied = await rig.authorize("git_status", "{}")
-        #expect(denial(denied).contains("which one"))
+        #expect(denial(denied).contains("'project' argument is required"))
         #expect(denial(denied).contains("works in: Exec"))
     }
 
-    @Test("A single attached project is used when none is named, and the name is written back")
-    func singleProjectDefault() async {
+    @Test("The project argument is required even when a single project is attached")
+    func singleProjectStillRequiresName() async {
         let rig = await Rig([("Solo", xcodeExecutor())])
-        guard case .allowed(let data, let args) = await rig.authorize("read_file", #"{"path":"a.txt"}"#) else {
+        let denied = await rig.authorize("read_file", #"{"path":"a.txt"}"#)
+        #expect(!isAllowed(denied))
+        #expect(denial(denied).contains("required, even when only one project is attached"))
+        #expect(denial(denied).contains("'Solo'"))
+        let empty = await rig.authorize("read_file", #"{"path":"a.txt","project":"  "}"#)
+        #expect(!isAllowed(empty))
+    }
+
+    @Test("The named project is accepted and its exact name is written back")
+    func namedProjectIsWrittenBack() async {
+        let rig = await Rig([("Solo", xcodeExecutor())])
+        guard case .allowed(let data, let args) = await rig.authorize("read_file", #"{"path":"a.txt","project":"Solo"}"#) else {
             Issue.record("must be allowed"); return
         }
         #expect(args["project"] == "Solo")
@@ -312,18 +323,32 @@ struct ToolAuthorizationTests {
         #expect(denial(result).contains("'MyApp'"))
     }
 
-    @Test("A path prefix picks the project for file tools when none is named")
-    func prefixRouting() async {
+    @Test("A path prefix is never a routing hint: without a project the call is refused")
+    func prefixIsNotAHint() async {
         let rig = await Rig([("Writable", xcodeExecutor()), ("ReadOnly", xcodeAdvisor)])
-        #expect(isAllowed(await rig.authorize("write_file", #"{"path":"Writable/a.txt","content":"x"}"#)))
-        #expect(!isAllowed(await rig.authorize("write_file", #"{"path":"ReadOnly/a.txt","content":"x"}"#)))
+        #expect(!isAllowed(await rig.authorize("write_file", #"{"path":"Writable/a.txt","content":"x"}"#)))
+        #expect(isAllowed(await rig.authorize("write_file", #"{"path":"Writable/a.txt","content":"x","project":"Writable"}"#)))
+        #expect(!isAllowed(await rig.authorize("write_file", #"{"path":"a.txt","content":"x","project":"ReadOnly"}"#)))
     }
 
-    @Test("list_files and search_in_project may span projects when none is named")
-    func fanOutReads() async {
+    @Test("list_files and search_in_project need a project too: no all-projects mode")
+    func listingNeedsProject() async {
         let rig = await Rig([("One", xcodeExecutor()), ("Two", xcodeAdvisor)])
-        #expect(isAllowed(await rig.authorize("list_files", "{}")))
-        #expect(isAllowed(await rig.authorize("search_in_project", #"{"query":"x"}"#)))
+        #expect(!isAllowed(await rig.authorize("list_files", "{}")))
+        #expect(!isAllowed(await rig.authorize("search_in_project", #"{"query":"x"}"#)))
+        #expect(isAllowed(await rig.authorize("list_files", #"{"project":"Two"}"#)))
+        #expect(isAllowed(await rig.authorize("search_in_project", #"{"query":"x","project":"One"}"#)))
+    }
+
+    @Test("Every tool that needs a project lists it in `required`, with one project or several")
+    func projectIsAlwaysRequiredInSchema() async {
+        for spec in [[("Solo", xcodeExecutor())], [("A", xcodeExecutor()), ("B", xcodeAdvisor)]] {
+            let rig = await Rig(spec, terminal: .auto, curl: true)
+            for tool in await rig.service.availableTools {
+                guard ToolPolicy.capability(of: tool.function.name)?.needsProject == true else { continue }
+                #expect(tool.function.parameters.required?.contains("project") == true, "\(tool.function.name)")
+            }
+        }
     }
 
     @Test("Numbers and booleans no longer lose the project: they become strings")
@@ -416,7 +441,7 @@ struct ToolExposureTests {
         #expect(!isAllowed(await rig.authorize("curl_request", #"{"host":"Dev"}"#)), "several projects and none named")
 
         let off = await Rig([("Exec", xcodeExecutor())], curl: false)
-        let blocked = await off.authorize("curl_session", #"{"action":"info","host":"Dev"}"#)
+        let blocked = await off.authorize("curl_session", #"{"project":"Exec","action":"info","host":"Dev"}"#)
         #expect(!isAllowed(blocked))
         #expect(denial(blocked).contains("Curl-Chappie"))
     }
@@ -491,7 +516,7 @@ struct ToolExposureTests {
         for tool in followers { #expect(tool.function.description.contains("same reason and fix as git_status")) }
     }
 
-    @Test("Every project is listed in the project argument and required when several are attached")
+    @Test("Every project is listed in the project argument and it is required")
     func projectArgumentCoversEveryProject() async {
         let docs = ProjectSettings(agentRole: .executor, isProgrammingProject: false)
         let rig = await Rig([("Code", xcodeExecutor()), ("Docs", docs)])
@@ -506,7 +531,7 @@ struct ToolExposureTests {
         #expect(description(of: "git_status", in: tools).contains("Docs"))
     }
 
-    @Test("loc_* definitions carry a project argument, required when several projects are attached")
+    @Test("loc_* definitions carry a required project argument")
     func locToolsHaveProjectArgument() async {
         let rig = await Rig([("A", xcodeExecutor()), ("B", xcodeExecutor())])
         let loc = await rig.service.availableTools.filter { $0.function.name.hasPrefix("loc_") }

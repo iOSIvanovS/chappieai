@@ -9,7 +9,7 @@
 // its whole toolbox, why a tool is closed, and what to ask the user to switch on.
 // Ordering and compression of closed tools: see ToolCatalog.
 //
-// The `project` argument lists ALL attached projects and is required when more than one is attached,
+// The `project` argument lists ALL attached projects and is ALWAYS required (even for one project),
 // exactly as ToolExecutionService.authorize demands. git_diff is offered only as FORBIDDEN.
 // Per-call authorization uses the same policy against the single project the call targets.
 
@@ -82,33 +82,33 @@ extension ToolExecutionService {
 
     func listFilesProjectArgDescription(for infos: [ActiveMemoryContext.ProjectInfo]) -> String {
         guard !infos.isEmpty else { return "Project display name to scope the file listing." }
-        if infos.count == 1 { return "Project name. Only one project: '\(infos[0].name)'. Can be omitted." }
+        if infos.count == 1 { return "Project name. Only one project: '\(infos[0].name)'. Required." }
         let list = infos.map { "'\($0.name)'" }.joined(separator: ", ")
-        return "Project display name — required when multiple projects are attached. Available: \(list)."
+        return "Project display name (required). Available: \(list)."
     }
 
     func fileToolProjectArgDescription(for infos: [ActiveMemoryContext.ProjectInfo]) -> String {
         guard !infos.isEmpty else { return "Project display name — identifies which project this file belongs to." }
-        if infos.count == 1 { return "Project name. Only one project: '\(infos[0].name)'. Can be omitted." }
+        if infos.count == 1 { return "Project name. Only one project: '\(infos[0].name)'. Required." }
         let list = infos.map { "'\($0.name)'" }.joined(separator: ", ")
-        return "Project display name — required when multiple projects are attached. Available: \(list)."
+        return "Project display name (required). Available: \(list)."
     }
 
     func gitProjectArgDescription(for infos: [ActiveMemoryContext.ProjectInfo]) -> String {
         guard !infos.isEmpty else { return "Project display name to target." }
-        if infos.count == 1 { return "Project name. Only one project: '\(infos[0].name)'. Can be omitted." }
+        if infos.count == 1 { return "Project name. Only one project: '\(infos[0].name)'. Required." }
         let list = infos.map { "'\($0.name)'" }.joined(separator: ", ")
-        return "Project display name — required when multiple projects are attached. Available: \(list)."
+        return "Project display name (required). Available: \(list)."
     }
 
     func buildProjectArgDescription(for infos: [ActiveMemoryContext.ProjectInfo]) -> String {
         guard !infos.isEmpty else { return "Project display name to target." }
         if infos.count == 1 {
             let env = (projectSettingsCache[infos[0].id] ?? ProjectSettings()).devEnvironment
-            return "Project name. Only one project: '\(infos[0].name)' (\(env.displayName)). Can be omitted."
+            return "Project name. Only one project: '\(infos[0].name)' (\(env.displayName)). Required."
         }
         let list = infos.map { "'\($0.name)' (\((projectSettingsCache[$0.id] ?? ProjectSettings()).devEnvironment.displayName))" }.joined(separator: ", ")
-        return "Project display name — required when multiple projects are attached. Available: \(list)."
+        return "Project display name (required). Available: \(list)."
     }
 
     // WHY PATHS IN DESCRIPTION: AI needs to know which path it will cd into before calling the tool.
