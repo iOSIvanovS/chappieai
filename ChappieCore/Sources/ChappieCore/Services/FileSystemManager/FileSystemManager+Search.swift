@@ -39,6 +39,8 @@ extension FileSystemManager {
         contextLines: Int
     ) throws -> String {
         let targetWorkspaces: [(name: String, url: URL)]
+        // A named project: paths are relative to its root. All projects: paths carry the project name.
+        let prefixed = (projectName ?? "").isEmpty
         if let name = projectName, !name.isEmpty {
             guard let ws = workspaces.first(where: { $0.name == name }) else {
                 throw ChappieError.fileSystemError(
@@ -82,7 +84,7 @@ extension FileSystemManager {
                 if relativePath == resolvedFile.path {
                     relativePath = fileURL.path.replacingOccurrences(of: wsURL.path + "/", with: "")
                 }
-                let displayPath = wsName.isEmpty ? relativePath : "\(wsName)/\(relativePath)"
+                let displayPath = (wsName.isEmpty || !prefixed) ? relativePath : "\(wsName)/\(relativePath)"
 
                 results.append("📄 \(displayPath)\n\(fileResult)")
             }

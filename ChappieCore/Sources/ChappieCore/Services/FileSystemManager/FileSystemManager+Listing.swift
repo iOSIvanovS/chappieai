@@ -2,7 +2,8 @@
 // ChappieCore
 //
 // List files across one or all attached workspaces.
-// Returns prefixed paths ("ProjectName/relative/path") in multi-workspace mode.
+// listFiles() across all workspaces returns prefixed paths ("ProjectName/relative/path");
+// listFiles(project:) returns paths relative to that project's root.
 
 import Foundation
 
@@ -17,19 +18,20 @@ extension FileSystemManager {
 
     /// List files for a specific project only.
     /// WHY: AI passes project= to scope the listing — avoids mixing all projects in one dump.
-    /// Returns the same prefixed format as listFiles() for consistency.
+    /// Paths are relative to that project's root, WITHOUT the project-name prefix: the project is already
+    /// named in the call, and every file tool takes such paths together with the same project argument.
     public func listFiles(project: String) throws -> [String] {
         guard let workspace = workspaces.first(where: { $0.name == project }) else {
             throw ChappieError.fileSystemError(
                 "Project '\(project)' not found. Available: \(workspaces.map(\.name).joined(separator: ", "))"
             )
         }
-        return try listFilesIn(workspaces: [workspace])
+        return try listFilesIn(workspaces: [workspace], prefixed: false)
     }
 
     // MARK: - Private
 
-    func listFilesIn(workspaces: [(name: String, url: URL)]) throws -> [String] {
+    func listFilesIn(workspaces: [(name: String, url: URL)], prefixed: Bool = true) throws -> [String] {
         var allPaths: [String] = []
 
         for (name, url) in workspaces {
@@ -61,7 +63,7 @@ extension FileSystemManager {
                     relativePath = fileURL.path.replacingOccurrences(of: url.path + "/", with: "")
                 }
 
-                if name.isEmpty {
+                if name.isEmpty || !prefixed {
                     allPaths.append(relativePath)
                 } else {
                     allPaths.append("\(name)/\(relativePath)")

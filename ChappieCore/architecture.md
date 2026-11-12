@@ -76,7 +76,7 @@ ChappieCore/
         ├── AIProviderStore.swift       # CRUD for AI providers + Keychain (multi-key)
         ├── AppSettingsStore.swift      # Actor-based CRUD for singleton AppSettings
         ├── FileSystemManager.swift             # Secure FS: init, routing, read/write/delete/move
-        ├── FileSystemManager+Listing.swift     # listFiles (single + multi-workspace)
+        ├── FileSystemManager+Listing.swift     # listFiles (all: prefixed; project: relative to root)
         ├── FileSystemManager+Search.swift      # searchInFile, searchInProject, grep helpers
         ├── FileSystemManager+Patch.swift       # patchFile (exactlyOne policy), getFileInfo
         ├── FileSystemManager+Image.swift       # readImageData (view_image) — raw bytes, no UTF-8 decode

@@ -229,6 +229,78 @@ struct FileSystemManagerTests {
         }
     }
 
+    // MARK: - Folder named like its project (Chappie/Chappie)
+
+    /// Project "Chappie" whose root contains a folder "Chappie/" — the real layout of this repository.
+    private func makeCollidingManager() throws -> (FileSystemManager, URL) {
+        let root = try makeTempDir()
+        let inner = root.appendingPathComponent("Chappie", isDirectory: true)
+        try FileManager.default.createDirectory(at: inner, withIntermediateDirectories: true)
+        try "root-file".write(to: root.appendingPathComponent("architecture.md"), atomically: true, encoding: .utf8)
+        try "inner-file".write(to: inner.appendingPathComponent("architecture.md"), atomically: true, encoding: .utf8)
+        let manager = FileSystemManager(workspaces: [(name: "Chappie", url: root), (name: "Other", url: try makeTempDir())])
+        return (manager, root)
+    }
+
+    @Test("Explicit project: a folder named like the project is NOT stripped on read")
+    func explicitProjectKeepsSameNamedFolder() async throws {
+        let (manager, root) = try makeCollidingManager()
+        defer { cleanup(root) }
+
+        #expect(try await manager.readFile(at: "Chappie/architecture.md", projectName: "Chappie") == "inner-file")
+        #expect(try await manager.readFile(at: "architecture.md", projectName: "Chappie") == "root-file")
+    }
+
+    @Test("Explicit project: write and delete hit the same-named folder, not the root")
+    func explicitProjectWriteAndDeleteKeepSameNamedFolder() async throws {
+        let (manager, root) = try makeCollidingManager()
+        defer { cleanup(root) }
+
+        try await manager.writeFile(at: "Chappie/new.txt", content: "x", projectName: "Chappie")
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("Chappie/new.txt").path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("new.txt").path))
+
+        try await manager.deleteFile(at: "Chappie/new.txt", projectName: "Chappie")
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("Chappie/new.txt").path))
+    }
+
+    @Test("Explicit project: search shows paths relative to the project root, no name prefix")
+    func explicitProjectSearchHasNoPrefix() async throws {
+        let (manager, root) = try makeCollidingManager()
+        defer { cleanup(root) }
+
+        let scoped = try await manager.searchInProject(query: "inner-file", projectName: "Chappie", filePattern: nil, contextLines: 0)
+        #expect(scoped.contains("📄 Chappie/architecture.md"))
+        #expect(!scoped.contains("Chappie/Chappie/architecture.md"))
+
+        let everywhere = try await manager.searchInProject(query: "inner-file", projectName: nil, filePattern: nil, contextLines: 0)
+        #expect(everywhere.contains("📄 Chappie/Chappie/architecture.md"))
+    }
+
+    @Test("listFiles(project:) is relative to the root, listFiles() carries the project name")
+    func listFilesPrefixDependsOnScope() async throws {
+        let (manager, root) = try makeCollidingManager()
+        defer { cleanup(root) }
+
+        let scoped = try await manager.listFiles(project: "Chappie")
+        #expect(scoped.contains("architecture.md"))
+        #expect(scoped.contains("Chappie/architecture.md"))
+        #expect(!scoped.contains("Chappie/Chappie/architecture.md"))
+
+        let all = try await manager.listFiles()
+        #expect(all.contains("Chappie/architecture.md"))
+        #expect(all.contains("Chappie/Chappie/architecture.md"))
+    }
+
+    @Test("Without a project argument the prefix still routes (legacy)")
+    func prefixRoutingWithoutProjectStillWorks() async throws {
+        let (manager, root) = try makeCollidingManager()
+        defer { cleanup(root) }
+
+        #expect(try await manager.readFile(at: "Chappie/architecture.md") == "root-file")
+        #expect(try await manager.readFile(at: "Chappie/Chappie/architecture.md") == "inner-file")
+    }
+
     // MARK: - Security (Path Traversal)
 
     @Test("🔒 Path traversal via ../ is blocked")

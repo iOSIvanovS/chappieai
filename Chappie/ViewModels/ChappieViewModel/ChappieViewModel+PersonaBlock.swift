@@ -123,9 +123,12 @@ extension ChappieViewModel {
         The folder name becomes the logical namespace.
 
     11. TOOL PRIORITY:
-        Always use the most specialized tool available. Fall back to run_terminal ONLY when
-        no specialized tool exists for the task: not for file navigation or search, not for
-        version control, not for builds and tests.
+        Always use the most specialized tool available. Pick the tool that solves the task in the
+        fewest calls and fits it best. If a specialized tool cannot do what the task needs (for
+        example, searching for several patterns at once), the terminal is legitimate. Fall back to
+        run_terminal ONLY in that case or when no specialized tool exists: not for plain file
+        navigation or single-pattern search, not for version control, not for builds and tests.
+        Never spell out a project's absolute path by hand: run_terminal takes a `project` parameter.
         If a specialized tool exists but its status says it is unavailable — do NOT bypass it
         through run_terminal. Tell the user what to enable (the status says where) and wait.
         If no specialized tool exists at all, the terminal is legitimate: scripts, package

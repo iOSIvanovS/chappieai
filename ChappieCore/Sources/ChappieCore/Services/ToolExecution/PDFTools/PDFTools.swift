@@ -34,11 +34,20 @@ extension ToolExecutionService {
             mcpArgs["path"] = url.path
         } else if let path = args["path"], !path.isEmpty {
             guard PDFGuidance.isPDF(path: path) else { return "Error: '\(path)' is not a .pdf file." }
+            var effectivePath = path
             switch projectForPDF(path: path, requested: args["project"]) {
             case .failure(let message): return message
-            case .success(let project): if let project { mcpArgs["project"] = project }
+            case .success(let project):
+                if let project {
+                    mcpArgs["project"] = project
+                    // A "ProjectName/…" prefix is only a routing hint when several projects are attached and none is named.
+                    let named = !(args["project"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    if !named, activeMemoryContext.projects.count > 1, path.hasPrefix(project + "/") {
+                        effectivePath = String(path.dropFirst(project.count + 1))
+                    }
+                }
             }
-            mcpArgs["path"] = path
+            mcpArgs["path"] = effectivePath
         } else {
             return "Error: Pass 'path' (with 'project') or the 'uuid' of an attachment."
         }

@@ -21,7 +21,8 @@
 // WHY: AI now always passes "project" as a separate arg — path may be a bare filename
 // like "readme.md" with no project prefix. Without explicit routing, resolveWorkspace()
 // would fail to find a matching prefix and throw "Cannot route path".
-// When projectName is provided — workspace is resolved by name, not by path prefix.
+// When projectName is provided — workspace is resolved by name and the path is relative to the
+// project root, untouched (a folder named like the project must stay reachable).
 // When projectName is nil — falls back to prefix-based routing (backward compat).
 
 import Foundation
@@ -119,15 +120,14 @@ public actor FileSystemManager {
     // MARK: - Routing helper
 
     /// Resolves workspace and relative path for a file operation.
-    /// WHY: when projectName is provided — route by name (AI passes bare path + project arg).
+    /// WHY: when projectName is provided — route by name and treat the path as relative to the project root.
+    /// The path is NEVER stripped of a leading "<project name>/" here: a project "Chappie" legitimately
+    /// contains a folder "Chappie/", and stripping would silently redirect "Chappie/x.swift" to "x.swift".
+    /// Prefix handling for multi-project calls without a project lives in ToolExecutionService.authorize.
     /// When nil — route by path prefix (legacy / single-workspace compat).
     func resolveForOperation(path: String, projectName: String?) throws -> (url: URL, relativePath: String) {
         if let name = projectName, !name.isEmpty {
-            let url = try resolveWorkspace(byName: name)
-            // Path may already contain the project prefix (e.g. "ProjectName/file.md") — strip it.
-            let prefix = name + "/"
-            let relativePath = path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : path
-            return (url, relativePath)
+            return (try resolveWorkspace(byName: name), path)
         }
         return try resolveWorkspace(for: path)
     }

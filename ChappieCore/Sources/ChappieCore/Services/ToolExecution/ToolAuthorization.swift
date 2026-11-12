@@ -101,6 +101,17 @@ extension ToolExecutionService {
             return .denied(message + hint)
         }
 
+        // Only here is a "ProjectName/…" prefix a routing hint: several projects, no explicit project, file tool.
+        // With an explicit project (or a single one) the path is relative to the project root and stays as is,
+        // because a project may contain a folder with its own name.
+        let explicitProject = !(args["project"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if !explicitProject, projects.count > 1, Self.prefixRoutedTools.contains(toolName) {
+            let prefix = target.name + "/"
+            for key in ["path", "from", "to"] {
+                if let value = args[key], value.hasPrefix(prefix) { args[key] = String(value.dropFirst(prefix.count)) }
+            }
+        }
+
         args["project"] = target.name
         guard let canonical = try? JSONEncoder().encode(args) else {
             return .denied("❌ Tool '\(toolName)': failed to re-encode arguments.")

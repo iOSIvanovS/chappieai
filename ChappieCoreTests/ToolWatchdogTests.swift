@@ -150,7 +150,7 @@ struct ToolWatchdogTests {
         )
         let call = AIToolCall(
             id: "t1", type: "function",
-            function: AIToolCallFunction(name: "read_file", arguments: #"{"path":"P/a.txt","project":"P"}"#)
+            function: AIToolCallFunction(name: "read_file", arguments: #"{"path":"a.txt","project":"P"}"#)
         )
         let result = await service.execute(call: call)
         #expect(result.contains("hello"))

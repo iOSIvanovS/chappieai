@@ -106,12 +106,11 @@ final class DocumentTools: Sendable {
         }
         // WHY: when a named project is specified, resolve against its root — not the default project.
         var root = projectPath
-        var path = relativePath
+        let path = relativePath
         if let name = projectName, let mapped = projectPathMap[name] {
+            // WHY no prefix stripping: the path is relative to the project root, and a project may contain
+            // a folder named like itself ("Chappie/Chappie/…"). The app strips routing prefixes beforehand.
             root = mapped
-            // WHY: list_files returns "ProjectName/file.docx" — strip the prefix to avoid double-nesting.
-            let prefix = name + "/"
-            if path.hasPrefix(prefix) { path = String(path.dropFirst(prefix.count)) }
         } else if !PathGuard.isUsableRoot(root), projectPathMap.count == 1, let only = projectPathMap.values.first {
             // The helper may start without a workspace folder (root "/"): use the single attached project.
             root = only
