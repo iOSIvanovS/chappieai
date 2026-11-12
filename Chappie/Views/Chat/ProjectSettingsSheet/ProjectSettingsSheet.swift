@@ -18,7 +18,7 @@
 //
 // TERMINAL:
 // Terminal settings have moved to ThreadSettingsSheet (thread-level).
-// ProjectSettings.terminalAccess is kept for Codable compatibility but not shown here.
+// ProjectSettings no longer has a terminal field; the terminal is a thread-level switch.
 
 import SwiftUI
 import ChappieCore

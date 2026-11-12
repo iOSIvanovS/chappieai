@@ -20,13 +20,13 @@ extension ToolExecutionService {
     /// EVERY tool, each with its availability status; see ToolCatalog for ordering and compression.
     public var availableTools: [AITool] {
         let allInfos = activeMemoryContext.projects
-        let terminal = activeMemoryContext.threadTerminalAccess
+        let terminal = activeMemoryContext.threadTerminalEnabled
         let curl = activeMemoryContext.curlEnabled
         let statusProjects = allInfos.map { ToolStatusProject(name: $0.name, settings: settings(of: $0)) }
 
         let entries: [ToolCatalog.Entry] = allToolDefinitions(allInfos: allInfos).map { tool in
             let status = ToolPolicy.status(
-                of: tool.function.name, projects: statusProjects, terminalAccess: terminal, curlEnabled: curl
+                of: tool.function.name, projects: statusProjects, terminalEnabled: terminal, curlEnabled: curl
             )
             return (tool, status)
         }

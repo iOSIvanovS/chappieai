@@ -145,7 +145,7 @@ struct ToolWatchdogTests {
         let info = ActiveMemoryContext.ProjectInfo(id: UUID(), name: "P")
         let settings = ProjectSettings(agentRole: .executor, isProgrammingProject: true, devEnvironment: .xcode)
         await service.setMemoryContextAndSettings(
-            context: ActiveMemoryContext(threadId: UUID(), projects: [info], threadTerminalAccess: .none),
+            context: ActiveMemoryContext(threadId: UUID(), projects: [info], threadTerminalEnabled: false),
             settings: [info.id: settings]
         )
         let call = AIToolCall(

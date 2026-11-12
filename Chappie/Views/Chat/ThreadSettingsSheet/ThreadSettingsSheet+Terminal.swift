@@ -1,7 +1,7 @@
 // ThreadSettingsSheet+Terminal.swift
 // Chappie
 //
-// Terminal access section and related warning views for ThreadSettingsSheet.
+// Terminal switch section and related warning views for ThreadSettingsSheet.
 
 import SwiftUI
 import ChappieCore
@@ -14,24 +14,17 @@ extension ThreadSettingsSheet {
         VStack(alignment: .leading, spacing: 10) {
             sectionLabel("thread.settings.terminal_section", systemImage: "terminal.fill")
 
-            Picker("thread.settings.terminal_picker", selection: $draftSettings.terminalAccess) {
-                ForEach(TerminalAccessLevel.allCases, id: \.self) { level in
-                    Text(level.displayName).tag(level)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            Toggle("thread.settings.terminal_toggle", isOn: $draftSettings.terminalEnabled)
+                .toggleStyle(.switch)
 
-            Text(draftSettings.terminalAccess.description)
+            Text("thread.settings.terminal_toggle_description")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if draftSettings.terminalAccess == .auto {
+            if draftSettings.terminalEnabled {
                 autoTerminalWarningView
-            }
 
-            if draftSettings.terminalAccess != .none {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "shield.fill")
                         .font(.system(size: 11))
@@ -42,9 +35,7 @@ extension ThreadSettingsSheet {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-            }
 
-            if draftSettings.terminalAccess != .none {
                 superPowerWarningView
             }
         }

@@ -55,7 +55,7 @@ struct CurlModelsTests {
         let s = try JSONDecoder().decode(ThreadSettings.self, from: Data(oldJSON.utf8))
         #expect(s.maxMessagesInContext == 120)
         #expect(s.isUnlimitedContext)
-        #expect(s.terminalAccess == .auto)
+        #expect(s.terminalEnabled)
         #expect(s.activeModelName == "m")
         #expect(s.curlEnabled == false)
         #expect(s.curlHosts.isEmpty)

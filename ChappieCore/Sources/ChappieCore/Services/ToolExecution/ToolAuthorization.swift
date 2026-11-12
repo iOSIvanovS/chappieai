@@ -27,12 +27,12 @@ enum ToolAuthorization {
 extension ToolExecutionService {
 
     func authorize(toolName: String, argsData: Data) -> ToolAuthorization {
-        let terminal = activeMemoryContext.threadTerminalAccess
+        let terminal = activeMemoryContext.threadTerminalEnabled
         let curl = activeMemoryContext.curlEnabled
 
         guard let capability = ToolPolicy.capability(of: toolName) else {
             // Unknown or forbidden tool: denied whatever the arguments look like.
-            let decision = ToolPolicy.decide(tool: toolName, project: nil, terminalAccess: terminal, curlEnabled: curl)
+            let decision = ToolPolicy.decide(tool: toolName, project: nil, terminalEnabled: terminal, curlEnabled: curl)
             return finish(decision, argsData: argsData, args: [:])
         }
 
@@ -55,7 +55,7 @@ extension ToolExecutionService {
 
         guard capability.needsProject else {
             // No project involved (always-on, terminal).
-            let decision = ToolPolicy.decide(tool: toolName, project: nil, terminalAccess: terminal, curlEnabled: curl)
+            let decision = ToolPolicy.decide(tool: toolName, project: nil, terminalEnabled: terminal, curlEnabled: curl)
             return finish(decision, argsData: argsData, args: args)
         }
 
@@ -70,7 +70,7 @@ extension ToolExecutionService {
         }
 
         let decision = ToolPolicy.decide(
-            tool: toolName, project: settings(of: target), terminalAccess: terminal, curlEnabled: curl
+            tool: toolName, project: settings(of: target), terminalEnabled: terminal, curlEnabled: curl
         )
         if case .denied(let message) = decision {
             let hint = whereItWorks(toolName, capability, excluding: target.name, terminal: terminal, curl: curl)
@@ -97,11 +97,11 @@ extension ToolExecutionService {
         _ toolName: String,
         _ capability: ToolCapability,
         excluding: String?,
-        terminal: TerminalAccessLevel,
+        terminal: Bool,
         curl: Bool
     ) -> String {
         guard capability.needsProject,
-              ToolPolicy.threadBlock(capability, terminalAccess: terminal, curlEnabled: curl) == nil
+              ToolPolicy.threadBlock(capability, terminalEnabled: terminal, curlEnabled: curl) == nil
         else { return "" }
 
         let projects = activeMemoryContext.projects

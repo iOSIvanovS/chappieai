@@ -168,16 +168,16 @@ public enum ToolPolicy {
     /// - Parameters:
     ///   - project: settings of the project the call targets; nil when the tool needs none
     ///     (or when the target could not be resolved — project tools are then denied).
-    ///   - terminalAccess: thread-level terminal switch.
+    ///   - terminalEnabled: thread-level terminal switch.
     ///   - curlEnabled: thread-level Curl-Chappie switch.
     public static func decide(
         tool: String,
         project: ProjectSettings?,
-        terminalAccess: TerminalAccessLevel,
+        terminalEnabled: Bool,
         curlEnabled: Bool = false
     ) -> ToolDecision {
         guard let block = evaluate(
-            tool: tool, project: project, terminalAccess: terminalAccess, curlEnabled: curlEnabled
+            tool: tool, project: project, terminalEnabled: terminalEnabled, curlEnabled: curlEnabled
         ) else { return .allowed }
         return .denied(block.message(tool: tool))
     }

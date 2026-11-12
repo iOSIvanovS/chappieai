@@ -53,27 +53,6 @@ public enum TestsAccessLevel: String, Codable, Sendable, CaseIterable {
     public var canReadLog: Bool { self != .none }
 }
 
-// MARK: - TerminalAccessLevel
-
-/// Controls how the AI can use run_terminal.
-///
-/// WHY THREE LEVELS:
-/// - none: terminal is completely off (default, safe).
-/// - confirm: every command requires explicit user confirmation before execution.
-/// - auto: commands run immediately. User chose to trust the agent fully.
-///
-/// There is no "safe commands only" auto-mode — the boundary between safe and dangerous
-/// is too fuzzy in practice (e.g. `npm install` can run postinstall scripts).
-/// Better to give the user a clear binary choice: confirm everything or trust fully.
-public enum TerminalAccessLevel: String, Codable, Sendable, CaseIterable {
-    case none
-    case confirm
-    case auto
-
-    public var isEnabled: Bool { self != .none }
-    public var requiresConfirmation: Bool { self == .confirm }
-}
-
 // MARK: - ProjectLanguage
 
 /// Language for architecture files and code comments.

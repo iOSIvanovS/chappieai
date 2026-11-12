@@ -31,10 +31,10 @@ struct SystemPromptBuilderTests {
     }
 
     /// Creates a project context with executor role + programming project enabled by default,
-    /// then overlays the provided settings on top (terminalAccess, etc.).
+    /// then overlays the provided settings on top (agent role, etc.).
     private func makeProject(settings: ProjectSettings) -> PromptContext.ProjectContext {
         var base = ProjectSettings(agentRole: .executor, isProgrammingProject: true)
-        base.terminalAccess = settings.terminalAccess
+        base.buildEnabled = settings.buildEnabled
         return PromptContext.ProjectContext(name: "TestProject", settings: base, memory: [])
     }
 
@@ -245,10 +245,10 @@ struct SystemPromptBuilderTests {
 
     // MARK: - Thread terminal access
 
-    @Test("Thread terminal access is never injected into the prompt (the tool status carries it)",
-          arguments: [TerminalAccessLevel.none, .confirm, .auto])
-    func threadTerminalNotInjected(access: TerminalAccessLevel) {
-        let ctx = PromptContext(threadTerminalAccess: access)
+    @Test("Thread terminal switch is never injected into the prompt (the tool status carries it)",
+          arguments: [false, true])
+    func threadTerminalNotInjected(enabled: Bool) {
+        let ctx = PromptContext(threadTerminalEnabled: enabled)
         let prompt = makeBuilder().build(context: ctx)
         #expect(!prompt.contains("Thread Settings"))
         #expect(!prompt.contains("Terminal:"))
@@ -256,12 +256,9 @@ struct SystemPromptBuilderTests {
 
     // MARK: - Project settings block (facts only; tool statuses carry access state)
 
-    @Test("Project terminal setting never reaches the prompt",
-          arguments: [TerminalAccessLevel.none, .confirm, .auto])
-    func projectTerminalNotInjected(access: TerminalAccessLevel) {
-        var settings = ProjectSettings()
-        settings.terminalAccess = access
-        let project = makeProject(settings: settings)
+    @Test("Project block never mentions the terminal")
+    func projectTerminalNotInjected() {
+        let project = makeProject(settings: ProjectSettings())
         let prompt = makeBuilder().build(context: PromptContext(projects: [project]))
         let section = extractProjectSection(from: prompt, projectName: project.name)
         #expect(!section.contains("Terminal"))

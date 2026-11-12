@@ -27,7 +27,7 @@
 //   Populated from activeProjects.absolutePath — available after bookmark resolution.
 //
 // TERMINAL ACCESS:
-//   threadTerminalAccess is passed from activeThreadSettings to ActiveMemoryContext
+//   threadTerminalEnabled is passed from activeThreadSettings to ActiveMemoryContext
 //   so ToolDefinitions and ToolPolicy can read it without touching project settings.
 //
 // ATOMIC CONTEXT+SETTINGS UPDATE:
@@ -75,7 +75,7 @@ extension ChappieViewModel {
             threadId: activeThread?.id,
             projects: projectInfos,
             projectPathMap: pathMap,
-            threadTerminalAccess: activeThreadSettings.terminalAccess,
+            threadTerminalEnabled: activeThreadSettings.terminalEnabled,
             curlEnabled: activeThreadSettings.curlEnabled,
             curlHosts: activeThreadSettings.curlHosts
         )

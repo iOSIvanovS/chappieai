@@ -91,8 +91,7 @@ extension ChappieViewModel {
                     },
                     onToolBudget: { seconds in
                         Task { @MainActor in self.setToolBudget(seconds) }
-                    },
-                    onTerminalConfirm: self.terminalConfirmHandler()
+                    }
                 )
 
                 let rawResponse = self.cleanAIResponse(result.finalResponse)

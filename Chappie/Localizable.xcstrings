@@ -3241,6 +3241,7 @@
       }
     },
     "Cancel" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -4782,61 +4783,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "يجب أن يبدو العنوان مثل https:\/\/host أو http:\/\/host:port، دون بيانات دخول بداخله."
+            "value" : "يجب أن يبدو العنوان مثل https://host أو http://host:port، دون بيانات دخول بداخله."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Die Adresse muss wie https:\/\/host oder http:\/\/host:port aussehen, ohne Zugangsdaten darin."
+            "value" : "Die Adresse muss wie https://host oder http://host:port aussehen, ohne Zugangsdaten darin."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The address must look like https:\/\/host or http:\/\/host:port, without a login inside."
+            "value" : "The address must look like https://host or http://host:port, without a login inside."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "La dirección debe tener la forma https:\/\/host o http:\/\/host:port, sin credenciales dentro."
+            "value" : "La dirección debe tener la forma https://host o http://host:port, sin credenciales dentro."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "L'adresse doit ressembler à https:\/\/host ou http:\/\/host:port, sans identifiants à l'intérieur."
+            "value" : "L'adresse doit ressembler à https://host ou http://host:port, sans identifiants à l'intérieur."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "पता https:\/\/host या http:\/\/host:port जैसा होना चाहिए, उसके भीतर लॉगिन जानकारी नहीं होनी चाहिए।"
+            "value" : "पता https://host या http://host:port जैसा होना चाहिए, उसके भीतर लॉगिन जानकारी नहीं होनी चाहिए।"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "アドレスは https:\/\/host または http:\/\/host:port の形式にしてください。認証情報を含めることはできません。"
+            "value" : "アドレスは https://host または http://host:port の形式にしてください。認証情報を含めることはできません。"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "O endereço deve ter a forma https:\/\/host ou http:\/\/host:port, sem credenciais dentro."
+            "value" : "O endereço deve ter a forma https://host ou http://host:port, sem credenciais dentro."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Адрес должен выглядеть как https:\/\/host или http:\/\/host:port, без логина внутри."
+            "value" : "Адрес должен выглядеть как https://host или http://host:port, без логина внутри."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "地址应形如 https:\/\/host 或 http:\/\/host:port，且不能包含登录凭据。"
+            "value" : "地址应形如 https://host 或 http://host:port，且不能包含登录凭据。"
           }
         }
       }
@@ -4846,61 +4847,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "أدخل مسار تسجيل الدخول (مثل \/api\/login) أو اختر صلاحية أخرى."
+            "value" : "أدخل مسار تسجيل الدخول (مثل /api/login) أو اختر صلاحية أخرى."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Gib den Login-Pfad ein (z. B. \/api\/login) oder wähle eine andere Berechtigung."
+            "value" : "Gib den Login-Pfad ein (z. B. /api/login) oder wähle eine andere Berechtigung."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Enter the login path (for example \/api\/login), or choose another permission."
+            "value" : "Enter the login path (for example /api/login), or choose another permission."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Introduce la ruta de inicio de sesión (por ejemplo \/api\/login) o elige otro permiso."
+            "value" : "Introduce la ruta de inicio de sesión (por ejemplo /api/login) o elige otro permiso."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Saisissez le chemin de connexion (par exemple \/api\/login) ou choisissez une autre permission."
+            "value" : "Saisissez le chemin de connexion (par exemple /api/login) ou choisissez une autre permission."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "लॉगिन पथ दर्ज करें (उदाहरण: \/api\/login) या कोई अन्य अनुमति चुनें।"
+            "value" : "लॉगिन पथ दर्ज करें (उदाहरण: /api/login) या कोई अन्य अनुमति चुनें।"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ログインパス（例: \/api\/login）を入力するか、別の権限を選んでください。"
+            "value" : "ログインパス（例: /api/login）を入力するか、別の権限を選んでください。"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Informe o caminho de login (por exemplo \/api\/login) ou escolha outra permissão."
+            "value" : "Informe o caminho de login (por exemplo /api/login) ou escolha outra permissão."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Укажите путь для входа (например \/api\/login) или выберите другой уровень прав."
+            "value" : "Укажите путь для входа (например /api/login) или выберите другой уровень прав."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "请输入登录路径（例如 \/api\/login），或选择其他权限。"
+            "value" : "请输入登录路径（例如 /api/login），或选择其他权限。"
           }
         }
       }
@@ -5358,61 +5359,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "رمز \/ مفتاح API"
+            "value" : "رمز / مفتاح API"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Token \/ API-Schlüssel"
+            "value" : "Token / API-Schlüssel"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Token \/ API key"
+            "value" : "Token / API key"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Token \/ clave de API"
+            "value" : "Token / clave de API"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Jeton \/ clé d'API"
+            "value" : "Jeton / clé d'API"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "टोकन \/ API कुंजी"
+            "value" : "टोकन / API कुंजी"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "トークン \/ APIキー"
+            "value" : "トークン / APIキー"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Token \/ chave de API"
+            "value" : "Token / chave de API"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Токен \/ API-ключ"
+            "value" : "Токен / API-ключ"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "令牌 \/ API 密钥"
+            "value" : "令牌 / API 密钥"
           }
         }
       }
@@ -8618,66 +8619,66 @@
         }
       }
     },
-    "https:\/\/..." : {
+    "https://..." : {
       "localizations" : {
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https:\/\/..."
+            "value" : "https://..."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https:\/\/..."
+            "value" : "https://..."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https:\/\/..."
+            "value" : "https://..."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https:\/\/..."
+            "value" : "https://..."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https:\/\/..."
+            "value" : "https://..."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https:\/\/..."
+            "value" : "https://..."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https:\/\/..."
+            "value" : "https://..."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https:\/\/..."
+            "value" : "https://..."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https:\/\/..."
+            "value" : "https://..."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "https:\/\/..."
+            "value" : "https://..."
           }
         }
       }
@@ -15222,61 +15223,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "\/path\/to\/project"
+            "value" : "/path/to/project"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "\/pfad\/zum\/projekt"
+            "value" : "/pfad/zum/projekt"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "\/path\/to\/project"
+            "value" : "/path/to/project"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "\/ruta\/al\/proyecto"
+            "value" : "/ruta/al/proyecto"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "\/chemin\/vers\/projet"
+            "value" : "/chemin/vers/projet"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "\/path\/to\/project"
+            "value" : "/path/to/project"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "\/path\/to\/project"
+            "value" : "/path/to/project"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "\/caminho\/para\/projeto"
+            "value" : "/caminho/para/projeto"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "\/путь\/к\/проекту"
+            "value" : "/путь/к/проекту"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "\/项目\/路径"
+            "value" : "/项目/路径"
           }
         }
       }
@@ -16700,61 +16701,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "بدون مسار، مثال: https:\/\/api.openai.com"
+            "value" : "بدون مسار، مثال: https://api.openai.com"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Kein Pfad, z.B.: https:\/\/api.openai.com"
+            "value" : "Kein Pfad, z.B.: https://api.openai.com"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No path, e.g.: https:\/\/api.openai.com"
+            "value" : "No path, e.g.: https://api.openai.com"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sin ruta, p. ej.: https:\/\/api.openai.com"
+            "value" : "Sin ruta, p. ej.: https://api.openai.com"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sans chemin, ex.: https:\/\/api.openai.com"
+            "value" : "Sans chemin, ex.: https://api.openai.com"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "कोई पाथ नहीं, जैसे: https:\/\/api.openai.com"
+            "value" : "कोई पाथ नहीं, जैसे: https://api.openai.com"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "パスなし、例: https:\/\/api.openai.com"
+            "value" : "パスなし、例: https://api.openai.com"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sem caminho, ex.: https:\/\/api.openai.com"
+            "value" : "Sem caminho, ex.: https://api.openai.com"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Без пути, например: https:\/\/api.openai.com"
+            "value" : "Без пути, например: https://api.openai.com"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "无路径，例如：https:\/\/api.openai.com"
+            "value" : "无路径，例如：https://api.openai.com"
           }
         }
       }
@@ -17506,7 +17507,7 @@
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "(%d \/ %d)"
+            "value" : "(%d / %d)"
           }
         },
         "pt-BR" : {
@@ -17524,7 +17525,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "(%d \/ %d)"
+            "value" : "(%d / %d)"
           }
         }
       }
@@ -19135,61 +19136,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "تنسيق \/v1\/messages الأصلي. جسم الطلب وفق معيار Anthropic."
+            "value" : "تنسيق /v1/messages الأصلي. جسم الطلب وفق معيار Anthropic."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Natives \/v1\/messages-Format. Anfragekörper nach Anthropic-Standard."
+            "value" : "Natives /v1/messages-Format. Anfragekörper nach Anthropic-Standard."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Native \/v1\/messages format. Request body per Anthropic standard."
+            "value" : "Native /v1/messages format. Request body per Anthropic standard."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Formato nativo \/v1\/messages. Cuerpo de solicitud según estándar Anthropic."
+            "value" : "Formato nativo /v1/messages. Cuerpo de solicitud según estándar Anthropic."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Format natif \/v1\/messages. Corps de requête selon le standard Anthropic."
+            "value" : "Format natif /v1/messages. Corps de requête selon le standard Anthropic."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "नेटिव \/v1\/messages फॉर्मेट। Anthropic मानक के अनुसार अनुरोध बॉडी।"
+            "value" : "नेटिव /v1/messages फॉर्मेट। Anthropic मानक के अनुसार अनुरोध बॉडी।"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ネイティブ\/v1\/messagesフォーマット。Anthropic標準のリクエストボディ。"
+            "value" : "ネイティブ/v1/messagesフォーマット。Anthropic標準のリクエストボディ。"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Formato nativo \/v1\/messages. Corpo de requisição conforme padrão Anthropic."
+            "value" : "Formato nativo /v1/messages. Corpo de requisição conforme padrão Anthropic."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Нативный формат \/v1\/messages. Тело запроса по стандарту Anthropic."
+            "value" : "Нативный формат /v1/messages. Тело запроса по стандарту Anthropic."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "原生 \/v1\/messages 格式。请求体符合 Anthropic 标准。"
+            "value" : "原生 /v1/messages 格式。请求体符合 Anthropic 标准。"
           }
         }
       }
@@ -19683,7 +19684,7 @@
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ステップ1\/2 — プロバイダー"
+            "value" : "ステップ1/2 — プロバイダー"
           }
         },
         "pt-BR" : {
@@ -19747,7 +19748,7 @@
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ステップ2\/2 — モデル"
+            "value" : "ステップ2/2 — モデル"
           }
         },
         "pt-BR" : {
@@ -21791,13 +21792,13 @@
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ · पुनः प्रयास %2$d\/%3$d…"
+            "value" : "%1$@ · पुनः प्रयास %2$d/%3$d…"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ · 再試行中 (%2$d\/%3$d)…"
+            "value" : "%1$@ · 再試行中 (%2$d/%3$d)…"
           }
         },
         "pt-BR" : {
@@ -21815,7 +21816,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ · 正在进行第 %2$d\/%3$d 次重试…"
+            "value" : "%1$@ · 正在进行第 %2$d/%3$d 次重试…"
           }
         }
       }
@@ -21856,13 +21857,13 @@
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ · पुनः प्रयास %2$d\/%3$d, %4$d सेकंड में"
+            "value" : "%1$@ · पुनः प्रयास %2$d/%3$d, %4$d सेकंड में"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ · %4$d 秒後に再試行 (%2$d\/%3$d)"
+            "value" : "%1$@ · %4$d 秒後に再試行 (%2$d/%3$d)"
           }
         },
         "pt-BR" : {
@@ -21880,7 +21881,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ · 第 %2$d\/%3$d 次重试，%4$d 秒后"
+            "value" : "%1$@ · 第 %2$d/%3$d 次重试，%4$d 秒后"
           }
         }
       }
@@ -22463,6 +22464,7 @@
       }
     },
     "Run" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -23044,7 +23046,7 @@
       }
     },
     "settings.backup_section" : {
-      "comment" : "Settings section header for export\/import backup feature",
+      "comment" : "Settings section header for export/import backup feature",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -26830,454 +26832,6 @@
         }
       }
     },
-    "terminal.access.auto" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "تلقائياً"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Automatisch"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Automatically"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Automáticamente"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Automatiquement"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "स्वचालित रूप से"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自動的に"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Automaticamente"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Автоматически"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自动"
-          }
-        }
-      }
-    },
-    "terminal.access.auto.description" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ينفذ الوكيل الأوامر دون تأكيد. استخدم فقط إذا كنت تثق تماماً بالوكيل."
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Der Agent führt Befehle ohne Bestätigung aus. Nur verwenden, wenn Sie dem Agenten vollständig vertrauen."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Agent executes commands without confirmation. Use only if you fully trust the agent."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "El agente ejecuta comandos sin confirmación. Úsalo solo si confías completamente en el agente."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "L'agent exécute des commandes sans confirmation. À utiliser uniquement si vous faites entièrement confiance à l'agent."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "एजेंट बिना पुष्टि के कमांड निष्पादित करता है। केवल तभी उपयोग करें जब आप एजेंट पर पूरी तरह भरोसा करते हों।"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "エージェントは確認なしにコマンドを実行します。エージェントを完全に信頼する場合のみ使用してください。"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "O agente executa comandos sem confirmação. Use apenas se confiar completamente no agente."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Агент выполняет команды без подтверждения. Используйте только если полностью доверяете агенту."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "代理无需确认即执行命令。仅在完全信任代理时使用。"
-          }
-        }
-      }
-    },
-    "terminal.access.confirm" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "مع التأكيد"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mit Bestätigung"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "With confirmation"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Con confirmación"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Avec confirmation"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "पुष्टि के साथ"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "確認あり"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Com confirmação"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "С подтверждением"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "需要确认"
-          }
-        }
-      }
-    },
-    "terminal.access.confirm.description" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "كل أمر يتطلب تأكيداً في الدردشة قبل التنفيذ."
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Jeder Befehl erfordert eine Bestätigung im Chat vor der Ausführung."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Each command requires confirmation in chat before execution."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cada comando requiere confirmación en el chat antes de ejecutarse."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Chaque commande nécessite une confirmation dans le chat avant l'exécution."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "प्रत्येक कमांड को निष्पादन से पहले चैट में पुष्टि की आवश्यकता है।"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "各コマンドは実行前にチャットでの確認が必要です。"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cada comando requer confirmação no chat antes da execução."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Каждая команда требует подтверждения в чате перед выполнением."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "每个命令在执行前都需要在聊天中确认。"
-          }
-        }
-      }
-    },
-    "terminal.access.none" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "لا يوجد وصول"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kein Zugriff"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No access"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sin acceso"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Aucun accès"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "कोई पहुँच नहीं"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アクセスなし"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sem acesso"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Нет доступа"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无访问权限"
-          }
-        }
-      }
-    },
-    "terminal.access.none.description" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "الطرفية غير متاحة للوكيل."
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Terminal ist für den Agenten nicht verfügbar."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Terminal is unavailable to the agent."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "El terminal no está disponible para el agente."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Le terminal est indisponible pour l'agent."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "टर्मिनल एजेंट के लिए उपलब्ध नहीं है।"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ターミナルはエージェントには使用できません。"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "O terminal não está disponível para o agente."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Терминал недоступен агенту."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "终端对代理不可用。"
-          }
-        }
-      }
-    },
-    "terminal.confirmation_required" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "الطرفية — مطلوب تأكيد"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Terminal — Bestätigung erforderlich"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Terminal — confirmation required"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Terminal — confirmación requerida"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Terminal — confirmation requise"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "टर्मिनल — पुष्टि आवश्यक है"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ターミナル — 確認が必要です"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Terminal — confirmação necessária"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Терминал — требуется подтверждение"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "终端 — 需要确认"
-          }
-        }
-      }
-    },
     "tests.access.none" : {
       "comment" : "Tests access level picker — no access option",
       "localizations" : {
@@ -29263,70 +28817,6 @@
         }
       }
     },
-    "thread.settings.terminal_picker" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "الوصول إلى الطرفية"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Terminal-Zugriff"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Terminal Access"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Acceso al terminal"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Accès au terminal"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "टर्मिनल एक्सेस"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ターミナルアクセス"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Acesso ao terminal"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Доступ к терминалу"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "终端访问"
-          }
-        }
-      }
-    },
     "thread.settings.terminal_safe_hint" : {
       "localizations" : {
         "ar" : {
@@ -29515,6 +29005,136 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "终端访问是一种超能力。仅与您完全信任的模型和提供商一起使用。"
+          }
+        }
+      }
+    },
+    "thread.settings.terminal_toggle" : {
+      "comment" : "Toggle in thread settings: lets the agent use run_terminal and run_ssh",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "السماح بالطرفية"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminal erlauben"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allow terminal"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Permitir terminal"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Autoriser le terminal"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "टर्मिनल की अनुमति दें"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ターミナルを許可"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Permitir terminal"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разрешить терминал"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许使用终端"
+          }
+        }
+      }
+    },
+    "thread.settings.terminal_toggle_description" : {
+      "comment" : "Caption under the terminal toggle in thread settings",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "إيقاف: لا يملك الوكيل طرفية، وتشغّل أنت عمليات البناء والاختبارات. تشغيل: ينفّذ الوكيل الأوامر وعمليات البناء والاختبارات بنفسه."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aus: Der Agent hat kein Terminal, Builds und Tests führen Sie selbst aus. An: Der Agent führt Befehle, Builds und Tests selbst aus."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Off: the agent has no terminal, and builds and tests are run by you. On: the agent runs commands, builds and tests itself."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Desactivado: el agente no tiene terminal y las compilaciones y pruebas las ejecutas tú. Activado: el agente ejecuta comandos, compilaciones y pruebas por sí mismo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Désactivé : l'agent n'a pas de terminal, et vous lancez vous-même les compilations et les tests. Activé : l'agent exécute lui-même les commandes, les compilations et les tests."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "बंद: एजेंट के पास टर्मिनल नहीं है, बिल्ड और टेस्ट आप खुद चलाते हैं। चालू: एजेंट खुद कमांड, बिल्ड और टेस्ट चलाता है।"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オフ：エージェントはターミナルを使えず、ビルドとテストはあなたが実行します。オン：エージェントがコマンド、ビルド、テストを自分で実行します。"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Desligado: o agente não tem terminal, e você executa as compilações e os testes. Ligado: o agente executa comandos, compilações e testes por conta própria."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выключено: у агента нет терминала, сборки и тесты запускаете вы. Включено: агент сам запускает команды, сборки и тесты."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关闭：代理没有终端，构建和测试由您自己运行。开启：代理自行运行命令、构建和测试。"
           }
         }
       }
@@ -30100,61 +29720,61 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "إظهار \/ إخفاء الخيوط"
+            "value" : "إظهار / إخفاء الخيوط"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Threads anzeigen \/ ausblenden"
+            "value" : "Threads anzeigen / ausblenden"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Show \/ hide threads"
+            "value" : "Show / hide threads"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mostrar \/ ocultar hilos"
+            "value" : "Mostrar / ocultar hilos"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Afficher \/ masquer les fils"
+            "value" : "Afficher / masquer les fils"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "थ्रेड दिखाएं \/ छुपाएं"
+            "value" : "थ्रेड दिखाएं / छुपाएं"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "スレッドを表示 \/ 非表示"
+            "value" : "スレッドを表示 / 非表示"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mostrar \/ ocultar tópicos"
+            "value" : "Mostrar / ocultar tópicos"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Показать \/ скрыть треды"
+            "value" : "Показать / скрыть треды"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "显示\/隐藏线程"
+            "value" : "显示/隐藏线程"
           }
         }
       }

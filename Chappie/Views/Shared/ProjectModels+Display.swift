@@ -46,24 +46,6 @@ extension TestsAccessLevel {
     }
 }
 
-extension TerminalAccessLevel {
-    var displayName: String {
-        switch self {
-        case .none:    return String(localized: "terminal.access.none")
-        case .confirm: return String(localized: "terminal.access.confirm")
-        case .auto:    return String(localized: "terminal.access.auto")
-        }
-    }
-
-    var description: String {
-        switch self {
-        case .none:    return String(localized: "terminal.access.none.description")
-        case .confirm: return String(localized: "terminal.access.confirm.description")
-        case .auto:    return String(localized: "terminal.access.auto.description")
-        }
-    }
-}
-
 extension DevEnvironment {
     /// UI label. Only `.unknown` needs translation; the rest are proper names.
     var localizedName: String {

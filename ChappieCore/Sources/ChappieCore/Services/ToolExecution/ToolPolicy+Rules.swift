@@ -18,7 +18,7 @@ extension ToolPolicy {
     public static func evaluate(
         tool: String,
         project: ProjectSettings?,
-        terminalAccess: TerminalAccessLevel,
+        terminalEnabled: Bool,
         curlEnabled: Bool
     ) -> ToolBlock? {
         guard let capability = capability(of: tool) else {
@@ -27,7 +27,7 @@ extension ToolPolicy {
                 fix: nil, permanent: true
             )
         }
-        if let thread = threadBlock(capability, terminalAccess: terminalAccess, curlEnabled: curlEnabled) {
+        if let thread = threadBlock(capability, terminalEnabled: terminalEnabled, curlEnabled: curlEnabled) {
             return thread
         }
         guard capability.needsProject else { return nil }
@@ -45,7 +45,7 @@ extension ToolPolicy {
     /// Blocks that come from thread settings (and permanent bans); nil when the thread allows the tool.
     public static func threadBlock(
         _ capability: ToolCapability,
-        terminalAccess: TerminalAccessLevel,
+        terminalEnabled: Bool,
         curlEnabled: Bool
     ) -> ToolBlock? {
         switch capability {
@@ -56,9 +56,9 @@ extension ToolPolicy {
                 permanent: true
             )
         case .terminal:
-            return terminalAccess.isEnabled ? nil : ToolBlock(
+            return terminalEnabled ? nil : ToolBlock(
                 reason: "terminal access is off for this thread",
-                fix: "thread settings → Terminal → 'With confirmation' or 'Automatically'"
+                fix: "thread settings → Terminal → turn the switch on"
             )
         case .curl:
             return curlEnabled ? nil : ToolBlock(

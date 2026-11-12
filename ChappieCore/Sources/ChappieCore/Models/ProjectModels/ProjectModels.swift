@@ -36,7 +36,6 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
     public var architectureLanguage: ProjectLanguage
     public var commentsEnabled: Bool
     public var commentsLanguage: ProjectLanguage
-    public var terminalAccess: TerminalAccessLevel
 
     /// Controls availability of build_project / run_tests for this specific project.
     /// Default true — preserves existing behavior for projects created before this setting existed.
@@ -59,7 +58,6 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         architectureLanguage: ProjectLanguage = .english,
         commentsEnabled: Bool = false,
         commentsLanguage: ProjectLanguage = .english,
-        terminalAccess: TerminalAccessLevel = .none,
         buildEnabled: Bool = true,
         curlSecrets: [CurlSecret] = []
     ) {
@@ -72,7 +70,6 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         self.architectureLanguage = architectureLanguage
         self.commentsEnabled = commentsEnabled
         self.commentsLanguage = commentsLanguage
-        self.terminalAccess = terminalAccess
         self.buildEnabled = buildEnabled
         self.curlSecrets = curlSecrets
     }
@@ -84,7 +81,6 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         testsAccess = .none
         architectureEnabled = false
         commentsEnabled = false
-        terminalAccess = .none
         // Curl-Chappie is not available to advisors at all. Secret metadata is kept so that
         // switching back to executor does not lose the user's setup.
     }
@@ -94,7 +90,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
     private enum CodingKeys: String, CodingKey {
         case agentRole, isProgrammingProject, devEnvironment, gitAccess, testsAccess
         case architectureEnabled, architectureLanguage, commentsEnabled, commentsLanguage
-        case terminalAccess, buildEnabled, curlSecrets
+        case buildEnabled, curlSecrets
     }
 
     public init(from decoder: Decoder) throws {
@@ -108,7 +104,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         architectureLanguage = try c.decodeIfPresent(ProjectLanguage.self, forKey: .architectureLanguage) ?? .english
         commentsEnabled = try c.decodeIfPresent(Bool.self, forKey: .commentsEnabled) ?? false
         commentsLanguage = try c.decodeIfPresent(ProjectLanguage.self, forKey: .commentsLanguage) ?? .english
-        terminalAccess = try c.decodeIfPresent(TerminalAccessLevel.self, forKey: .terminalAccess) ?? .none
+        // A legacy "terminalAccess" key in old records is simply ignored (unknown keys never fail decoding).
         // Old records predate this field — default to true (build was always allowed before).
         buildEnabled = try c.decodeIfPresent(Bool.self, forKey: .buildEnabled) ?? true
         curlSecrets = try c.decodeIfPresent([CurlSecret].self, forKey: .curlSecrets) ?? []
@@ -125,7 +121,6 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         try c.encode(architectureLanguage, forKey: .architectureLanguage)
         try c.encode(commentsEnabled, forKey: .commentsEnabled)
         try c.encode(commentsLanguage, forKey: .commentsLanguage)
-        try c.encode(terminalAccess, forKey: .terminalAccess)
         try c.encode(buildEnabled, forKey: .buildEnabled)
         try c.encode(curlSecrets, forKey: .curlSecrets)
     }

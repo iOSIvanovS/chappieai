@@ -47,7 +47,7 @@ public struct ActiveMemoryContext: Sendable {
     public let projectPathMap: [String: String]
 
     /// Thread-level terminal access. Independent of project roles.
-    public let threadTerminalAccess: TerminalAccessLevel
+    public let threadTerminalEnabled: Bool
 
     /// Curl-Chappie switch and host allow-list of the thread. Secrets are per project (ProjectSettings).
     public let curlEnabled: Bool
@@ -57,20 +57,20 @@ public struct ActiveMemoryContext: Sendable {
         threadId: UUID? = nil,
         projects: [ProjectInfo] = [],
         projectPathMap: [String: String] = [:],
-        threadTerminalAccess: TerminalAccessLevel = .none,
+        threadTerminalEnabled: Bool = false,
         curlEnabled: Bool = false,
         curlHosts: [CurlHost] = []
     ) {
         self.threadId = threadId
         self.projects = projects
         self.projectPathMap = projectPathMap
-        self.threadTerminalAccess = threadTerminalAccess
+        self.threadTerminalEnabled = threadTerminalEnabled
         self.curlEnabled = curlEnabled
         self.curlHosts = curlHosts
     }
 
     /// Fallback before ModelContainer is initialized.
-    public static let empty = ActiveMemoryContext(threadId: nil, projects: [], projectPathMap: [:], threadTerminalAccess: .none)
+    public static let empty = ActiveMemoryContext(threadId: nil, projects: [], projectPathMap: [:], threadTerminalEnabled: false)
 
     /// Used in PROJECT GUARD to block file tools when no project is attached.
     public var hasProjects: Bool { !projects.isEmpty }

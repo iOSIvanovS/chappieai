@@ -75,27 +75,12 @@ extension ContentView {
                     onCancel: { viewModel.cancelNewThread() }
                 )
             }
-            .sheet(item: terminalPromptBinding) { prompt in
-                TerminalConfirmationSheet(
-                    prompt: prompt,
-                    threadTitle: viewModel.terminalPromptThreadTitle(prompt),
-                    onRun: { viewModel.approveTerminalCommand(prompt) },
-                    onCancel: { viewModel.rejectTerminalCommand(prompt) }
-                )
-            }
             .alert("content.no_model_title", isPresented: $viewModel.showNoProviderAlert) {
                 Button("content.no_model_open_settings") { showSettings = true }
                 Button("content.no_model_cancel", role: .cancel) { }
             } message: {
                 Text("content.no_model_message")
             }
-    }
-
-    // MARK: - Terminal confirmation
-
-    /// Read-only in effect: the sheet closes only when the decision removes the prompt from the queue.
-    private var terminalPromptBinding: Binding<TerminalPrompt?> {
-        Binding(get: { viewModel.currentTerminalPrompt }, set: { _ in })
     }
 
     // MARK: - Navigation

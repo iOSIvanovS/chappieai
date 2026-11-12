@@ -51,7 +51,7 @@ struct ThreadSettingsSheet: View {
         self._draftSettings = State(initialValue: thread.settings)
         self._draftKeyId = State(initialValue: thread.settings.activeKeyId)
 
-        print("[ThreadSettingsSheet] init: providerId=\(thread.settings.activeProviderId?.uuidString ?? "nil") keyId=\(thread.settings.activeKeyId?.uuidString ?? "nil") maxMsgs=\(thread.settings.maxMessagesInContext) terminal=\(thread.settings.terminalAccess.rawValue)")
+        print("[ThreadSettingsSheet] init: providerId=\(thread.settings.activeProviderId?.uuidString ?? "nil") keyId=\(thread.settings.activeKeyId?.uuidString ?? "nil") maxMsgs=\(thread.settings.maxMessagesInContext) terminal=\(thread.settings.terminalEnabled)")
     }
 
     // MARK: - Body
@@ -105,18 +105,18 @@ struct ThreadSettingsSheet: View {
     )
 }
 
-#Preview("Terminal — confirm") {
+#Preview("Terminal — on") {
     ThreadSettingsSheet(
         thread: ThreadMetadata(
             id: UUID(),
             title: "Server Ops",
-            settings: ThreadSettings(terminalAccess: .confirm),
+            settings: ThreadSettings(terminalEnabled: true),
             createdAt: Date(),
             updatedAt: Date()
         ),
         providers: [],
         onSave: { title, settings, _, _, _ in
-            print("Save: \(title), terminal: \(settings.terminalAccess.rawValue)")
+            print("Save: \(title), terminal: \(settings.terminalEnabled)")
         },
         onDismiss: {}
     )

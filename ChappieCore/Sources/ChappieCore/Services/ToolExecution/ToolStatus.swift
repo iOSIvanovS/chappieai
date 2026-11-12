@@ -34,7 +34,7 @@ extension ToolPolicy {
     public static func status(
         of tool: String,
         projects: [ToolStatusProject],
-        terminalAccess: TerminalAccessLevel,
+        terminalEnabled: Bool,
         curlEnabled: Bool
     ) -> ToolStatus {
         guard let capability = capability(of: tool) else {
@@ -47,18 +47,17 @@ extension ToolPolicy {
             return ToolStatus(isAvailable: true, label: "[ALWAYS AVAILABLE]")
 
         case .forbidden:
-            let block = threadBlock(capability, terminalAccess: terminalAccess, curlEnabled: curlEnabled)
+            let block = threadBlock(capability, terminalEnabled: terminalEnabled, curlEnabled: curlEnabled)
             return ToolStatus(isAvailable: false, label: "[FORBIDDEN — \(block?.summary ?? "never allowed")]")
 
         case .terminal:
-            if let block = threadBlock(capability, terminalAccess: terminalAccess, curlEnabled: curlEnabled) {
+            if let block = threadBlock(capability, terminalEnabled: terminalEnabled, curlEnabled: curlEnabled) {
                 return ToolStatus(isAvailable: false, label: "[UNAVAILABLE — \(block.summary)]")
             }
-            let mode = terminalAccess.requiresConfirmation ? "every command waits for the user's confirmation" : "commands run automatically"
-            return ToolStatus(isAvailable: true, label: "[AVAILABLE — thread terminal setting: \(mode)]")
+            return ToolStatus(isAvailable: true, label: "[AVAILABLE — thread terminal switch is on: commands run automatically]")
 
         case .curl:
-            return curlStatus(tool, capability, projects, terminalAccess, curlEnabled)
+            return curlStatus(tool, capability, projects, terminalEnabled, curlEnabled)
 
         default:
             return projectStatus(tool, capability, projects)
@@ -81,11 +80,11 @@ extension ToolPolicy {
         _ tool: String,
         _ capability: ToolCapability,
         _ projects: [ToolStatusProject],
-        _ terminal: TerminalAccessLevel,
+        _ terminal: Bool,
         _ curlEnabled: Bool
     ) -> ToolStatus {
         let part = projectPart(tool, capability, projects)
-        if let thread = threadBlock(capability, terminalAccess: terminal, curlEnabled: curlEnabled) {
+        if let thread = threadBlock(capability, terminalEnabled: terminal, curlEnabled: curlEnabled) {
             return ToolStatus(
                 isAvailable: false,
                 label: "[UNAVAILABLE — \(thread.summary). It also needs an EXECUTOR project; \(part.text)]"

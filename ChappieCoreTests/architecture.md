@@ -49,7 +49,7 @@ ChappieCoreTests/
 ├── OfficeImagesTests.swift             # ToolImageResult marker, OfficeMediaIntake (foreign folder/file/symlink refused, folder deleted), OutputGuard on documents with pictures
 ├── PDFToolsRoutingTests.swift          # pdf_* classified/exposed, page mandatory, other readers refuse a PDF, picture result through OutputGuard
 ├── MemoryManagerTests.swift            # Semantic memory CRUD via SQLiteStorage
-├── TerminalConfirmationTests.swift     # Confirm-mode flow: run / decline / no handler answers, marker timeout round trip, TerminalDecisionGate (early decision, first wins, Stop = decline)
+├── TerminalSwitchMigrationTests.swift   # Legacy terminalAccess values -> terminalEnabled switch, wrong types, new key wins, round trip, project list survives
 ├── ThreadIsolationTests.swift          # SystemPromptBuilder: sections, memory isolation, compact project settings block, no terminal lines
 ├── ToolArgumentsTests.swift            # Lenient argument parsing: scalars, null, nested, double-encoded, errors
 ├── ToolPolicyTests.swift               # Access table: roles, plans, git/build rules, per-project resolution; every tool offered with a status line, danger order, compression of closed groups

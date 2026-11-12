@@ -25,13 +25,13 @@ private let advisor = ProjectSettings(agentRole: .advisor, isProgrammingProject:
 private func status(
     _ tool: String,
     _ projects: [(String, ProjectSettings)],
-    terminal: TerminalAccessLevel = .none,
+    terminal: Bool = false,
     curl: Bool = false
 ) -> ToolStatus {
     ToolPolicy.status(
         of: tool,
         projects: projects.map { ToolStatusProject(name: $0.0, settings: $0.1) },
-        terminalAccess: terminal,
+        terminalEnabled: terminal,
         curlEnabled: curl
     )
 }
@@ -47,20 +47,20 @@ struct ToolStatusLabelTests {
 
     @Test("git_diff is FORBIDDEN with the reason and an alternative")
     func forbidden() {
-        let s = status("git_diff", [("A", executor())], terminal: .auto)
+        let s = status("git_diff", [("A", executor())], terminal: true)
         #expect(!s.isAvailable)
         #expect(s.label.hasPrefix("[FORBIDDEN"))
         #expect(s.label.contains("costs real money"))
         #expect(s.label.contains("Instead: git_status"))
     }
 
-    @Test("Terminal: off → how to enable; on → mode")
+    @Test("Terminal: off → how to enable; on → available")
     func terminal() {
-        let off = status("run_terminal", [], terminal: .none)
+        let off = status("run_terminal", [], terminal: false)
         #expect(!off.isAvailable)
         #expect(off.label.contains("thread settings → Terminal"))
-        #expect(status("run_terminal", [], terminal: .confirm).label.contains("confirmation"))
-        #expect(status("run_ssh", [], terminal: .auto).label.contains("automatically"))
+        #expect(status("run_terminal", [], terminal: true).isAvailable)
+        #expect(status("run_ssh", [], terminal: true).label.contains("automatically"))
     }
 
     @Test("Project tool: every project listed on the side where it belongs, with its reason and fix")
@@ -160,9 +160,9 @@ struct ToolBlockTests {
 
     @Test("Call-time refusal is built from the same block as the status")
     func sameWording() {
-        let block = ToolPolicy.evaluate(tool: "write_file", project: advisor, terminalAccess: .none, curlEnabled: false)
+        let block = ToolPolicy.evaluate(tool: "write_file", project: advisor, terminalEnabled: false, curlEnabled: false)
         #expect(block != nil)
-        let denied = ToolPolicy.decide(tool: "write_file", project: advisor, terminalAccess: .none)
+        let denied = ToolPolicy.decide(tool: "write_file", project: advisor, terminalEnabled: false)
         guard case .denied(let text) = denied, let block else { Issue.record("expected denial"); return }
         #expect(text == block.message(tool: "write_file"))
         #expect(text.contains("ADVISOR"))
@@ -171,7 +171,7 @@ struct ToolBlockTests {
 
     @Test("Permanent blocks do not say 'To enable'")
     func permanent() {
-        let block = ToolPolicy.evaluate(tool: "git_diff", project: nil, terminalAccess: .auto, curlEnabled: true)
+        let block = ToolPolicy.evaluate(tool: "git_diff", project: nil, terminalEnabled: true, curlEnabled: true)
         #expect(block?.permanent == true)
         #expect(block?.summary.contains("To enable") == false)
     }

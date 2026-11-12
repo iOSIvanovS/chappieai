@@ -36,7 +36,7 @@ public struct PromptContext: Sendable {
     public let threadMemory: [MemoryEntry]
     public let projects: [ProjectContext]
     /// Thread-level terminal access — independent of project roles.
-    public let threadTerminalAccess: TerminalAccessLevel
+    public let threadTerminalEnabled: Bool
 
     public struct ProjectContext: Sendable {
         public let name: String
@@ -59,13 +59,13 @@ public struct PromptContext: Sendable {
         globalMemory: [MemoryEntry] = [],
         threadMemory: [MemoryEntry] = [],
         projects: [ProjectContext] = [],
-        threadTerminalAccess: TerminalAccessLevel = .none
+        threadTerminalEnabled: Bool = false
     ) {
         self.userName = userName
         self.globalMemory = globalMemory
         self.threadMemory = threadMemory
         self.projects = projects
-        self.threadTerminalAccess = threadTerminalAccess
+        self.threadTerminalEnabled = threadTerminalEnabled
     }
 
     public static let empty = PromptContext()

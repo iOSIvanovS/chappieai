@@ -101,7 +101,7 @@ public actor ThreadSession {
             globalMemory: globalMemory,
             threadMemory: threadMemory,
             projects: projectContexts,
-            threadTerminalAccess: thread.settings.terminalAccess
+            threadTerminalEnabled: thread.settings.terminalEnabled
         )
     }
 }

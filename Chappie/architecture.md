@@ -31,7 +31,7 @@ Chappie/
 ├── ViewModels/
 │   ├── ChappieViewModel/               # @Observable @MainActor ViewModel, split by concern:
 │   │                                   #   Send (AI request pipeline), Threads / ThreadSession / ThreadProvider / ThreadSettings / ThreadGreeting,
-│   │                                   #   Providers, AppSettings, Memory, Projects (user-only), Terminal (confirmation flow),
+│   │                                   #   Providers, AppSettings, Memory, Projects (user-only), Terminal window state,
 │   │                                   #   Multimodal (images + Office attachments), Persistence (SaveQueue), History, Pagination,
 │   │                                   #   Backup, Boot, DevEnvironment, Workspace, PersonaBlock (system prompt constants)
 │   ├── RetryStatus+Label.swift         # RetryStatus -> localized "Provider error 500 · retry 2 of 5 in 4s"
@@ -44,7 +44,6 @@ Chappie/
 └── Views/
     ├── Chat/
     │   ├── ContentView/                # Conductor: assembles components, manages sheets
-    │   ├── TerminalConfirmationSheet.swift # Modal Run/Cancel prompt for a terminal command awaiting approval
     │   ├── ChatScrollView/             # Message feed (LazyVStack, anti-jump streaming)
     │   ├── MessageBubbleView/          # Message bubble (+ attachments)
     │   ├── ProjectChipsView/           # Project chips + balance chip (bottom row)
@@ -172,7 +171,6 @@ graph TD
 | `+AppSettings.swift` | `AppSettingsStore` read/write |
 | `+Memory.swift` | Memory tool callbacks |
 | `+Projects.swift` | Project add/remove/settings via `ThreadStore` — **user-only, no AI** |
-| `+Terminal.swift` | Terminal confirmation flow — `TerminalPrompt` queue, approve/reject pending commands |
 | `+PersonaBlock.swift` | `v2PersonaBlock` + `baseSystemPrompt` constants |
 
 ### Project Attachment Rules
@@ -233,30 +231,12 @@ the editable `absolutePath` field above).
 
 ---
 
-## 7. Terminal Confirmation Flow
+## 7. Terminal switch
 
-When the thread terminal level is `.confirm`, the orchestrator PAUSES the `run_terminal` call, asks the user,
-and continues with the real outcome. The model never sees the internal marker, and no extra turn is needed.
-
-```
-AI calls run_terminal
-  → TerminalTools (confirm mode) returns a PendingTerminalCommand marker instead of running
-  → AIOrchestrator+ToolExecution sees the marker (TerminalConfirmationFlow.resolve) and calls onTerminalConfirm
-  → ChappieViewModel+Terminal.terminalConfirmHandler(): queues a TerminalPrompt in `terminalPrompts`,
-    registers a TerminalDecisionGate, suspends; ContentView shows TerminalConfirmationSheet for the first prompt
-
-User chooses "Run" (click or ⌘↩) → gate.resolve(.run)     → executeConfirmedCommand (live terminal window) → output goes to the model
-User chooses "Cancel" / Esc     → gate.resolve(.decline) → note "declined" in the chat; model gets "user declined, NOT executed"
-Stop button                     → request task cancelled → gate resolves .decline by itself
-```
-
-**Why a sheet, not a chat bubble.** A bubble lived in the message list of the active thread: it appeared below the
-input bar without scrolling and vanished from view when the user switched threads while the request kept waiting.
-The sheet cannot be missed, does not depend on scrolling and survives thread switches. Plain Enter does not run the
-command (only click or ⌘↩), so a dangerous command never starts by a stray keypress. The prompt is never persisted.
-The live terminal window opens only after approval. No watchdog runs while the user thinks: the clock for the command
-starts at approval. A caller that supplies no handler gets an explicit "not executed" answer, never a silent run.
-Tests: `TerminalConfirmationTests`.
+The terminal is an on/off switch of the thread (`ThreadSettings.terminalEnabled`, a `Toggle` in the thread settings
+sheet). There is no confirmation mode: the sheet, the `terminalPrompts` queue and the pending-command marker were
+removed (2026-11-12). Old threads migrate in `ThreadSettings.init(from:)` (details in ChappieCore/architecture.md §13).
+Off means the agent has no terminal and builds/tests are run by the user.
 
 ---
 
@@ -312,7 +292,6 @@ Auto-select: if provider has exactly one key → pre-selected automatically.
 .sheet(item: $selectedThreadForSettings) { ThreadSettingsSheet(...) }
 .sheet(isPresented: $viewModel.showNewThreadProviderPicker) { NewThreadProviderSheet(...) }
 .sheet(isPresented: $showProvidersSettings) { ProvidersSettingsView(...) }
-.sheet(item: terminalPromptBinding) { TerminalConfirmationSheet(...) }   // shows viewModel.currentTerminalPrompt
 ```
 
 ---

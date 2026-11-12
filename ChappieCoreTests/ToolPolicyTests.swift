@@ -28,9 +28,9 @@ private let xcodeAdvisor = ProjectSettings(
 private func decide(
     _ tool: String,
     _ project: ProjectSettings?,
-    terminal: TerminalAccessLevel = .none
+    terminal: Bool = false
 ) -> ToolDecision {
-    ToolPolicy.decide(tool: tool, project: project, terminalAccess: terminal)
+    ToolPolicy.decide(tool: tool, project: project, terminalEnabled: terminal)
 }
 
 private struct Rig {
@@ -40,7 +40,7 @@ private struct Rig {
     /// One service wired with the given projects (name → settings) and thread terminal level.
     init(
         _ spec: [(String, ProjectSettings)],
-        terminal: TerminalAccessLevel = .none,
+        terminal: Bool = false,
         curl: Bool = false
     ) async {
         let dir = FileManager.default.temporaryDirectory
@@ -53,7 +53,7 @@ private struct Rig {
         var settings: [UUID: ProjectSettings] = [:]
         for (info, entry) in zip(projects, spec) { settings[info.id] = entry.1 }
         await service.setMemoryContextAndSettings(
-            context: ActiveMemoryContext(threadId: UUID(), projects: projects, threadTerminalAccess: terminal,
+            context: ActiveMemoryContext(threadId: UUID(), projects: projects, threadTerminalEnabled: terminal,
                                          curlEnabled: curl,
                                          curlHosts: [CurlHost(name: "Dev", origin: "https://dev.x.ru", permission: .readOnly)]),
             settings: settings
@@ -96,13 +96,13 @@ struct ToolPolicyTableTests {
 
     @Test("An unknown tool is denied, whatever the rights")
     func unknownToolDenied() {
-        #expect(!decide("some_future_tool", xcodeExecutor(), terminal: .auto).isAllowed)
+        #expect(!decide("some_future_tool", xcodeExecutor(), terminal: true).isAllowed)
         #expect(!decide("attach_file", xcodeExecutor()).isAllowed)
     }
 
     @Test("git_diff is denied everywhere")
     func gitDiffDenied() {
-        guard case .denied(let why) = decide("git_diff", xcodeExecutor(), terminal: .auto) else {
+        guard case .denied(let why) = decide("git_diff", xcodeExecutor(), terminal: true) else {
             Issue.record("git_diff must be denied"); return
         }
         #expect(why.contains("FORBIDDEN"))
@@ -224,9 +224,9 @@ struct ToolPolicyGitBuildTests {
 
     @Test("Terminal is a thread switch, independent of the project role")
     func terminal() {
-        #expect(!decide("run_terminal", nil, terminal: .none).isAllowed)
-        #expect(decide("run_terminal", nil, terminal: .confirm).isAllowed)
-        #expect(decide("run_ssh", xcodeAdvisor, terminal: .auto).isAllowed)
+        #expect(!decide("run_terminal", nil, terminal: false).isAllowed)
+        #expect(decide("run_terminal", nil, terminal: true).isAllowed)
+        #expect(decide("run_ssh", xcodeAdvisor, terminal: true).isAllowed)
     }
 }
 
@@ -343,7 +343,7 @@ struct ToolAuthorizationTests {
     @Test("Every tool that needs a project lists it in `required`, with one project or several")
     func projectIsAlwaysRequiredInSchema() async {
         for spec in [[("Solo", xcodeExecutor())], [("A", xcodeExecutor()), ("B", xcodeAdvisor)]] {
-            let rig = await Rig(spec, terminal: .auto, curl: true)
+            let rig = await Rig(spec, terminal: true, curl: true)
             for tool in await rig.service.availableTools {
                 guard ToolPolicy.capability(of: tool.function.name)?.needsProject == true else { continue }
                 #expect(tool.function.parameters.required?.contains("project") == true, "\(tool.function.name)")
@@ -376,7 +376,7 @@ struct ToolAuthorizationTests {
 
     @Test("Unknown tools and git_diff are denied by the live gate too")
     func liveGateDeniesUnknown() async {
-        let rig = await Rig([("One", xcodeExecutor())], terminal: .auto)
+        let rig = await Rig([("One", xcodeExecutor())], terminal: true)
         #expect(!isAllowed(await rig.authorize("not_a_tool", "{}")))
         #expect(!isAllowed(await rig.authorize("git_diff", #"{"project":"One"}"#)))
     }
@@ -393,9 +393,9 @@ struct ToolExposureTests {
             [], [("A", xcodeAdvisor)], [("A", xcodeExecutor())], [("A", xcodeAdvisor), ("B", xcodeExecutor())]
         ]
         for setup in setups {
-            let rig = await Rig(setup, terminal: .none)
+            let rig = await Rig(setup, terminal: false)
             #expect(await rig.names() == ToolPolicy.knownTools)
-            let maxRig = await Rig(setup, terminal: .auto, curl: true)
+            let maxRig = await Rig(setup, terminal: true, curl: true)
             #expect(await maxRig.names() == ToolPolicy.knownTools)
         }
     }
@@ -470,18 +470,18 @@ struct ToolExposureTests {
         #expect(text.contains("ADVISOR"))
     }
 
-    @Test("The terminal status shows the thread mode when open")
+    @Test("The terminal status says the switch is on when open")
     func terminalExposure() async {
-        let open = await Rig([("A", xcodeExecutor())], terminal: .confirm).service.availableTools
+        let open = await Rig([("A", xcodeExecutor())], terminal: true).service.availableTools
         #expect(description(of: "run_ssh", in: open).hasPrefix("[AVAILABLE"))
-        #expect(description(of: "run_ssh", in: open).contains("confirmation"))
-        let shut = await Rig([("A", xcodeExecutor())], terminal: .none).service.availableTools
+        #expect(!description(of: "run_ssh", in: open).contains("confirmation"))
+        let shut = await Rig([("A", xcodeExecutor())], terminal: false).service.availableTools
         #expect(description(of: "run_terminal", in: shut).hasPrefix("[UNAVAILABLE"))
     }
 
     @Test("git_diff is offered only as FORBIDDEN")
     func gitDiffIsForbidden() async {
-        let tools = await Rig([("A", xcodeExecutor())], terminal: .auto).service.availableTools
+        let tools = await Rig([("A", xcodeExecutor())], terminal: true).service.availableTools
         let text = description(of: "git_diff", in: tools)
         #expect(text.hasPrefix("[FORBIDDEN"), "\(text)")
         #expect(text.contains("git_status"))

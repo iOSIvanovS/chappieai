@@ -87,9 +87,9 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
     /// If the model is deleted from the provider, the thread shows a warning banner.
     public var activeModelName: String?
 
-    /// Terminal access level for this thread.
+    /// Whether run_terminal / run_ssh are available in this thread. Off by default.
     /// Thread-level setting — independent of any attached project role.
-    public var terminalAccess: TerminalAccessLevel
+    public var terminalEnabled: Bool
 
     /// Curl-Chappie (HTTP request tool) switch for this thread. Off by default.
     public var curlEnabled: Bool
@@ -104,7 +104,7 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
         activeProviderId: UUID? = nil,
         activeKeyId: UUID? = nil,
         activeModelName: String? = nil,
-        terminalAccess: TerminalAccessLevel = .none,
+        terminalEnabled: Bool = false,
         curlEnabled: Bool = false,
         curlHosts: [CurlHost] = []
     ) {
@@ -114,7 +114,7 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
         self.activeProviderId = activeProviderId
         self.activeKeyId = activeKeyId
         self.activeModelName = activeModelName
-        self.terminalAccess = terminalAccess
+        self.terminalEnabled = terminalEnabled
         self.curlEnabled = curlEnabled
         self.curlHosts = curlHosts
     }
@@ -126,21 +126,46 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
 
     private enum CodingKeys: String, CodingKey {
         case maxMessagesInContext, isUnlimitedContext, activeProviderId, activeKeyId
-        case activeModelName, terminalAccess, curlEnabled, curlHosts
+        case activeModelName, terminalEnabled, curlEnabled, curlHosts
+    }
+
+    /// Read-only key of the pre-switch three-level setting ("none" / "confirm" / "auto").
+    private enum LegacyKeys: String, CodingKey {
+        case terminalAccess
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+        // Migration: only the legacy "auto" turns the terminal on; "none", "confirm", an unknown
+        // string, a non-string value or an absent key leave it off (the safe side). The legacy value is
+        // read with try? so no stored shape can make the whole settings record fail to decode.
+        let legacyValue = (try? legacy.decodeIfPresent(String.self, forKey: .terminalAccess)) ?? nil
+        let migratedEnabled = legacyValue == "auto"
+        let storedEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .terminalEnabled)) ?? nil
         self.init(
             maxMessagesInContext: try c.decodeIfPresent(Int.self, forKey: .maxMessagesInContext) ?? 30,
             isUnlimitedContext: try c.decodeIfPresent(Bool.self, forKey: .isUnlimitedContext) ?? false,
             activeProviderId: try c.decodeIfPresent(UUID.self, forKey: .activeProviderId),
             activeKeyId: try c.decodeIfPresent(UUID.self, forKey: .activeKeyId),
             activeModelName: try c.decodeIfPresent(String.self, forKey: .activeModelName),
-            terminalAccess: try c.decodeIfPresent(TerminalAccessLevel.self, forKey: .terminalAccess) ?? .none,
+            terminalEnabled: storedEnabled ?? migratedEnabled,
             curlEnabled: try c.decodeIfPresent(Bool.self, forKey: .curlEnabled) ?? false,
             curlHosts: try c.decodeIfPresent([CurlHost].self, forKey: .curlHosts) ?? []
         )
+    }
+
+    /// Writes only the new key; the legacy one disappears on the next save.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(maxMessagesInContext, forKey: .maxMessagesInContext)
+        try c.encode(isUnlimitedContext, forKey: .isUnlimitedContext)
+        try c.encodeIfPresent(activeProviderId, forKey: .activeProviderId)
+        try c.encodeIfPresent(activeKeyId, forKey: .activeKeyId)
+        try c.encodeIfPresent(activeModelName, forKey: .activeModelName)
+        try c.encode(terminalEnabled, forKey: .terminalEnabled)
+        try c.encode(curlEnabled, forKey: .curlEnabled)
+        try c.encode(curlHosts, forKey: .curlHosts)
     }
 }
 

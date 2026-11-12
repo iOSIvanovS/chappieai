@@ -41,7 +41,7 @@ struct ToolPathRoutingTests {
         )
         let settings = ProjectSettings(agentRole: .executor, isProgrammingProject: true, devEnvironment: .xcode)
         await service.setMemoryContextAndSettings(
-            context: ActiveMemoryContext(threadId: UUID(), projects: infos, threadTerminalAccess: .none),
+            context: ActiveMemoryContext(threadId: UUID(), projects: infos, threadTerminalEnabled: false),
             settings: Dictionary(uniqueKeysWithValues: infos.map { ($0.id, settings) })
         )
         return Fixture(service: service, rootA: rootA, rootB: rootB)

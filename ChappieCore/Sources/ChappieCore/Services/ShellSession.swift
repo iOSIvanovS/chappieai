@@ -18,8 +18,8 @@
 //
 // DANGEROUS COMMANDS:
 // CommandSafety (word-level analysis, not substrings) catches catastrophic mistakes regardless
-// of TerminalAccessLevel. It is a safety net, not a security boundary: the real guard is
-// TerminalAccessLevel in ProjectSettings + ToolPolicy.
+// of the thread terminal switch. It is a safety net, not a security boundary: the real guard is
+// the thread terminal switch + ToolPolicy.
 
 import Foundation
 

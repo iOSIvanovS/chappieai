@@ -69,7 +69,7 @@ extension ThreadSettingsSheet {
                 // Store exactly what request matching compares against (see CurlOrigin).
                 updatedSettings.curlHosts = CurlValidation.normalized(CurlValidation.droppingBlank(updatedSettings.curlHosts))
 
-                print("[ThreadSettingsSheet] onSave: title='\(finalTitle)' maxMsgs=\(updatedSettings.maxMessagesInContext) keyId=\(effectiveKeyId?.uuidString ?? "nil") terminal=\(updatedSettings.terminalAccess.rawValue)")
+                print("[ThreadSettingsSheet] onSave: title='\(finalTitle)' maxMsgs=\(updatedSettings.maxMessagesInContext) keyId=\(effectiveKeyId?.uuidString ?? "nil") terminal=\(updatedSettings.terminalEnabled)")
 
                 onSave(finalTitle, updatedSettings, nil, effectiveKeyId, nil)
             }

@@ -13,8 +13,7 @@ extension AIOrchestrator {
         onTerminalOutput: (@Sendable (String) -> Void)? = nil,
         onTerminalStart: (@Sendable (String) -> Void)? = nil,
         onTerminalFinish: (@Sendable () -> Void)? = nil,
-        onToolBudget: (@Sendable (TimeInterval?) -> Void)? = nil,
-        onTerminalConfirm: TerminalConfirmationHandler? = nil
+        onToolBudget: (@Sendable (TimeInterval?) -> Void)? = nil
     ) async throws {
         let terminalToolNames: Set<String> = ["run_terminal", "run_ssh"]
 
@@ -34,39 +33,15 @@ extension AIOrchestrator {
                 // Access control happens inside toolService.execute (ToolPolicy): denied calls come
                 // back as an explanatory message, so the tool_call always gets its tool result.
                 onToolCall(toolName, targetPath)
-                // In confirmation mode the live window opens only after the user approves.
-                var awaitsConfirmation = false
-                if toolName == "run_terminal" {
-                    awaitsConfirmation = await toolService.terminalRequiresConfirmation()
-                }
-                if isTerminalTool && !awaitsConfirmation {
+                if isTerminalTool {
                     onTerminalStart?(extractCommand(from: arguments))
                 }
                 // The UI shows the time the watchdog allows for this call as a filling bar.
                 onToolBudget?(ToolDeadlines.seconds(tool: toolName, arguments: arguments))
-                let firstResult = await toolService.execute(call: toolCall, onOutput: onTerminalOutput)
+                resultString = await toolService.execute(call: toolCall, onOutput: onTerminalOutput)
                 onToolBudget?(nil)
-                if isTerminalTool && !awaitsConfirmation {
+                if isTerminalTool {
                     onTerminalFinish?()
-                }
-                // A confirmation marker pauses here until the user decides; the model only ever sees the
-                // real outcome (output, or "user declined"). No watchdog runs while the user thinks.
-                let service = toolService
-                resultString = await TerminalConfirmationFlow.resolve(
-                    toolName: toolName,
-                    result: firstResult,
-                    confirm: onTerminalConfirm
-                ) { @Sendable pending in
-                    onTerminalStart?(pending.command)
-                    onToolBudget?(ToolDeadlines.seconds(tool: toolName, arguments: "{\"timeout\":\"\(Int(pending.timeout ?? 300))\"}"))
-                    let output = await service.executeConfirmedCommand(
-                        pending.command,
-                        timeout: pending.timeout ?? 300,
-                        onOutput: onTerminalOutput
-                    )
-                    onToolBudget?(nil)
-                    onTerminalFinish?()
-                    return output
                 }
                 loopGuard.record(signature: signature, result: resultString)
                 // Stop was pressed while the tool ran: the tool already stopped its processes and

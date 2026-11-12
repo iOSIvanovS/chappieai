@@ -11,7 +11,7 @@
 //
 // HONEST LIMIT: this is NOT a security boundary. Variables, `$(...)` inside quotes, scripts written
 // to disk and run later, and any other indirection get through. The real guard is
-// TerminalAccessLevel (off / confirm / full). Do not extend this list to "close" bypasses.
+// the thread terminal switch. Do not extend this list to "close" bypasses.
 
 import Foundation
 

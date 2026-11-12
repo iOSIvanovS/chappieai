@@ -16,44 +16,15 @@
 // Each call opens a fresh connection, runs the command, returns output, closes.
 // No interactive input supported — use for remote diagnostics and server commands only.
 //
-// CONFIRMATION MODE (run_terminal only):
-// When threadTerminalAccess == .confirm, the tool does NOT execute the command.
-// Instead it returns a special PENDING_CONFIRMATION marker that the ViewModel
-// intercepts and renders as an inline confirmation UI in the chat.
-//
 // SESSION LIFECYCLE:
 // Sessions are created lazily on first use per thread.
 // Sessions are cleared when a thread is deactivated (clearSession called from ViewModel).
 //
 // ACCESS CONTROL:
-// Terminal access is thread-level — read from activeMemoryContext.threadTerminalAccess.
+// Terminal access is a thread-level on/off switch — read from activeMemoryContext.threadTerminalEnabled.
 // No project role required. ToolPolicy handles the gate before this code runs.
 
 import Foundation
-
-// MARK: - PendingTerminalCommand
-
-/// Marker returned when threadTerminalAccess == .confirm.
-/// ViewModel parses this to show inline confirmation UI.
-public struct PendingTerminalCommand: Codable, Sendable {
-    public static let markerPrefix = "CHAPPIE_TERMINAL_CONFIRM:"
-
-    public let command: String
-    public let threadId: UUID
-    /// Timeout the model asked for; kept so the approved run honours it. Absent in older markers.
-    public var timeout: Double? = nil
-
-    public var encoded: String {
-        let json = (try? JSONEncoder().encode(self)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-        return "\(Self.markerPrefix)\(json)"
-    }
-
-    public static func decode(from string: String) -> PendingTerminalCommand? {
-        guard string.hasPrefix(markerPrefix) else { return nil }
-        let json = String(string.dropFirst(markerPrefix.count))
-        return try? JSONDecoder().decode(PendingTerminalCommand.self, from: Data(json.utf8))
-    }
-}
 
 // MARK: - TerminalTools extension
 
@@ -93,30 +64,6 @@ extension ToolExecutionService {
         The command was NOT run. If this was a mistake, fix the command (use a narrower, explicit path). \
         If it is really intended, tell the user to run it manually in Terminal.app.
         """
-    }
-
-    /// What the model is told when the user pressed Cancel: unambiguous, so it neither retries the same
-    /// command nor assumes anything changed.
-    static func declinedMessage(_ command: String) -> String {
-        """
-        🚫 The user declined to run this command: \(command)
-        It was NOT executed and nothing changed. Do not retry it as is: ask the user what they prefer, \
-        or propose a different approach.
-        """
-    }
-
-    /// Confirmation mode is on but the caller has no way to ask the user (nothing was run).
-    static func unconfirmableMessage(_ command: String) -> String {
-        """
-        ⚠️ The command was NOT executed: this thread requires confirmation, but no confirmation prompt \
-        could be shown to the user. Command: \(command)
-        Tell the user, and ask them to run it manually or to switch the thread terminal mode.
-        """
-    }
-
-    /// True when run_terminal currently waits for the user's confirmation (thread setting).
-    func terminalRequiresConfirmation() -> Bool {
-        activeMemoryContext.threadTerminalAccess.requiresConfirmation
     }
 
     // MARK: - run_terminal
@@ -175,39 +122,7 @@ extension ToolExecutionService {
             return Self.blockedMessage(reason)
         }
 
-        // Thread-level access gate — access control already passed in ToolPolicy,
-        // but confirmation mode is determined here from threadTerminalAccess.
-        let terminalAccess = activeMemoryContext.threadTerminalAccess
-        if terminalAccess.requiresConfirmation {
-            let pending = PendingTerminalCommand(
-                command: command,
-                threadId: activeMemoryContext.threadId ?? UUID(),
-                timeout: timeout
-            )
-            return pending.encoded
-        }
-
         return await runLocalCommand(command, timeout: timeout, onOutput: onOutput)
-    }
-
-    /// Executes a confirmed command (called by ViewModel after user approval).
-    public func executeConfirmedCommand(
-        _ command: String,
-        timeout: TimeInterval = 300,
-        onOutput: (@Sendable (String) -> Void)? = nil
-    ) async -> String {
-        if let reason = ShellSession.dangerousPattern(in: command) {
-            return Self.blockedMessage(reason)
-        }
-        let cappedTimeout = ShellSession.cappedTimeout(for: command, requested: timeout)
-        // Same watchdog as every other tool call; the clock starts now, after the user's approval.
-        let seconds = ToolDeadlines.seconds(tool: "run_terminal", arguments: "{\"timeout\":\"\(Int(cappedTimeout))\"}")
-        let result = await ToolWatchdog.run(toolName: "run_terminal", seconds: seconds) { [self] in
-            await runLocalCommand(command, timeout: cappedTimeout, onOutput: onOutput)
-        }
-        // This result becomes a chat message that later travels to the model as history, so it
-        // goes through the same size gate as a tool result.
-        return OutputGuard.apply(toolName: "run_terminal", output: result)
     }
 
     private func runLocalCommand(

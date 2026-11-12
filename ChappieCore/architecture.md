@@ -156,8 +156,7 @@ ChappieCore/
             ├── FileTools.swift                      # File tool implementations
             ├── GitBuildTools.swift                  # Git/build tool implementations
             ├── MemoryTools.swift                    # Memory tool implementations
-            ├── TerminalTools.swift                  # run_terminal implementation (ShellSession), PendingTerminalCommand marker, declined/unconfirmable answers
-            └── TerminalConfirmation.swift           # TerminalDecision, TerminalDecisionGate, TerminalConfirmationFlow.resolve (pause for the user's Run/Cancel)
+            └── TerminalTools.swift                  # run_terminal / run_ssh implementation (ShellSession), safety-net refusal text
 ```
 
 ---
@@ -512,7 +511,7 @@ absolute path; for an EXECUTOR programming project also dev environment, test-wr
 goes through the shared write tools, so no tool status can express it), and the architecture / comment switches with
 their language. Role, git level, compilation and test-run access are NOT repeated: the status line of each tool
 states them (`ToolPolicy.status`). The thread's terminal setting is not injected either (the `run_terminal` /
-`run_ssh` statuses carry it), and neither is the legacy per-project `terminalAccess`. Behavioural rules (comment
+`run_ssh` statuses carry it), and neither is any terminal setting. Behavioural rules (comment
 style, how to handle architecture files) live in the persona rules, not in this block. Tests: `ThreadIsolationTests`.
 
 ---
@@ -647,8 +646,7 @@ uncancellable system call is abandoned and its late result is dropped.
 
 The message tells the model the outcome: mutating tools (`ToolDeadlines.isMutating`) are reported as
 "RESULT IS UNKNOWN, check state, no automatic retry"; readers as "nothing was changed". The clock starts at real
-execution, so waiting for a manual terminal approval does not count; the approved command runs through the same
-watchdog inside the paused tool call (`TerminalConfirmationFlow`), so Stop reaches it. The UI shows the allowed time as a
+execution. The UI shows the allowed time as a
 pie that fills clockwise in the tint colour in place of the spinner of the agent action bar (`StreamingState.toolBudget`;
 no number; a bar under the row was rejected because it made the label jump). Tests: `ToolWatchdogTests`.
 
@@ -702,8 +700,7 @@ Running commands collect output through `OutputCapture` (`ShellSession`, `run_ss
 `captureCap` (200 KB), only the byte count keeps growing, and a tail window is kept so the exit code and the
 end-of-output sentinel are still found. A cut stream appends `[[CHAPPIE_OUTPUT_TRUNCATED:<bytes>]]`; the gate
 sums the markers (stdout + stderr) and judges the real size. `MCPToolBridge` refuses a helper response
-over 10 MB with the same notice. The confirmed-terminal path (`executeConfirmedCommand`) is gated too, since
-its result becomes a chat message that later travels to the model as history.
+over 10 MB with the same notice.
 
 Spool (run_terminal only): when a command's output passes the command limit, `OutputCapture` opens an `OutputSpool`
 file and from then on every byte goes to disk as well. `ShellSession` then returns not a refusal but a notice
@@ -727,18 +724,15 @@ runaway, end-to-end through `execute`).
 
 `ShellSession` — persistent bash process per thread ID.
 
-**TerminalAccessLevel:**
-- `.none` — terminal unavailable (default)
-- `.confirm` — every command requires user approval
-- `.auto` — commands execute immediately
-
-**Confirmation mode (`TerminalConfirmation.swift`).** In `.confirm`, `run_terminal` returns a `PendingTerminalCommand`
-marker (command, thread id, requested timeout) instead of running. `AIOrchestrator.executeToolCalls` passes the result
-through `TerminalConfirmationFlow.resolve`: with a marker it awaits `onTerminalConfirm` (supplied by the app) and then
-either runs the command via `executeConfirmedCommand` (output goes to the model) or answers "user declined, NOT
-executed, do not retry as is". No handler = "NOT executed" answer, never a silent run. `TerminalDecisionGate` is the
-suspension point: first answer wins, a decision made before `wait()` is kept, task cancellation (Stop) resolves
-`.decline`. The live terminal window opens only after approval. Tests: `TerminalConfirmationTests`.
+**Terminal switch (`ThreadSettings.terminalEnabled`, `ActiveMemoryContext.threadTerminalEnabled`).** A plain on/off
+thread setting; there is no confirmation mode. Decision (2026-11-12): the three-level `none / confirm / auto` setting and
+everything around it (confirmation sheet, `PendingTerminalCommand` marker, `TerminalDecisionGate`, `executeConfirmedCommand`)
+were removed: the confirm path had its own failure modes and the safety net below plus the per-thread switch are the
+only barriers. **Migration:** `ThreadSettings.init(from:)` reads the legacy `terminalAccess` key as a plain string with
+`try?` (so no stored shape can fail the whole record); only `"auto"` turns the switch on, `none`, `confirm`, garbage, a
+non-string or a missing key leave it off. The new key wins when both exist; `encode` writes only `terminalEnabled`.
+`ProjectSettings.terminalAccess` was deleted outright (unknown keys never fail decoding, so old project JSON is safe and
+the `[ThreadProjectEntry]` list cannot be lost). Tests: `TerminalSwitchMigrationTests`.
 
 **CommandSafety — a net for mistakes, NOT a security boundary.** Decision (backlog 11): the old substring blocklist
 is gone. It blocked harmless commands (`rm -rf /tmp/x` contains "rm -rf /"; "reboot" inside a commit message) and was
@@ -749,8 +743,8 @@ command: recursive `rm`/`chmod`/`chown` on `/`, `~`, `$HOME`, or a top-level sys
 `dd of=/dev/…` and redirects onto raw disks; destructive `diskutil`; `shutdown|reboot|halt|poweroff` as a command
 NAME; `curl|wget … | sh`; fork bomb. `bash -c '…'` and `eval` are analysed recursively (depth-limited); a heredoc fed to
 a shell is inspected, any other heredoc is data. Indirection (variables, scripts written then run, `$(…)` in quotes)
-is NOT caught and the refusal text says so. The real guard is `TerminalAccessLevel`; do not grow this list to chase
-bypasses. Applies to `run_terminal`, confirmed commands and `run_ssh`.
+is NOT caught and the refusal text says so. The real guard is the thread terminal switch; do not grow this list to chase
+bypasses. Applies to `run_terminal` and `run_ssh`.
 
 
 **Cancellation (Stop button).** `cancelCurrentRequest()` cancels the request Task; every long wait honours it:
@@ -824,4 +818,4 @@ Tests: `MessageTimestampTests`, `MemoryDatesTests`.
 | 2026-08 | Backup import UI shipped in app layer (Chappie/architecture.md): BackupImportSheet two-step confirmation (decrypt/preview, then explicit destructive "Restore Now"), reachable from SettingsView and from OnboardingView welcome step as a "Restore from Backup" shortcut that skips the whole provider setup wizard. |
 | 2026-11 | `project` is required for every project tool (file, search, document, git, build, loc, curl, pdf by path), with one project or several. Removed: single-project default, `ProjectName/` path-prefix routing (a project with a same-named inner folder, e.g. `Chappie/Chappie/`, silently redirected calls to the root), all-projects mode of `list_files`/`search_in_project`; schemas no longer depend on the number of projects. Covered by ToolPathRoutingTests, ToolAuthorizationTests, ToolExposureTests. |
 | 2026-11 | Remote providers.json catalog removed (ProvidersRemoteService, RemoteProviderCatalog, startup sync). Replaced by hardcoded BuiltInProviders presets without models; chat path is per preset. `AIProvider.catalogId` keeps its name for stored-data compatibility and now means "preset id". |
-| 2026-11 | Localization boundary: ChappieCore holds no catalog-localized strings. Labels of AgentRole/Git/Tests/TerminalAccessLevel and the "unknown" DevEnvironment moved to the app target (Chappie/Views/Shared/ProjectModels+Display.swift), because Xcode extracts catalog keys only from app sources and marks keys used inside a Swift package as stale. `DevEnvironment.displayName` stays a stable English name for prompts; the UI uses `localizedName`. |
+| 2026-11 | Localization boundary: ChappieCore holds no catalog-localized strings. Labels of AgentRole/Git/Tests and the "unknown" DevEnvironment moved to the app target (Chappie/Views/Shared/ProjectModels+Display.swift), because Xcode extracts catalog keys only from app sources and marks keys used inside a Swift package as stale. `DevEnvironment.displayName` stays a stable English name for prompts; the UI uses `localizedName`. |
