@@ -118,7 +118,9 @@ ChappieCore/
         │   └── PDFGuidance.swift       # Refusal text every other reader returns for a PDF, pointing to the pdf_* tools
         ├── OutputGuard/
         │   ├── OutputGuard.swift       # THE size gate for every tool result (200 KB read / 100 KB command), oversize notice
-        │   └── OutputCapture.swift     # Memory-capped collector for running commands (keeps head + tail window, counts all bytes)
+        │   ├── OutputCapture.swift     # Memory-capped collector for running commands (keeps head + tail window, counts all bytes); opens an OutputSpool past 100 KB
+        │   ├── OutputSpool.swift       # Disk copy of a long command output (0600 file in tmp/chappie-terminal-output, 256 MB cap, cleanup by age 24 h and folder size)
+        │   └── OutputGuard+Spill.swift # Model-facing notice for a spooled output: size, beginning, end, path, grep/sed/tail hint
         ├── ProcessControl/
         │   └── ProcessTree.swift       # Stop a process + descendants (SIGTERM, SIGKILL after grace); ProcessCanceller; copy lives in ChappieMCP
         ├── ShellSession.swift          # Persistent bash session (per-thread, run_terminal)
@@ -702,6 +704,15 @@ end-of-output sentinel are still found. A cut stream appends `[[CHAPPIE_OUTPUT_T
 sums the markers (stdout + stderr) and judges the real size. `MCPToolBridge` refuses a helper response
 over 10 MB with the same notice. The confirmed-terminal path (`executeConfirmedCommand`) is gated too, since
 its result becomes a chat message that later travels to the model as history.
+
+Spool (run_terminal only): when a command's output passes the command limit, `OutputCapture` opens an `OutputSpool`
+file and from then on every byte goes to disk as well. `ShellSession` then returns not a refusal but a notice
+(`OutputGuard.spillNotice`): size, line count, the first ~8 KB, the last ~8 KB, the file path and `grep`/`sed`/`tail`
+commands for the middle. The hint names terminal commands on purpose: file tools take project-relative paths only
+(`PathGuard` rejects absolute ones), and the spool folder is outside every project. The exit-code line and the
+sentinel the session appends are cut off the file. A timeout or Stop on a command that already spooled returns the
+same notice. If the folder cannot be created, or the output turns out to fit the limit, the old in-memory behaviour
+applies. `run_ssh` is not spooled yet (two streams, separate pass).
 
 Not yet covered (helper side, ChappieMCP has no test target): `ProcessRunner` still reads build/git output
 to the end in memory. Its callers already return a bounded summary (build/test: last lines + errors), and

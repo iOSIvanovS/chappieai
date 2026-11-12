@@ -42,8 +42,12 @@ public actor ShellSession {
 
     // MARK: - Init
 
-    public init(initialDirectory: String) {
+    /// Where the full output of a command that outgrew the command limit is saved (nil = never).
+    private let spoolDirectory: URL?
+
+    public init(initialDirectory: String, spoolDirectory: URL? = OutputSpool.defaultDirectory) {
         self.initialDirectory = initialDirectory
+        self.spoolDirectory = spoolDirectory
     }
 
     // MARK: - Public API
@@ -186,7 +190,7 @@ public actor ShellSession {
         // fires no matter what value is passed in. This happened in practice: a capped
         // 60s timeout still hung for ~30 minutes. readabilityHandler is event-driven
         // (GCD dispatch source under the hood) so it never blocks the watchdog timer.
-        let box = SentinelReadBox()
+        let box = SentinelReadBox(spoolDirectory: spoolDirectory)
         var timedOut = false
 
         // Stop in the UI cancels this task. The wait below would otherwise run until the command
@@ -198,7 +202,7 @@ public actor ShellSession {
                 guard box.markResumedIfNeeded() else { return }
                 handle.readabilityHandler = nil
                 box.markCancelled()
-                let partial = box.capture.text()
+                let partial = ShellSession.partialText(box.capture)
                 continuation.resume(returning: ShellResult(
                     output: "🛑 Command cancelled by the user; the shell session was stopped.\nPartial output:\n\(partial)",
                     exitCode: -1
@@ -228,7 +232,7 @@ public actor ShellSession {
                 guard box.markResumedIfNeeded() else { return }
                 handle.readabilityHandler = nil
                 box.markTimedOut()
-                let partial = box.capture.text()
+                let partial = ShellSession.partialText(box.capture)
                 continuation.resume(returning: ShellResult(
                     output: "⏱️ Command timed out after \(Int(timeout))s.\nPartial output:\n\(partial)",
                     exitCode: -1
@@ -252,9 +256,17 @@ public actor ShellSession {
     /// Extracts clean output and exit code from sentinel-wrapped output.
     /// Static + nonisolated so it can be called from Task.detached without capturing self.
     static func parseOutput(_ capture: OutputCapture, sentinel: String) -> ShellResult {
+        // Spooled case: the output outgrew the command limit and a file holds all of it. The exit code
+        // is read from the tail window, the model gets the beginning, the end and the path.
+        if capture.isSpooled {
+            let exitCode = exitCode(inTail: capture.tailText, sentinel: sentinel)
+            return ShellResult(output: spilledText(capture, trailerMarker: "EXIT_CODE:"), exitCode: exitCode)
+        }
+
         // Normal case: everything fit, parse the whole text.
-        // Truncated case: the middle was not stored, so the exit code is read from the tail window and
-        // the stored head is returned with the size marker; OutputGuard then replaces it with a notice.
+        // Truncated case (no spool available): the middle was not stored, so the exit code is read from
+        // the tail window and the stored head is returned with the size marker; OutputGuard then
+        // replaces it with a notice.
         let truncated = capture.isTruncated
         let raw = truncated ? capture.tailText : capture.headText
 
@@ -280,6 +292,36 @@ public actor ShellSession {
 
         return ShellResult(output: cleanOutput, exitCode: exitCode)
     }
+
+    /// The exit code the session appended near the end of the stream; 0 when the line is not in the window.
+    static func exitCode(inTail tail: String, sentinel: String) -> Int {
+        // Not anchored to a line start: output that does not end with a newline is followed directly by
+        // the injected line ("...textEXIT_CODE:2"). The last occurrence is the injected one.
+        let beforeSentinel = tail.components(separatedBy: sentinel).first ?? tail
+        guard let hit = beforeSentinel.range(of: "EXIT_CODE:", options: .backwards) else { return 0 }
+        let digits = beforeSentinel[hit.upperBound...].prefix(while: { $0 == "-" || ($0.isASCII && $0.isNumber) })
+        return Int(digits) ?? 0
+    }
+
+    /// Model-facing text of a spooled output: beginning, end and the file path.
+    static func spilledText(_ capture: OutputCapture, trailerMarker: String?) -> String {
+        guard let summary = capture.closeSpool(trailerMarker: trailerMarker, tailBytes: OutputGuard.spillEdgeBytes) else {
+            return capture.text()
+        }
+        // The spool opens on raw bytes, which include the injected exit-code lines. When the command's own
+        // output turned out to fit the limit, it is returned whole like any other and the file is dropped.
+        if !summary.isIncomplete, summary.bytes <= OutputGuard.commandLimit,
+           let data = try? Data(contentsOf: summary.url) {
+            try? FileManager.default.removeItem(at: summary.url)
+            return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return OutputGuard.spillNotice(head: capture.headText, summary: summary)
+    }
+
+    /// What the model sees of an unfinished command (timeout or Stop): the whole text, or the spill notice.
+    static func partialText(_ capture: OutputCapture) -> String {
+        capture.isSpooled ? spilledText(capture, trailerMarker: nil) : capture.text()
+    }
 }
 
 // MARK: - SentinelReadBox
@@ -290,12 +332,16 @@ public actor ShellSession {
 private final class SentinelReadBox: @unchecked Sendable {
     private let lock = NSLock()
     /// Output collector with its own lock and a memory cap (see OutputCapture).
-    let capture = OutputCapture()
+    let capture: OutputCapture
     private var resumed = false
     private var timedOut = false
     private var cancelled = false
     private var cancelAction: (@Sendable () -> Void)?
     private var cancelRequested = false
+
+    init(spoolDirectory: URL?) {
+        capture = OutputCapture(spoolDirectory: spoolDirectory)
+    }
 
     /// Registers what to do on Stop. If Stop already arrived, it runs immediately.
     func installCancelAction(_ action: @escaping @Sendable () -> Void) {

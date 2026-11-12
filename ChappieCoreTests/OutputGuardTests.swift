@@ -144,7 +144,7 @@ struct OutputGuardShellTests {
 
     @Test("A runaway command is capped in memory and the real size reaches the notice")
     func runawayCommand() async {
-        let shell = ShellSession(initialDirectory: NSTemporaryDirectory())
+        let shell = ShellSession(initialDirectory: NSTemporaryDirectory(), spoolDirectory: nil)
         // 1 MB of output, far above the capture cap.
         let result = await shell.run("/usr/bin/head -c 1000000 /dev/zero | /usr/bin/tr '\\0' 'a'", timeout: 60)
         #expect(result.output.utf8.count < OutputGuard.captureCap + 200, "memory must not follow the output size")
@@ -157,7 +157,7 @@ struct OutputGuardShellTests {
 
     @Test("Output between the command limit and the capture cap is refused with its exact size")
     func middleSizedOutput() async {
-        let shell = ShellSession(initialDirectory: NSTemporaryDirectory())
+        let shell = ShellSession(initialDirectory: NSTemporaryDirectory(), spoolDirectory: nil)
         let result = await shell.run("/usr/bin/head -c 150000 /dev/zero | /usr/bin/tr '\\0' 'a'", timeout: 60)
         #expect(result.exitCode == 0)
         #expect(OutputGuard.apply(toolName: "run_terminal", output: result.formatted).contains("OUTPUT NOT PASSED"))

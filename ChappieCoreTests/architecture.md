@@ -44,6 +44,7 @@ ChappieCoreTests/
 ├── CurlScenarioRunnerTests.swift       # Curl scenario RUNS on a stateful stub server (Stroykontrol chain Authorization -> Remark_create -> Remark_with_comment): root-only cleanup, nested cleanup never runs, cleanup skipped without a value, preflight refusals (host permission, ROOT cleanup DELETE, unmapped slots/inputs/missing secret values), dry run, shared-session reuse, two actors, report redaction, injection guard, check semantics
 ├── ToolWatchdogTests.swift             # ToolDeadlines table + messages; watchdog: fast path, hung tool cancelled, uncancellable tool abandoned, Stop forwarded
 ├── OutputGuardTests.swift              # Size gate: 200/100 KB boundaries on UTF-8 bytes, notices, OutputCapture, runaway shell command, end-to-end through execute()
+├── OutputSpoolTests.swift              # Spool: file equals real output, trailer cut, 0600, size cap, cleanup by age/size, notice text, real shell (exit code, timeout keeps path, borderline stays inline)
 ├── ImagePipelineTests.swift            # ImageDownscaler (2000 px cap, JPEG, alpha, pass-through, cache reuse/invalidation), ImageValve, image marker restriction
 ├── OfficeImagesTests.swift             # ToolImageResult marker, OfficeMediaIntake (foreign folder/file/symlink refused, folder deleted), OutputGuard on documents with pictures
 ├── PDFToolsRoutingTests.swift          # pdf_* classified/exposed, page mandatory, other readers refuse a PDF, picture result through OutputGuard
