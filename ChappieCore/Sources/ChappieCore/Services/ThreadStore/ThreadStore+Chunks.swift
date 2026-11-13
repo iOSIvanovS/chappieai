@@ -167,6 +167,39 @@ extension ThreadStore {
         return (chunk, hasMore, prevIndex)
     }
 
+    /// Loads older chunks, newest first, until `alreadyEligible` plus the eligible messages of the
+    /// loaded chunks reaches `needed` (or no older chunks are left).
+    /// WHY: the window opens with the last chunk only; right after a chunk rollover it can hold a
+    /// handful of messages, which would starve the model context. `isEligible` tells which
+    /// messages actually reach the model (tool logs and local notices do not).
+    public func loadOlderChunks<T: Codable>(
+        fromThreadId threadId: UUID,
+        currentOldestChunkIndex: Int,
+        alreadyEligible: Int,
+        needed: Int,
+        as type: T.Type,
+        isEligible: (T) -> Bool
+    ) async throws -> (messages: [T], hasMore: Bool, newOldestChunkIndex: Int) {
+        var oldest = currentOldestChunkIndex
+        var collected: [T] = []
+        var hasMore = true
+        var eligible = alreadyEligible
+
+        while hasMore && eligible < needed {
+            let step = try await loadMoreMessages(
+                fromThreadId: threadId,
+                currentOldestChunkIndex: oldest,
+                as: type
+            )
+            guard !step.messages.isEmpty else { hasMore = step.hasMore; break }
+            collected = step.messages + collected
+            oldest = step.newOldestChunkIndex
+            hasMore = step.hasMore
+            eligible += step.messages.filter(isEligible).count
+        }
+        return (collected, hasMore, oldest)
+    }
+
     /// Returns the chunk index of the last (most recent) chunk, or nil if no chunks exist.
     public func lastChunkIndex(forThreadId threadId: UUID) async throws -> Int? {
         let indices = try await chunkIndices(for: threadId)

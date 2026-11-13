@@ -282,6 +282,11 @@ Integer index (not zero-padded) — sorted numerically by `chunkIndices()`.
 - **Thread open** → only the **last chunk** is loaded into memory (O(1), fast).
 - **Scroll to top** → `loadMoreMessages()` loads the previous chunk on demand.
 - `hasMoreChunks` / `oldestLoadedChunkIndex` track pagination state in ViewModel.
+- **Model context vs. window**: the window (last chunk) can hold only a few messages right after a chunk
+  rollover (512 stored → 12 in memory). Before building the request history, `ChappieViewModel.ensureModelHistoryLoaded()`
+  calls `loadOlderChunks(...)`, which prepends older chunks until the window holds `maxMessagesInContext + 1`
+  messages that actually reach the model (tool logs and local notices do not count). `oldestLoadedChunkIndex`
+  moves with it, so `saveLoadedMessages(fromChunk:)` keeps writing at the right position. Regression: `ThreadStoreOlderChunksTests`.
 
 ### Auto-Migration
 
@@ -300,6 +305,9 @@ loadAllMessages(fromThreadId:as:) → [T]
 
 // Scroll-up pagination — returns previous chunk
 loadMoreMessages(fromThreadId:currentOldestChunkIndex:as:) → (messages, hasMore, newOldestChunkIndex)
+
+// Top-up for the model context — loads older chunks until enough eligible messages
+loadOlderChunks(fromThreadId:currentOldestChunkIndex:alreadyEligible:needed:as:isEligible:) → (messages, hasMore, newOldestChunkIndex)
 
 // Normal save of the in-memory window: replaces chunks >= fromChunk in ONE transaction,
 // older chunks on disk are never touched.

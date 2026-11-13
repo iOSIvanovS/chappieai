@@ -37,15 +37,17 @@ extension ChappieViewModel {
         currentToolCall = nil
         runningCost = 0.0
 
-        let networkHistory = buildRawNetworkHistory(excludingLast: 1)
-        let currentTimeLabel = timestampLabels()[userMessageId]
-
         let config = activeConfig
         let memoryContext = activeMemoryContext
         let activeThreadId = activeThread?.id
         let activeProviderId = activeProvider?.id
 
         currentRequestTask = Task {
+            // History is built after the window is topped up from older chunks, never before.
+            await ensureModelHistoryLoaded()
+            let networkHistory = buildRawNetworkHistory(excludingLast: 1)
+            let currentTimeLabel = timestampLabels()[userMessageId]
+
             let currentAIMessage = await buildCurrentAIMessage(text: prompt, attachments: attachments, timeLabel: currentTimeLabel)
 
             let systemPromptOverride = await v2SystemPrompt()
