@@ -23,13 +23,8 @@ extension ToolPolicy {
         // Reading project files
         "list_files", "get_file_info", "json_info", "json_schema", "json_get", "json_find",
         "read_file", "view_image", "search_in_file", "search_in_project", "read_document",
-        // Reading localization
-        "loc_info", "loc_key_check", "loc_list_keys", "loc_next_batch", "loc_dead_keys",
         // Changing project files
         "send_attachment", "write_file", "patch_file", "json_edit", "write_document", "rename_file", "move_file", "delete_file",
-        // Changing localization
-        "loc_add_key", "loc_add_language", "loc_submit_batch", "loc_create",
-        "loc_rename_key", "loc_rename_keys", "loc_rename", "loc_remove_key", "loc_remove_language", "loc_delete",
         // Git
         "git_status", "git_log", "git_add", "git_commit", "git_reset", "git_push", "git_checkout", "git_revert",
         // Network requests
@@ -59,8 +54,6 @@ extension ToolPolicy {
         case .forbidden:  return tool
         case .fileRead:   return "Project file reading"
         case .fileWrite:  return "Project file changes"
-        case .locRead:    return "Localization (read-only)"
-        case .locWrite:   return "Localization (changing)"
         case .git:        return "Git"
         case .curl:       return "Curl-Chappie (HTTP requests and scenarios)"
         }

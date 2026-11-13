@@ -24,10 +24,6 @@ extension ContentView {
                         selectedProjectForSettings = nil
                     },
                     onDismiss: { selectedProjectForSettings = nil },
-                    onDetectEnvironment: { completion in
-                        let live = viewModel.activeProjects.first(where: { $0.id == project.id }) ?? project
-                        viewModel.detectDevEnvironment(for: live, completion: completion)
-                    },
                     onUpdatePath: { newPath in
                         viewModel.updateProjectPath(newPath, forProjectId: project.id)
                     },

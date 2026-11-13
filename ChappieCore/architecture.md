@@ -168,7 +168,6 @@ ChappieCore/
             ├── ToolDefinitions+MemoryTools.swift    # Memory tool definitions (IT-08)
             ├── ToolDefinitions+GitTools.swift       # Git tool definitions
             ├── ToolDefinitions+TerminalTools.swift   # Terminal, SSH, project mgmt tool defs
-            ├── ToolDefinitions+LocalizationTools.swift # loc_* tool definitions (Xcode only)
             ├── ToolExecutionService.swift           # Dispatches tool calls from AIOrchestrator
             ├── FileTools.swift                      # File tool implementations
             ├── GitToolExecution.swift               # Git tool execution
@@ -560,10 +559,9 @@ function `(tool, target project's ProjectSettings, thread terminal level, curl s
 - **Exposure** — `availableTools` offers EVERY classified tool (git_diff as FORBIDDEN). The old filter that hid tools
   nobody could run is gone: the model must know its whole toolbox, why a tool is closed, and what to ask the user to
   switch on. The status line (see below) carries that. The `project` argument of project tools lists all attached
-  projects and is ALWAYS in `required` for project tools (loc_*, curl_*, pdf path form excepted by `uuid`), exactly like `authorize`.
+  projects and is ALWAYS in `required` for project tools (curl_*, pdf path form excepted by `uuid`), exactly like `authorize`.
 
-Rules worth knowing: ADVISOR reads only (files, search, loc read tools); `git_log` is allowed at the read-only git level; loc_* need an
-Xcode project and carry a `project` argument that scopes the helper's path roots;
+Rules worth knowing: ADVISOR reads only (files, search, json read tools); `git_log` is allowed at the read-only git level;
 arguments of project tools must be a flat string map (otherwise refused with an explanation).
 `git_diff` is permanently blocked. Tests: `ToolPolicyTests` (completeness check against `availableTools`).
 
@@ -577,8 +575,7 @@ in: B, C — reason. To enable: fix]`, `[FORBIDDEN — …]`. Projects with an i
 most harmless to the most dangerous tool (`ToolPolicy.dangerOrder`), so a safe tool is preferred over a risky one
 that can do the same job (`write_file` before a shell redirect). An open tool keeps its full definition with the
 status line in front of the description. A closed tool is compressed: empty parameters plus status and the first
-sentence of its description; closed tools of one group with an identical status (`groupTitle`: Git, Build and
-tests, Localization, Curl-Chappie, …) share one description carried by the first member, the others refer to it.
+sentence of its description; closed tools of one group with an identical status (`groupTitle`: Git, Curl-Chappie, …) share one description carried by the first member, the others refer to it.
 Full definitions return as soon as the settings open the tool. Tests: `ToolPolicyTests` (exposure, order,
 compression, project argument), `ToolStatusTests`.
 
@@ -660,7 +657,7 @@ uncancellable system call is abandoned and its late result is dropped.
 
 | Class | Deadline |
 |---|---|
-| files, search, documents, memory, attachments, web, localization | 2 min |
+| files, search, documents, memory, attachments, web, json | 2 min |
 | git status/log/add/reset/checkout | 3 min |
 | run_terminal / run_ssh | 5 min; a longer requested `timeout` is honoured (+30 s grace) up to 30 min |
 | git commit / revert / push | 12 min (above the helper's own 10 min cap, which normally fires first) |
@@ -917,7 +914,8 @@ Tests: `MessageTimestampTests`, `MemoryDatesTests`.
 | 2026-11 | `project` is required for every project tool (file, search, document, git, build, loc, curl, pdf by path), with one project or several. Removed: single-project default, `ProjectName/` path-prefix routing (a project with a same-named inner folder, e.g. `Chappie/Chappie/`, silently redirected calls to the root), all-projects mode of `list_files`/`search_in_project`; schemas no longer depend on the number of projects. Covered by ToolPathRoutingTests, ToolAuthorizationTests, ToolExposureTests. |
 | 2026-11 | RouterAI preset. `BuiltInProvider.supportsPromptCaching` replaces the hardcoded `catalogId == "aitunnel"` check (AITunnel and RouterAI send top-level `cache_control`); providers added by hand are matched to a preset by host (`BuiltInProviders.find(baseURL:)`). Verified live: without `cache_control` RouterAI caches nothing; with it, call 2 reads the whole prefix (cost 4.0 -> 0.16 RUB per 15k tokens), 5m and 1h TTL both work, tool-result turns hit the cache. RouterAI reports price as `usage.cost` (AITunnel: `cost_rub`) via `AIUsage.effectiveCost`; no `usage.balance`, so `BalanceEndpoint` (`GET /api/v1/credits`, `data.credits`) is fetched after each streamed answer. |
 | 2026-11 | Remote providers.json catalog removed (ProvidersRemoteService, RemoteProviderCatalog, startup sync). Replaced by hardcoded BuiltInProviders presets without models; chat path is per preset. `AIProvider.catalogId` keeps its name for stored-data compatibility and now means "preset id". |
-| 2026-11 | Localization boundary: ChappieCore holds no catalog-localized strings. Labels of AgentRole/Git/Tests and the "unknown" DevEnvironment moved to the app target (Chappie/Views/Shared/ProjectModels+Display.swift), because Xcode extracts catalog keys only from app sources and marks keys used inside a Swift package as stale. `DevEnvironment.displayName` stays a stable English name for prompts; the UI uses `localizedName`. |
+| 2026-11 | Localization boundary: ChappieCore holds no catalog-localized strings. Labels of AgentRole/Git/Tests and the "unknown" DevEnvironment moved to the app target (Chappie/Views/Shared/ProjectModels+Display.swift), because Xcode extracts catalog keys only from app sources and marks keys used inside a Swift package as stale. (`DevEnvironment` itself was removed later, see the 2026-11 note below.) |
+| 2026-11 | Localization tools removed (pass J5-a): all 15 `loc_*` tools, the helper's LocalizationTools module with its xcstrings data model, `ToolCapability.locRead/locWrite`, `ToolPolicy.localizationTools`, `xcodeBlock` and the dispatcher branch. They dropped `extractionState`, `variations` and `substitutions` on every write, escaped `/` and rewrote the whole file; `json_*` do the same work byte-exactly in any environment. Tests assert the names are no longer classified. |
 
 ### Build and test tools removed (2026-11)
 
@@ -925,7 +923,13 @@ Tests: `MessageTimestampTests`, `MemoryDatesTests`.
 `DevEnvironment.specificTools` and the helper's `projectEnvMap` (argv[3]) are gone. WHY: they were per-language
 wrappers around commands the terminal already runs, and they hid the real output behind a summary. The agent now
 runs `xcodebuild`, `npm test`, `pytest` etc. through `run_terminal`; a long output is spilled to a file (see
-OutputSpool) and read with `grep`/`sed`. The dev-environment setting stays as a hint only and never gates a tool.
+OutputSpool) and read with `grep`/`sed`.
+### Dev environment selection removed (2026-11)
+
+`DevEnvironment`, `ProjectSettings.devEnvironment`, the "Dev environment: ..." prompt line, the picker and the Detect
+button in ProjectSettingsSheet, `ChappieViewModel+DevEnvironment.swift` (local rules plus an AI detection call) and
+7 catalog keys are gone. WHY: nothing is tied to a language or stack any more, the agent reads the project itself.
+Old stored records keep a `devEnvironment` key that the decoder ignores (unknown keys never fail decoding).
 `testsAccess` became `ProjectSettings.testsWriteEnabled` (one switch, only a prompt line states it); a stored legacy
 `"testsAccess":"write"` turns it on, every other value (or type) turns it off. Tests: `TerminalSwitchMigrationTests`.
 Recipe for Xcode: `xcodebuild -project P.xcodeproj -scheme S -destination 'platform=macOS' test > /tmp/x.log 2>&1`;

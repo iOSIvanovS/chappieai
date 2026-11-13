@@ -10,12 +10,6 @@
 // 2. Role .executor + isProgrammingProject = false — show role only.
 // 3. Role .executor + isProgrammingProject = true — show all advanced settings.
 //
-// ENV DETECTION:
-// "Detect" button calls onDetectEnvironment — async AI call in ViewModel.
-// isDetecting=true shows spinner inside the button while waiting.
-// The callback from ViewModel arrives on any thread; we hop to MainActor before
-// mutating @State (draft.devEnvironment, isDetecting).
-//
 // TERMINAL:
 // Terminal settings have moved to ThreadSettingsSheet (thread-level).
 // ProjectSettings no longer has a terminal field; the terminal is a thread-level switch.
@@ -30,8 +24,6 @@ struct ProjectSettingsSheet: View {
     let project: ProjectMetadata
     let onSave: (ProjectSettings) -> Void
     let onDismiss: () -> Void
-    /// Called when user taps "Detect". Receives a @Sendable callback to invoke with the result.
-    let onDetectEnvironment: (@Sendable @escaping (DevEnvironment) -> Void) -> Void
     /// Called when user updates the project path (manual edit or Browse picker).
     /// Separate from onSave — path lives in ThreadProjectEntry, not ProjectSettings.
     let onUpdatePath: (String) -> Void
@@ -47,13 +39,11 @@ struct ProjectSettingsSheet: View {
     @State var pathDraft: String
     @State var showingDowngradeAlert = false
     @State var pendingRoleChange: AgentRole? = nil
-    @State var isDetecting = false
 
     init(
         project: ProjectMetadata,
         onSave: @escaping (ProjectSettings) -> Void,
         onDismiss: @escaping () -> Void,
-        onDetectEnvironment: @escaping (@Sendable @escaping (DevEnvironment) -> Void) -> Void = { _ in },
         onUpdatePath: @escaping (String) -> Void = { _ in },
         curlHosts: [CurlHost] = [],
         curlSavedFields: Set<String> = [],
@@ -62,7 +52,6 @@ struct ProjectSettingsSheet: View {
         self.project = project
         self.onSave = onSave
         self.onDismiss = onDismiss
-        self.onDetectEnvironment = onDetectEnvironment
         self.onUpdatePath = onUpdatePath
         self.curlHosts = curlHosts
         self.onCommitCurlSecrets = onCommitCurlSecrets
@@ -98,8 +87,6 @@ struct ProjectSettingsSheet: View {
                         )
 
                         if draft.isProgrammingProject {
-                            Divider().padding(.vertical, 4)
-                            devEnvironmentSection
                             Divider().padding(.vertical, 4)
                             gitSection
                             testsSection
@@ -182,7 +169,7 @@ struct ProjectSettingsSheet: View {
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.return, modifiers: .command)
-            .disabled(isDetecting || !draft.curlSecretsAreSaveable)
+            .disabled(!draft.curlSecretsAreSaveable)
         }
         .padding(16)
     }
@@ -218,7 +205,6 @@ struct ProjectSettingsSheet: View {
             settings: ProjectSettings(
                 agentRole: .executor,
                 isProgrammingProject: true,
-                devEnvironment: .xcode,
                 gitAccess: .write,
                 testsWriteEnabled: true,
                 architectureEnabled: true,

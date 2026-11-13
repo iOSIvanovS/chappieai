@@ -75,10 +75,6 @@ public enum ToolCapability: Sendable {
     case fileRead
     /// Create, change, move or delete files (EXECUTOR only).
     case fileWrite
-    /// Read-only localization tools; needs an Xcode project.
-    case locRead
-    /// Localization tools that change files; EXECUTOR on an Xcode project.
-    case locWrite
     /// git_*: EXECUTOR on a programming project, limited by the project's git level.
     case git
     /// curl_request / curl_session / curl_extract: thread switch AND an EXECUTOR project
@@ -126,13 +122,6 @@ public enum ToolPolicy {
             "write_file", "patch_file", "delete_file", "move_file", "rename_file",
             "write_document", "json_edit"
         ])
-        // loc_next_batch only keeps its cursor in /tmp and never touches project files — a read.
-        add(.locRead, ["loc_info", "loc_key_check", "loc_list_keys", "loc_next_batch", "loc_dead_keys"])
-        add(.locWrite, [
-            "loc_create", "loc_rename", "loc_delete",
-            "loc_add_language", "loc_remove_language", "loc_submit_batch",
-            "loc_add_key", "loc_remove_key", "loc_rename_key", "loc_rename_keys"
-        ])
         add(.git, [
             "git_status", "git_log", "git_add", "git_commit", "git_push",
             "git_reset", "git_revert", "git_checkout"
@@ -149,11 +138,6 @@ public enum ToolPolicy {
 
     /// Every classified tool name.
     public static var knownTools: Set<String> { Set(table.keys) }
-
-    /// All tools that route to ChappieMCP's localization module.
-    public static var localizationTools: Set<String> {
-        Set(table.filter { $0.value == .locRead || $0.value == .locWrite }.keys)
-    }
 
     // MARK: Decision
 

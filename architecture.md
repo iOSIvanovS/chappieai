@@ -24,7 +24,7 @@
 | `ChappieCore` | Swift Package Library | All business logic: AI, tools, memory |
 | `ChappieCoreTests` | Unit Test Bundle | Tests for ChappieCore |
 | `ChappieMCP` | Command Line Tool | Child process entry point (only `main.swift`) |
-| `ChappieMCPCore` | Swift Package Library (local) | All helper logic: git, build, localization, documents, socket server |
+| `ChappieMCPCore` | Swift Package Library (local) | All helper logic: git, documents, socket server |
 | `ChappieMCPTests` | Unit Test Bundle | Tests for ChappieMCPCore (in `ChappieCoreTests.xctestplan`) |
 
 ---

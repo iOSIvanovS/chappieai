@@ -27,9 +27,6 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
     // Unlocks git/tests/architecture/comments/terminal settings in the UI and prompt.
     public var isProgrammingProject: Bool
 
-    // Dev environment — controls env-specific tool injection. .unknown = not set.
-    public var devEnvironment: DevEnvironment
-
     public var gitAccess: GitAccessLevel
 
     /// May the agent create and change tests. Only a prompt line states it: writing tests goes
@@ -47,7 +44,6 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
     public init(
         agentRole: AgentRole = .advisor,
         isProgrammingProject: Bool = false,
-        devEnvironment: DevEnvironment = .unknown,
         gitAccess: GitAccessLevel = .none,
         testsWriteEnabled: Bool = false,
         architectureEnabled: Bool = false,
@@ -58,7 +54,6 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
     ) {
         self.agentRole = agentRole
         self.isProgrammingProject = isProgrammingProject
-        self.devEnvironment = devEnvironment
         self.gitAccess = gitAccess
         self.testsWriteEnabled = testsWriteEnabled
         self.architectureEnabled = architectureEnabled
@@ -82,7 +77,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
     // MARK: - Codable (manual — new fields must decode safely from old stored JSON)
 
     private enum CodingKeys: String, CodingKey {
-        case agentRole, isProgrammingProject, devEnvironment, gitAccess, testsWriteEnabled
+        case agentRole, isProgrammingProject, gitAccess, testsWriteEnabled
         case architectureEnabled, architectureLanguage, commentsEnabled, commentsLanguage
         case curlSecrets
         // Legacy key, read as a plain String so that any stored value decodes.
@@ -93,7 +88,6 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         agentRole = try c.decodeIfPresent(AgentRole.self, forKey: .agentRole) ?? .advisor
         isProgrammingProject = try c.decodeIfPresent(Bool.self, forKey: .isProgrammingProject) ?? false
-        devEnvironment = try c.decodeIfPresent(DevEnvironment.self, forKey: .devEnvironment) ?? .unknown
         gitAccess = try c.decodeIfPresent(GitAccessLevel.self, forKey: .gitAccess) ?? .none
         // The new key wins; otherwise only the old "write" level carries over, everything else is off.
         if let enabled = (try? c.decodeIfPresent(Bool.self, forKey: .testsWriteEnabled)) ?? nil {
@@ -106,7 +100,7 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         architectureLanguage = try c.decodeIfPresent(ProjectLanguage.self, forKey: .architectureLanguage) ?? .english
         commentsEnabled = try c.decodeIfPresent(Bool.self, forKey: .commentsEnabled) ?? false
         commentsLanguage = try c.decodeIfPresent(ProjectLanguage.self, forKey: .commentsLanguage) ?? .english
-        // Legacy "terminalAccess" and "buildEnabled" keys in old records are simply ignored
+        // Legacy "terminalAccess", "buildEnabled" and "devEnvironment" keys in old records are simply ignored
         // (unknown keys never fail decoding).
         curlSecrets = try c.decodeIfPresent([CurlSecret].self, forKey: .curlSecrets) ?? []
     }
@@ -115,7 +109,6 @@ public struct ProjectSettings: Codable, Sendable, Equatable, Hashable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(agentRole, forKey: .agentRole)
         try c.encode(isProgrammingProject, forKey: .isProgrammingProject)
-        try c.encode(devEnvironment, forKey: .devEnvironment)
         try c.encode(gitAccess, forKey: .gitAccess)
         try c.encode(testsWriteEnabled, forKey: .testsWriteEnabled)
         try c.encode(architectureEnabled, forKey: .architectureEnabled)

@@ -9,16 +9,15 @@ import Foundation
 
 private func executor(
     git: GitAccessLevel = .full,
-    env: DevEnvironment = .xcode,
     programming: Bool = true
 ) -> ProjectSettings {
     ProjectSettings(
-        agentRole: .executor, isProgrammingProject: programming, devEnvironment: env,
+        agentRole: .executor, isProgrammingProject: programming,
         gitAccess: git
     )
 }
 
-private let advisor = ProjectSettings(agentRole: .advisor, isProgrammingProject: true, devEnvironment: .xcode)
+private let advisor = ProjectSettings(agentRole: .advisor, isProgrammingProject: true)
 
 private func status(
     _ tool: String,
@@ -99,15 +98,6 @@ struct ToolStatusLabelTests {
         let s = status("git_status", [("Docs", executor(programming: false))])
         #expect(!s.isAvailable)
         #expect(s.label.contains("Programming project"))
-    }
-
-    @Test("loc_*: needs Xcode; the reason says which environment the project has")
-    func locNeedsXcode() {
-        let s = status("loc_info", [("Py", executor(env: .python))])
-        #expect(!s.isAvailable)
-        #expect(s.label.contains("Python"))
-        #expect(status("loc_info", [("X", advisor)]).isAvailable)
-        #expect(!status("loc_create", [("X", advisor)]).isAvailable)
     }
 
     @Test("Curl: off switch and ADVISOR-only are both reported")

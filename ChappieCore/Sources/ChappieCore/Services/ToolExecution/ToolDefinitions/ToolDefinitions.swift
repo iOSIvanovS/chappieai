@@ -62,7 +62,6 @@ extension ToolExecutionService {
         tools.append(contentsOf: memoryTools())
         tools.append(contentsOf: gitTools(allInfos: allInfos))
         tools.append(gitDiffTool())
-        tools.append(contentsOf: localizationTools(allInfos: allInfos))
         tools.append(contentsOf: curlTools(allInfos: allInfos))
         tools.append(contentsOf: projectManagementTools())
         tools.append(contentsOf: terminalTools(allInfos: allInfos))

@@ -34,10 +34,3 @@ extension GitAccessLevel {
         }
     }
 }
-
-extension DevEnvironment {
-    /// UI label. Only `.unknown` needs translation; the rest are proper names.
-    var localizedName: String {
-        self == .unknown ? String(localized: "dev.env.unknown") : displayName
-    }
-}

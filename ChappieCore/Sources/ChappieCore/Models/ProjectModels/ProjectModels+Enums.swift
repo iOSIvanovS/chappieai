@@ -1,7 +1,7 @@
 // ProjectModels+Enums.swift
 // ChappieCore
 //
-// All project-related enums: roles, access levels, language, dev environment.
+// All project-related enums: roles, access levels, language.
 // No localized UI strings here: labels live in the app target (ProjectModels+Display.swift).
 
 import Foundation
@@ -96,65 +96,6 @@ public enum ProjectLanguage: String, Codable, Sendable, CaseIterable {
         case .portuguese: return "Portuguese (Brazilian)"
         case .arabic:     return "Arabic"
         case .chinese:    return "Chinese (Simplified)"
-        }
-    }
-}
-
-// MARK: - DevEnvironment
-
-/// Development environment / language stack for a programming project.
-/// A hint for the model and the UI (name, detection markers); it never gates a tool.
-/// .unknown means not yet detected or selected.
-public enum DevEnvironment: String, Codable, Sendable, CaseIterable {
-    case unknown         = "unknown"
-    case xcode           = "xcode"
-    case nodejs          = "nodejs"
-    case python          = "python"
-    case go              = "go"
-    case rust            = "rust"
-    case java            = "java"
-    case kotlin          = "kotlin"
-    case flutter         = "flutter"
-    case reacttypescript = "react_typescript"
-    case dotnet          = "dotnet"
-    // Static HTML/CSS/JS — no build system, no package manager.
-    // Detected by index.html or .html files when no framework marker is present.
-    case html            = "html"
-
-    /// Stable English name used in AI prompts and tool messages. UI uses `localizedName`
-    /// (app target), so the core never depends on the app's string catalog.
-    public var displayName: String {
-        switch self {
-        case .unknown:         return "Unknown"
-        case .xcode:           return "Xcode (Swift / Obj-C)"
-        case .nodejs:          return "Node.js"
-        case .python:          return "Python"
-        case .go:              return "Go"
-        case .rust:            return "Rust"
-        case .java:            return "Java"
-        case .kotlin:          return "Kotlin (Android)"
-        case .flutter:         return "Flutter (Dart)"
-        case .reacttypescript: return "React / TypeScript"
-        case .dotnet:          return ".NET (C#)"
-        case .html:            return "HTML / CSS / JS"
-        }
-    }
-
-    /// Marker files used by AI to auto-detect the environment from a file list.
-    public var detectionHints: [String] {
-        switch self {
-        case .unknown:         return []
-        case .xcode:           return [".xcodeproj", ".xcworkspace", ".swift"]
-        case .nodejs:          return ["package.json", "node_modules", ".nvmrc"]
-        case .python:          return ["requirements.txt", "pyproject.toml", "setup.py", ".py"]
-        case .go:              return ["go.mod", "go.sum", ".go"]
-        case .rust:            return ["Cargo.toml", "Cargo.lock", ".rs"]
-        case .java:            return ["pom.xml", "build.gradle", ".java"]
-        case .kotlin:          return ["build.gradle.kts", "AndroidManifest.xml", ".kt"]
-        case .flutter:         return ["pubspec.yaml", "pubspec.lock", ".dart"]
-        case .reacttypescript: return ["tsconfig.json", "vite.config.ts", "next.config.ts", ".tsx"]
-        case .dotnet:          return [".csproj", ".sln", ".cs"]
-        case .html:            return ["index.html", ".html", ".css", ".js"]
         }
     }
 }

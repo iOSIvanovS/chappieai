@@ -13,7 +13,7 @@
 //   number / bool   → "30", "0.5", "true" / "false"
 //   null            → key is dropped (same as not sending it)
 //   array / object  → compact JSON text with sorted keys (tools such as memorize and
-//                     loc_submit_batch expect JSON text inside a string argument)
+//                     json_edit expect JSON text inside a string argument)
 //   "" / "null"     → no arguments at all
 //   a JSON string that itself holds an object (double-encoded) → unwrapped once
 // Anything that is not an object after that (array, bare number, broken JSON) is an explicit error

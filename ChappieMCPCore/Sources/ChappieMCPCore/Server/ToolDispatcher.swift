@@ -2,51 +2,20 @@
 //
 // Routes tool calls to the appropriate handler classes.
 //
-// git_*, document and localization tools use projectPathMap to resolve per-project paths.
-// loc_* tools are scoped to the project named in the call (see localizationTools(for:)).
+// git_* and document tools use projectPathMap to resolve per-project paths.
 
 import Foundation
 
-private struct ToolFailure: Error {
-    let message: String
-}
-
 final class ToolDispatcher: Sendable {
     private let gitTools: GitTools
-    private let locTools: LocalizationTools
     private let docTools: DocumentTools
-    private let projectPathMap: [String: String]
 
     init(projectPath: String, projectPathMap: [String: String] = [:]) {
-        self.projectPathMap = projectPathMap
         self.gitTools   = GitTools(projectPath: projectPath, projectPathMap: projectPathMap)
-        self.locTools   = LocalizationTools(projectPath: projectPath, projectPathMap: projectPathMap)
         self.docTools   = DocumentTools(projectPath: projectPath, projectPathMap: projectPathMap)
     }
 
-    /// loc_* tools scoped to the project named in the call. The app has already checked THAT
-    /// project's rights, so the helper must not let a path resolve into a sibling project.
-    /// Without a `project` argument (older callers) every attached root stays reachable.
-    private func localizationTools(for projectName: String?) -> Result<LocalizationTools, ToolFailure> {
-        guard let name = projectName, !name.isEmpty else { return .success(locTools) }
-        guard let path = projectPathMap[name] else {
-            let known = projectPathMap.keys.sorted().joined(separator: ", ")
-            return .failure(ToolFailure(message: "Unknown project '\(name)'. Attached: \(known.isEmpty ? "(none)" : known)"))
-        }
-        return .success(LocalizationTools(projectPath: "", projectPathMap: [name: path]))
-    }
-
     func execute(tool: String, args: [String: String]) async -> ToolResult {
-        if tool.hasPrefix("loc_") {
-            switch localizationTools(for: args["project"]) {
-            case .failure(let failure): return .failure(failure.message)
-            case .success(let scoped):  return executeLocalization(tool: tool, args: args, locTools: scoped)
-            }
-        }
-        return await executeNonLocalization(tool: tool, args: args)
-    }
-
-    private func executeNonLocalization(tool: String, args: [String: String]) async -> ToolResult {
         switch tool {
 
         // MARK: - Git tools
@@ -135,94 +104,6 @@ final class ToolDispatcher: Sendable {
                 entryName: args["entry_name"],
                 projectName: args["project"]
             )
-
-        default:
-            return .failure("Unknown tool: \(tool).")
-        }
-    }
-
-    // MARK: - Localization tools
-
-    private func executeLocalization(tool: String, args: [String: String], locTools: LocalizationTools) -> ToolResult {
-        switch tool {
-
-        case "loc_info":
-            return locTools.info()
-
-        case "loc_create":
-            guard let path = args["path"], !path.isEmpty else {
-                return .failure("Argument 'path' is required (e.g. 'Chappie/Localizable.xcstrings')")
-            }
-            return locTools.create(relativePath: path, sourceLanguage: args["sourceLanguage"] ?? "en")
-
-        case "loc_rename":
-            guard let from = args["from"], !from.isEmpty else { return .failure("Argument 'from' is required") }
-            guard let to = args["to"], !to.isEmpty else { return .failure("Argument 'to' is required") }
-            return locTools.rename(fromRelativePath: from, toRelativePath: to)
-
-        case "loc_delete":
-            guard let path = args["path"], !path.isEmpty else { return .failure("Argument 'path' is required") }
-            return locTools.delete(relativePath: path)
-
-        case "loc_add_language":
-            guard let language = args["language"], !language.isEmpty else {
-                return .failure("Argument 'language' is required (e.g. 'ru', 'de', 'zh-Hans')")
-            }
-            return locTools.addLanguage(language: language, relativePath: args["path"])
-
-        case "loc_remove_language":
-            guard let language = args["language"], !language.isEmpty else {
-                return .failure("Argument 'language' is required")
-            }
-            return locTools.removeLanguage(language: language, relativePath: args["path"])
-
-        case "loc_key_check":
-            guard let key = args["key"], !key.isEmpty else { return .failure("Argument 'key' is required") }
-            guard let path = args["path"], !path.isEmpty else { return .failure("Argument 'path' is required") }
-            return locTools.keyCheck(key: key, relativePath: path)
-
-        case "loc_next_batch":
-            guard let path = args["path"], !path.isEmpty else { return .failure("Argument 'path' is required") }
-            return locTools.nextBatch(relativePath: path)
-
-        case "loc_submit_batch":
-            guard let path = args["path"], !path.isEmpty else { return .failure("Argument 'path' is required") }
-            guard let translations = args["translations"], !translations.isEmpty else {
-                return .failure("Argument 'translations' is required (JSON: {\"key\": {\"ru\": \"...\", \"de\": \"...\"}})")
-            }
-            return locTools.submitBatch(relativePath: path, translationsJSON: translations)
-
-        case "loc_dead_keys":
-            guard let path = args["path"], !path.isEmpty else { return .failure("Argument 'path' is required") }
-            return locTools.deadKeys(relativePath: path)
-
-        case "loc_add_key":
-            guard let path = args["path"], !path.isEmpty else { return .failure("Argument 'path' is required") }
-            guard let key = args["key"], !key.isEmpty else { return .failure("Argument 'key' is required") }
-            guard let value = args["value"], !value.isEmpty else { return .failure("Argument 'value' is required (English text)") }
-            return locTools.addKey(relativePath: path, key: key, englishValue: value, comment: args["comment"])
-
-        case "loc_remove_key":
-            guard let path = args["path"], !path.isEmpty else { return .failure("Argument 'path' is required") }
-            guard let key = args["key"], !key.isEmpty else { return .failure("Argument 'key' is required") }
-            return locTools.removeKey(relativePath: path, key: key)
-
-        case "loc_rename_key":
-            guard let path = args["path"], !path.isEmpty else { return .failure("Argument 'path' is required") }
-            guard let oldKey = args["old_key"], !oldKey.isEmpty else { return .failure("Argument 'old_key' is required") }
-            guard let newKey = args["new_key"], !newKey.isEmpty else { return .failure("Argument 'new_key' is required") }
-            return locTools.renameKey(relativePath: path, oldKey: oldKey, newKey: newKey)
-
-        case "loc_rename_keys":
-            guard let path = args["path"], !path.isEmpty else { return .failure("Argument 'path' is required") }
-            guard let renames = args["renames"], !renames.isEmpty else {
-                return .failure("Argument 'renames' is required (JSON array: [{\"old_key\": \"...\", \"new_key\": \"...\"}])")
-            }
-            return locTools.renameKeys(relativePath: path, renamesJSON: renames)
-
-        case "loc_list_keys":
-            guard let path = args["path"], !path.isEmpty else { return .failure("Argument 'path' is required") }
-            return locTools.listKeys(relativePath: path, filter: args["filter"])
 
         default:
             return .failure("Unknown tool: \(tool).")

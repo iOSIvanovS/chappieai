@@ -3,7 +3,7 @@
 //
 // Formats ProjectSettings into the system prompt block injected into every AI request.
 //
-// Only facts that no tool status carries live here: path, dev environment, the test-writing
+// Only facts that no tool status carries live here: path, the test-writing
 // permission, and the architecture/comment switches with their language. Role and git level
 // are stated by the tool statuses (ToolPolicy.status).
 
@@ -22,10 +22,6 @@ extension ProjectSettings {
         // Advisor and non-programming projects have nothing beyond the path to report.
         guard agentRole == .executor, isProgrammingProject else {
             return lines.joined(separator: "\n")
-        }
-
-        if devEnvironment != .unknown {
-            lines.append("- Dev environment: \(devEnvironment.displayName)")
         }
 
         // Writing tests goes through the shared write tools, so no tool status can express this.

@@ -243,14 +243,12 @@ public actor ToolExecutionService {
         // The one gate. Unknown tools are denied here; project tools come back with the
         // canonical project name already written into the arguments.
         let argsData: Data
-        let args: [String: String]
         switch authorize(toolName: name, argsData: rawArgsData) {
         case .denied(let message):
             print("[ToolExecutionService] 🚫 Access denied for '\(name)'")
             return message
-        case .allowed(let data, let decoded):
+        case .allowed(let data, _):
             argsData = data
-            args = decoded
         }
 
         do {
@@ -302,9 +300,6 @@ public actor ToolExecutionService {
                 return await handler()
 
             default:
-                if ToolPolicy.localizationTools.contains(name) {
-                    return await mcpBridge.execute(tool: name, args: args)
-                }
                 return "Error: Unknown tool \(name)"
             }
         } catch {

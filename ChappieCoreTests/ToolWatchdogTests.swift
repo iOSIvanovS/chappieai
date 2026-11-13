@@ -49,7 +49,7 @@ struct ToolDeadlinesTests {
         #expect(ToolDeadlines.isMutating("write_file"))
         #expect(ToolDeadlines.isMutating("git_push"))
         #expect(ToolDeadlines.isMutating("run_terminal"))
-        #expect(ToolDeadlines.isMutating("loc_delete"))
+        #expect(ToolDeadlines.isMutating("json_edit"))
         #expect(!ToolDeadlines.isMutating("read_file"))
         #expect(!ToolDeadlines.isMutating("git_status"))
 
@@ -140,7 +140,7 @@ struct ToolWatchdogTests {
             socketPath: "/tmp/chappie-watchdog-tests-nonexistent.sock"
         )
         let info = ActiveMemoryContext.ProjectInfo(id: UUID(), name: "P")
-        let settings = ProjectSettings(agentRole: .executor, isProgrammingProject: true, devEnvironment: .xcode)
+        let settings = ProjectSettings(agentRole: .executor, isProgrammingProject: true)
         await service.setMemoryContextAndSettings(
             context: ActiveMemoryContext(threadId: UUID(), projects: [info], threadTerminalEnabled: false),
             settings: [info.id: settings]

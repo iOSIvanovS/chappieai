@@ -68,7 +68,7 @@ public enum ToolDeadlines {
     /// True when a call that was cut off may have changed something, so its outcome is unknown.
     public static func isMutating(_ tool: String) -> Bool {
         switch ToolPolicy.capability(of: tool) {
-        case .fileWrite, .locWrite, .terminal: return true
+        case .fileWrite, .terminal: return true
         default: break
         }
         return [

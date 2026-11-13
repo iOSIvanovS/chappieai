@@ -128,60 +128,6 @@ extension ProjectSettingsSheet {
         }
     }
 
-    // MARK: - Dev environment section
-
-    var devEnvironmentSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("project.settings.dev_env_section", systemImage: "laptopcomputer")
-
-            HStack(spacing: 8) {
-                Picker("project.settings.env_picker", selection: $draft.devEnvironment) {
-                    ForEach(DevEnvironment.allCases, id: \.self) { env in
-                        Text(env.localizedName).tag(env)
-                    }
-                }
-                .pickerStyle(.menu)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .disabled(isDetecting)
-
-                // Detect button — triggers AI detection, shows spinner while waiting.
-                // Callback arrives on any thread — hop to MainActor before mutating @State.
-                Button {
-                    isDetecting = true
-                    onDetectEnvironment { detected in
-                        Task { @MainActor in
-                            draft.devEnvironment = detected
-                            isDetecting = false
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        if isDetecting {
-                            ProgressView()
-                                .progressViewStyle(.circular)
-                                .scaleEffect(0.65)
-                                .frame(width: 14, height: 14)
-                        } else {
-                            Image(systemName: "wand.and.stars")
-                        }
-                        Text(isDetecting ? String(localized: "project.settings.detecting") : String(localized: "project.settings.detect"))
-                            .font(.callout)
-                    }
-                }
-                .buttonStyle(.bordered)
-                .disabled(isDetecting)
-                .help("project.settings.detect_help")
-            }
-
-            if draft.devEnvironment == .unknown {
-                Text("project.settings.env_unknown_hint")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
     // MARK: - Git section
 
     var gitSection: some View {

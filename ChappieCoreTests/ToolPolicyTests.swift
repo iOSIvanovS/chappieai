@@ -14,13 +14,13 @@ private func xcodeExecutor(
     git: GitAccessLevel = .full
 ) -> ProjectSettings {
     ProjectSettings(
-        agentRole: .executor, isProgrammingProject: true, devEnvironment: .xcode,
+        agentRole: .executor, isProgrammingProject: true,
         gitAccess: git
     )
 }
 
 private let xcodeAdvisor = ProjectSettings(
-    agentRole: .advisor, isProgrammingProject: true, devEnvironment: .xcode
+    agentRole: .advisor, isProgrammingProject: true
 )
 
 private func decide(
@@ -118,7 +118,7 @@ struct ToolPolicyTableTests {
     func projectToolWithoutProject() {
         #expect(!decide("read_file", nil).isAllowed)
         #expect(!decide("write_file", nil).isAllowed)
-        #expect(!decide("loc_info", nil).isAllowed)
+        #expect(!decide("json_find", nil).isAllowed)
     }
 
     @Test("Every classified tool except git_diff and the terminal pair needs a known capability")
@@ -126,7 +126,14 @@ struct ToolPolicyTableTests {
         for tool in ToolPolicy.knownTools {
             #expect(ToolPolicy.capability(of: tool) != nil)
         }
-        #expect(ToolPolicy.localizationTools.count == 15)
+    }
+
+    @Test("The localization tools are gone: they are not classified, so they are denied")
+    func localizationToolsRemoved() {
+        for tool in ["loc_info", "loc_create", "loc_add_key", "loc_submit_batch", "loc_dead_keys"] {
+            #expect(ToolPolicy.capability(of: tool) == nil, "\(tool)")
+            #expect(!decide(tool, xcodeExecutor(), terminal: true).isAllowed, "\(tool)")
+        }
     }
 }
 
@@ -136,38 +143,23 @@ struct ToolPolicyTableTests {
 struct ToolPolicyRoleTests {
 
     private let reads = ["list_files", "read_file", "get_file_info", "view_image",
-                         "read_document", "search_in_file", "search_in_project"]
-    private let writes = ["write_file", "patch_file", "delete_file", "move_file", "rename_file", "write_document"]
-    private let locReads = ["loc_info", "loc_key_check", "loc_list_keys", "loc_next_batch", "loc_dead_keys"]
-    private let locWrites = ["loc_create", "loc_rename", "loc_delete", "loc_add_language", "loc_remove_language",
-                             "loc_submit_batch", "loc_add_key", "loc_remove_key", "loc_rename_key", "loc_rename_keys"]
+                         "read_document", "search_in_file", "search_in_project",
+                         "json_info", "json_schema", "json_get", "json_find"]
+    private let writes = ["write_file", "patch_file", "delete_file", "move_file", "rename_file", "write_document", "json_edit"]
 
-    @Test("ADVISOR reads files and localization, and nothing else")
+    @Test("ADVISOR reads files and JSON, and nothing else")
     func advisor() {
-        for tool in reads + locReads { #expect(decide(tool, xcodeAdvisor).isAllowed, "\(tool)") }
-        for tool in writes + locWrites { #expect(!decide(tool, xcodeAdvisor).isAllowed, "\(tool)") }
+        for tool in reads { #expect(decide(tool, xcodeAdvisor).isAllowed, "\(tool)") }
+        for tool in writes { #expect(!decide(tool, xcodeAdvisor).isAllowed, "\(tool)") }
         for tool in ["git_status", "git_log", "git_commit"] {
             #expect(!decide(tool, xcodeAdvisor).isAllowed, "\(tool)")
         }
     }
 
-    @Test("EXECUTOR on an Xcode project may use all of them")
+    @Test("EXECUTOR may use all of them")
     func executor() {
         let settings = xcodeExecutor()
-        for tool in reads + writes + locReads + locWrites { #expect(decide(tool, settings).isAllowed, "\(tool)") }
-    }
-
-    @Test("loc_* mutations are denied by the role even when the project is Xcode")
-    func locMutationsNeedExecutor() {
-        for tool in locWrites { #expect(!decide(tool, xcodeAdvisor).isAllowed, "\(tool)") }
-    }
-
-    @Test("loc_* need an Xcode project, not any programming project")
-    func locNeedsXcode() {
-        let python = ProjectSettings(agentRole: .executor, isProgrammingProject: true, devEnvironment: .python)
-        #expect(!decide("loc_info", python).isAllowed)
-        #expect(!decide("loc_create", python).isAllowed)
-        #expect(decide("read_file", python).isAllowed)
+        for tool in reads + writes { #expect(decide(tool, settings).isAllowed, "\(tool)") }
     }
 }
 
@@ -227,7 +219,7 @@ struct ToolAuthorizationTests {
         let denied = await rig.authorize("write_file", #"{"path":"a.txt","content":"x","project":"ReadOnly"}"#)
         #expect(!isAllowed(denied))
         #expect(denial(denied).contains("ADVISOR"))
-        #expect(!isAllowed(await rig.authorize("loc_delete", #"{"path":"A.xcstrings","project":"ReadOnly"}"#)))
+        #expect(!isAllowed(await rig.authorize("json_edit", #"{"path":"A.json","edits":[],"project":"ReadOnly"}"#)))
     }
 
     @Test("Several projects and no project named: refused with the list, never 'the first one'")
@@ -435,13 +427,13 @@ struct ToolExposureTests {
     func advisorThreadClosesMutations() async {
         let tools = await Rig([("A", xcodeAdvisor)]).service.availableTools
         for tool in ["write_file", "patch_file", "delete_file", "write_document", "git_status", "git_commit",
-                     "loc_create", "loc_submit_batch", "run_terminal"] {
+                     "json_edit", "run_terminal"] {
             let found = description(of: tool, in: tools)
             #expect(found.hasPrefix("[UNAVAILABLE"), "\(tool) must be closed: \(found)")
         }
         #expect(description(of: "write_file", in: tools).contains("ADVISOR"))
         #expect(description(of: "run_terminal", in: tools).contains("Terminal"))
-        for tool in ["read_file", "search_in_project", "loc_info", "loc_list_keys"] {
+        for tool in ["read_file", "search_in_project", "json_info", "json_find"] {
             #expect(description(of: tool, in: tools).hasPrefix("[AVAILABLE in: A"), "\(tool)")
         }
         #expect(description(of: "memorize", in: tools).hasPrefix("[ALWAYS AVAILABLE]"))
@@ -516,14 +508,4 @@ struct ToolExposureTests {
         #expect(description(of: "git_status", in: tools).contains("Docs"))
     }
 
-    @Test("loc_* definitions carry a required project argument")
-    func locToolsHaveProjectArgument() async {
-        let rig = await Rig([("A", xcodeExecutor()), ("B", xcodeExecutor())])
-        let loc = await rig.service.availableTools.filter { $0.function.name.hasPrefix("loc_") }
-        #expect(loc.count == 15)
-        for tool in loc {
-            #expect(tool.function.parameters.properties["project"] != nil, "\(tool.function.name)")
-            #expect(tool.function.parameters.required?.contains("project") == true, "\(tool.function.name)")
-        }
-    }
 }

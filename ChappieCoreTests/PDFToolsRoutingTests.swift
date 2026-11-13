@@ -17,7 +17,7 @@ struct PDFToolsRoutingTests {
             socketPath: "/tmp/chappie-pdf-tests-nonexistent.sock"
         )
         let info = ActiveMemoryContext.ProjectInfo(id: UUID(), name: "P")
-        let settings = ProjectSettings(agentRole: .executor, isProgrammingProject: true, devEnvironment: .xcode)
+        let settings = ProjectSettings(agentRole: .executor, isProgrammingProject: true)
         await service.setMemoryContextAndSettings(
             context: ActiveMemoryContext(threadId: UUID(), projects: [info], threadTerminalEnabled: false),
             settings: [info.id: settings]

@@ -281,13 +281,12 @@ struct SystemPromptBuilderTests {
     @Test("Programming executor block holds only facts, no role, git, compilation or rule text")
     func programmingExecutorBlockIsCompact() {
         var settings = ProjectSettings(agentRole: .executor, isProgrammingProject: true)
-        settings.devEnvironment = .xcode
         settings.testsWriteEnabled = true
         settings.architectureEnabled = true
         settings.commentsEnabled = true
         let block = settings.formatForSystemPrompt(projectName: "App", absolutePath: "/tmp/app")
         #expect(block.contains("- Absolute path: /tmp/app"))
-        #expect(block.contains("- Dev environment:"))
+        #expect(!block.contains("Dev environment"))
         #expect(block.contains("- Tests: creating tests allowed"))
         #expect(block.contains("- Architecture files: enabled ("))
         #expect(block.contains("- Code comments: enabled ("))

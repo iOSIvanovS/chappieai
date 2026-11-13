@@ -21,7 +21,7 @@ private struct SchemaRig {
             socketPath: "/tmp/chappie-schema-tests-nonexistent.sock"
         )
         let info = ActiveMemoryContext.ProjectInfo(id: UUID(), name: "P")
-        let settings = ProjectSettings(agentRole: .executor, isProgrammingProject: true, devEnvironment: .xcode)
+        let settings = ProjectSettings(agentRole: .executor, isProgrammingProject: true)
         await service.setMemoryContextAndSettings(
             context: ActiveMemoryContext(threadId: UUID(), projects: project ? [info] : [], threadTerminalEnabled: true),
             settings: project ? [info.id: settings] : [:]

@@ -83,10 +83,6 @@ extension ToolPolicy {
             return nil
         case .fileWrite, .curl:
             return executorBlock(s)
-        case .locRead:
-            return xcodeBlock(s)
-        case .locWrite:
-            return executorBlock(s) ?? xcodeBlock(s)
         case .git:
             if let block = executorBlock(s) ?? programmingBlock(s) { return block }
             guard s.gitAccess.allowedTools.contains(tool) else {
@@ -118,12 +114,4 @@ extension ToolPolicy {
         )
     }
 
-    private static func xcodeBlock(_ s: ProjectSettings) -> ToolBlock? {
-        (s.isProgrammingProject && s.devEnvironment == .xcode) ? nil : ToolBlock(
-            reason: s.isProgrammingProject
-                ? "it works only on Xcode projects (this one is \(s.devEnvironment.displayName))"
-                : "it works only on Xcode projects (this one is not a programming project)",
-            fix: "project settings → enable 'Programming project' and set the environment to Xcode"
-        )
-    }
 }

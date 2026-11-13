@@ -9,7 +9,7 @@
 ## 1. Purpose
 
 ChappieMCP is a local helper process launched by `Chappie.app` as a child process.
-It provides the AI agent with tools for git, build/test, localization, and Office document editing.
+It provides the AI agent with tools for git, Office documents and PDFs.
 
 **Why a separate process:**
 - Independence: helper restarts without restarting the app
@@ -44,7 +44,6 @@ ChappieMCPCore/                        # Local Swift package: ALL helper logic (
         ├── ProcessTree.swift          # Identical copy of ChappieCore's file (SIGTERM tree, SIGKILL after 2 s); parity is tested
         ├── GitTools.swift             # git_status, git_add, git_commit, git_log, git_reset, git_revert, git_checkout
         ├── PathGuard.swift            # Byte-identical copy of ChappieCore's PathGuard (parity test) — project containment
-        ├── LocalizationTools/         # loc_* tools (Xcode / xcstrings only); create/rename/delete accept only .xcstrings
         └── DocumentTools/             # read_document, write_document (Office formats via ZIPFoundation)
             ├── DocumentTools+Excel.swift  # readExcel: workbook.xml + sharedStrings + ALL worksheets in natural order
             ├── DocumentTools+Media.swift  # OfficeMediaCollector: pictures of docx/pptx/xlsx/odt → temp folder + [image N] XML comments
@@ -84,7 +83,6 @@ graph TD
         Main["main.swift\nparses argv[1..3]"]
         Server["MCPHTTPServer\nUnix Domain Socket + ToolDispatcher"]
         Git["GitTools"]
-        Loc["LocalizationTools"]
         Doc["DocumentTools\n(ZIPFoundation)"]
     end
 
@@ -98,7 +96,6 @@ graph TD
     Socket --> Server
     Main --> Server
     Server --> Git
-    Server --> Loc
     Server --> Doc
 ```
 
@@ -146,7 +143,7 @@ The app cancels a call by hanging up. The helper never reads from the client aga
 - `ClientWatcher` (one `poll()` loop per running tool, on the I/O queue) cancels the tool's `Task` when the peer closes. It is stopped and joined before the descriptor is closed.
 - `ProcessRunner` turns Task cancellation into `ProcessTree.terminate`: SIGTERM to the process and all descendants, SIGKILL for survivors after 2 s (pid + start time are checked first, so a recycled pid is never killed). Used by build/test and git.
 - **Git write commands are not cancellable** (`add`, `commit`, `push`, `reset`, `revert`, `checkout`): killing them halfway can leave `index.lock` or a half-applied state. They run to the end even if the client left (only their timeout stops them, see below); only `status` and `log` stop.
-- Not cancellable by design: in-process work (loc_*, file/zip document readers) is short and has no child process.
+- Not cancellable by design: in-process work (file/zip document readers) is short and has no child process.
 
 ---
 
@@ -184,24 +181,9 @@ All git commands run with: `GIT_PAGER=cat`, `GIT_TERMINAL_PROMPT=0`, `TERM=dumb`
 
 ### Path safety (PathGuard.swift)
 
-All path-taking tools (`loc_*`, `read_document`, `write_document` incl. `output_path`) resolve paths through `PathGuard`: relative only, no `..`, symlinks leading outside the project root are refused. The single exception is an absolute path inside `~/Library/Application Support/Chappie/Attachments` (the app hands those over for attachments). Git tools take no file paths from the model.
+All path-taking tools (`read_document`, `write_document` incl. `output_path`) resolve paths through `PathGuard`: relative only, no `..`, symlinks leading outside the project root are refused. The single exception is an absolute path inside `~/Library/Application Support/Chappie/Attachments` (the app hands those over for attachments). Git tools take no file paths from the model.
 
-**Roots.** `loc_*` and documents check paths against the attached projects' roots (`projectPathMap`), never against the workspace folder alone. A root of `/`, empty or non-existent is unusable (`PathGuard.isUsableRoot`): `main.swift` turns such an `argv[1]` into an empty workspace, and `MCPHelperLauncher` no longer substitutes the launch directory (which is `/` under Xcode and made the guard a no-op). With several projects, `loc_create` needs a path whose folder already exists in exactly one project; `loc_rename` keeps the destination in the source's project; `loc_dead_keys` scans only the project that owns the file.
-
-### Localization (LocalizationTools.swift)
-
-Xcode-specific (`.xcstrings` format). Injected only when `devEnvironment == .xcode`.
-
-| Tool | Purpose |
-|------|---------|
-| `loc_info` | Coverage stats for all .xcstrings files |
-| `loc_create` / `loc_delete` / `loc_rename` | File lifecycle |
-| `loc_add_language` / `loc_remove_language` | Language management |
-| `loc_add_key` / `loc_remove_key` | Key management |
-| `loc_next_batch` | Next untranslated batch (100 / N languages) |
-| `loc_submit_batch` | Submit translations |
-| `loc_key_check` | Check key status across languages |
-| `loc_dead_keys` | Find unused keys |
+**Roots.** Documents check paths against the attached projects' roots (`projectPathMap`), never against the workspace folder alone. A root of `/`, empty or non-existent is unusable (`PathGuard.isUsableRoot`): `main.swift` turns such an `argv[1]` into an empty workspace, and `MCPHelperLauncher` no longer substitutes the launch directory (which is `/` under Xcode and made the guard a no-op).
 
 ### Documents (DocumentTools.swift)
 

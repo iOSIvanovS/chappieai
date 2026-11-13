@@ -308,7 +308,7 @@ struct FullChainCancellationTests {
             socketPath: path
         )
         let info = ActiveMemoryContext.ProjectInfo(id: UUID(), name: "P")
-        let settings = ProjectSettings(agentRole: .executor, isProgrammingProject: true, devEnvironment: .xcode, gitAccess: .statusOnly)
+        let settings = ProjectSettings(agentRole: .executor, isProgrammingProject: true, gitAccess: .statusOnly)
         await service.setMemoryContextAndSettings(
             context: ActiveMemoryContext(threadId: UUID(), projects: [info], threadTerminalEnabled: false),
             settings: [info.id: settings]

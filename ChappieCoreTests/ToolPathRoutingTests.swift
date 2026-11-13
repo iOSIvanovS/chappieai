@@ -39,7 +39,7 @@ struct ToolPathRoutingTests {
             memoryManager: MemoryManager(workspaceURL: rootA),
             socketPath: "/tmp/chappie-routing-tests-nonexistent.sock"
         )
-        let settings = ProjectSettings(agentRole: .executor, isProgrammingProject: true, devEnvironment: .xcode)
+        let settings = ProjectSettings(agentRole: .executor, isProgrammingProject: true)
         await service.setMemoryContextAndSettings(
             context: ActiveMemoryContext(threadId: UUID(), projects: infos, threadTerminalEnabled: false),
             settings: Dictionary(uniqueKeysWithValues: infos.map { ($0.id, settings) })
