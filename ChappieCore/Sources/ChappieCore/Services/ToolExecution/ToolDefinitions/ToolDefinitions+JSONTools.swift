@@ -1,7 +1,8 @@
 // ToolDefinitions+JSONTools.swift
 // ChappieCore
 //
-// json_info / json_schema / json_get / json_find. Read-only, any size of JSON file, answers stay small.
+// json_info / json_schema / json_get / json_find (read-only) and json_edit (in-place changes).
+// Any size of JSON file, answers stay small.
 
 import Foundation
 
@@ -112,6 +113,40 @@ extension ToolExecutionService {
                         "max_chars": maxChars
                     ],
                     required: ["path", "project"]
+                )
+            )),
+            AITool(function: AIFunctionDefinition(
+                name: "json_edit",
+                description: """
+                Change a JSON file IN PLACE: only the bytes of the edited places change, every other byte (indent, separators, key \
+                order, comments, escaping) stays exactly as it was. New keys and values are written in the file's own style \
+                (see json_info). Several operations in one call; all paths refer to the file AS IT IS NOW, so the order of \
+                operations does not matter. If anything is wrong NOTHING is written and every problem is listed.
+                `edits` is a JSON array of operations:
+                - {"op":"set","at":PATH,"value":ANY} replace the value at an existing path.
+                - {"op":"delete","at":PATH} remove an object member or an array item (the commas are fixed).
+                - {"op":"insert","at":CONTAINER_PATH,"key":"name","value":ANY,"position":P} add a member to an object (key required) \
+                or an item to an array (no key). position: "auto" (default: keeps an alphabetical object alphabetical, otherwise \
+                appends), "start", "end", "sorted", {"after":"key"}, {"before":"key"}, or an integer array position.
+                - {"op":"rename","at":PATH,"to":"newKey"} rename an object member, value untouched.
+                Every operation may carry "expect":VALUE (not for insert): the current value must equal it, otherwise the call is \
+                refused. Use it when the file may have changed since you read it.
+                Each `at` must match exactly ONE place. Value types are real JSON (a number is 5, not "5").
+                Use dry_run=true to see the changed lines without writing. The answer shows every changed place, old and new lines.
+                Example, add a Russian translation to an Xcode string catalog: \
+                [{"op":"insert","at":["strings","Cancel","localizations"],"key":"ru","value":{"stringUnit":{"state":"translated","value":"Отмена"}}}]
+                Use json_find first to learn what is missing, json_get to see the neighbours. Prefer this over write_file / patch_file \
+                for JSON files: no need to read the file, no risk of breaking its format.
+                \(pathSyntax)
+                """,
+                parameters: AIToolParameters(
+                    properties: [
+                        "path": pathArg, "project": projectArg,
+                        "edits": AIToolProperty(type: "string", description: "JSON array of operations (see the description), sent as an array or as its JSON text. Up to 2000 per call."),
+                        "dry_run": AIToolProperty(type: "string", description: "true: check and show what would change, write nothing."),
+                        "max_chars": maxChars
+                    ],
+                    required: ["path", "project", "edits"]
                 )
             ))
         ]

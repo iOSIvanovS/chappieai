@@ -26,7 +26,7 @@ extension ToolPolicy {
         // Reading localization
         "loc_info", "loc_key_check", "loc_list_keys", "loc_next_batch", "loc_dead_keys",
         // Changing project files
-        "send_attachment", "write_file", "patch_file", "write_document", "rename_file", "move_file", "delete_file",
+        "send_attachment", "write_file", "patch_file", "json_edit", "write_document", "rename_file", "move_file", "delete_file",
         // Changing localization
         "loc_add_key", "loc_add_language", "loc_submit_batch", "loc_create",
         "loc_rename_key", "loc_rename_keys", "loc_rename", "loc_remove_key", "loc_remove_language", "loc_delete",

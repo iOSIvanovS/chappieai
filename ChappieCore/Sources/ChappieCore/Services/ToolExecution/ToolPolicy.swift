@@ -124,7 +124,7 @@ public enum ToolPolicy {
         ])
         add(.fileWrite, [
             "write_file", "patch_file", "delete_file", "move_file", "rename_file",
-            "write_document"
+            "write_document", "json_edit"
         ])
         // loc_next_batch only keeps its cursor in /tmp and never touches project files — a read.
         add(.locRead, ["loc_info", "loc_key_check", "loc_list_keys", "loc_next_batch", "loc_dead_keys"])

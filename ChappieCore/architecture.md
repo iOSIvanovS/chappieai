@@ -115,7 +115,7 @@ ChappieCore/
         │   └── CurlToolArguments.swift #   flat string args -> engine types (headers/query/form objects, extract/apply rule arrays, body choice)
         ├── JSONTools/                  # read-only json_* engine: parse with byte positions, no values built (see section 12a3)
         │   ├── JSONDocument.swift      #   flat node array in file order, ranges, lookup, line numbers; JSONParser.swift (iterative, maxDepth 512, maxNodes 4M)
-        │   ├── JSONStyle.swift         #   indent, separator, EOL, escaping, key order, empty forms (used by json_info; json_edit will copy it)
+        │   ├── JSONStyle.swift         #   indent, separator, EOL, escaping, key order, empty forms (used by json_info and copied by json_edit)
         │   ├── JSONPath.swift          #   path = array of segments (key, index, glob * ?, "**"), resolve, path(of:), JSONToolError
         │   ├── JSONText.swift          #   quoting, counts, line spans, JSONOutput.fit (the size ceiling), JSONToolArgs
         │   ├── JSONInfo.swift          #   json_info report
@@ -123,8 +123,10 @@ ChappieCore/
         │   ├── JSONSchemaRenderer.swift #  json_schema text from a shape
         │   ├── JSONFragment.swift      #   json_get: raw numbered lines when they fit, otherwise a collapsed view; missing-path diagnosis
         │   ├── JSONFinder.swift        #   json_find: subjects (at) + conditions (key, kind, has, missing, value_at, equals, not_equals, contains) + output/group_by
-        │   └── JSONToolEngine.swift    #   pure entry point (bytes + args -> text), UTF-16/32 refusal
-        ├── ToolExecution/JSONTools/JSONTools.swift  # executor: reads bytes via FileSystemManager.readData (path guard, 64 MB cap), parses on a detached task
+        │   ├── JSONToolEngine.swift    #   pure entry point (bytes + args -> text), UTF-16/32 refusal
+        │   └── Edit/                   #   json_edit (J3): JSONEditOps (operation reader, strict fields), JSONEditPlanner (+Delete, +Insert: splices over the ORIGINAL bytes), JSONSplicer (order, overlap refusal, apply), JSONValueRenderer (writes a value in the file's style) + JSONValueEquality, JSONEditEngine (plan, apply, VERIFY), JSONEditReport (changed lines old/new)
+        ├── ToolExecution/JSONTools/    # JSONTools.swift: executor of the four readers (FileSystemManager.readData, path guard, 64 MB cap, detached task); JSONEditTool.swift: json_edit executor (read, engine on a detached task, write via FileSystemManager.replaceData)
+        ├── FileSystemManager/FileSystemManager+Replace.swift # replaceData: atomic write only if the file still equals the bytes the edit was based on; keeps permissions, follows a symlink
         ├── ToolExecution/PDFTools/
         │   ├── PDFTools.swift          # pdf_info / pdf_page_as_txt / pdf_page_as_image: picks the file (uuid or project path), calls the helper
         │   └── PDFGuidance.swift       # Refusal text every other reader returns for a PDF, pointing to the pdf_* tools
@@ -682,7 +684,7 @@ no number; a bar under the row was rejected because it made the label jump). Tes
 ## 12a3. JSON tools — read big JSON files without reading them
 
 `json_info`, `json_schema`, `json_get`, `json_find` (definitions in `ToolDefinitions+JSONTools`, policy: `fileRead`, ordered
-right after `get_file_info`). They run in the app, not in the helper: bytes come from `FileSystemManager.readData`
+right after `get_file_info`) and `json_edit` (same file, policy: `fileWrite`, ordered after `patch_file`, mutating for the watchdog). They run in the app, not in the helper: bytes come from `FileSystemManager.readData`
 (same `PathGuard` as `read_file`, size checked before reading), the engine is pure (`JSONToolEngine.run`).
 Decisions:
 
@@ -696,7 +698,31 @@ Decisions:
 - **Absence is a first-class question** (`json_find` `missing`), the thing `search_in_file` cannot answer.
 - No recursion over document depth anywhere in tool code (small worker stacks): parser and renderer use explicit stacks;
   the schema builder recurses only `depth` levels (max 20).
-- Standard deadline, not mutating. Tests: `JSONToolsTests`, `JSONDocumentTests`.
+- Readers: standard deadline, not mutating. Tests: `JSONToolsTests`, `JSONDocumentTests`.
+
+### json_edit (pass J3)
+
+Operations: `set`, `delete`, `insert` (key + `position`: auto/start/end/sorted/{after}/{before}/index), `rename`; each may carry
+`expect` (not insert). `dry_run` shows the report and writes nothing.
+
+- **Splices, not a serializer.** Every change is "replace bytes a..<b of the ORIGINAL file with this text". The result is built by
+  copying the original between the splices, so bytes outside them are identical by construction. All paths refer to the original
+  file, so the order of operations in one call never matters.
+- **New fragments copy the file**: `JSONValueRenderer` uses indent unit, key separator, EOL, `\/` and `\uXXXX` habits, the empty
+  form (Xcode's `{`, blank line, `}`), and multiline vs inline by what the file mostly does. Key order inside a new object is the
+  order the model wrote: the executor takes `edits` from the RAW call text, because the flat argument map re-encodes with sorted keys.
+- **Delete** cuts a run of neighbours with ONE comma (not last: up to the next member; reaching the end: from the end of the member
+  before). A comment in any touched gap refuses the edit. **Insert** into one place is grouped (one splice, commas right); `auto`
+  keeps an alphabetical object alphabetical, otherwise appends; a comment at the insertion point refuses.
+- **Proof before writing** (`JSONEditEngine.verify`): bytes outside the splices equal the original; the result parses; no duplicate
+  key appeared; each edited path holds exactly the requested value (paths through array positions are not re-checked, other
+  operations of the call may shift them). Any failure means nothing is written.
+- **Refusals instead of guesses**: path matching 0 or >1 places, two edits on the same place, insert of an existing key, key freed by
+  a rename in the same call, `sorted` on an unsorted object, root delete, value nested deeper than 64. All problems of one call are
+  listed together. A no-op edit reports "No change" and writes nothing.
+- **Write**: `FileSystemManager.replaceData` re-reads the file and refuses when it differs from what the edit was based on.
+- Limits: 2000 operations per call, 64 MB file. Tests: `JSONEditTests` (incl. byte-identical remove/restore round trip on a generated
+  catalog; on the real 845 KB xcstrings the same round trip was checked once by hand, not kept as a test).
 
 ## 12b. OutputGuard — the one size gate for tool results
 
