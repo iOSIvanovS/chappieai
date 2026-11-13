@@ -58,6 +58,49 @@ struct BuiltInProvidersTests {
         #expect(anthropic.defaultChatPath == "/v1/messages")
     }
 
+    @Test("RouterAI preset: chat path, caching flag, balance endpoint")
+    func routerAIPreset() {
+        let p = BuiltInProviders.find(id: "routerai")
+        #expect(p?.chatPath == "/api/v1/chat/completions")
+        #expect(p?.pathPrefix == "/api")
+        #expect(p?.supportsPromptCaching == true)
+        #expect(p?.balanceEndpoint?.path == "/api/v1/credits")
+    }
+
+    @Test("Only AITunnel and RouterAI send cache_control")
+    func cachingFlags() {
+        let flagged = BuiltInProviders.all.filter(\.supportsPromptCaching).map(\.id).sorted()
+        #expect(flagged == ["aitunnel", "routerai"])
+    }
+
+    @Test("Preset is found by host, ignoring path, case and scheme details")
+    func findByBaseURL() {
+        #expect(BuiltInProviders.find(baseURL: "https://routerai.ru/api")?.id == "routerai")
+        #expect(BuiltInProviders.find(baseURL: "https://RouterAI.ru")?.id == "routerai")
+        #expect(BuiltInProviders.find(baseURL: "https://api.aitunnel.ru/v1")?.id == "aitunnel")
+        #expect(BuiltInProviders.find(baseURL: "https://unknown.example") == nil)
+        #expect(BuiltInProviders.find(baseURL: "not a url") == nil)
+    }
+
+    @Test("Balance endpoint extracts the number or returns nil on a different shape")
+    func balanceParsing() {
+        let e = BuiltInProviders.find(id: "routerai")!.balanceEndpoint!
+        #expect(e.parse(Data(#"{"data":{"credits":897.21210323728}}"#.utf8)) == 897.21210323728)
+        #expect(e.parse(Data(#"{"data":{"credits":"x"}}"#.utf8)) == nil)
+        #expect(e.parse(Data(#"{"data":{}}"#.utf8)) == nil)
+        #expect(e.parse(Data("garbage".utf8)) == nil)
+    }
+
+    @Test("Usage cost is read from cost_rub (AITunnel) and cost (RouterAI)")
+    func usageCostKeys() throws {
+        let rr = Data(#"{"prompt_tokens":10,"cost":0.167,"prompt_tokens_details":{"cached_tokens":8,"cache_write_tokens":0}}"#.utf8)
+        let u = try JSONDecoder().decode(AIUsage.self, from: rr)
+        #expect(u.effectiveCost == 0.167)
+        #expect(u.effectiveCacheRead == 8)
+        let at = Data(#"{"prompt_tokens":10,"cost_rub":0.5}"#.utf8)
+        #expect(try JSONDecoder().decode(AIUsage.self, from: at).effectiveCost == 0.5)
+    }
+
     @Test("Unknown catalogId from an older catalog does not crash and behaves as custom")
     func unknownCatalogId() {
         let p = AIProvider(name: "Old", baseURL: "https://old.example", catalogId: "removed-provider")

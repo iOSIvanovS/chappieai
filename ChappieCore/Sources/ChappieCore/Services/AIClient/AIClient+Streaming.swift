@@ -49,6 +49,7 @@ extension AIClient {
             var toolCallBuffers: [Int: (id: String, name: String, arguments: String)] = [:]
             var finalCost: Double? = nil
             var finalBalance: Double? = nil
+            var diagnostics = StreamDiagnostics()
         }
         let state = StreamState()
         let watchdog = StallWatchdog(timeout: stallTimeout)
@@ -71,11 +72,14 @@ extension AIClient {
 
                 guard let chunkData = jsonString.data(using: .utf8),
                       let chunk = try? JSONDecoder().decode(AIStreamChunk.self, from: chunkData) else {
+                    // Dropped chunks used to vanish silently; keep a count and the first sample for the log.
+                    state.diagnostics.recordSkipped(jsonString)
                     continue
                 }
+                state.diagnostics.record(chunk)
 
                 if let usage = chunk.usage {
-                    state.finalCost = usage.cost_rub
+                    state.finalCost = usage.effectiveCost
                     state.finalBalance = usage.balance
                     logCacheStats(usage: usage)
                 }
@@ -141,11 +145,19 @@ extension AIClient {
                 )
             }
 
+        print(state.diagnostics.summary(
+            textChars: state.accumulatedText.count,
+            structuredToolCalls: assembledToolCalls?.count ?? 0,
+            textHasToolMarker: StreamDiagnostics.containsFlattenedToolMarker(state.accumulatedText),
+            host: endpointURL.host ?? "",
+            model: modelName
+        ))
+
         return AIStreamResult(
             text: state.accumulatedText,
             toolCalls: assembledToolCalls,
             cost: state.finalCost,
-            balance: state.finalBalance
+            balance: await resolvedBalance(state.finalBalance)
         )
     }
 }

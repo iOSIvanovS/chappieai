@@ -33,7 +33,7 @@ ChappieCore/
     │   │   ├── CurlSecret.swift        #   Project secret METADATA (name, kind, host origin); values are never stored here
     │   │   └── CurlSecretCatalog.swift #   Names/kinds/hosts/ref syntax of EXECUTOR projects' secrets, appended to the curl tool descriptions so the model knows what to pass as `session` (never values; flags parts with no stored value)
     │   ├── ProjectModels.swift         # ProjectSettings (incl. curlSecrets), ProjectMetadata, ThreadProjectEntry
-    │   ├── BuiltInProviders.swift      # Hardcoded provider presets (URL, protocol, icon, chat path; no models). `AIProvider.catalogId` = preset id, kept for stored-data compatibility
+    │   ├── BuiltInProviders.swift      # Hardcoded provider presets (URL, protocol, icon, chat path, supportsPromptCaching, optional BalanceEndpoint; no models). `AIProvider.catalogId` = preset id, kept for stored-data compatibility
     │   ├── StorageIntegrity.swift      # StorageIntegrityIssue (damaged data report), LossyElement
     │   └── ThreadModels.swift          # ThreadSettings (incl. curlEnabled, curlHosts; manual Codable), ThreadMetadata, ThreadPayload
     └── Services/
@@ -58,6 +58,8 @@ ChappieCore/
         ├── AIClient.swift              # OpenAI-compatible HTTP client (entry point)
         ├── AIClient+HTTP.swift         # HTTP request building + response parsing
         ├── AIClient+Streaming.swift    # SSE streaming parser
+        ├── AIClient+Balance.swift      # Separate balance GET for presets with a BalanceEndpoint (RouterAI /credits); never throws
+        ├── StreamDiagnostics.swift     # Per-stream counters (finish_reason, chunks, skipped chunks, tool calls) and the STREAM END log line; flags tool calls flattened into text
         ├── AIClient+Discovery.swift    # fetchAvailableModels()
         ├── AIClientProtocol.swift      # Protocol: validateProvider, streamChat, fetchModels
         ├── AIClientFactory.swift       # Factory: picks AIClient or AnthropicClient by protocol
@@ -878,6 +880,7 @@ Tests: `MessageTimestampTests`, `MemoryDatesTests`.
 | 2026-10 | CommandSafety (backlog 11A): word-level command analysis replaces the substring blocklist (no more false positives on `rm -rf /tmp/x`, no bypass by flag order or `bash -c`); documented as a safety net, not a boundary. Covered by CommandSafetyTests (14 groups, ~190 command cases). |
 | 2026-08 | Backup import UI shipped in app layer (Chappie/architecture.md): BackupImportSheet two-step confirmation (decrypt/preview, then explicit destructive "Restore Now"), reachable from SettingsView and from OnboardingView welcome step as a "Restore from Backup" shortcut that skips the whole provider setup wizard. |
 | 2026-11 | `project` is required for every project tool (file, search, document, git, build, loc, curl, pdf by path), with one project or several. Removed: single-project default, `ProjectName/` path-prefix routing (a project with a same-named inner folder, e.g. `Chappie/Chappie/`, silently redirected calls to the root), all-projects mode of `list_files`/`search_in_project`; schemas no longer depend on the number of projects. Covered by ToolPathRoutingTests, ToolAuthorizationTests, ToolExposureTests. |
+| 2026-11 | RouterAI preset. `BuiltInProvider.supportsPromptCaching` replaces the hardcoded `catalogId == "aitunnel"` check (AITunnel and RouterAI send top-level `cache_control`); providers added by hand are matched to a preset by host (`BuiltInProviders.find(baseURL:)`). Verified live: without `cache_control` RouterAI caches nothing; with it, call 2 reads the whole prefix (cost 4.0 -> 0.16 RUB per 15k tokens), 5m and 1h TTL both work, tool-result turns hit the cache. RouterAI reports price as `usage.cost` (AITunnel: `cost_rub`) via `AIUsage.effectiveCost`; no `usage.balance`, so `BalanceEndpoint` (`GET /api/v1/credits`, `data.credits`) is fetched after each streamed answer. |
 | 2026-11 | Remote providers.json catalog removed (ProvidersRemoteService, RemoteProviderCatalog, startup sync). Replaced by hardcoded BuiltInProviders presets without models; chat path is per preset. `AIProvider.catalogId` keeps its name for stored-data compatibility and now means "preset id". |
 | 2026-11 | Localization boundary: ChappieCore holds no catalog-localized strings. Labels of AgentRole/Git/Tests and the "unknown" DevEnvironment moved to the app target (Chappie/Views/Shared/ProjectModels+Display.swift), because Xcode extracts catalog keys only from app sources and marks keys used inside a Swift package as stale. `DevEnvironment.displayName` stays a stable English name for prompts; the UI uses `localizedName`. |
 

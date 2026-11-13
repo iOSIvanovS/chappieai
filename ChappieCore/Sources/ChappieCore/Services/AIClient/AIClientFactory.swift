@@ -20,8 +20,9 @@
 // This avoids the double-path bug where /v1/models gets appended twice.
 //
 // CACHE CONTROL:
-// cache_control is an AITunnel-specific extension — only sent when catalogId == "aitunnel".
-// All other providers (Groq, Ollama, OpenAI, etc.) reject this field with HTTP 400.
+// cache_control is a non-standard extension — only sent when the provider's built-in preset has
+// supportsPromptCaching = true (AITunnel, RouterAI). Other providers (Groq, Ollama, OpenAI, etc.)
+// may reject this field with HTTP 400.
 
 import Foundation
 
@@ -38,8 +39,13 @@ public enum AIClientFactory {
         // Model-level protocol takes precedence over provider-level default.
         let proto = model.providerProtocol
         let auth = provider.authScheme
-        // cache_control is AITunnel-specific — only aitunnel catalog provider supports it.
-        let supportsCaching = provider.catalogId == "aitunnel"
+        // cache_control is a non-standard extension — only presets flagged supportsPromptCaching get it.
+        let preset = provider.builtIn ?? BuiltInProviders.find(baseURL: provider.baseURL)
+        let supportsCaching = preset?.supportsPromptCaching ?? false
+        var balanceSource: (url: URL, endpoint: BalanceEndpoint)?
+        if let preset, let endpoint = preset.balanceEndpoint, let url = URL(string: preset.baseURL + endpoint.path) {
+            balanceSource = (url, endpoint)
+        }
 
         switch proto {
         case .anthropic:
@@ -57,7 +63,8 @@ public enum AIClientFactory {
                 apiKey: apiKey,
                 modelName: model.id,
                 authScheme: auth,
-                supportsCaching: supportsCaching
+                supportsCaching: supportsCaching,
+                balanceSource: balanceSource
             )
         }
     }

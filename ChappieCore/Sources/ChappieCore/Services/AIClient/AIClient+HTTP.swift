@@ -75,7 +75,7 @@ extension AIClient {
         let cacheCreation = usage.effectiveCacheCreation
         let promptTokens = usage.prompt_tokens ?? 0
         let completionTokens = usage.completion_tokens ?? 0
-        let costStr = usage.cost_rub.map { String(format: "%.4f RUB", $0) } ?? "n/a"
+        let costStr = usage.effectiveCost.map { String(format: "%.4f RUB", $0) } ?? "n/a"
 
         if cacheRead > 0 {
             let pct = promptTokens > 0 ? Int(Double(cacheRead) / Double(promptTokens) * 100) : 0
@@ -156,6 +156,6 @@ extension AIClient {
         guard let choice = result.choices.first else {
             throw ChappieError.parsingError("Model returned empty choices array")
         }
-        return (choice.message, result.usage?.cost_rub, result.usage?.balance)
+        return (choice.message, result.usage?.effectiveCost, result.usage?.balance)
     }
 }

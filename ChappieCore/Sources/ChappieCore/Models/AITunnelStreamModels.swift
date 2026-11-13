@@ -9,8 +9,23 @@ import Foundation
 /// usage is present only in the final chunk before [DONE].
 public struct AIStreamChunk: Decodable, Sendable {
     public let id: String?
+    /// Model and provider the gateway actually routed to; absent on many providers.
+    public let model: String?
+    public let provider: String?
     public let choices: [AIStreamChoice]
     public let usage: AIUsage?
+
+    private enum CodingKeys: String, CodingKey { case id, model, provider, choices, usage }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id)
+        // Diagnostic-only fields: a wrong type must never cost us the whole chunk.
+        model = try? c.decodeIfPresent(String.self, forKey: .model)
+        provider = try? c.decodeIfPresent(String.self, forKey: .provider)
+        choices = try c.decode([AIStreamChoice].self, forKey: .choices)
+        usage = try c.decodeIfPresent(AIUsage.self, forKey: .usage)
+    }
 }
 
 public struct AIStreamChoice: Decodable, Sendable {

@@ -66,13 +66,19 @@ public struct AIUsage: Decodable, Sendable {
     public let prompt_tokens: Int?
     public let completion_tokens: Int?
     public let total_tokens: Int?
+    /// AITunnel reports the request price here.
     public let cost_rub: Double?
+    /// RouterAI reports the request price in RUB under a different key.
+    public let cost: Double?
     public let balance: Double?
 
     public let cache_creation_input_tokens: Int?
     public let cache_read_input_tokens: Int?
     /// AITunnel-specific cache breakdown (non-standard nested object).
     public let prompt_tokens_details: AIPromptTokensDetails?
+
+    /// Request price in RUB from whichever key the provider uses.
+    public var effectiveCost: Double? { cost_rub ?? cost }
 
     /// Tokens written to cache — works with both Anthropic and AITunnel formats.
     public var effectiveCacheCreation: Int {

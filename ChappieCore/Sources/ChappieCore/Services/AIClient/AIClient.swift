@@ -30,14 +30,25 @@ public struct AIClient: Sendable, AIClientProtocol {
     let authScheme: AuthScheme
     let urlSession: URLSession
 
-    /// True only for AITunnel — all other providers reject cache_control with HTTP 400.
+    /// True only for presets with supportsPromptCaching — other providers may reject cache_control with HTTP 400.
     let supportsCaching: Bool
+
+    /// Set for providers that do not return `usage.balance` in chat responses; see AIClient+Balance.
+    let balanceSource: (url: URL, endpoint: BalanceEndpoint)?
 
     // MARK: - Init (from chat endpoint)
 
     /// Use when you have the full chat endpoint URL.
     /// baseURL is derived by stripping the path.
-    public init(endpoint: String, apiKey: String, modelName: String, authScheme: AuthScheme = .bearer, supportsCaching: Bool = false) {
+    public init(
+        endpoint: String,
+        apiKey: String,
+        modelName: String,
+        authScheme: AuthScheme = .bearer,
+        supportsCaching: Bool = false,
+        balanceSource: (url: URL, endpoint: BalanceEndpoint)? = nil
+    ) {
+        self.balanceSource = balanceSource
         self.endpointURL = URL(string: endpoint) ?? URL(string: "https://api.openai.com/v1/chat/completions")!
         self.apiKey = apiKey
         self.modelName = modelName
@@ -62,6 +73,7 @@ public struct AIClient: Sendable, AIClientProtocol {
     /// Use for discovery/validation when you know the provider's base URL.
     /// endpointURL = baseURL + /v1/chat/completions.
     public init(baseURL: String, apiKey: String, modelName: String, authScheme: AuthScheme = .bearer, supportsCaching: Bool = false) {
+        self.balanceSource = nil
         let base = URL(string: baseURL) ?? URL(string: "https://api.openai.com")!
         self.baseURL = base
         self.endpointURL = base.appendingPathComponent("v1/chat/completions")
