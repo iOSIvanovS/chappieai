@@ -50,11 +50,12 @@ ChappieCoreTests/
 ├── PDFToolsRoutingTests.swift          # pdf_* classified/exposed, page mandatory, other readers refuse a PDF, picture result through OutputGuard
 ├── JSONDocumentTests.swift             # JSON parser with byte positions, style detection (fixtures: xcstrings, package.json, tsconfig, minified, tabs, CRLF, BOM), deep nesting on a worker thread
 ├── JSONToolsTests.swift                # paths/globs, json_info/schema/get/find on a generated 300-key catalog, answer size ceilings, UTF-16, deep file, service wiring
-├── JSONEditTests.swift                 # json_edit: set/insert/delete/rename, style copy (tabs, CRLF, minified, escaping), commas, comments refused, overlap, expect, dry_run, verification, catalog round trip, replaceData race guard, permissions, symlink
+├── JSONEditTests.swift                 # json_edit: set/insert/delete/rename, style copy (tabs, CRLF, minified, escaping), commas, comments refused, overlap, expect, dry_run, verification, report content (an insertion shows no removed neighbour, one line with two edits printed once, unchanged neighbourhood trimmed), negative positions, catalog round trip, replaceData race guard, permissions, symlink
 ├── MemoryManagerTests.swift            # Semantic memory CRUD via SQLiteStorage
 ├── TerminalSwitchMigrationTests.swift   # Legacy terminalAccess values -> terminalEnabled switch, wrong types, new key wins, round trip, project list survives
 ├── ThreadIsolationTests.swift          # SystemPromptBuilder: sections, memory isolation, compact project settings block, no terminal lines
 ├── ToolArgumentsTests.swift            # Lenient argument parsing: scalars, null, nested, double-encoded, errors
+├── ToolSchemaTypesTests.swift          # Declared argument types (json_edit edits array of objects, dry_run/ignore_case booleans, integer depth/limit/max_chars), no array without items, items on the Anthropic wire, old string shapes still read
 ├── ToolPolicyTests.swift               # Access table: roles, plans, git/build rules, per-project resolution; every tool offered with a status line, danger order, compression of closed groups
 ├── ToolStatusTests.swift               # Availability label of tool descriptions (per project/thread, merged reasons) and shared ToolBlock wording
 ├── ThreadStoreTests.swift              # Chunk system: roundtrip, lazy load, pagination, boundary, delete

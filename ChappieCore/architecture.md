@@ -126,7 +126,7 @@ ChappieCore/
         │   ├── JSONFragment.swift      #   json_get: raw numbered lines when they fit, otherwise a collapsed view; missing-path diagnosis
         │   ├── JSONFinder.swift        #   json_find: subjects (at) + conditions (key, kind, has, missing, value_at, equals, not_equals, contains) + output/group_by
         │   ├── JSONToolEngine.swift    #   pure entry point (bytes + args -> text), UTF-16/32 refusal
-        │   └── Edit/                   #   json_edit (J3): JSONEditOps (operation reader, strict fields), JSONEditPlanner (+Delete, +Insert: splices over the ORIGINAL bytes), JSONSplicer (order, overlap refusal, apply), JSONValueRenderer (writes a value in the file's style) + JSONValueEquality, JSONEditEngine (plan, apply, VERIFY), JSONEditReport (changed lines old/new)
+        │   └── Edit/                   #   json_edit (J3): JSONEditOps (operation reader, strict fields), JSONEditPlanner (+Delete, +Insert: splices over the ORIGINAL bytes), JSONSplicer (order, overlap refusal, apply), JSONValueRenderer (writes a value in the file's style) + JSONValueEquality, JSONEditEngine (plan, apply, VERIFY), JSONEditReport (changed lines old/new: one place per merged original line, an insertion always stands alone and shows only what was added, lines are compared without their indent and without the separator comma so a shifted line is never printed as removed)
         ├── ToolExecution/JSONTools/    # JSONTools.swift: executor of the four readers (FileSystemManager.readData, path guard, 64 MB cap, detached task); JSONEditTool.swift: json_edit executor (read, engine on a detached task, write via FileSystemManager.replaceData)
         ├── FileSystemManager/FileSystemManager+Replace.swift # replaceData: atomic write only if the file still equals the bytes the edit was based on; keeps permissions, follows a symlink
         ├── ToolExecution/PDFTools/
@@ -733,6 +733,24 @@ Operations: `set`, `delete`, `insert` (key + `position`: auto/start/end/sorted/{
 - **Write**: `FileSystemManager.replaceData` re-reads the file and refuses when it differs from what the edit was based on.
 - Limits: 2000 operations per call, 64 MB file. Tests: `JSONEditTests` (incl. byte-identical remove/restore round trip on a generated
   catalog; on the real 845 KB xcstrings the same round trip was checked once by hand, not kept as a test).
+
+### Argument types in the schema (pass J4)
+
+A tool argument is declared with the type it really is. A string-only declaration for a number, a flag or a list makes the model send
+`"true"` and `"[…]"` as text and leaves it guessing what an element looks like.
+
+- **`AIToolProperty` gained `items`** (`AIToolItemShape`): the shape of an array's element. It is a class, not a struct, because an
+  element shape may itself contain an array and a value type cannot hold itself. `ToolDefinitions+JSONTools` uses it for
+  `json_edit.edits`: an array of operation objects, with the four op forms in the element description.
+- **`json_edit`**: `edits` is `array` of `object`, `dry_run` is `boolean`, `max_chars` is `integer`.
+- **`json_find`**: `limit` is `integer`, `ignore_case` is `boolean`, the rest stay `string` (they are paths, globs and free text).
+  **`json_schema` / `json_get`**: `depth` is `integer`.
+- **The wire carries it**: `AnthropicClient.convertTool` maps `items` recursively into `AnthropicToolProperty`, so an Anthropic request
+  keeps the element shape instead of a bare `"array"`. OpenAI-style requests encode `AIToolProperty` directly.
+- **Leniency stays.** The declarations changed, not the readers: `ToolArguments` still flattens `true` → `"true"` and a JSON array to
+  compact text, and `JSONEditArguments` still takes `edits` from the raw call text (so key order survives). A model that repeats an old
+  habit still works; a test pins both.
+- Tests: `ToolSchemaTypesTests` (declared types, no array without items, `items` on the Anthropic wire, lenient old shapes).
 
 ## 12b. OutputGuard — the one size gate for tool results
 

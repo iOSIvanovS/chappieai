@@ -95,9 +95,7 @@ extension AnthropicClient {
     // MARK: - Tool Conversion
 
     func convertTool(_ tool: AITool) -> AnthropicTool {
-        let props = tool.function.parameters.properties.mapValues { prop in
-            AnthropicToolProperty(type: prop.type, description: prop.description)
-        }
+        let props = tool.function.parameters.properties.mapValues(convertProperty)
         return AnthropicTool(
             name: tool.function.name,
             description: tool.function.description,
@@ -106,6 +104,24 @@ extension AnthropicClient {
                 properties: props,
                 required: tool.function.parameters.required
             )
+        )
+    }
+
+    private func convertProperty(_ prop: AIToolProperty) -> AnthropicToolProperty {
+        AnthropicToolProperty(
+            type: prop.type,
+            description: prop.description,
+            items: prop.items.map(convertShape)
+        )
+    }
+
+    /// Array and object arguments need their inner shape, so the model knows what an element looks
+    /// like; a bare "array" leaves it guessing and a strict schema rejects an array without items.
+    private func convertShape(_ shape: AIToolItemShape) -> AnthropicToolProperty {
+        AnthropicToolProperty(
+            type: shape.type,
+            description: shape.description,
+            items: shape.items.map(convertShape)
         )
     }
 }

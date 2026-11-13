@@ -137,13 +137,21 @@ extension JSONEditPlanner {
         case .start: return (0, false)
         case .end: return (count, false)
         case .index(let value):
-            guard (0...count).contains(value) else {
-                problem("\(label): position \(value) is outside 0...\(count). Use \"end\" to append.")
+            // Paths already count from the end when negative (see JSONDocument.element), so a
+            // position does too: one rule for the whole toolset beats two that look alike.
+            let resolved = value < 0 ? count + value : value
+            guard (0...count).contains(resolved) else {
+                let allowed = count == 0 ? "0" : "0...\(count) or -1...-\(count)"
+                problem("\(label): position \(value) is outside \(allowed). Use \"end\" to append.")
                 return nil
             }
-            return (value, false)
+            return (resolved, false)
         case .after(let anchor), .before(let anchor):
-            guard isObject, let found = member(anchor) else {
+            guard isObject else {
+                problem("\(label): 'position' names the key \(JSONText.quote(anchor)), but this is an array and an array item has no key. Use \"start\", \"end\" or an integer index.")
+                return nil
+            }
+            guard let found = member(anchor) else {
                 problem("\(label): 'position' names the key \(JSONText.quote(anchor)), which is not in this object.")
                 return nil
             }

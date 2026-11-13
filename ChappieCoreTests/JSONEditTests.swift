@@ -189,10 +189,31 @@ struct JSONEditInsertTests {
         #expect(answer.contains("no key"))
     }
 
+    @Test("A negative position counts from the end, like a path segment")
+    func negativePosition() {
+        let text = "{\n  \"l\" : [\n    1,\n    2,\n    3\n  ]\n}"
+        #expect(applied(text, #"[{"op":"insert","at":["l"],"value":0,"position":-1}]"#) == "{\n  \"l\" : [\n    1,\n    2,\n    0,\n    3\n  ]\n}")
+        #expect(applied(text, #"[{"op":"insert","at":["l"],"value":0,"position":-3}]"#) == "{\n  \"l\" : [\n    0,\n    1,\n    2,\n    3\n  ]\n}")
+        // -count is the first place, so one past the end has no negative form.
+        let (answer, result) = edit(text, #"[{"op":"insert","at":["l"],"value":0,"position":-4}]"#)
+        #expect(result == nil)
+        #expect(answer.contains("outside"))
+        #expect(answer.contains("-1...-3"))
+    }
+
     @Test("Key rules: needed for objects, forbidden for arrays, insert into a scalar refused")
     func keyRules() {
         #expect(edit(sorted, #"[{"op":"insert","at":[],"value":1}]"#).result == nil)
         #expect(edit(sorted, #"[{"op":"insert","at":["a"],"key":"x","value":1}]"#).result == nil)
+    }
+
+    @Test("after/before on an array says the array has no keys, instead of looking for one")
+    func anchorOnArray() {
+        let text = "{\n  \"l\" : [\n    1,\n    2\n  ]\n}"
+        let (answer, result) = edit(text, #"[{"op":"insert","at":["l"],"value":0,"position":{"after":"beta"}}]"#)
+        #expect(result == nil)
+        #expect(answer.contains("array item has no key"))
+        #expect(!answer.contains("not in this object"))
     }
 
     @Test("A comment at the insertion point is refused, not silently reattached")
@@ -326,6 +347,71 @@ struct JSONEditSafetyTests {
         #expect(answer.contains("- \"a\" : 1"))
         #expect(answer.contains("+ \"a\" : 5"))
         #expect(answer.contains("Every byte outside"))
+    }
+
+    @Test("An insertion never prints a neighbouring line as removed")
+    func insertionReport() {
+        let text = "{\n  \"a\" : 1,\n  \"zh-Hans\" : 2\n}"
+        let (answer, result) = edit(text, #"[{"op":"insert","at":[],"key":"b","value":3,"position":"end"}]"#)
+        #expect(result != nil)
+        #expect(answer.contains("+ \"b\" : 3"))
+        #expect(!answer.contains("- \"zh-Hans\""))
+        #expect(!answer.contains("- \""))
+    }
+
+    @Test("Two edits on one line are printed once, with both numbers")
+    func sharedLineReport() {
+        // A minified file puts both members on one line, which is where the merging matters.
+        let text = #"{"a":1,"b":2}"#
+        let (answer, result) = edit(text, #"[{"op":"set","at":["a"],"value":10},{"op":"set","at":["b"],"value":20}]"#)
+        #expect(result != nil)
+        #expect(answer.contains("edit 1,2"))
+        #expect(answer.contains("- {\"a\":1,\"b\":2}"))
+        #expect(answer.contains("+ {\"a\":10,\"b\":20}"))
+        // The shared line is printed once, not once per edit.
+        #expect(answer.components(separatedBy: "- {\"a\":1,\"b\":2}").count == 2)
+    }
+
+    @Test("An insertion in the middle shows what was added, without the comma that glues it in")
+    func insertionMiddleReport() {
+        let text = "{\n  \"a\" : 1,\n  \"c\" : 3\n}"
+        let (answer, result) = edit(text, #"[{"op":"insert","at":[],"key":"b","value":2,"position":{"after":"a"}}]"#)
+        #expect(result != nil)
+        // The new member is spliced in at the start of the line that holds "c", so that is the line quoted.
+        #expect(answer.contains("L3"))
+        #expect(answer.contains("+ \"b\" : 2"))
+        #expect(!answer.contains("2,"))
+        #expect(!answer.contains("- \""))
+    }
+
+    @Test("A line the edit only shifted is not printed as removed")
+    func commaShift() {
+        // Deleting the first member moves the comma away from the line of the second one; the line
+        // itself keeps its content, so reporting it as removed would read as lost data.
+        let text = "{\n  \"a\" : 1,\n  \"b\" : 2\n}"
+        let (answer, result) = edit(text, #"[{"op":"delete","at":["a"]}]"#)
+        #expect(result == "{\n  \"b\" : 2\n}")
+        #expect(!answer.contains("- \"b\" : 2"))
+    }
+
+    @Test("An insertion next to a delete keeps each place to itself")
+    func insertBesideDelete() {
+        let text = "{\n  \"o\" : {\n    \"keep\" : 1,\n    \"gone\" : 2\n  }\n}"
+        let edits = #"[{"op":"delete","at":["o","gone"]},{"op":"insert","at":["o"],"key":"fresh","value":{"x":1},"position":"start"}]"#
+        let (answer, result) = edit(text, edits)
+        #expect(result != nil)
+        #expect(answer.contains("+ \"fresh\" : {"))
+        #expect(!answer.contains("- \"keep\""))
+    }
+
+    @Test("An unchanged neighbourhood is not shown as rewritten")
+    func neighbourhoodTrimmed() {
+        let text = "{\n  \"o\" : {\n    \"a\" : 1,\n    \"b\" : 2\n  }\n}"
+        let (answer, result) = edit(text, #"[{"op":"set","at":["o","b"],"value":9}]"#)
+        #expect(result != nil)
+        #expect(answer.contains("- \"b\" : 2"))
+        #expect(answer.contains("+ \"b\" : 9"))
+        #expect(!answer.contains("\"o\" :"))
     }
 
     @Test("All problems are listed together, nothing is written")

@@ -184,7 +184,7 @@ enum JSONEditParser {
 
     private static func position(_ doc: JSONDocument, _ node: Int, prefix: String) throws -> JSONEditPosition {
         let bad = JSONToolError("""
-        \(prefix) (insert): 'position' must be "auto", "start", "end", "sorted", {"after":"key"}, {"before":"key"} or an integer array position.
+        \(prefix) (insert): 'position' must be "auto", "start", "end", "sorted", {"after":"key"}, {"before":"key"} or an integer array position (0 first, -1 counting from the end).
         """)
         switch doc.nodes[node].kind {
         case .string:

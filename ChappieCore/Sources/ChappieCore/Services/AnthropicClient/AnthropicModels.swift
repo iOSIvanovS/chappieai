@@ -125,9 +125,16 @@ struct AnthropicToolInputSchema: Encodable {
     let required: [String]?
 }
 
-struct AnthropicToolProperty: Encodable {
+final class AnthropicToolProperty: Encodable {
     let type: String
     let description: String?
+    let items: AnthropicToolProperty?
+
+    init(type: String, description: String?, items: AnthropicToolProperty? = nil) {
+        self.type = type
+        self.description = description
+        self.items = items
+    }
 }
 
 // MARK: - Streaming Event Models

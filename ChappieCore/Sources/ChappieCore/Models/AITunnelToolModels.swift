@@ -39,10 +39,28 @@ public struct AIToolParameters: Codable, Sendable {
 public struct AIToolProperty: Codable, Sendable {
     public let type: String
     public let description: String?
+    /// Shape of an array's elements. Without it an "array" property tells the model nothing about
+    /// what to put inside, and a strict schema rejects an array that has no items.
+    public let items: AIToolItemShape?
 
-    public init(type: String, description: String?) {
+    public init(type: String, description: String?, items: AIToolItemShape? = nil) {
         self.type = type
         self.description = description
+        self.items = items
+    }
+}
+
+/// The element shape of an array argument, e.g. the operation objects of `json_edit`.
+/// A class, not a struct: the shape may describe nested arrays, and a value type cannot hold itself.
+public final class AIToolItemShape: Codable, Sendable {
+    public let type: String
+    public let description: String?
+    public let items: AIToolItemShape?
+
+    public init(type: String, description: String?, items: AIToolItemShape? = nil) {
+        self.type = type
+        self.description = description
+        self.items = items
     }
 }
 

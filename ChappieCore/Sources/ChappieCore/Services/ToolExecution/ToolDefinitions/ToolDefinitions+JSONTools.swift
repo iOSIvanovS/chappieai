@@ -12,7 +12,7 @@ extension ToolExecutionService {
         let projectArg = AIToolProperty(type: "string", description: fileToolProjectArgDescription(for: allInfos))
         let pathArg = AIToolProperty(type: "string", description: "Relative path to the JSON file")
         let maxChars = AIToolProperty(
-            type: "string",
+            type: "integer",
             description: "Optional size limit of the answer in characters (default 8000, from 1000 to 40000). Raise it only when a result was cut."
         )
         let pathSyntax = """
@@ -52,7 +52,7 @@ extension ToolExecutionService {
                     properties: [
                         "path": pathArg, "project": projectArg,
                         "at": AIToolProperty(type: "string", description: "Optional JSON array path: describe only this part, for example [\"strings\"]. Wildcards merge all matches into one shape. Default: the whole file."),
-                        "depth": AIToolProperty(type: "string", description: "How many levels of nesting to describe (default 6, 1 to 20)."),
+                        "depth": AIToolProperty(type: "integer", description: "How many levels of nesting to describe (default 6, 1 to 20)."),
                         "max_chars": maxChars
                     ],
                     required: ["path", "project"]
@@ -71,7 +71,7 @@ extension ToolExecutionService {
                     properties: [
                         "path": pathArg, "project": projectArg,
                         "at": AIToolProperty(type: "string", description: "JSON array path of the part to show, for example [\"strings\", \"Cancel\"]. Default: the whole file (collapsed if big)."),
-                        "depth": AIToolProperty(type: "string", description: "Force the collapsed view with this many levels open. Omit to get the file's own lines when they fit."),
+                        "depth": AIToolProperty(type: "integer", description: "Force the collapsed view with this many levels open. Omit to get the file's own lines when they fit."),
                         "max_chars": maxChars
                     ],
                     required: ["path", "project"]
@@ -105,11 +105,11 @@ extension ToolExecutionService {
                         "equals": AIToolProperty(type: "string", description: "The value must equal this text."),
                         "not_equals": AIToolProperty(type: "string", description: "The value must differ from this text (a subject with no value at value_at passes)."),
                         "contains": AIToolProperty(type: "string", description: "The value must contain this text."),
-                        "ignore_case": AIToolProperty(type: "string", description: "true: equals, not_equals and contains ignore case."),
+                        "ignore_case": AIToolProperty(type: "boolean", description: "true: equals, not_equals and contains ignore case."),
                         "output": AIToolProperty(type: "string", description: "paths (default), keys, values or count."),
                         "show": AIToolProperty(type: "string", description: "JSON array path relative to the subject: value to print next to each result (paths) or instead of the subject (values)."),
                         "group_by": AIToolProperty(type: "string", description: "JSON array path relative to the subject: count subjects per distinct value found there."),
-                        "limit": AIToolProperty(type: "string", description: "Most results to list (default 50, up to 500). The match count is always exact."),
+                        "limit": AIToolProperty(type: "integer", description: "Most results to list (default 50, up to 500). The match count is always exact."),
                         "max_chars": maxChars
                     ],
                     required: ["path", "project"]
@@ -126,8 +126,11 @@ extension ToolExecutionService {
                 - {"op":"set","at":PATH,"value":ANY} replace the value at an existing path.
                 - {"op":"delete","at":PATH} remove an object member or an array item (the commas are fixed).
                 - {"op":"insert","at":CONTAINER_PATH,"key":"name","value":ANY,"position":P} add a member to an object (key required) \
-                or an item to an array (no key). position: "auto" (default: keeps an alphabetical object alphabetical, otherwise \
-                appends), "start", "end", "sorted", {"after":"key"}, {"before":"key"}, or an integer array position.
+                or an item to an array (no key). position (default "auto"): \
+                in an object "auto" keeps an alphabetical object alphabetical and otherwise appends, and the choices are \
+                "start", "end", "sorted" (alphabetical place, needs an alphabetical object), {"after":"key"}, {"before":"key"}; \
+                in an array the choices are "start", "end" and an integer index (0 first, -1 the place of the last item, \
+                counting from the end like a path segment) — an array has no keys, so {"after":...} does not apply there.
                 - {"op":"rename","at":PATH,"to":"newKey"} rename an object member, value untouched.
                 Every operation may carry "expect":VALUE (not for insert): the current value must equal it, otherwise the call is \
                 refused. Use it when the file may have changed since you read it.
@@ -142,8 +145,19 @@ extension ToolExecutionService {
                 parameters: AIToolParameters(
                     properties: [
                         "path": pathArg, "project": projectArg,
-                        "edits": AIToolProperty(type: "string", description: "JSON array of operations (see the description), sent as an array or as its JSON text. Up to 2000 per call."),
-                        "dry_run": AIToolProperty(type: "string", description: "true: check and show what would change, write nothing."),
+                        "edits": AIToolProperty(
+                            type: "array",
+                            description: "The operations to apply, in any order. Up to 2000 per call.",
+                            items: AIToolItemShape(
+                                type: "object",
+                                description: """
+                                One operation. {"op":"set","at":PATH,"value":ANY}, {"op":"delete","at":PATH}, \
+                                {"op":"insert","at":CONTAINER_PATH,"key":"name","value":ANY,"position":P}, \
+                                {"op":"rename","at":PATH,"to":"newKey"}. Every op except insert may carry "expect":VALUE.
+                                """
+                            )
+                        ),
+                        "dry_run": AIToolProperty(type: "boolean", description: "true: check and show what would change, write nothing."),
                         "max_chars": maxChars
                     ],
                     required: ["path", "project", "edits"]
