@@ -57,10 +57,38 @@ struct ToolSchemaTypeTests {
 
         #expect(props["limit"]?.type == "integer")
         #expect(props["ignore_case"]?.type == "boolean")
+        #expect(props["match_any"]?.type == "boolean")
         for name in ["at", "key", "kind", "has", "missing", "value_at", "equals", "not_equals",
-                     "contains", "output", "show", "group_by"] {
+                     "contains", "not_contains", "same_as", "output", "show", "group_by"] {
             #expect(props[name]?.type == "string", "\(name)")
         }
+    }
+
+    @Test("json_find: the arguments the engine accepts are exactly the ones the model is shown")
+    func jsonFindDeclaredEqualsKnown() async throws {
+        let rig = await SchemaRig()
+        let props = try #require(await rig.tool("json_find")).function.parameters.properties
+        // A name declared but refused would fail every use of it; a name accepted but undeclared
+        // would be invisible. Either drift is a bug this test catches the day it appears.
+        #expect(Set(props.keys) == JSONFindQuery.knownArguments)
+    }
+
+    @Test("json_info, json_schema, json_get: accepted arguments equal the declared ones")
+    func simpleToolsDeclaredEqualsKnown() async throws {
+        let rig = await SchemaRig()
+        for (name, known) in JSONToolEngine.knownArguments {
+            let props = try #require(await rig.tool(name)).function.parameters.properties
+            #expect(Set(props.keys) == known, "\(name)")
+        }
+    }
+
+    @Test("json_get refuses an invented argument instead of answering another question")
+    func jsonGetRefusesUnknown() {
+        let data = Data(#"{"a":{"b":1}}"#.utf8)
+        let out = JSONToolEngine.run(tool: "json_get", data: data, fileName: "x.json", arguments: ["at": #"["a"]"#, "max_depth": "1"])
+        #expect(out.hasPrefix("Error:"))
+        #expect(out.contains("'max_depth'"))
+        #expect(out.contains("Nothing was read"))
     }
 
     @Test("json_schema and json_get take a numeric depth")

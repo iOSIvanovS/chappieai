@@ -81,17 +81,28 @@ extension ToolExecutionService {
                 name: "json_find",
                 description: """
                 Search a JSON file by STRUCTURE, including what is MISSING. `at` chooses the subjects (every value that matches that \
-                path), the conditions filter them (ALL must hold), and relative paths inside conditions start at the subject.
-                Conditions: key (glob over the subject's own key), kind (object/array/string/number/bool/null), has / missing \
-                (a relative path exists / does not exist), value_at + equals / not_equals / contains (compare the value found at a \
-                relative path; strings decoded, other scalars as written: 5, true, null).
+                path), the conditions filter them, and relative paths inside conditions start at the subject.
+                Conditions (ALL must hold, unless match_any is true): key (glob over the subject's own key), kind \
+                (object/array/string/number/bool/null), has / missing (a relative path exists / does not exist), and value_at + \
+                equals / not_equals / contains / not_contains / same_as. Those last five compare the value found at value_at \
+                (default: the subject itself); strings are decoded, other scalars as written (5, true, null).
+                - same_as points at ANOTHER path of the same subject: "this value equals that one" — e.g. a translation that was \
+                copied from English instead of written.
+                match_any: true turns the conditions into OR, so one call answers "missing ru OR not translated" without merging \
+                two results by hand.
                 Output: paths (default, with line numbers), keys, values, or count; group_by (relative path) counts subjects per value.
                 Examples:
                 - Entries without a Russian translation: at ["strings","*"], missing ["localizations","ru"], output keys.
                 - Which translations are not yet 'translated': at ["strings","*","localizations","*"], value_at ["stringUnit","state"], not_equals "translated".
+                - Entries that need work, in ONE call: at ["strings","*"], missing ["localizations","ru"], match_any true, \
+                value_at ["localizations","ru","stringUnit","state"], not_equals "translated", output keys.
+                - Russian text copied from English: at ["strings","*"], value_at ["localizations","ru","stringUnit","value"], \
+                same_as ["localizations","en","stringUnit","value"], output count.
                 - Every key that looks like a title anywhere: at ["**"], key "*title*", output values.
                 - How many entries per state: at ["strings","*","localizations","ru"], group_by ["stringUnit","state"].
                 \(pathSyntax)
+                Unknown argument names are refused rather than ignored: a near miss such as "equals_path" or "any_of" would \
+                otherwise fall through and answer a DIFFERENT question with no sign of it.
                 """,
                 parameters: AIToolParameters(
                     properties: [
@@ -100,12 +111,15 @@ extension ToolExecutionService {
                         "key": AIToolProperty(type: "string", description: "Glob the subject's own key must match, for example \"add_*\"."),
                         "kind": AIToolProperty(type: "string", description: "The subject must be of this kind: object, array, string, number, bool or null."),
                         "has": AIToolProperty(type: "string", description: "JSON array path relative to the subject that must exist."),
-                        "missing": AIToolProperty(type: "string", description: "JSON array path relative to the subject that must NOT exist."),
-                        "value_at": AIToolProperty(type: "string", description: "JSON array path relative to the subject: the value that equals / not_equals / contains look at. Default: the subject itself."),
+                        "missing": AIToolProperty(type: "string", description: "JSON array path relative to the subject that must NOT exist. This is how you match what is ABSENT."),
+                        "value_at": AIToolProperty(type: "string", description: "JSON array path relative to the subject: the value that equals / not_equals / contains / not_contains / same_as look at. Default: the subject itself."),
                         "equals": AIToolProperty(type: "string", description: "The value must equal this text."),
                         "not_equals": AIToolProperty(type: "string", description: "The value must differ from this text (a subject with no value at value_at passes)."),
                         "contains": AIToolProperty(type: "string", description: "The value must contain this text."),
-                        "ignore_case": AIToolProperty(type: "boolean", description: "true: equals, not_equals and contains ignore case."),
+                        "not_contains": AIToolProperty(type: "string", description: "The value must NOT contain this text — text that was left in English, keys still holding a placeholder, and so on."),
+                        "same_as": AIToolProperty(type: "string", description: "JSON array path relative to the subject: another place whose value this one must EQUAL. Comparison follows ignore_case."),
+                        "ignore_case": AIToolProperty(type: "boolean", description: "true: equals, not_equals, contains, not_contains and same_as ignore case."),
+                        "match_any": AIToolProperty(type: "boolean", description: "false (default): every given condition must hold. true: at least one must hold (OR)."),
                         "output": AIToolProperty(type: "string", description: "paths (default), keys, values or count."),
                         "show": AIToolProperty(type: "string", description: "JSON array path relative to the subject: value to print next to each result (paths) or instead of the subject (values)."),
                         "group_by": AIToolProperty(type: "string", description: "JSON array path relative to the subject: count subjects per distinct value found there."),

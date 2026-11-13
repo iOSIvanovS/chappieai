@@ -16,6 +16,7 @@ public enum JSONToolEngine {
     /// Answers one call. Every failure comes back as readable text starting with "Error:".
     public static func run(tool: String, data: Data, fileName: String, arguments: [String: String]) -> String {
         do {
+            if let problem = unknownArgumentProblem(tool: tool, arguments: arguments) { return "Error: \(problem)" }
             if let problem = encodingProblem(data) { return "Error: \(problem)" }
             let doc = try JSONDocument.parse(data)
             let args = JSONToolArgs(values: arguments)
@@ -40,6 +41,23 @@ public enum JSONToolEngine {
         } catch {
             return "Error: \(error.localizedDescription)"
         }
+    }
+
+    /// Arguments each of the three simple tools accepts. json_find checks its own list in JSONFindQuery.
+    static let knownArguments: [String: Set<String>] = [
+        "json_info": ["path", "project", "max_chars"],
+        "json_schema": ["path", "project", "at", "depth", "max_chars"],
+        "json_get": ["path", "project", "at", "depth", "max_chars"]
+    ]
+
+    /// A near-miss argument name would be dropped silently and the tool would answer a different
+    /// question than the one asked (for example a "depth" typo returns the whole file).
+    static func unknownArgumentProblem(tool: String, arguments: [String: String]) -> String? {
+        guard let known = knownArguments[tool] else { return nil }
+        let unknown = arguments.keys.filter { !known.contains($0) }.sorted()
+        guard !unknown.isEmpty else { return nil }
+        let names = unknown.map { "'\($0)'" }.joined(separator: ", ")
+        return "\(tool) has no argument \(names). Known: \(known.sorted().joined(separator: ", ")). Nothing was read."
     }
 
     /// A UTF-16 or UTF-32 file would only produce a confusing "unexpected character"; say what it is.

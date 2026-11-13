@@ -9,7 +9,16 @@
 //   kind       the subject is object / array / string / number / bool / null
 //   has        a relative path exists            missing   a relative path does not exist
 //   value_at   which value the next conditions look at (default: the subject itself)
-//   equals / not_equals / contains   compare that value (strings decoded, other scalars as written)
+//   equals / not_equals / contains / not_contains   compare that value (strings decoded, other
+//              scalars as written)
+//   same_as    compare that value with another place in the same subject instead of a literal
+// Negative forms exist next to the positive ones (not_equals, not_contains): a model that finds only
+// half of a pair invents the other half's name.
+//
+// match_any turns the whole condition set into OR: AND alone cannot ask "missing ru OR not translated"
+// in one call. Unknown argument names are refused (see knownArguments): a near miss such as
+// "equals_path" would otherwise be ignored and the search would answer a different question.
+//
 // Typical use: "which entries under strings.* have no localizations.ru" =
 //   at ["strings","*"], missing ["localizations","ru"], output "keys".
 
@@ -25,7 +34,10 @@ struct JSONFindQuery {
     var equals: String?
     var notEquals: String?
     var contains: String?
+    var notContains: String?
+    var sameAs: [JSONPathSegment]?
     var ignoreCase = false
+    var matchAny = false
     var output = Output.paths
     var show: [JSONPathSegment]?
     var groupBy: [JSONPathSegment]?
@@ -33,14 +45,33 @@ struct JSONFindQuery {
 
     enum Output: String { case paths, keys, values, count }
 
-    var hasValueCondition: Bool { equals != nil || notEquals != nil || contains != nil }
+    var hasValueCondition: Bool {
+        equals != nil || notEquals != nil || contains != nil || notContains != nil || sameAs != nil
+    }
     var hasAnyCondition: Bool {
         key != nil || kind != nil || has != nil || missing != nil || hasValueCondition
     }
 
+    /// The same eight conditions as one "all of them" and as one "any of them" predicate.
+    /// `matchAny` swaps the two; nothing else in the search changes.
+    func accepts(_ doc: JSONDocument, _ index: Int) -> Bool {
+        matchAny ? JSONFinder.passesAny(doc, index, self) : JSONFinder.passesAll(doc, index, self)
+    }
+
     init() {}
 
+    static let knownArguments: Set<String> = [
+        "path", "project", "at", "key", "kind", "has", "missing", "value_at", "equals", "not_equals",
+        "contains", "not_contains", "same_as", "ignore_case", "match_any", "output", "show",
+        "group_by", "limit", "max_chars"
+    ]
+
     init(_ args: JSONToolArgs) throws {
+        let unknown = args.values.keys.filter { !Self.knownArguments.contains($0) }.sorted()
+        if !unknown.isEmpty {
+            let names = unknown.map { "'\($0)'" }.joined(separator: ", ")
+            throw JSONToolError("json_find has no argument \(names). Known: \(Self.knownArguments.sorted().joined(separator: ", ")). Nothing was searched.")
+        }
         at = try args.path("at")
         has = try args.string("has") == nil ? nil : args.path("has")
         missing = try args.string("missing") == nil ? nil : args.path("missing")
@@ -57,7 +88,10 @@ struct JSONFindQuery {
         equals = args.string("equals")
         notEquals = args.string("not_equals")
         contains = args.string("contains")
+        notContains = args.string("not_contains")
+        sameAs = try args.string("same_as") == nil ? nil : args.path("same_as")
         ignoreCase = args.bool("ignore_case")
+        matchAny = args.bool("match_any")
         if let text = args.string("output") {
             guard let parsed = Output(rawValue: text.lowercased()) else {
                 throw JSONToolError("Argument 'output' must be one of: paths, keys, values, count.")
@@ -76,7 +110,7 @@ enum JSONFinder {
             if query.at.isEmpty { throw JSONToolError("The file has no values to search.") }
             throw JSONFragment.missingPath(doc, query.at)
         }
-        let matches = subjects.filter { passes(doc, $0, query) }
+        let matches = subjects.filter { query.accepts(doc, $0) }
 
         let scope = query.at.isEmpty ? "the whole file" : JSONPathSegment.render(query.at)
         var lines = ["\(fileName) — searched \(JSONText.plural(subjects.count, "value", "values")) in \(scope): \(JSONText.count(matches.count)) match."]
@@ -95,43 +129,6 @@ enum JSONFinder {
             lines.append("No condition was given, so every searched value matches. Add key, kind, has, missing, equals, not_equals or contains.")
         }
         return JSONOutput.fit(lines.joined(separator: "\n"), maxChars: maxChars, hint: "Lower `limit`, narrow `at`, or raise `max_chars`.")
-    }
-
-    // MARK: Conditions
-
-    private static func passes(_ doc: JSONDocument, _ index: Int, _ query: JSONFindQuery) -> Bool {
-        let node = doc.nodes[index]
-        if let key = query.key {
-            guard let own = node.key, key.matches(own) else { return false }
-        }
-        if let kind = query.kind, node.kind != kind { return false }
-        if let has = query.has, doc.resolve(has, from: index).isEmpty { return false }
-        if let missing = query.missing, !doc.resolve(missing, from: index).isEmpty { return false }
-        guard query.hasValueCondition else { return true }
-
-        let candidates = doc.resolve(query.valueAt, from: index).filter { isScalar(doc, $0) }
-        if let equals = query.equals, !candidates.contains(where: { same(text(doc, $0), equals, query) }) { return false }
-        if let notEquals = query.notEquals, candidates.contains(where: { same(text(doc, $0), notEquals, query) }) { return false }
-        if let part = query.contains, !candidates.contains(where: { has(text(doc, $0), part, query) }) { return false }
-        return true
-    }
-
-    private static func isScalar(_ doc: JSONDocument, _ index: Int) -> Bool {
-        let kind = doc.nodes[index].kind
-        return kind != .object && kind != .array
-    }
-
-    /// Strings decoded, every other scalar exactly as written (5, true, null).
-    private static func text(_ doc: JSONDocument, _ index: Int) -> String {
-        doc.stringValue(of: index) ?? doc.rawText(of: index)
-    }
-
-    private static func same(_ left: String, _ right: String, _ query: JSONFindQuery) -> Bool {
-        query.ignoreCase ? left.lowercased() == right.lowercased() : left == right
-    }
-
-    private static func has(_ whole: String, _ part: String, _ query: JSONFindQuery) -> Bool {
-        query.ignoreCase ? whole.lowercased().contains(part.lowercased()) : whole.contains(part)
     }
 
     // MARK: Output

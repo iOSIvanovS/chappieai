@@ -124,7 +124,8 @@ ChappieCore/
         │   ├── JSONSchema.swift        #   JSONShape + builder: merge nodes into shapes, dictionary detection
         │   ├── JSONSchemaRenderer.swift #  json_schema text from a shape
         │   ├── JSONFragment.swift      #   json_get: raw numbered lines when they fit, otherwise a collapsed view; missing-path diagnosis
-        │   ├── JSONFinder.swift        #   json_find: subjects (at) + conditions (key, kind, has, missing, value_at, equals, not_equals, contains) + output/group_by
+        │   ├── JSONFinder.swift        #   json_find: query parsing (known arguments are closed), subjects (at), run, output/group_by
+        │   ├── JSONFinder+Conditions.swift #   json_find conditions: AND form, OR form (match_any), same_as, not_contains
         │   ├── JSONToolEngine.swift    #   pure entry point (bytes + args -> text), UTF-16/32 refusal
         │   └── Edit/                   #   json_edit (J3): JSONEditOps (operation reader, strict fields), JSONEditPlanner (+Delete, +Insert: splices over the ORIGINAL bytes), JSONSplicer (order, overlap refusal, apply), JSONValueRenderer (writes a value in the file's style) + JSONValueEquality, JSONEditEngine (plan, apply, VERIFY), JSONEditReport (changed lines old/new: one place per merged original line, an insertion always stands alone and shows only what was added, lines are compared without their indent and without the separator comma so a shifted line is never printed as removed)
         ├── ToolExecution/JSONTools/    # JSONTools.swift: executor of the four readers (FileSystemManager.readData, path guard, 64 MB cap, detached task); JSONEditTool.swift: json_edit executor (read, engine on a detached task, write via FileSystemManager.replaceData)
@@ -743,7 +744,23 @@ A tool argument is declared with the type it really is. A string-only declaratio
   element shape may itself contain an array and a value type cannot hold itself. `ToolDefinitions+JSONTools` uses it for
   `json_edit.edits`: an array of operation objects, with the four op forms in the element description.
 - **`json_edit`**: `edits` is `array` of `object`, `dry_run` is `boolean`, `max_chars` is `integer`.
-- **`json_find`**: `limit` is `integer`, `ignore_case` is `boolean`, the rest stay `string` (they are paths, globs and free text).
+- **`json_find`**: `limit` is `integer`, `ignore_case` and `match_any` are `boolean`, the rest stay `string` (they are paths, globs and free text).
+
+### Why json_find grew `same_as`, `not_contains`, `match_any` (pass J5-b) and refuses unknown arguments
+
+The reader of these tools is a model, so the shape was chosen for how a model writes a call, not for a query language:
+
+- **No nested condition groups.** A boolean tree (`any_of: [[…],[…]]`) is a second language inside an argument; models get
+  brackets and nesting wrong, and a wrong tree still parses and answers a different question. Flat arguments stay checkable.
+- **`match_any` is one flag, not a tree.** AND is the default and OR is the same conditions with the flag. The case that really
+  needs a mix (some AND, some OR) is two calls, and each call stays readable.
+- **`same_as` takes a path, not a value.** "Translation equals the English text" compares two places of the same subject, so it
+  cannot be written as a literal. It follows `ignore_case`; a subject lacking the other path never matches.
+- **`not_contains` completes the pair** with `contains`, as `not_equals` does with `equals`. A model that finds half of a pair invents
+  the other half's name.
+- **Unknown arguments are refused, naming the offender and listing the known ones.** Before this, an invented `equals_path` was
+  dropped silently, no condition remained, and the search answered a different question with no sign of it.
+  `jsonFindDeclaredEqualsKnown` pins the declared schema to `JSONFindQuery.knownArguments`, so the two cannot drift.
   **`json_schema` / `json_get`**: `depth` is `integer`.
 - **The wire carries it**: `AnthropicClient.convertTool` maps `items` recursively into `AnthropicToolProperty`, so an Anthropic request
   keeps the element shape instead of a bare `"array"`. OpenAI-style requests encode `AIToolProperty` directly.

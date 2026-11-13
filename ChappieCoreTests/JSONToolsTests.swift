@@ -343,6 +343,87 @@ struct JSONFindTests {
         #expect(out.contains("match"))
     }
 
+    // Three entries: a is fine, b copies English into ru, c has no ru, d has ru in needs_review.
+    private static let pairs = """
+    {"strings":{
+      "a":{"en":{"v":"Cancel"},"ru":{"v":"Отмена","s":"translated"}},
+      "b":{"en":{"v":"Save"},"ru":{"v":"Save","s":"translated"}},
+      "c":{"en":{"v":"Close"}},
+      "d":{"en":{"v":"Open"},"ru":{"v":"Открыть","s":"needs_review"}}
+    }}
+    """
+
+    @Test("same_as finds a value copied from another place; a subject without that place never matches")
+    func sameAs() {
+        let out = run("json_find", Self.pairs, [
+            "at": #"["strings","*"]"#, "value_at": #"["ru","v"]"#, "same_as": #"["en","v"]"#, "output": "keys"
+        ])
+        #expect(out.contains("1 match"))
+        #expect(out.contains("\"b\""))
+        #expect(!out.contains("\"c\""))
+    }
+
+    @Test("same_as follows ignore_case")
+    func sameAsIgnoreCase() {
+        let text = #"{"x":{"a":"Hello","b":"hello"}}"#
+        let args = ["at": #"["x"]"#, "value_at": #"["a"]"#, "same_as": #"["b"]"#, "output": "count"]
+        #expect(run("json_find", text, args).contains("0 match"))
+        #expect(run("json_find", text, args.merging(["ignore_case": "true"]) { $1 }).contains("1 match"))
+    }
+
+    @Test("not_contains is the negative of contains and passes when there is no value")
+    func notContains() {
+        let out = run("json_find", Self.pairs, [
+            "at": #"["strings","*"]"#, "value_at": #"["ru","v"]"#, "not_contains": "Save", "output": "keys"
+        ])
+        #expect(out.contains("3 match"))
+        #expect(!out.contains("\"b\""))
+        #expect(out.contains("\"c\""))
+    }
+
+    @Test("match_any answers an OR in one call: no Russian OR not translated")
+    func matchAny() {
+        let args = [
+            "at": #"["strings","*"]"#, "missing": #"["ru"]"#,
+            "value_at": #"["ru","s"]"#, "not_equals": "translated", "output": "keys"
+        ]
+        // All conditions together: no ru AND state != translated -> only c (no ru means no state at all).
+        let all = run("json_find", Self.pairs, args)
+        #expect(all.contains("1 match"))
+        #expect(all.contains("\"c\""))
+        // Any condition: c (no ru) and d (needs_review).
+        let any = run("json_find", Self.pairs, args.merging(["match_any": "true"]) { $1 })
+        #expect(any.contains("2 match"))
+        #expect(any.contains("\"c\", \"d\""))
+    }
+
+    @Test("match_any with a key and a kind condition")
+    func matchAnyStructural() {
+        let out = run("json_find", #"{"a":{"title":1},"b":[1],"c":3}"#, [
+            "at": #"["*"]"#, "kind": "array", "key": "c", "match_any": "true", "output": "keys"
+        ])
+        #expect(out.contains("2 match"))
+        #expect(out.contains("\"b\", \"c\""))
+    }
+
+    @Test("match_any with no condition behaves like the default: nothing is filtered out")
+    func matchAnyNoCondition() {
+        let plain = run("json_find", #"{"a":1,"b":2}"#, ["at": #"["*"]"#, "output": "count"])
+        let any = run("json_find", #"{"a":1,"b":2}"#, ["at": #"["*"]"#, "match_any": "true", "output": "count"])
+        #expect(plain.contains("2 match"))
+        #expect(any.contains("2 match"))
+    }
+
+    @Test("An argument that does not exist is refused, naming it, instead of answering another question")
+    func unknownArgument() {
+        let out = run("json_find", Self.pairs, ["at": #"["strings","*"]"#, "equals_path": #"["en","v"]"#, "output": "count"])
+        #expect(out.hasPrefix("Error:"))
+        #expect(out.contains("'equals_path'"))
+        #expect(out.contains("same_as"))
+        #expect(out.contains("Nothing was searched"))
+        #expect(run("json_find", Self.pairs, ["any_of": "[]"]).contains("'any_of'"))
+    }
+
     @Test("Bad arguments are explained")
     func badArguments() {
         #expect(run("json_find", "{}", ["kind": "text"]).hasPrefix("Error:"))
