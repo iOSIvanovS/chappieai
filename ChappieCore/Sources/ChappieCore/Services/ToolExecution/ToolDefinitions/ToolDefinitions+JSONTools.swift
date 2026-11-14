@@ -21,6 +21,24 @@ extension ToolExecutionService {
         (0 first, -1 last), or a pattern: "*" any key or item, "add_*" / "?" glob, "**" this node and everything below it. \
         A literal * or ? in a key is written \\* or \\?.
         """
+        let xcstringsRecipe = """
+        An Xcode string catalog (.xcstrings) is plain JSON, so json_* tools serve it directly — there is no separate \
+        localization tool and none is needed:
+        - Top level: {"sourceLanguage":"en","strings":{…},"version":"1.0"}.
+        - Each entry under "strings" is either an empty {} or holds "comment", "extractionState" (e.g. "stale", \
+        "manual", "extracted_with_value") and "localizations".
+        - A localization is {"stringUnit":{"state":…,"value":…}}, or {"variations":{"plural":{…}}} for plurals; \
+        state is one of translated, needs_review, new, stale.
+        Recipes:
+        - Add a language to a key: insert at ["strings","KEY","localizations"], key "ru", \
+        value {"stringUnit":{"state":"translated","value":"Отмена"}}.
+        - Mark a translation finished: set ["strings","KEY","localizations","ru","stringUnit","state"] to "translated".
+        - Which keys still need a translation: json_find at ["strings","*"], missing ["localizations","ru"], output keys; \
+        then translate them all in ONE json_edit call.
+        Keys are alphabetical, so a new key goes in with "position":"sorted".
+        Never rewrite the whole file with write_file: "comment", "extractionState" and "variations" would be silently lost. \
+        json_edit changes only the bytes of the edited places and keeps everything else.
+        """
 
         return [
             AITool(function: AIFunctionDefinition(
@@ -154,6 +172,7 @@ extension ToolExecutionService {
                 [{"op":"insert","at":["strings","Cancel","localizations"],"key":"ru","value":{"stringUnit":{"state":"translated","value":"Отмена"}}}]
                 Use json_find first to learn what is missing, json_get to see the neighbours. Prefer this over write_file / patch_file \
                 for JSON files: no need to read the file, no risk of breaking its format.
+                \(xcstringsRecipe)
                 \(pathSyntax)
                 """,
                 parameters: AIToolParameters(

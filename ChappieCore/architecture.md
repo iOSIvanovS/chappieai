@@ -531,7 +531,7 @@ the request prefix, so a long unchanged prefix keeps the cache valid, and the ta
 a model reads most attentively. Empty sections are omitted — no wasted tokens. Test: `blockOrderAndNoWrapper`.
 
 **Project settings block (`ProjectSettings.formatForSystemPrompt`) carries only facts that no tool status carries:**
-absolute path; for an EXECUTOR programming project also dev environment, test-writing permission (writing tests
+absolute path; for an EXECUTOR project also the test-writing permission (writing tests
 goes through the shared write tools, so no tool status can express it), and the architecture / comment switches with
 their language. Role, git level, compilation and test-run access are NOT repeated: the status line of each tool
 states them (`ToolPolicy.status`). The thread's terminal setting is not injected either (the `run_terminal` /
@@ -543,7 +543,7 @@ style, how to handle architecture files) live in the persona rules, not in this 
 ## 12. ToolPolicy — one access table
 
 `ToolPolicy.swift` holds one row per tool (`ToolCapability`): alwaysOn, terminal, forbidden, fileRead, fileWrite,
-locRead, locWrite, git, build, tests, buildLog, curl. **A tool without a row is denied.** `ToolPolicy.decide` is a pure
+git, curl. **A tool without a row is denied.** `ToolPolicy.decide` is a pure
 function `(tool, target project's ProjectSettings, thread terminal level, curl switch) → ToolDecision`.
 
 `ToolAuthorization.swift` connects it to the live thread, for both questions with the same function:
@@ -766,6 +766,22 @@ The reader of these tools is a model, so the shape was chosen for how a model wr
   habit still works; a test pins both.
 - Tests: `ToolSchemaTypesTests` (declared types, no array without items, `items` on the Anthropic wire, lenient old shapes).
 
+### Xcode string catalogs via json_* (pass J5-c)
+
+After `loc_*` were removed, the knowledge of the `.xcstrings` format would have gone with them, so `json_edit`'s description
+carries a short recipe (built once in `xcstringsRecipe`, shared by the description text): top level
+`{"sourceLanguage","strings","version"}`, an entry is `{}` or `{"comment","extractionState","localizations"}`, a localization is
+`{"stringUnit":{"state","value"}}` or `{"variations":{"plural":…}}`, `state` ∈ translated / needs_review / new / stale. Two worked
+operations (add a language to a key, mark a translation finished), the `json_find` call that lists keys still missing a
+translation, and the warning that a whole-file rewrite silently drops `comment`, `extractionState` and `variations`.
+This is format documentation, not an environment gate: nothing in the tool behaves differently for that file.
+
+Verified live on a copy of the real `Chappie/Localizable.xcstrings` (785.9 KB, 28 759 lines, 449 keys, 10 languages):
+the two-operation call inserted `uk` between `ru` and `zh-Hans` with `position:"sorted"`, changed one `state`, and left
+`extractionState` (2 × stale), `comment` (76), the key count and the zero `\/` escaping untouched; `json_find missing`
+answered 448 of 449 and `same_as` found the 7 Russian texts copied from English. The catalog is alphabetical (0
+out-of-order pairs of 449), which is what makes `"position":"sorted"` usable on it.
+
 ## 12b. OutputGuard — the one size gate for tool results
 
 > **RULE FOR ANY NEW TOOL: its result must leave through `ToolExecutionService.execute`.** That method wraps
@@ -916,6 +932,7 @@ Tests: `MessageTimestampTests`, `MemoryDatesTests`.
 | 2026-11 | Remote providers.json catalog removed (ProvidersRemoteService, RemoteProviderCatalog, startup sync). Replaced by hardcoded BuiltInProviders presets without models; chat path is per preset. `AIProvider.catalogId` keeps its name for stored-data compatibility and now means "preset id". |
 | 2026-11 | Localization boundary: ChappieCore holds no catalog-localized strings. Labels of AgentRole/Git/Tests and the "unknown" DevEnvironment moved to the app target (Chappie/Views/Shared/ProjectModels+Display.swift), because Xcode extracts catalog keys only from app sources and marks keys used inside a Swift package as stale. (`DevEnvironment` itself was removed later, see the 2026-11 note below.) |
 | 2026-11 | Localization tools removed (pass J5-a): all 15 `loc_*` tools, the helper's LocalizationTools module with its xcstrings data model, `ToolCapability.locRead/locWrite`, `ToolPolicy.localizationTools`, `xcodeBlock` and the dispatcher branch. They dropped `extractionState`, `variations` and `substitutions` on every write, escaped `/` and rewrote the whole file; `json_*` do the same work byte-exactly in any environment. Tests assert the names are no longer classified. |
+| 2026-11 | String catalog recipe in `json_edit` (pass J5-c): the knowledge of the `.xcstrings` format moved from the deleted tools into the tool description (structure, four `state` values, two worked operations, the `json_find` call for missing translations, and why a whole-file rewrite loses `comment`/`extractionState`/`variations`). Verified live on a copy of the real 785.9 KB catalog: sorted insert of a new language, one `state` change, every other byte identical. |
 
 ### Build and test tools removed (2026-11)
 
