@@ -55,7 +55,7 @@ public actor MemoryManager {
     // MARK: - Workspace initialization
 
     /// Sets up workspace target discovery.
-    /// NOTE: architecture.md files are NOT created automatically — only by explicit user agreement.
+    /// NOTE: architecture files are NOT created automatically — only by explicit user agreement.
     public func initializeWorkspaceMemory() async {
         guard !isInitialized else { return }
 

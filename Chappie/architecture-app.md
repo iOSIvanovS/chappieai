@@ -1,5 +1,5 @@
 <!--
-  Chappie/architecture.md
+  Chappie/architecture-app.md
   ARCHITECTURE DOCUMENT — UI TARGET (Chappie.app)
   Update after every significant architectural change.
 -->
@@ -198,7 +198,7 @@ lives in `ThreadProjectEntry`, not inside the settings struct.
 `ChappieViewModel.exportBackup(password:)` → `BackupService.exportEncrypted(password:)` (ChappieCore)
 → `NSSavePanel` writes the resulting encrypted `Data` to a `.chappiebackup` file.
 
-**Import (full restore, no merge — see `ChappieCore/architecture.md` BackupService section):**
+**Import (full restore, no merge — see `ChappieCore/architecture-core.md` BackupService section):**
 `BackupImportSheet` — two-step confirmation since the action is destructive:
 1. `NSOpenPanel` picks the `.chappiebackup` file + password entered → "Decrypt & Preview" →
    `ChappieViewModel.previewBackup(data:password:)` → `BackupService.decryptBundle` — decrypts and
@@ -235,7 +235,7 @@ the editable `absolutePath` field above).
 
 The terminal is an on/off switch of the thread (`ThreadSettings.terminalEnabled`, a `Toggle` in the thread settings
 sheet). There is no confirmation mode: the sheet, the `terminalPrompts` queue and the pending-command marker were
-removed (2026-11-12). Old threads migrate in `ThreadSettings.init(from:)` (details in ChappieCore/architecture.md §13).
+removed (2026-11-12). Old threads migrate in `ThreadSettings.init(from:)` (details in ChappieCore/architecture-core.md §13).
 Off means the agent has no terminal and builds/tests are run by the user.
 
 ---

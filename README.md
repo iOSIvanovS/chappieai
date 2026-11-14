@@ -80,7 +80,7 @@ open Chappie.xcodeproj
 
 Swift packages (GRDB, ZIPFoundation, Sparkle) are resolved by Xcode. Sparkle updates are signed with the author's private key, so a build from source will not receive official updates.
 
-Architecture notes live in [`architecture.md`](architecture.md) and next to each module.
+Architecture notes live in [`architecture-overview.md`](architecture-overview.md) and next to each module.
 
 ---
 

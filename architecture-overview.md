@@ -3,15 +3,15 @@
 ## 1. Project Structure
 
 ```
-/Volumes/Storage/Work/Chappie/
-├── architecture.md                          # This file (root architecture)
+/Volumes/Работа/Мои проекты/Chappie/Chappie/
+├── architecture-overview.md                 # This file (root architecture)
 ├── Chappie.xcodeproj/
-├── Chappie/                                 # UI target → see Chappie/architecture.md
-├── ChappieCore/                             # Business logic → see ChappieCore/architecture.md
-├── ChappieCoreTests/                        # Tests → see ChappieCoreTests/architecture.md
-├── ChappieMCP/                              # Helper process (thin main.swift) → see ChappieMCP/architecture.md
-├── ChappieMCPCore/                          # Helper logic as a local package → see ChappieMCP/architecture.md
-└── ChappieMCPTests/                         # Helper tests → see ChappieMCP/architecture.md
+├── Chappie/                                 # UI target → see Chappie/architecture-app.md
+├── ChappieCore/                             # Business logic → see ChappieCore/architecture-core.md
+├── ChappieCoreTests/                        # Tests → see ChappieCoreTests/architecture-core-tests.md
+├── ChappieMCP/                              # Helper process (thin main.swift) → see ChappieMCP/architecture-mcp.md
+├── ChappieMCPCore/                          # Helper logic as a local package → see ChappieMCP/architecture-mcp.md
+└── ChappieMCPTests/                         # Helper tests → see ChappieMCP/architecture-mcp.md
 ```
 
 ---
@@ -34,18 +34,18 @@
 ```mermaid
 graph TD
     subgraph App["Chappie.app (macOS 14+)"]
-        UI["Chappie — SwiftUI UI\nsee Chappie/architecture.md"]
-        Core["ChappieCore — Business Logic\nsee ChappieCore/architecture.md"]
+        UI["Chappie — SwiftUI UI\nsee Chappie/architecture-app.md"]
+        Core["ChappieCore — Business Logic\nsee ChappieCore/architecture-core.md"]
         UI -->|depends on| Core
     end
 
     subgraph Tests["Test Target"]
-        T["ChappieCoreTests\nsee ChappieCoreTests/architecture.md"]
+        T["ChappieCoreTests\nsee ChappieCoreTests/architecture-core-tests.md"]
         T -->|tests| Core
     end
 
     subgraph Helper["Child Process"]
-        MCP["ChappieMCP — git + xcodebuild + loc\nsee ChappieMCP/architecture.md"]
+        MCP["ChappieMCP — git + documents + socket\nsee ChappieMCP/architecture-mcp.md"]
     end
 
     Core -->|Unix Domain Socket IPC| MCP
@@ -220,7 +220,7 @@ Release tooling (DMG build, signing, GitHub Release upload, `appcast.xml` on `gh
 ## 13. 📚 Docs Group in Xcode Navigator
 
 `📚 Docs` group in `project.pbxproj` — navigation only, not included in build.
-Contains root `architecture.md` + references to 4 target architecture files.
+Contains root `architecture-overview.md` + references to 4 target architecture files.
 **Manage manually** via `write_file` in `project.pbxproj`.
 
 ---

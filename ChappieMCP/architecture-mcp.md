@@ -1,5 +1,5 @@
 <!--
-  ChappieMCP/architecture.md
+  ChappieMCP/architecture-mcp.md
   ARCHITECTURE DOCUMENT — CHAPPIEMCP
   Update after every significant change.
 -->
@@ -27,7 +27,7 @@ Chappie.app/Contents/Helpers/ChappieMCP
 
 ```
 ChappieMCP/
-├── architecture.md                    # This file (covers the executable, ChappieMCPCore and ChappieMCPTests)
+├── architecture-mcp.md                # This file (covers the executable, ChappieMCPCore and ChappieMCPTests)
 └── Sources/ChappieMCP/main.swift      # Thin entry point: ChappieMCPHelper.run(arguments:)
 
 ChappieMCPCore/                        # Local Swift package: ALL helper logic (so tests can @testable import it)

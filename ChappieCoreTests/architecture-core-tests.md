@@ -1,5 +1,5 @@
 <!--
-  ChappieCoreTests/architecture.md
+  ChappieCoreTests/architecture-core-tests.md
   ARCHITECTURE DOCUMENT — CHAPPICORETESTS
   Update after every significant change to the test architecture.
 -->
@@ -22,7 +22,7 @@ Uses Swift Testing framework (`import Testing`, `@Suite`, `@Test`, `#expect`).
 
 ```
 ChappieCoreTests/
-├── architecture.md
+├── architecture-core-tests.md
 ├── AppConfigTests.swift                # AppConfig defaults + clamping logic
 ├── AITunnelModelsTests.swift           # Codable roundtrip for AI wire models
 ├── ChappieErrorTests.swift             # ChappieError enum coverage

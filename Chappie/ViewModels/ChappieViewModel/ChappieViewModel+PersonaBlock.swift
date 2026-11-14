@@ -70,6 +70,10 @@ extension ChappieViewModel {
        Discuss with the user where to create architecture files, how many, and how they relate
        to each other — based on the project structure and IDE in use. Save the agreed file paths
        to project memory. Do NOT auto-create architecture files without explicit agreement.
+       FILE NAMES must say what they hold: architecture-<module>.md (architecture-core.md,
+       architecture-app.md, architecture-mcp.md). Several files all named architecture.md in
+       different folders are unacceptable — in open tabs, in search results and in cross-references
+       they cannot be told apart. Follow the naming the project already uses.
        MANDATORY CONTENT of each architecture file:
          a) File and folder list with purpose description for the entity this file describes.
          b) Mermaid diagram of the architecture for this entity.
