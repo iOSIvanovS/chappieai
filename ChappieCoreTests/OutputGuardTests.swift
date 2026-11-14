@@ -172,6 +172,32 @@ struct OutputGuardShellTests {
         #expect(bad.exitCode == 1)
         #expect(bad.output == "oops")
     }
+
+    @Test("Output without a trailing newline does not swallow the injected exit-code line")
+    func outputWithoutTrailingNewline() async {
+        let shell = ShellSession(initialDirectory: NSTemporaryDirectory())
+        // WHY: the session appends "EXIT_CODE:N" right after the command's own bytes, so without a
+        // final newline the two run together ("abcEXIT_CODE:0"). A line-prefix test used to miss it,
+        // leaving the marker in the text and the exit code at a coincidental 0.
+        let ok = await shell.run("printf abc", timeout: 10)
+        #expect(ok.output == "abc")
+        #expect(ok.exitCode == 0)
+
+        let failed = await shell.run("printf abc; false", timeout: 10)
+        #expect(failed.output == "abc", "the trailer must not stay in the text")
+        #expect(failed.exitCode == 1, "the exit code must come from the glued line")
+    }
+
+    @Test("A command that prints the marker itself keeps its own text")
+    func markerInCommandOutput() async {
+        let shell = ShellSession(initialDirectory: NSTemporaryDirectory())
+        // The injected line is always the last one, so the last occurrence is the real trailer.
+        // WHY the subshell: a bare `exit 4` closes the session before the sentinel is printed,
+        // which turns this into a timeout test instead of a marker test.
+        let literal = await shell.run("printf 'EXIT_CODE:9'; (exit 4)", timeout: 10)
+        #expect(literal.output == "EXIT_CODE:9")
+        #expect(literal.exitCode == 4)
+    }
 }
 
 // MARK: - The one entry point

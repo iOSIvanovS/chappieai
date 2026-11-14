@@ -253,14 +253,17 @@ public actor ShellSession {
         return result
     }
 
+    /// The line the session appends after every command (see `run`).
+    static let exitCodeMarker = "EXIT_CODE:"
+
     /// Extracts clean output and exit code from sentinel-wrapped output.
     /// Static + nonisolated so it can be called from Task.detached without capturing self.
     static func parseOutput(_ capture: OutputCapture, sentinel: String) -> ShellResult {
         // Spooled case: the output outgrew the command limit and a file holds all of it. The exit code
         // is read from the tail window, the model gets the beginning, the end and the path.
         if capture.isSpooled {
-            let exitCode = exitCode(inTail: capture.tailText, sentinel: sentinel)
-            return ShellResult(output: spilledText(capture, trailerMarker: "EXIT_CODE:"), exitCode: exitCode)
+            let trailer = splitTrailer(capture.tailText, sentinel: sentinel)
+            return ShellResult(output: spilledText(capture, trailerMarker: exitCodeMarker), exitCode: trailer.exitCode)
         }
 
         // Normal case: everything fit, parse the whole text.
@@ -269,38 +272,33 @@ public actor ShellSession {
         // replaces it with a notice.
         let truncated = capture.isTruncated
         let raw = truncated ? capture.tailText : capture.headText
+        let trailer = splitTrailer(raw, sentinel: sentinel)
 
-        // Split on sentinel — take everything before it.
-        let output = raw.components(separatedBy: sentinel).first ?? raw
-
-        // Extract EXIT_CODE line injected after command.
-        var exitCode = 0
-        var cleanLines: [String] = []
-        for line in output.components(separatedBy: "\n") {
-            if line.hasPrefix("EXIT_CODE:"),
-               let code = Int(line.dropFirst("EXIT_CODE:".count).trimmingCharacters(in: .whitespaces)) {
-                exitCode = code
-            } else if !truncated {
-                cleanLines.append(line)
-            }
-        }
         if truncated {
             let stored = capture.headText + "\n" + OutputGuard.truncationMarker(totalBytes: capture.totalBytes)
-            return ShellResult(output: stored, exitCode: exitCode)
+            return ShellResult(output: stored, exitCode: trailer.exitCode)
         }
-        let cleanOutput = cleanLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
 
-        return ShellResult(output: cleanOutput, exitCode: exitCode)
+        let cleanOutput = trailer.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ShellResult(output: cleanOutput, exitCode: trailer.exitCode)
     }
 
-    /// The exit code the session appended near the end of the stream; 0 when the line is not in the window.
-    static func exitCode(inTail tail: String, sentinel: String) -> Int {
-        // Not anchored to a line start: output that does not end with a newline is followed directly by
-        // the injected line ("...textEXIT_CODE:2"). The last occurrence is the injected one.
-        let beforeSentinel = tail.components(separatedBy: sentinel).first ?? tail
-        guard let hit = beforeSentinel.range(of: "EXIT_CODE:", options: .backwards) else { return 0 }
-        let digits = beforeSentinel[hit.upperBound...].prefix(while: { $0 == "-" || ($0.isASCII && $0.isNumber) })
-        return Int(digits) ?? 0
+    /// Separates the command's own output from the trailer the session injected after it, and reads
+    /// the exit code out of the trailer.
+    ///
+    /// WHY not line-based: output that does not end with a newline runs straight into the injected
+    /// line ("...abcEXIT_CODE:1"), so the marker has no line start to anchor to. A `hasPrefix` test
+    /// missed it twice — the exit code silently read 0 and the marker stayed in the text handed to
+    /// the model. Searching backwards does not care about line boundaries, and the last occurrence is
+    /// always the injected one, so a command that prints "EXIT_CODE:" itself keeps its own text.
+    private static func splitTrailer(_ text: String, sentinel: String) -> (body: String, exitCode: Int) {
+        let beforeSentinel = text.components(separatedBy: sentinel).first ?? text
+        guard let hit = beforeSentinel.range(of: exitCodeMarker, options: .backwards) else {
+            return (beforeSentinel, 0)
+        }
+        let digits = beforeSentinel[hit.upperBound...]
+            .prefix(while: { $0 == "-" || ($0.isASCII && $0.isNumber) })
+        return (String(beforeSentinel[..<hit.lowerBound]), Int(digits) ?? 0)
     }
 
     /// Model-facing text of a spooled output: beginning, end and the file path.
