@@ -33,6 +33,20 @@ struct StreamDiagnostics: Sendable {
         }
     }
 
+    /// Fills the values the native Anthropic stream reports differently: it has no per-chunk
+    /// `choices`, and the stop reason arrives in `message_delta`.
+    mutating func recordNative(
+        finishReason: String?,
+        chunks: Int,
+        skippedChunks: Int,
+        firstSkippedSample: String?
+    ) {
+        self.finishReason = finishReason
+        self.chunks = chunks
+        self.skippedChunks = skippedChunks
+        self.firstSkippedSample = firstSkippedSample
+    }
+
     static func containsFlattenedToolMarker(_ text: String) -> Bool {
         text.contains(flattenedToolMarker)
     }

@@ -3,6 +3,13 @@
 //
 // Converts AIMessage/AITool (shared protocol types) into Anthropic wire format.
 // Key differences from OpenAI: tool results go as "user" role, tool calls as content blocks.
+//
+// MERGING (why it is block-level):
+// Anthropic rejects two consecutive messages with the same role, so adjacent same-role messages
+// are merged. Merging must keep content BLOCKS, not text: turning a tool_result into plain text
+// drops its tool_use_id, and the model then cannot tell which call the output belongs to.
+// Verified: a merged-by-text history makes the model answer "I don't know what you asked" while
+// returning HTTP 200 — a silent wrong answer, not an error.
 
 import Foundation
 
@@ -78,18 +85,70 @@ extension AnthropicClient {
     }
 
     /// Anthropic rejects requests where two consecutive messages share the same role.
+    /// Blocks are concatenated as they are — a tool_result keeps its tool_use_id.
     func mergeConsecutiveSameRole(_ messages: [AnthropicMessage]) -> [AnthropicMessage] {
         var merged: [AnthropicMessage] = []
         for msg in messages {
             if let last = merged.last, last.role == msg.role {
-                let combined = [last.contentString ?? "", msg.contentString ?? ""]
-                    .filter { !$0.isEmpty }.joined(separator: "\n\n")
-                merged[merged.count - 1] = AnthropicMessage(role: last.role, content: .text(combined))
+                merged[merged.count - 1] = AnthropicMessage(
+                    role: last.role,
+                    content: .blocks(last.content.asBlocks() + msg.content.asBlocks())
+                )
             } else {
                 merged.append(msg)
             }
         }
         return merged
+    }
+
+    // MARK: - Prompt Caching
+
+    /// Places cache breakpoints on the request: one at the end of the system prompt, one at the
+    /// last block of the last message.
+    ///
+    /// WHY THESE TWO PLACES: a breakpoint marks "everything up to here is cacheable". The system
+    /// prompt never changes, and history grows by appending, so the tail of this request becomes a
+    /// prefix of the next one — each request reads the previous prefix and writes only the delta.
+    ///
+    /// WHY NOT A TOP-LEVEL cache_control: measured on RouterAI's native endpoint over five growing
+    /// requests, top-level wrote the full prefix every time and read nothing back
+    /// (write ≈17k, read 0 on every turn). With explicit block breakpoints the same series gave
+    /// read growing 16891 → 16980 and write never above 18 tokens.
+    ///
+    /// Returns the messages unchanged when caching is off, so strict providers see no new fields.
+    func applyingCacheBreakpoints(to messages: [AnthropicMessage]) -> [AnthropicMessage] {
+        guard supportsCaching, var last = messages.last else { return messages }
+
+        switch last.content {
+        case .text(let text):
+            last.content = .blocks([
+                AnthropicContentBlock(type: "text", text: text, cacheControl: Self.cacheControl)
+            ])
+
+        case .blocks(let blocks):
+            guard var tail = blocks.last else { return messages }
+            tail.cacheControl = Self.cacheControl
+            last.content = .blocks(Array(blocks.dropLast()) + [tail])
+
+        case .toolResult(var result):
+            // The struct is encoded as a one-element array; the breakpoint goes inside it.
+            result.cacheControl = Self.cacheControl
+            last.content = .toolResult(result)
+        }
+
+        var out = messages
+        out[out.count - 1] = last
+        return out
+    }
+
+    /// Builds the system field. Blocks are used instead of a bare string so a breakpoint can be
+    /// attached; without caching it stays a plain string to keep strict providers happy.
+    func buildSystemBlocks(_ systemPrompt: String) -> [AnthropicSystemBlock]? {
+        guard !systemPrompt.isEmpty else { return nil }
+        return [AnthropicSystemBlock(
+            text: systemPrompt,
+            cacheControl: supportsCaching ? Self.cacheControl : nil
+        )]
     }
 
     // MARK: - Tool Conversion

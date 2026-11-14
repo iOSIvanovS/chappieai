@@ -29,6 +29,8 @@ public struct BuiltInProvider: Sendable, Identifiable, Equatable {
     public let supportsPromptCaching: Bool
     /// Separate balance request for providers that do not put `usage.balance` into chat responses.
     public let balanceEndpoint: BalanceEndpoint?
+    /// Set when the gateway serves Claude models over the native Anthropic protocol on its own path.
+    public let nativeAnthropic: NativeAnthropicRoute?
 
     /// Part of chatPath before the standard "/v1/chat/completions" tail ("/openai" for Groq).
     /// Needed because the /models endpoint lives under the same prefix.
@@ -47,8 +49,10 @@ public struct BuiltInProvider: Sendable, Identifiable, Equatable {
         providerProtocol: ProviderProtocol = .openai,
         chatPath: String = "/v1/chat/completions",
         supportsPromptCaching: Bool = false,
-        balanceEndpoint: BalanceEndpoint? = nil
+        balanceEndpoint: BalanceEndpoint? = nil,
+        nativeAnthropic: NativeAnthropicRoute? = nil
     ) {
+        self.nativeAnthropic = nativeAnthropic
         self.id = id
         self.name = name
         self.baseURL = baseURL
@@ -59,6 +63,35 @@ public struct BuiltInProvider: Sendable, Identifiable, Equatable {
         self.chatPath = chatPath
         self.supportsPromptCaching = supportsPromptCaching
         self.balanceEndpoint = balanceEndpoint
+    }
+}
+
+// MARK: - NativeAnthropicRoute
+
+/// Claude models of a gateway go over the native /v1/messages protocol instead of its
+/// OpenAI-compatible translation layer. That layer sometimes returned a tool call as plain text
+/// inside the reply (finish_reason "stop", no tool_calls), and the agent turn ended with nothing
+/// executed. The route is chosen per request from the model id — stored models are not rewritten.
+public struct NativeAnthropicRoute: Sendable, Equatable {
+    /// Models whose id starts with this prefix use the native route ("anthropic/").
+    public let modelPrefix: String
+    /// Full path of the native endpoint on the preset's host.
+    public let messagesPath: String
+    /// Native responses carry no price. It is read afterwards from the id the gateway puts into
+    /// the `x-generation-id` response header: GET `path?id=<id>`.
+    public let costEndpoint: BalanceEndpoint
+    /// `max_tokens` is mandatory in the native protocol; the OpenAI route let the gateway decide.
+    public let maxTokens: Int
+
+    public init(modelPrefix: String, messagesPath: String, costEndpoint: BalanceEndpoint, maxTokens: Int) {
+        self.modelPrefix = modelPrefix
+        self.messagesPath = messagesPath
+        self.costEndpoint = costEndpoint
+        self.maxTokens = maxTokens
+    }
+
+    public func handles(modelId: String) -> Bool {
+        modelId.hasPrefix(modelPrefix)
     }
 }
 
@@ -121,7 +154,15 @@ public enum BuiltInProviders {
                         iconName: "point.3.connected.trianglepath.dotted", iconColor: "#7C3AED",
                         chatPath: "/api/v1/chat/completions",
                         supportsPromptCaching: true,
-                        balanceEndpoint: BalanceEndpoint(path: "/api/v1/credits", valuePath: ["data", "credits"])),
+                        balanceEndpoint: BalanceEndpoint(path: "/api/v1/credits", valuePath: ["data", "credits"]),
+                        // Verified live 2026-11-14: tools, streaming, tool_result round trip, top-level
+                        // cache_control (write then read), max_tokens 64000, price via /generation.
+                        nativeAnthropic: NativeAnthropicRoute(
+                            modelPrefix: "anthropic/",
+                            messagesPath: "/api/v1/messages",
+                            costEndpoint: BalanceEndpoint(path: "/api/v1/generation", valuePath: ["data", "total_cost"]),
+                            maxTokens: 32000
+                        )),
         BuiltInProvider(id: "ollama", name: "Ollama (Local)", baseURL: "http://localhost:11434",
                         requiresApiKey: false, iconName: "desktopcomputer", iconColor: "#3E8914"),
     ]

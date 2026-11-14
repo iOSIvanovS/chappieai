@@ -88,9 +88,18 @@ struct StreamDumpTests {
 
     // MARK: - Recorder buffer
 
-    @Test("Empty tool arguments are not valid JSON")
-    func emptyArgumentsAreInvalid() {
-        #expect(StreamDumpToolCall(name: "x", arguments: "").argumentsAreValidJSON == false)
+    /// A tool with only optional parameters streams no argument fragments at all. Reading that as a
+    /// cut stream produced a dump with a false cause for a perfectly healthy turn (live, 2026-11-14).
+    @Test("Empty tool arguments are valid: the model sent none")
+    func emptyArgumentsAreValid() {
+        #expect(StreamDumpToolCall(name: "x", arguments: "").argumentsAreValidJSON)
+        #expect(StreamDumpToolCall(name: "x", arguments: "  \n ").argumentsAreValidJSON)
+    }
+
+    @Test("A parameterless call is not reported as a cut stream")
+    func emptyArgumentsAreNotSaved() {
+        let noArgs = StreamDumpToolCall(name: "list_thread_projects", arguments: "")
+        #expect(StreamDumpRecorder.reason(for: summary(toolCalls: [noArgs]), forced: false) == nil)
     }
 
     @Test("Recorder keeps lines and counts what it dropped")

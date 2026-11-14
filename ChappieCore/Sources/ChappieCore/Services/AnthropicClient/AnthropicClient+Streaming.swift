@@ -3,6 +3,10 @@
 //
 // SSE streaming logic for AnthropicClient.
 // Handles content_block_start/delta, message_delta, stall watchdog.
+//
+// PRICE TIMING: the billing id arrives in the response headers, but the price is only final
+// after the stream ends, so resolveCost runs after the loop and the result is attached to the
+// returned AIStreamResult. A failed lookup yields nil and no error.
 
 import Foundation
 
@@ -20,13 +24,15 @@ extension AnthropicClient {
 
         try Task.checkCancellation()
 
-        let anthropicMessages = buildAnthropicMessages(from: chatHistory)
+        let anthropicMessages = applyingCacheBreakpoints(
+            to: buildAnthropicMessages(from: chatHistory)
+        )
         let anthropicTools = tools.isEmpty ? nil : tools.map(convertTool)
 
         let body = AnthropicRequest(
             model: modelName,
-            maxTokens: Self.maxTokens,
-            system: systemPrompt.isEmpty ? nil : systemPrompt,
+            maxTokens: maxTokens,
+            system: buildSystemBlocks(systemPrompt),
             messages: anthropicMessages,
             tools: anthropicTools,
             stream: true
@@ -50,13 +56,18 @@ extension AnthropicClient {
         let errorBody = await LLMHTTP.errorBodyIfNeeded(response, bytes: asyncBytes)
         try validateHTTPResponse(response, data: errorBody)
 
+        /// Captured before the stream is consumed — the header belongs to the response, not the body.
+        let generation = generationId(from: response)
+
         final class StreamState: @unchecked Sendable {
             var accumulatedText = ""
             var toolBlocks: [Int: (id: String, name: String, inputJSON: String)] = [:]
-            var finalCost: Double? = nil
             var finalBalance: Double? = nil
+            var usage: AnthropicUsage? = nil
             var finishReason: String? = nil
             var chunks = 0
+            var skippedChunks = 0
+            var firstSkippedSample: String? = nil
             /// Raw SSE lines, kept in memory and written only when the stream looks wrong.
             var dump = StreamDumpRecorder()
         }
@@ -86,6 +97,8 @@ extension AnthropicClient {
 
                 guard let data = jsonString.data(using: .utf8),
                       let json = try? JSONDecoder().decode(AnthropicStreamEvent.self, from: data) else {
+                    state.skippedChunks += 1
+                    if state.firstSkippedSample == nil { state.firstSkippedSample = String(jsonString.prefix(200)) }
                     continue
                 }
 
@@ -118,16 +131,10 @@ extension AnthropicClient {
                 case "message_delta":
                     if let reason = json.delta?.stopReason, !reason.isEmpty { state.finishReason = reason }
                     if let usage = json.usage {
-                        state.finalCost = usage.costRub
+                        // Kept until the end: the price arrives after the stream, so the single
+                        // CACHE line can report tokens and cost together, like the OpenAI route.
+                        state.usage = usage
                         state.finalBalance = usage.balance
-                        logCacheStats(
-                            inputTokens: usage.inputTokens ?? 0,
-                            outputTokens: usage.outputTokens ?? 0,
-                            cacheRead: usage.cacheReadInputTokens ?? 0,
-                            cacheCreation: usage.cacheCreationInputTokens ?? 0,
-                            cost: usage.costRub,
-                            balance: usage.balance
-                        )
                     }
 
                 default: break
@@ -164,6 +171,21 @@ extension AnthropicClient {
                 )
             }
 
+        var diagnostics = StreamDiagnostics()
+        diagnostics.recordNative(
+            finishReason: state.finishReason,
+            chunks: state.chunks,
+            skippedChunks: state.skippedChunks,
+            firstSkippedSample: state.firstSkippedSample
+        )
+        print(diagnostics.summary(
+            textChars: state.accumulatedText.count,
+            structuredToolCalls: toolCalls?.count ?? 0,
+            textHasToolMarker: StreamDiagnostics.containsFlattenedToolMarker(state.accumulatedText),
+            host: endpointURL.host ?? "",
+            model: modelName
+        ))
+
         let dumpSummary = StreamDumpSummary(
             date: Date(),
             host: endpointURL.host ?? "",
@@ -174,8 +196,8 @@ extension AnthropicClient {
             upstreamProvider: nil,
             finishReason: state.finishReason,
             chunks: state.chunks,
-            skippedChunks: 0,
-            firstSkippedSample: nil,
+            skippedChunks: state.skippedChunks,
+            firstSkippedSample: state.firstSkippedSample,
             text: state.accumulatedText,
             toolCalls: (toolCalls ?? []).map {
                 StreamDumpToolCall(name: $0.function.name, arguments: $0.function.arguments)
@@ -185,11 +207,30 @@ extension AnthropicClient {
             StreamDumpWriter.write(recorder: state.dump, summary: dumpSummary, reason: reason)
         }
 
+        // Price and balance are resolved after the stream so the header is already available and
+        // the amount is final. Both are best-effort: nil keeps the previous value in the UI.
+        let cost = try await resolveCost(generationId: generation)
+        let balance: Double?
+        if let reported = state.finalBalance {
+            balance = reported
+        } else {
+            balance = await fetchBalance()
+        }
+
+        logCacheStats(
+            inputTokens: state.usage?.inputTokens ?? 0,
+            outputTokens: state.usage?.outputTokens ?? 0,
+            cacheRead: state.usage?.cacheReadInputTokens ?? 0,
+            cacheCreation: state.usage?.cacheCreationInputTokens ?? 0,
+            cost: cost,
+            balance: balance
+        )
+
         return AIStreamResult(
             text: state.accumulatedText,
             toolCalls: toolCalls,
-            cost: state.finalCost,
-            balance: state.finalBalance
+            cost: cost,
+            balance: balance
         )
     }
 
@@ -205,14 +246,15 @@ extension AnthropicClient {
     ) {
         let costStr = cost.map { String(format: "%.4f RUB", $0) } ?? "n/a"
         let balanceStr = balance.map { String(format: "%.2f RUB", $0) } ?? "n/a"
+        let total = inputTokens + cacheRead + cacheCreation
 
         if cacheRead > 0 {
-            let pct = inputTokens > 0 ? Int(Double(cacheRead) / Double(inputTokens) * 100) : 0
-            print("[AnthropicClient] CACHE HIT | input: \(inputTokens) | read: \(cacheRead) (\(pct)%) | created: \(cacheCreation) | output: \(outputTokens) | cost: \(costStr) | balance: \(balanceStr)")
+            let pct = total > 0 ? Int(Double(cacheRead) / Double(total) * 100) : 0
+            print("[AnthropicClient] CACHE HIT | prompt: \(total) | read: \(cacheRead) (\(pct)%) | created: \(cacheCreation) | completion: \(outputTokens) | cost: \(costStr) | balance: \(balanceStr)")
         } else if cacheCreation > 0 {
-            print("[AnthropicClient] CACHE WRITE | input: \(inputTokens) | created: \(cacheCreation) | output: \(outputTokens) | cost: \(costStr) | balance: \(balanceStr)")
+            print("[AnthropicClient] CACHE WRITE | prompt: \(total) | created: \(cacheCreation) | completion: \(outputTokens) | cost: \(costStr) | balance: \(balanceStr)")
         } else {
-            print("[AnthropicClient] CACHE MISS | input: \(inputTokens) | output: \(outputTokens) | cost: \(costStr) | balance: \(balanceStr)")
+            print("[AnthropicClient] CACHE MISS | prompt: \(total) | completion: \(outputTokens) | cost: \(costStr) | balance: \(balanceStr)")
         }
     }
 }

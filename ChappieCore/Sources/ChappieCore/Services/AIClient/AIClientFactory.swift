@@ -47,13 +47,23 @@ public enum AIClientFactory {
             balanceSource = (url, endpoint)
         }
 
+        // Gateways that translate the OpenAI protocol sometimes send a tool call as plain text in
+        // the reply, and the agent turn ends without running anything. For the models such a
+        // gateway serves natively, the native endpoint is used instead. Chosen per request from the
+        // model id, so stored model records stay valid and non-Claude models keep the OpenAI route.
+        if let route = preset?.nativeAnthropic, route.handles(modelId: model.id) {
+            return makeNativeAnthropic(route: route, provider: provider, apiKey: apiKey, model: model, auth: auth)
+        }
+
         switch proto {
         case .anthropic:
             return AnthropicClient(
                 baseURL: provider.baseURL,
                 apiKey: apiKey,
                 modelName: model.id,
-                authScheme: auth
+                authScheme: auth,
+                supportsCaching: supportsCaching,
+                balanceSource: balanceSource
             )
 
         case .openai:
@@ -67,6 +77,37 @@ public enum AIClientFactory {
                 balanceSource: balanceSource
             )
         }
+    }
+
+    /// Native Anthropic client for a gateway route: its own endpoint path, its own max_tokens,
+    /// and the gateway's price lookup keyed by the x-generation-id header.
+    private static func makeNativeAnthropic(
+        route: NativeAnthropicRoute,
+        provider: AIProvider,
+        apiKey: String,
+        model: AIModel,
+        auth: AuthScheme
+    ) -> AnthropicClient {
+        let base = provider.baseURL.hasSuffix("/") ? String(provider.baseURL.dropLast()) : provider.baseURL
+        let costSource = URL(string: base + route.costEndpoint.path).map { (url: $0, endpoint: route.costEndpoint) }
+        let preset = provider.builtIn ?? BuiltInProviders.find(baseURL: provider.baseURL)
+        let balanceSource: (url: URL, endpoint: BalanceEndpoint)? = {
+            guard let endpoint = preset?.balanceEndpoint,
+                  let url = URL(string: preset!.baseURL + endpoint.path) else { return nil }
+            return (url, endpoint)
+        }()
+
+        return AnthropicClient(
+            baseURL: provider.baseURL,
+            apiKey: apiKey,
+            modelName: model.id,
+            authScheme: auth,
+            messagesPath: route.messagesPath,
+            supportsCaching: true,
+            costSource: costSource,
+            balanceSource: balanceSource,
+            maxTokens: route.maxTokens
+        )
     }
 
     /// Convenience factory for provider-level validation and model discovery (no model selected yet).

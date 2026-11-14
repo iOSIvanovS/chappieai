@@ -65,7 +65,9 @@ ChappieCore/
         ├── AIClient+Discovery.swift    # fetchAvailableModels()
         ├── AIClientProtocol.swift      # Protocol: validateProvider, streamChat, fetchModels
         ├── AIClientFactory.swift       # Factory: picks AIClient or AnthropicClient by protocol
-        ├── AnthropicClient.swift       # Anthropic native API (/v1/messages)
+        ├── AnthropicClient.swift       # Anthropic native API (/v1/messages); also serves gateways that expose that path
+        ├── AnthropicClient+Streaming.swift       # Native SSE parser: content_block_start/delta/stop, usage, stream dump
+        ├── AnthropicClient+MessageConversion.swift  # ChatMessage/tool -> Anthropic blocks; merge keeps tool_use_id
         ├── AnthropicModels.swift       # Anthropic-specific request/response models
         ├── AIOrchestrator.swift                  # Reasoning loop: core + process()
         ├── AIOrchestrator+Retry.swift            # streamWithRetry: thin adapter over LLMRetryRunner
@@ -490,6 +492,21 @@ AIClientProtocol
 AIClientFactory.make(for:apiKey:model:) → AIClient | AnthropicClient
 ```
 
+**Which protocol a request takes is decided per model id, not per provider** (`NativeAnthropicRoute` on a preset).
+A gateway can serve Claude models over its own native `/v1/messages` path while its other models stay on the
+OpenAI-compatible path. RouterAI: `modelPrefix: "anthropic/"` — any `anthropic/*` id goes to `AnthropicClient`,
+everything else to `AIClient`. Stored models are never rewritten, so switching the preset back and forth costs
+nothing. WHY it matters: on RouterAI's OpenAI route the gateway occasionally flattened a tool call into plain text
+(4 dumps in one day, `finish_reason: stop`, no `tool_calls` key anywhere in the stream — the call was synthesised by
+the translator and given up on). The native route never did it.
+
+**Prompt caching differs by route.** On the OpenAI route the cache hint is a single top-level `cache_control`. On the
+native route it is two block-level breakpoints — the end of `system` and the last block of the last message —
+verified live on RouterAI: top-level there writes the cache and **never reads it back** (`read: 0` on every step),
+while block breakpoints give `read` 16898 -> 17018 with `created` <= 18 (cost 1.84 -> 0.16 RUB per turn). The
+`anthropic-beta: extended-cache-ttl-2025-04-11` header is sent only when caching is on, and only then does
+`ttl: "1h"` take effect (without it the write silently becomes 0).
+
 ---
 
 ## 10. AIOrchestrator — Reasoning Loop
@@ -642,8 +659,11 @@ stream, so the question "who lost the call" cannot be answered. `StreamDump.swif
 - **Privacy**: a dump holds the whole conversation that was sent, including tool arguments and results. Files stay
   local, are never uploaded, and old ones are deleted by count.
 - **Failures are swallowed**: a dump that cannot be written prints one line and lets the answer through untouched.
+- **Empty arguments are valid.** A tool with no parameters gets one empty `partial_json` delta, so the accumulated
+  string is `""`; that is `{}`, not "malformed". Before this rule a healthy parameterless call produced a 600 KB dump
+  named `malformed-tool-arguments` — a diagnostic that lies in its own file name, which is worse than no dump.
 - Tests: `StreamDumpTests` (healthy stream writes nothing, each reason, marker outranking milder reasons, buffer cap,
-  file contents, pruning, empty recorder writing no folder).
+  file contents, pruning, empty recorder writing no folder, parameterless call silent).
 
 ## 12a. ImagePipeline — images sent to a model
 
@@ -970,6 +990,7 @@ Tests: `MessageTimestampTests`, `MemoryDatesTests`.
 | 2026-11 | Localization boundary: ChappieCore holds no catalog-localized strings. Labels of AgentRole/Git/Tests and the "unknown" DevEnvironment moved to the app target (Chappie/Views/Shared/ProjectModels+Display.swift), because Xcode extracts catalog keys only from app sources and marks keys used inside a Swift package as stale. (`DevEnvironment` itself was removed later, see the 2026-11 note below.) |
 | 2026-11 | Localization tools removed (pass J5-a): all 15 `loc_*` tools, the helper's LocalizationTools module with its xcstrings data model, `ToolCapability.locRead/locWrite`, `ToolPolicy.localizationTools`, `xcodeBlock` and the dispatcher branch. They dropped `extractionState`, `variations` and `substitutions` on every write, escaped `/` and rewrote the whole file; `json_*` do the same work byte-exactly in any environment. Tests assert the names are no longer classified. |
 | 2026-11 | String catalog recipe in `json_edit` (pass J5-c): the knowledge of the `.xcstrings` format moved from the deleted tools into the tool description (structure, four `state` values, two worked operations, the `json_find` call for missing translations, and why a whole-file rewrite loses `comment`/`extractionState`/`variations`). Verified live on a copy of the real 785.9 KB catalog: sorted insert of a new language, one `state` change, every other byte identical. |
+| 2026-11 | Native Anthropic route for gateways. `BuiltInProvider.nativeAnthropic` (`NativeAnthropicRoute`, `modelPrefix`) makes `AIClientFactory` pick `AnthropicClient` per model id: RouterAI sends `anthropic/*` over its own `/api/v1/messages`, everything else over the OpenAI-compatible path. Causation, not preference: the OpenAI route of RouterAI flattened a tool call into plain text 4 times in a day (stream had no `tool_calls` key at all, `finish_reason: stop`, marker split across `delta.content` chunks), while the native route never did. Verified live end-to-end on the user's key: tools non-stream and streamed, full `tool_result` turn, two parallel `tool_use` blocks, `max_tokens` 32k/64k, `cache_control` on blocks. Two bugs found and fixed on the way: `mergeConsecutiveSameRole` glued two parallel `tool_result` blocks into text (HTTP 200, wrong answer — the model lost the ids), and the native route had no `cache_control` at all, which would have raised cost ~11x. Cost per turn read from `GET /api/v1/generation?id=<x-generation-id>` (the header arrives in the stream too), balance from `/api/v1/credits`; both after the stream, both swallowing failure. Tests: `NativeAnthropicLiveTests` (3, only run when a real key is present) + `AnthropicMessageConversionTests`. An empty-arguments regression is covered in `StreamDumpTests` (see above). |
 | 2026-11 | Stream dump (diagnostics pass 2): `StreamDumpRecorder` buffers the raw SSE lines of one request and `StreamDumpWriter` saves them under `Application Support/ChappieAI/StreamDumps` only when the stream looks wrong (flattened tool call, skipped chunks, invalid tool arguments, missing finish reason) or when `CHAPPIE_STREAM_DUMP=1`. Nothing is ever parsed out of the text as a call — a dump is for reading, not executing. Also fixed `AnthropicDelta.type` being required, which silently dropped `message_delta` events and with them the reported cost. Covered by StreamDumpTests (13). |
 | 2026-11 | Exit code of a command without a trailing newline: `ShellSession.parseOutput` split the stream into lines and looked for a line starting with `EXIT_CODE:`, but the session appends that line directly after the command's last bytes, so `printf abc; false` produced the single line `abcEXIT_CODE:1`. The marker had no line start to anchor to: the exit code was read as a coincidental 0 (reported as success) and the marker stayed in the text handed to the model. Both paths now go through one `splitTrailer`, which searches backwards for the marker and cuts it out of the body; the last occurrence is always the injected one, so a command that prints `EXIT_CODE:` itself keeps its own text. The tail-window copy `exitCode(inTail:)` is gone — one implementation for the inline, truncated and spooled cases. Covered by OutputGuardTests (3 new cases). |
 | 2026-11 | `run_ssh` now spools its output like `run_terminal`: both collectors get `OutputSpool.defaultDirectory`. Before, a remote command printing more than `captureCap` lost everything past it, and a result over the command limit was refused by `OutputGuard` — the model saw only a size notice and no output at all. A timeout or Stop used to discard the output received so far and report only the reason; it now carries both streams (`SSHResult.stopped`), because the lines printed before the hang are usually the explanation. The text shaping moved into its own `SSHResult.swift` (TerminalTools was past 400 lines) and is testable without an ssh host. Covered by SSHResultTests (8 cases). |

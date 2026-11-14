@@ -7,8 +7,15 @@ struct StreamDumpToolCall: Sendable {
     let arguments: String
 
     /// A gateway can cut the argument fragments mid-way; an unparsable tail is itself a finding.
+    ///
+    /// WHY EMPTY IS VALID: a tool whose parameters are all optional streams no `input_json_delta` at
+    /// all — Anthropic sends an empty `partial_json` and the accumulated string stays "". Treating
+    /// that as malformed wrote a 600 KB dump for a healthy turn and put a false cause in the file name.
+    /// An empty argument string is the model's way of saying "no arguments", which ToolArguments
+    /// already reads as an empty map.
     var argumentsAreValidJSON: Bool {
-        guard !arguments.isEmpty, let data = arguments.data(using: .utf8) else { return false }
+        guard let data = arguments.data(using: .utf8) else { return false }
+        if arguments.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
         return (try? JSONSerialization.jsonObject(with: data)) != nil
     }
 }

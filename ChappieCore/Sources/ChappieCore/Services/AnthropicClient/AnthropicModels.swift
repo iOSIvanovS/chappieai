@@ -11,7 +11,8 @@ import Foundation
 struct AnthropicRequest: Encodable {
     let model: String
     let maxTokens: Int
-    let system: String?
+    /// Sent as an array of blocks so a cache breakpoint can be attached to it.
+    let system: [AnthropicSystemBlock]?
     let messages: [AnthropicMessage]
     let tools: [AnthropicTool]?
     let stream: Bool
@@ -22,11 +23,30 @@ struct AnthropicRequest: Encodable {
     }
 }
 
+/// One block of the system prompt. Prompts used to be a bare string, which cannot carry a
+/// cache breakpoint — the native protocol accepts breakpoints on blocks only.
+struct AnthropicSystemBlock: Encodable {
+    let type: String
+    let text: String
+    var cacheControl: AICacheControl?
+
+    init(text: String, cacheControl: AICacheControl? = nil) {
+        self.type = "text"
+        self.text = text
+        self.cacheControl = cacheControl
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case type, text
+        case cacheControl = "cache_control"
+    }
+}
+
 // MARK: - Message
 
 struct AnthropicMessage: Encodable {
     let role: String
-    let content: AnthropicMessageContent
+    var content: AnthropicMessageContent
 
     var contentString: String? {
         switch content {
@@ -41,6 +61,20 @@ enum AnthropicMessageContent: Encodable {
     case text(String)
     case blocks([AnthropicContentBlock])
     case toolResult(AnthropicToolResultContent)
+
+    /// Unified block view — merging same-role messages must not flatten tool results into text,
+    /// because that would drop their tool_use_id.
+    func asBlocks() -> [AnthropicContentBlock] {
+        switch self {
+        case .text(let t):
+            return t.isEmpty ? [] : [AnthropicContentBlock(type: "text", text: t)]
+        case .blocks(let blocks):
+            return blocks
+        case .toolResult(let r):
+            // Same shape the encoder produces: a one-element array of tool_result.
+            return [AnthropicContentBlock(type: r.type, text: nil, toolResult: r)]
+        }
+    }
 
     func encode(to encoder: Encoder) throws {
         switch self {
@@ -64,6 +98,11 @@ struct AnthropicContentBlock: Encodable {
     var name: String? = nil
     var input: [String: Any]? = nil
     var source: AnthropicImageSource? = nil
+    /// A tool result carried inside the block array — used when merging same-role messages.
+    var toolResult: AnthropicToolResultContent? = nil
+    /// Marks the end of a cached prefix. Only the last block of the last message carries it —
+    /// see applyingCacheBreakpoints.
+    var cacheControl: AICacheControl? = nil
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
@@ -72,6 +111,12 @@ struct AnthropicContentBlock: Encodable {
         if let id { try container.encode(id, forKey: .id) }
         if let name { try container.encode(name, forKey: .name) }
         if let source { try container.encode(source, forKey: .source) }
+        if let cacheControl { try container.encode(cacheControl, forKey: .cacheControl) }
+        if let toolResult {
+            // tool_result fields live at the block's own level, not in a nested object.
+            try container.encode(toolResult.toolUseId, forKey: .toolUseId)
+            try container.encode(toolResult.content, forKey: .toolResultContent)
+        }
         if let input {
             let jsonData = try JSONSerialization.data(withJSONObject: input)
             let jsonValue = try JSONDecoder().decode(JSONValue.self, from: jsonData)
@@ -81,6 +126,9 @@ struct AnthropicContentBlock: Encodable {
 
     enum CodingKeys: String, CodingKey {
         case type, text, id, name, input, source
+        case cacheControl = "cache_control"
+        case toolUseId = "tool_use_id"
+        case toolResultContent = "content"
     }
 }
 
@@ -99,10 +147,12 @@ struct AnthropicToolResultContent: Encodable {
     let type: String
     let toolUseId: String
     let content: String
+    var cacheControl: AICacheControl? = nil
 
     enum CodingKeys: String, CodingKey {
         case type, content
         case toolUseId = "tool_use_id"
+        case cacheControl = "cache_control"
     }
 }
 
