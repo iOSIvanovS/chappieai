@@ -6,8 +6,10 @@
 //
 // MULTI-PROJECT ROUTING:
 // GitTools holds a projectPathMap [projectName → absolutePath].
-// When a "project" arg is provided, the correct working directory is resolved from the map.
-// When omitted — falls back to the single entry in the map (single-project threads).
+// The correct working directory is resolved from the map by the "project" arg. The app sends that
+// arg on every call — with one project attached or several — so git always lands in a named project.
+// The no-name branches below exist for direct calls to the helper (tests, manual use) and refuse
+// to guess when the map holds more than one entry.
 // Git commands are therefore always deterministic per project.
 //
 // WHY Process() INSTEAD OF libgit2 OR SwiftGit2:
@@ -101,8 +103,8 @@ final class GitTools: Sendable {
     /// Resolves the working directory for the given project name.
     ///
     /// Resolution order:
-    /// 1. Exact match in projectPathMap by name.
-    /// 2. Single-project fallback: if map has exactly one entry AND no name was provided — use it.
+    /// 1. Exact match in projectPathMap by name — the path the app always takes.
+    /// 2. Single-project fallback: only for a call that arrived without a name (direct helper use).
     /// 3. Error: multiple projects in map but name is missing or unknown.
     ///    Silent fallback would run git in the wrong project — explicit error is safer.
     private func resolvePath(for projectName: String?) -> Result<String, GitPathError> {
@@ -139,26 +141,26 @@ final class GitTools: Sendable {
         switch error {
         case .projectNotFound(let name, let available):
             return """
-            Project '\(name)' not found in projectPathMap. \
+            Project '\(name)' is not attached to this thread. \
             Available projects: \(available). \
-            Check that '\(name)' is attached to this thread and its folder is accessible.
+            Check the spelling, or attach '\(name)' and retry.
             """
         case .projectNotFoundEmptyMap(let name):
             return """
-            Project '\(name)' not found: projectPathMap is empty. \
-            The project folder bookmark may not have been resolved yet — \
+            Project '\(name)' is not attached to this thread, and no other project is either. \
+            The project folder may not have been resolved yet — \
             try switching threads or re-attaching the project.
             """
         case .ambiguousProject(let available):
             return """
-            Parameter 'project' is required when multiple projects are attached. \
-            Available projects: \(available). \
+            This git tool needs a project: the app sends 'project' on every call, whether one \
+            project is attached or several. Available projects: \(available). \
             Specify which project to run this git command in.
             """
         case .emptyMap:
             return """
-            No projects found in projectPathMap. \
-            Project folder bookmarks may not have been resolved yet — \
+            No project is attached to this thread. \
+            Project folders may not have been resolved yet — \
             try switching threads or re-attaching the project.
             """
         }

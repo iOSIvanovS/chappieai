@@ -6,9 +6,8 @@
 // git_diff is blocked here as a safety net (primary block is in ToolPolicy).
 //
 // MULTI-PROJECT GIT:
-// All git_* tools accept an optional "project" arg. When provided, it is forwarded
-// to MCP so git runs in the correct project directory (via projectPathMap routing).
-// When omitted — MCP uses the default (single attached) project path.
+// All git_* tools take a "project" arg, set by ToolAuthorization before the call reaches this file,
+// and forward it to MCP so git runs in that project's directory (via projectPathMap routing).
 
 import Foundation
 

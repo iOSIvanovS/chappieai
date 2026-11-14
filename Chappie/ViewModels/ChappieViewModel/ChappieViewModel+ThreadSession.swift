@@ -23,7 +23,9 @@
 // M-09 WORKSPACE ISOLATION:
 //   syncFileSystemForActiveThread() reads absolutePath from each ProjectMetadata directly.
 //   No bookmarks. No global project registry. Path is always the one the user picked.
-//   Paths are prefixed: "ProjectName/relative/path".
+//   Paths from scoped calls are relative to the project root, never prefixed: every tool call
+//   carries a project name, and "ProjectName/relative/path" is deliberately not a routing hint
+//   (project "Chappie" contains a folder named Chappie, so such a path would be ambiguous).
 //   On threads with no projects — restores the global fileSystem (from workspaceURL).
 //
 // FS READINESS GUARD:

@@ -2,7 +2,8 @@
 //
 // Routes tool calls to the appropriate handler classes.
 //
-// git_* and document tools use projectPathMap to resolve per-project paths.
+// git_* and document tools use projectPathMap to resolve per-project paths. The app always sends a
+// project name; the fallbacks inside those classes serve direct helper calls (tests, manual runs).
 
 import Foundation
 

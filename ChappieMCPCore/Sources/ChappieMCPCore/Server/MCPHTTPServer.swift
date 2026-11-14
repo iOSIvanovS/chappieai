@@ -22,7 +22,7 @@
 //
 // MULTI-PROJECT ROUTING:
 // ToolDispatcher holds projectPathMap [projectName → absolutePath], populated from CLI argv[3].
-// git_*, document and localization tools use it to resolve the root of the project named in the call.
+// git_* and document tools use it to resolve the root of the project named in the call.
 
 import Foundation
 

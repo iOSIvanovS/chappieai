@@ -102,15 +102,15 @@ extension ToolExecutionService {
                 let available = pathMap.keys.sorted().map { "'\($0)'" }.joined(separator: ", ")
                 if available.isEmpty {
                     return """
-                    ❌ run_terminal: project '\(projectName)' not found.
-                    projectPathMap is empty — no projects with resolved paths are attached.
+                    ❌ run_terminal: project '\(projectName)' is not available.
+                    No attached project has a resolved folder yet.
                     Try re-attaching the project or switching threads.
                     """
                 } else {
                     return """
-                    ❌ run_terminal: project '\(projectName)' not found in projectPathMap.
+                    ❌ run_terminal: project '\(projectName)' is not attached to this thread.
                     Available: \(available).
-                    Check that the project is attached to the thread and its folder is accessible.
+                    Check the spelling, or attach '\(projectName)' and retry.
                     """
                 }
             }
