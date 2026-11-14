@@ -13,13 +13,13 @@ extension ToolExecutionService {
 
         case "list_files":
             let args = (try? JSONDecoder().decode([String: String].self, from: argsData)) ?? [:]
-            let projectArg = args["project"]
-            let files: [String]
-            if let project = projectArg, !project.isEmpty {
-                files = try await fileSystem.listFiles(project: project)
-            } else {
-                files = try await fileSystem.listFiles()
+            // One scope only. authorize() denies a project tool without a project before this point,
+            // so there is no all-projects listing to fall back to — and no silent merge of every
+            // attached project into one dump. The guard is unreachable defence, not a second mode.
+            guard let project = args["project"], !project.isEmpty else {
+                return "Error: Argument 'project' is required for list_files"
             }
+            let files = try await fileSystem.listFiles(project: project)
             let encoder = JSONEncoder()
             encoder.outputFormatting = .prettyPrinted
             let data = try encoder.encode(files)

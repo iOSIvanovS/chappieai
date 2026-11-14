@@ -80,6 +80,29 @@ struct ToolPathRoutingTests {
         }
     }
 
+    @Test("list_files without a project is refused, never an all-projects dump with prefixes")
+    func listFilesWithoutProjectIsRefused() async throws {
+        for count in [1, 2] {
+            let fixture = try await makeFixture(projects: count)
+            defer { try? FileManager.default.removeItem(at: fixture.rootA.deletingLastPathComponent()) }
+
+            let refused = await call(fixture.service, "list_files", "{}")
+            #expect(refused.contains("'project' argument is required"))
+            // the all-projects listing used to carry "ProjectName/" prefixes and merged both roots
+            #expect(!refused.contains("Chappie/x.txt"))
+            #expect(!refused.contains("Other/"))
+
+            // The answer is JSON and JSONEncoder escapes '/' as '\/', so compare decoded paths.
+            let scoped = await call(fixture.service, "list_files", #"{"project":"Chappie"}"#)
+            let paths = try #require(
+                try JSONSerialization.jsonObject(with: Data(scoped.utf8)) as? [String]
+            )
+            #expect(paths.contains("x.txt"))
+            #expect(paths.contains("Chappie/x.txt"))
+            #expect(!paths.contains("Chappie/Chappie/x.txt"))
+        }
+    }
+
     @Test("write_file with an explicit project lands in the inner folder, not the root")
     func writeLandsInInnerFolder() async throws {
         let fixture = try await makeFixture(projects: 2)
