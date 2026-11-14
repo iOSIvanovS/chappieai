@@ -153,13 +153,19 @@ struct AnthropicStreamEvent: Decodable {
 }
 
 struct AnthropicDelta: Decodable {
-    let type: String
+    /// Absent on `message_delta`, where the delta carries only a stop reason and no block type.
+    /// Optional so that event still decodes — with a required field the whole event was dropped
+    /// and its usage (cost, balance) was lost.
+    let type: String?
     let text: String?
     let partialJSON: String?
+    /// Present on `message_delta`: "end_turn", "tool_use", "max_tokens".
+    let stopReason: String?
 
     enum CodingKeys: String, CodingKey {
         case type, text
         case partialJSON = "partial_json"
+        case stopReason = "stop_reason"
     }
 }
 

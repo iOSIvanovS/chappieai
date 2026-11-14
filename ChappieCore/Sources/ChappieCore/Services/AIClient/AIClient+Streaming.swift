@@ -50,6 +50,8 @@ extension AIClient {
             var finalCost: Double? = nil
             var finalBalance: Double? = nil
             var diagnostics = StreamDiagnostics()
+            /// Raw SSE lines, kept in memory and written only when the stream looks wrong.
+            var dump = StreamDumpRecorder()
         }
         let state = StreamState()
         let watchdog = StallWatchdog(timeout: stallTimeout)
@@ -63,6 +65,7 @@ extension AIClient {
 
                 guard !line.isEmpty, line.hasPrefix("data: ") else { continue }
                 let jsonString = String(line.dropFirst(6))
+                state.dump.record(line)
                 if jsonString == "[DONE]" { break }
 
                 // Providers can report failures inside a 200 stream: {"error": {...}}.
@@ -152,6 +155,27 @@ extension AIClient {
             host: endpointURL.host ?? "",
             model: modelName
         ))
+
+        let dumpSummary = StreamDumpSummary(
+            date: Date(),
+            host: endpointURL.host ?? "",
+            path: endpointURL.path,
+            protocolName: "openai",
+            model: modelName,
+            upstreamModel: state.diagnostics.upstreamModel,
+            upstreamProvider: state.diagnostics.upstreamProvider,
+            finishReason: state.diagnostics.finishReason,
+            chunks: state.diagnostics.chunks,
+            skippedChunks: state.diagnostics.skippedChunks,
+            firstSkippedSample: state.diagnostics.firstSkippedSample,
+            text: state.accumulatedText,
+            toolCalls: (assembledToolCalls ?? []).map {
+                StreamDumpToolCall(name: $0.function.name, arguments: $0.function.arguments)
+            }
+        )
+        if let reason = StreamDumpRecorder.reason(for: dumpSummary, forced: StreamDumpRecorder.isForced) {
+            StreamDumpWriter.write(recorder: state.dump, summary: dumpSummary, reason: reason)
+        }
 
         return AIStreamResult(
             text: state.accumulatedText,

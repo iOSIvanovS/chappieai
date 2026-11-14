@@ -55,6 +55,10 @@ extension AnthropicClient {
             var toolBlocks: [Int: (id: String, name: String, inputJSON: String)] = [:]
             var finalCost: Double? = nil
             var finalBalance: Double? = nil
+            var finishReason: String? = nil
+            var chunks = 0
+            /// Raw SSE lines, kept in memory and written only when the stream looks wrong.
+            var dump = StreamDumpRecorder()
         }
         let state = StreamState()
         let watchdog = StallWatchdog(timeout: stallTimeout)
@@ -66,9 +70,13 @@ extension AnthropicClient {
                 if Task.isCancelled { break }
                 await watchdog.reset()
 
-                if line.hasPrefix("event: ") { continue }
+                if line.hasPrefix("event: ") {
+                    state.dump.record(line)
+                    continue
+                }
                 guard line.hasPrefix("data: ") else { continue }
                 let jsonString = String(line.dropFirst(6))
+                state.dump.record(line)
                 guard !jsonString.isEmpty else { continue }
 
                 // `event: error` (e.g. overloaded_error) arrives inside a 200 stream.
@@ -81,6 +89,7 @@ extension AnthropicClient {
                     continue
                 }
 
+                state.chunks += 1
                 switch json.type {
                 case "content_block_start":
                     if let block = json.contentBlock, block.type == "tool_use" {
@@ -107,6 +116,7 @@ extension AnthropicClient {
                     }
 
                 case "message_delta":
+                    if let reason = json.delta?.stopReason, !reason.isEmpty { state.finishReason = reason }
                     if let usage = json.usage {
                         state.finalCost = usage.costRub
                         state.finalBalance = usage.balance
@@ -153,6 +163,27 @@ extension AnthropicClient {
                     function: AIToolCallFunction(name: block.name, arguments: block.inputJSON)
                 )
             }
+
+        let dumpSummary = StreamDumpSummary(
+            date: Date(),
+            host: endpointURL.host ?? "",
+            path: endpointURL.path,
+            protocolName: "anthropic",
+            model: modelName,
+            upstreamModel: nil,
+            upstreamProvider: nil,
+            finishReason: state.finishReason,
+            chunks: state.chunks,
+            skippedChunks: 0,
+            firstSkippedSample: nil,
+            text: state.accumulatedText,
+            toolCalls: (toolCalls ?? []).map {
+                StreamDumpToolCall(name: $0.function.name, arguments: $0.function.arguments)
+            }
+        )
+        if let reason = StreamDumpRecorder.reason(for: dumpSummary, forced: StreamDumpRecorder.isForced) {
+            StreamDumpWriter.write(recorder: state.dump, summary: dumpSummary, reason: reason)
+        }
 
         return AIStreamResult(
             text: state.accumulatedText,

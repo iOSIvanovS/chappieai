@@ -52,11 +52,11 @@
 		874865FA2FC3029E00F5E876 /* ChappieCoreTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ChappieCoreTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		874866232FC35DF000F5E876 /* ChappieMCP */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = ChappieMCP; sourceTree = BUILT_PRODUCTS_DIR; };
 		87BAA4782FBEED3A001DDBED /* Chappie.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Chappie.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		87DOCS0000000000000000002 /* architecture-app.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture-app.md"; path = Chappie/architecture-app.md; sourceTree = "<group>"; };
-		87DOCS0000000000000000003 /* architecture-core.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture-core.md"; path = ChappieCore/architecture-core.md; sourceTree = "<group>"; };
-		87DOCS0000000000000000004 /* architecture-core-tests.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture-core-tests.md"; path = ChappieCoreTests/architecture-core-tests.md; sourceTree = "<group>"; };
-		87DOCS0000000000000000005 /* architecture-mcp.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture-mcp.md"; path = ChappieMCP/architecture-mcp.md; sourceTree = "<group>"; };
-		87DOCS0001000000000000001 /* architecture-overview.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture-overview.md"; path = architecture-overview.md; sourceTree = "<group>"; };
+		87DOCS0000000000000000002 /* architecture-app.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture-app.md"; path = "Chappie/architecture-app.md"; sourceTree = "<group>"; };
+		87DOCS0000000000000000003 /* architecture-core.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture-core.md"; path = "ChappieCore/architecture-core.md"; sourceTree = "<group>"; };
+		87DOCS0000000000000000004 /* architecture-core-tests.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture-core-tests.md"; path = "ChappieCoreTests/architecture-core-tests.md"; sourceTree = "<group>"; };
+		87DOCS0000000000000000005 /* architecture-mcp.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "architecture-mcp.md"; path = "ChappieMCP/architecture-mcp.md"; sourceTree = "<group>"; };
+		87DOCS0001000000000000001 /* architecture-overview.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "architecture-overview.md"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -667,7 +667,7 @@
 				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
 				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SELECTED_FILES = readwrite;
-				EXCLUDED_SOURCE_FILE_NAMES = architecture-app.md;
+				EXCLUDED_SOURCE_FILE_NAMES = "architecture-app.md";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Chappie/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = ChappieAI;
@@ -714,7 +714,7 @@
 				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
 				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SELECTED_FILES = readwrite;
-				EXCLUDED_SOURCE_FILE_NAMES = architecture-app.md;
+				EXCLUDED_SOURCE_FILE_NAMES = "architecture-app.md";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Chappie/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = ChappieAI;

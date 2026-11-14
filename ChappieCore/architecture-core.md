@@ -60,6 +60,8 @@ ChappieCore/
         ├── AIClient+Streaming.swift    # SSE streaming parser
         ├── AIClient+Balance.swift      # Separate balance GET for presets with a BalanceEndpoint (RouterAI /credits); never throws
         ├── StreamDiagnostics.swift     # Per-stream counters (finish_reason, chunks, skipped chunks, tool calls) and the STREAM END log line; flags tool calls flattened into text
+        ├── StreamDump.swift            # Bounded in-memory buffer of raw SSE lines + StreamDumpReason (why a stream deserves a file); decides, never parses text into a call
+        ├── StreamDumpWriter.swift      # Writes a dump to Application Support/ChappieAI/StreamDumps, prunes by count; never throws into the answer path
         ├── AIClient+Discovery.swift    # fetchAvailableModels()
         ├── AIClientProtocol.swift      # Protocol: validateProvider, streamChat, fetchModels
         ├── AIClientFactory.swift       # Factory: picks AIClient or AnthropicClient by protocol
@@ -614,6 +616,34 @@ folded into it). Only the model request is repeated; tools run outside the loop.
 
 ---
 
+## 12a1. Stream dump — a bad answer must be inspectable after the fact
+
+A gateway can hand back a tool call as plain text instead of a structured delta (seen twice on RouterAI in 24 h,
+never on AITunnel with the same model). By the time anyone reads the log, Xcode's console tail has dropped the raw
+stream, so the question "who lost the call" cannot be answered. `StreamDump.swift` + `StreamDumpWriter.swift` fix that.
+
+- **Buffered in memory, written only when something looks wrong.** A healthy turn is 100–500 KB of SSE, so writing
+  every request would cost a disk write per step. Both stream parsers (`AIClient+Streaming`, `AnthropicClient+Streaming`)
+  feed a `StreamDumpRecorder` with each raw line; after the stream ends `StreamDumpRecorder.reason(for:forced:)`
+  decides whether the buffer deserves a file.
+- **Reasons, in priority order** — `flattened-tool-call` (the `[tool_use id=` marker; triggered by the marker ALONE,
+  so a flattening that hides behind other structured calls is still caught), `skipped-chunks`, `malformed-tool-arguments`
+  (accumulated arguments are not valid JSON), `no-finish-reason`, `forced`.
+- **A dump is a diagnostic, never an execution path.** Nothing is ever parsed out of the text as a tool call: prose
+  about tools contains the same characters, and a parser that mistakes an explanation for a call would act on words the
+  model only meant to say. The file exists so the raw stream can be read by a person.
+- **`CHAPPIE_STREAM_DUMP=1`** saves every request, for capturing healthy samples to compare against.
+- **Where**: `Application Support/ChappieAI/StreamDumps/`, name `yyyy-MM-dd_HH-mm-ss_<reason>.log` in UTC, so the
+  newest fault can be found by listing the folder. 40 files kept, oldest pruned by name order.
+- **Content**: a header (reason, host, protocol, model, upstream model/provider as the gateway reported them, finish
+  reason, chunk/skipped counts, per-tool-call argument size and JSON validity), then the assembled text, then the raw
+  SSE lines exactly as they arrived. The buffer cap (4 MB) is stated in the file when it truncated.
+- **Privacy**: a dump holds the whole conversation that was sent, including tool arguments and results. Files stay
+  local, are never uploaded, and old ones are deleted by count.
+- **Failures are swallowed**: a dump that cannot be written prints one line and lets the answer through untouched.
+- Tests: `StreamDumpTests` (healthy stream writes nothing, each reason, marker outranking milder reasons, buffer cap,
+  file contents, pruning, empty recorder writing no folder).
+
 ## 12a. ImagePipeline — images sent to a model
 
 > **RULE: every image that enters a request goes through `ImageDownscaler`.** Providers bill an image by pixels,
@@ -933,6 +963,7 @@ Tests: `MessageTimestampTests`, `MemoryDatesTests`.
 | 2026-11 | Localization boundary: ChappieCore holds no catalog-localized strings. Labels of AgentRole/Git/Tests and the "unknown" DevEnvironment moved to the app target (Chappie/Views/Shared/ProjectModels+Display.swift), because Xcode extracts catalog keys only from app sources and marks keys used inside a Swift package as stale. (`DevEnvironment` itself was removed later, see the 2026-11 note below.) |
 | 2026-11 | Localization tools removed (pass J5-a): all 15 `loc_*` tools, the helper's LocalizationTools module with its xcstrings data model, `ToolCapability.locRead/locWrite`, `ToolPolicy.localizationTools`, `xcodeBlock` and the dispatcher branch. They dropped `extractionState`, `variations` and `substitutions` on every write, escaped `/` and rewrote the whole file; `json_*` do the same work byte-exactly in any environment. Tests assert the names are no longer classified. |
 | 2026-11 | String catalog recipe in `json_edit` (pass J5-c): the knowledge of the `.xcstrings` format moved from the deleted tools into the tool description (structure, four `state` values, two worked operations, the `json_find` call for missing translations, and why a whole-file rewrite loses `comment`/`extractionState`/`variations`). Verified live on a copy of the real 785.9 KB catalog: sorted insert of a new language, one `state` change, every other byte identical. |
+| 2026-11 | Stream dump (diagnostics pass 2): `StreamDumpRecorder` buffers the raw SSE lines of one request and `StreamDumpWriter` saves them under `Application Support/ChappieAI/StreamDumps` only when the stream looks wrong (flattened tool call, skipped chunks, invalid tool arguments, missing finish reason) or when `CHAPPIE_STREAM_DUMP=1`. Nothing is ever parsed out of the text as a call — a dump is for reading, not executing. Also fixed `AnthropicDelta.type` being required, which silently dropped `message_delta` events and with them the reported cost. Covered by StreamDumpTests (13). |
 
 ### Build and test tools removed (2026-11)
 
