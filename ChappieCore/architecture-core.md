@@ -174,7 +174,8 @@ ChappieCore/
             ├── FileTools.swift                      # File tool implementations
             ├── GitToolExecution.swift               # Git tool execution
             ├── MemoryTools.swift                    # Memory tool implementations
-            └── TerminalTools.swift                  # run_terminal / run_ssh implementation (ShellSession), safety-net refusal text
+            ├── TerminalTools.swift                  # run_terminal / run_ssh implementation (ShellSession), safety-net refusal text
+            └── SSHResult.swift                      # Model-facing text of a run_ssh result: full text or spill notice, finished and stopped cases
 ```
 
 ---
@@ -843,14 +844,20 @@ end-of-output sentinel are still found. A cut stream appends `[[CHAPPIE_OUTPUT_T
 sums the markers (stdout + stderr) and judges the real size. `MCPToolBridge` refuses a helper response
 over 10 MB with the same notice.
 
-Spool (run_terminal only): when a command's output passes the command limit, `OutputCapture` opens an `OutputSpool`
-file and from then on every byte goes to disk as well. `ShellSession` then returns not a refusal but a notice
-(`OutputGuard.spillNotice`): size, line count, the first ~8 KB, the last ~8 KB, the file path and `grep`/`sed`/`tail`
-commands for the middle. The hint names terminal commands on purpose: file tools take project-relative paths only
-(`PathGuard` rejects absolute ones), and the spool folder is outside every project. The exit-code line and the
-sentinel the session appends are cut off the file. A timeout or Stop on a command that already spooled returns the
-same notice. If the folder cannot be created, or the output turns out to fit the limit, the old in-memory behaviour
-applies. `run_ssh` is not spooled yet (two streams, separate pass).
+Spool (run_terminal and run_ssh): when a command's output passes the command limit, `OutputCapture` opens an
+`OutputSpool` file and from then on every byte goes to disk as well. `ShellSession` then returns not a refusal but a
+notice (`OutputGuard.spillNotice`): size, line count, the first ~8 KB, the last ~8 KB, the file path and
+`grep`/`sed`/`tail` commands for the middle. The hint names terminal commands on purpose: file tools take
+project-relative paths only (`PathGuard` rejects absolute ones), and the spool folder is outside every project. The
+exit-code line and the sentinel the session appends are cut off the file. A timeout or Stop on a command that already
+spooled returns the same notice. If the folder cannot be created, or the output turns out to fit the limit, the old
+in-memory behaviour applies.
+
+`run_ssh` spools the same way (stdout and stderr get their own file), but has no trailer of its own to cut.
+`SSHResult` shapes its text: `finished` gives the exit code and both streams, `stopped` (timeout or Stop) keeps
+whatever the remote host had already printed instead of reporting only the reason. Before this, ssh collected
+output without a spool directory: everything past `captureCap` was lost and a result over the limit was refused
+outright, so the model saw nothing. Covered by SSHResultTests (8 cases, collectors instead of a live host).
 
 Not yet covered (helper side, ChappieMCP has no test target): `ProcessRunner` still reads build/git output
 to the end in memory. Its callers already return a bounded summary (build/test: last lines + errors), and
@@ -965,6 +972,7 @@ Tests: `MessageTimestampTests`, `MemoryDatesTests`.
 | 2026-11 | String catalog recipe in `json_edit` (pass J5-c): the knowledge of the `.xcstrings` format moved from the deleted tools into the tool description (structure, four `state` values, two worked operations, the `json_find` call for missing translations, and why a whole-file rewrite loses `comment`/`extractionState`/`variations`). Verified live on a copy of the real 785.9 KB catalog: sorted insert of a new language, one `state` change, every other byte identical. |
 | 2026-11 | Stream dump (diagnostics pass 2): `StreamDumpRecorder` buffers the raw SSE lines of one request and `StreamDumpWriter` saves them under `Application Support/ChappieAI/StreamDumps` only when the stream looks wrong (flattened tool call, skipped chunks, invalid tool arguments, missing finish reason) or when `CHAPPIE_STREAM_DUMP=1`. Nothing is ever parsed out of the text as a call — a dump is for reading, not executing. Also fixed `AnthropicDelta.type` being required, which silently dropped `message_delta` events and with them the reported cost. Covered by StreamDumpTests (13). |
 | 2026-11 | Exit code of a command without a trailing newline: `ShellSession.parseOutput` split the stream into lines and looked for a line starting with `EXIT_CODE:`, but the session appends that line directly after the command's last bytes, so `printf abc; false` produced the single line `abcEXIT_CODE:1`. The marker had no line start to anchor to: the exit code was read as a coincidental 0 (reported as success) and the marker stayed in the text handed to the model. Both paths now go through one `splitTrailer`, which searches backwards for the marker and cuts it out of the body; the last occurrence is always the injected one, so a command that prints `EXIT_CODE:` itself keeps its own text. The tail-window copy `exitCode(inTail:)` is gone — one implementation for the inline, truncated and spooled cases. Covered by OutputGuardTests (3 new cases). |
+| 2026-11 | `run_ssh` now spools its output like `run_terminal`: both collectors get `OutputSpool.defaultDirectory`. Before, a remote command printing more than `captureCap` lost everything past it, and a result over the command limit was refused by `OutputGuard` — the model saw only a size notice and no output at all. A timeout or Stop used to discard the output received so far and report only the reason; it now carries both streams (`SSHResult.stopped`), because the lines printed before the hang are usually the explanation. The text shaping moved into its own `SSHResult.swift` (TerminalTools was past 400 lines) and is testable without an ssh host. Covered by SSHResultTests (8 cases). |
 
 ### Build and test tools removed (2026-11)
 

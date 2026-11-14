@@ -220,9 +220,10 @@ extension ToolExecutionService {
                 // fires live as chunks arrive over the SSH pipe, enabling onOutput streaming
                 // for the live terminal UI. Final result is still built from full accumulation.
                 // OutputCapture stops storing past OutputGuard.captureCap, so a runaway remote command
-                // cannot grow memory; the real byte count is kept for the oversize notice.
-                let outCapture = OutputCapture()
-                let errCapture = OutputCapture()
+                // cannot grow memory. With a spool directory the bytes past the cap survive on disk
+                // instead of being lost, exactly as for run_terminal.
+                let outCapture = OutputCapture(spoolDirectory: OutputSpool.defaultDirectory)
+                let errCapture = OutputCapture(spoolDirectory: OutputSpool.defaultDirectory)
 
                 outPipe.fileHandleForReading.readabilityHandler = { handle in
                     let chunk = handle.availableData
@@ -262,7 +263,10 @@ extension ToolExecutionService {
                 if canceller.stopReason == .cancelled {
                     outPipe.fileHandleForReading.readabilityHandler = nil
                     errPipe.fileHandleForReading.readabilityHandler = nil
-                    continuation.resume(returning: "🛑 run_ssh: Command cancelled by the user; the ssh connection was closed.")
+                    continuation.resume(returning: SSHResult.stopped(
+                        "🛑 run_ssh: Command cancelled by the user; the ssh connection was closed.",
+                        stdout: outCapture, stderr: errCapture
+                    ))
                     return
                 }
 
@@ -270,30 +274,22 @@ extension ToolExecutionService {
                     canceller.stop(.timedOut)
                     outPipe.fileHandleForReading.readabilityHandler = nil
                     errPipe.fileHandleForReading.readabilityHandler = nil
-                    continuation.resume(returning: "⏱️ run_ssh: Command timed out after \(finalTimeout)s on \(finalTarget).")
+                    continuation.resume(returning: SSHResult.stopped(
+                        "⏱️ run_ssh: Command timed out after \(finalTimeout)s on \(finalTarget).",
+                        stdout: outCapture, stderr: errCapture
+                    ))
                     return
                 }
 
                 outPipe.fileHandleForReading.readabilityHandler = nil
                 errPipe.fileHandleForReading.readabilityHandler = nil
 
-                // text() already carries the size marker when the stream was cut (OutputGuard sums the
-                // markers of stdout and stderr).
-                let stdout = outCapture.text().trimmingCharacters(in: .whitespacesAndNewlines)
-                let stderr = errCapture.text().trimmingCharacters(in: .whitespacesAndNewlines)
                 let exitCode = process.terminationStatus
-
                 print("[SSHTools] \(exitCode == 0 ? "✅" : "❌") Exit \(exitCode) from \(finalTarget)")
 
-                if exitCode == 0 {
-                    let output = stdout.isEmpty ? "✅ Command completed successfully (no output)." : "✅\n\(stdout)"
-                    continuation.resume(returning: output)
-                } else {
-                    var parts: [String] = ["❌ (exit code \(exitCode))"]
-                    if !stdout.isEmpty { parts.append(stdout) }
-                    if !stderr.isEmpty { parts.append("stderr: \(stderr)") }
-                    continuation.resume(returning: parts.joined(separator: "\n"))
-                }
+                continuation.resume(returning: SSHResult.finished(
+                    exitCode: exitCode, stdout: outCapture, stderr: errCapture
+                ))
             }
             }
         } onCancel: {
