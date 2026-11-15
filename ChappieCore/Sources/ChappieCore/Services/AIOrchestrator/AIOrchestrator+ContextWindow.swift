@@ -26,9 +26,12 @@ extension AIOrchestrator {
             deduplicatedHistory = history
         }
 
-        let cappedHistory = (maxMessages != Int.max && deduplicatedHistory.count > maxMessages)
-            ? Array(deduplicatedHistory.suffix(maxMessages))
-            : deduplicatedHistory
+        // Trimmed with slack so the cached prefix survives several turns; see ContextWindowPolicy.
+        let (cappedHistory, trimmedFrom) = ContextWindowPolicy.trim(deduplicatedHistory, limit: maxMessages)
+        if let trimmedFrom {
+            print("[AIOrchestrator] Trimmed \(trimmedFrom) → \(cappedHistory.count) messages "
+                  + "(limit \(maxMessages), slack \(ContextWindowPolicy.slack(for: maxMessages)))")
+        }
 
         var contextWindow = cappedHistory
         if let message = currentMessage {

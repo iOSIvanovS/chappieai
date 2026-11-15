@@ -77,6 +77,7 @@ ChappieCore/
         │   ├── LLMHTTP.swift               # typed ProviderHTTPError, bounded error-body read for streams, Retry-After
         │   └── RetryPolicy.swift           # 5 retries, 1/2/4/8/16 s (cap 30) + jitter; RetryStatus for the UI
         ├── AIOrchestrator+ContextWindow.swift    # buildContextWindow, estimateTokens
+        ├── ContextWindowPolicy.swift             # trim(history:limit:): keeps a slack so the cached prefix survives several turns
         ├── AIOrchestrator+ToolExecution.swift    # executeToolCalls, parseOutputFilePath
         ├── LoopGuard.swift                       # 3rd identical call with an unchanged result is blocked, with an explanation
         ├── AIProviderStore.swift       # CRUD for AI providers + Keychain (multi-key)
@@ -507,6 +508,16 @@ while block breakpoints give `read` 16898 -> 17018 with `created` <= 18 (cost 1.
 `anthropic-beta: extended-cache-ttl-2025-04-11` header is sent only when caching is on, and only then does
 `ttl: "1h"` take effect (without it the write silently becomes 0).
 
+**The window keeps a slack, or the cache is worthless.** A cache read needs a prefix byte-identical to
+the previous request. Sending exactly `limit` messages evicts the oldest one on every turn, so the first
+message after `system` changes each time and the cached prefix ends there — the system prompt is read,
+the whole conversation is written again. `ContextWindowPolicy` therefore lets the history grow to
+`limit + slack` (slack = max(4, limit/8)) before cutting it back to `limit`. Measured on the native
+endpoint, 9 turns, limit 30, ~250-token messages: exact window wrote 160026 tokens and read 22602
+(43.94 RUB); with a slack of 4 it wrote 4744 and read 188468 (6.53 RUB). Over 15 user turns of three
+requests each: 3.42 -> 1.87 RUB per turn. The trade is a bounded overshoot of the configured window.
+A cut can leave the history starting with an assistant turn; the API accepts that (verified).
+
 ---
 
 ## 10. AIOrchestrator — Reasoning Loop
@@ -515,6 +526,7 @@ Split across 4 files:
 - `AIOrchestrator.swift` — core actor, init, `process()` agentic loop
 - `AIOrchestrator+Retry.swift` — `streamWithRetry`, adapter over `LLMRetryRunner` (see "LLM request retry")
 - `AIOrchestrator+ContextWindow.swift` — `buildContextWindow`, `estimateTokens`
+- `ContextWindowPolicy.swift` — `trim(history:limit:)`: how many newest messages to send
 - `AIOrchestrator+ToolExecution.swift` — `executeToolCalls`, `parseOutputFilePath`
 - `LoopGuard.swift` — repeated-call guard. The 3rd identical call (same tool + arguments) in a row is blocked,
   but only while every previous result was identical (result hash compared); a changed result is progress and
