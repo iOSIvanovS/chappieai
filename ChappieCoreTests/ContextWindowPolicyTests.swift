@@ -156,39 +156,130 @@ struct ContextWindowPolicyTests {
         #expect(result.trimmedFrom == nil)
     }
 
+    // MARK: - Cache warmth threshold
+
+    // The allowance only widens while the prefix is still readable. These pin the boundary: the
+    // safe margin, the exact TTL boundary, and the two ways of having no usable profile.
+
+    private let oneHour = PromptCacheProfile(ttl: 3600)
+
+    @Test("No recorded request means a cold cache")
+    func warmthNoRecord() {
+        let warm = ContextWindowPolicy.cacheIsWarm(
+            lastRequestAt: nil, now: Date(), profile: oneHour
+        )
+        #expect(!warm)
+    }
+
+    @Test("No profile means a cold cache, however recent the request")
+    func warmthNoProfile() {
+        let warm = ContextWindowPolicy.cacheIsWarm(
+            lastRequestAt: Date(), now: Date(), profile: nil
+        )
+        #expect(!warm, "a route without a cache never earns the wider allowance")
+    }
+
+    @Test("A turn two minutes later still finds the prefix warm")
+    func warmthRecentRequest() {
+        let now = Date()
+        let warm = ContextWindowPolicy.cacheIsWarm(
+            lastRequestAt: now.addingTimeInterval(-120), now: now, profile: oneHour
+        )
+        #expect(warm)
+    }
+
+    @Test("The margin makes the cache cold before the nominal TTL runs out")
+    func warmthMargin() {
+        let now = Date()
+        // 54 minutes is exactly 90% of the hour.
+        let atMargin = ContextWindowPolicy.cacheIsWarm(
+            lastRequestAt: now.addingTimeInterval(-3600 * 0.9), now: now, profile: oneHour
+        )
+        #expect(!atMargin, "a request starting at the margin cannot count on the prefix")
+
+        let justInside = ContextWindowPolicy.cacheIsWarm(
+            lastRequestAt: now.addingTimeInterval(-3600 * 0.9 + 1), now: now, profile: oneHour
+        )
+        #expect(justInside)
+    }
+
+    @Test("After the TTL the cache is cold")
+    func warmthExpired() {
+        let now = Date()
+        let warm = ContextWindowPolicy.cacheIsWarm(
+            lastRequestAt: now.addingTimeInterval(-3601), now: now, profile: oneHour
+        )
+        #expect(!warm)
+    }
+
+    @Test("A different TTL moves the boundary, so the margin is not hardcoded to an hour")
+    func warmthCustomTTL() {
+        let now = Date()
+        let fiveMinutes = PromptCacheProfile(ttl: 300)
+        #expect(ContextWindowPolicy.cacheIsWarm(
+            lastRequestAt: now.addingTimeInterval(-240), now: now, profile: fiveMinutes
+        ))
+        #expect(!ContextWindowPolicy.cacheIsWarm(
+            lastRequestAt: now.addingTimeInterval(-300), now: now, profile: fiveMinutes
+        ))
+    }
+
     // MARK: - Cache profile
 
-    @Test("A client that says nothing about caching has no profile")
+    // WHY EVERY TEST HERE GOES THROUGH `any AIClientProtocol`:
+    // The orchestrator holds the protocol type, not the concrete client. An implementation that
+    // only exists in a protocol extension — with the protocol itself not declaring the member —
+    // is dispatched statically, so the extension's nil wins at runtime no matter what the
+    // concrete client says. Testing the concrete client alone hides exactly that failure: it
+    // passed here while the app logged `slack` on a cache-reading route. These tests ask the
+    // question the orchestrator actually asks.
+
+    @Test("An OpenAI-compatible client has no cache profile")
     func cacheProfileDefault() {
-        let a = AIClient(
+        let a: any AIClientProtocol = AIClient(
             endpoint: "https://example.com/v1/chat/completions",
             apiKey: "k",
             modelName: "m"
         )
-        #expect(a.promptCacheProfile == nil)
         #expect(a.promptCacheProfile == nil, "the wider allowance needs real cache reads")
     }
 
-    @Test("A caching Anthropic route reports the one-hour TTL")
+    @Test("A caching Anthropic route reports the one-hour TTL through the protocol")
     func cacheProfileAnthropic() {
-        let client = AnthropicClient(
+        let client: any AIClientProtocol = AnthropicClient(
             baseURL: "https://routerai.ru",
             apiKey: "k",
             modelName: "anthropic/claude-sonnet-5.5",
             messagesPath: "/api/v1/messages",
             supportsCaching: true
         )
-        let profile = client.promptCacheProfile
-        #expect(profile?.ttl == 3600)
+        #expect(client.promptCacheProfile?.ttl == 3600)
     }
 
     @Test("An Anthropic route without caching has no profile")
     func cacheProfileOff() {
-        let client = AnthropicClient(
+        let client: any AIClientProtocol = AnthropicClient(
             baseURL: "https://api.anthropic.com",
             apiKey: "k",
             modelName: "claude-sonnet-5-5"
         )
         #expect(client.promptCacheProfile == nil, "no caching means no reason to overshoot the window")
+    }
+
+    @Test("The profile is a protocol requirement, so it is dispatched dynamically")
+    func cacheProfileIsDynamic() {
+        // Two clients behind the same existential type must answer differently. If the member
+        // were only an extension default, both would answer nil and this would fail.
+        let clients: [any AIClientProtocol] = [
+            AnthropicClient(
+                baseURL: "https://routerai.ru",
+                apiKey: "k",
+                modelName: "anthropic/claude-sonnet-5.5",
+                messagesPath: "/api/v1/messages",
+                supportsCaching: true
+            ),
+            AIClient(endpoint: "https://example.com/v1/chat/completions", apiKey: "k", modelName: "m")
+        ]
+        #expect(clients.map(\.promptCacheProfile?.ttl) == [3600, nil])
     }
 }

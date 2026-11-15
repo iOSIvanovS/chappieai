@@ -70,11 +70,13 @@ public actor AIOrchestrator {
     // B-04: invalidate() sets this flag; process() checks it before each agentic step.
     var isInvalidated: Bool = false
 
-    /// Time of the last request sent for the current thread; see AIOrchestrator+ContextWindow.
-    var lastRequestAtStorage: Date? = nil
+    /// Where the last-request mark lives; see AIOrchestrator+ContextWindow and CacheWarmthStore.
+    ///
+    /// Persisted by default so a relaunch between turns does not throw away a warm prefix.
+    let cacheWarmth: any CacheWarmthStore
 
-    /// Thread the stored time belongs to, so switching threads does not inherit warmth.
-    var lastRequestThreadId: UUID? = nil
+    /// Thread the current turn belongs to, taken from MemoryContext at the start of process().
+    var currentThreadId: UUID? = nil
 
     // MARK: - Init
 
@@ -84,7 +86,8 @@ public actor AIOrchestrator {
         fileSystem: FileSystemManager,
         memoryManager: MemoryManager,
         config: AppConfig = .shared,
-        retryPolicy: RetryPolicy = .standard
+        retryPolicy: RetryPolicy = .standard,
+        cacheWarmth: (any CacheWarmthStore)? = nil
     ) {
         self.retryPolicy = retryPolicy
         self.aiClient = aiClient
@@ -92,6 +95,9 @@ public actor AIOrchestrator {
         self.fileSystem = fileSystem
         self.memoryManager = memoryManager
         self.defaultConfig = config
+        // Persisted unless the caller asks otherwise: an in-memory default would bring back the
+        // full prefix write on the first turn after every relaunch.
+        self.cacheWarmth = cacheWarmth ?? UserDefaultsCacheWarmthStore()
     }
 
     // MARK: - Invalidation (B-04)
@@ -126,13 +132,9 @@ public actor AIOrchestrator {
             throw CancellationError()
         }
 
-        // One orchestrator serves whichever thread is active. A different thread means a
-        // different prefix, so the warmth of the previous thread's cache says nothing about this
-        // one — forget it rather than inherit a wrong "warm" answer.
-        if lastRequestThreadId != memoryContext.threadId {
-            lastRequestThreadId = memoryContext.threadId
-            lastRequestAtStorage = nil
-        }
+        // No thread-switch reset here any more: the mark is keyed by thread in the store, so
+        // another thread's warmth is never read in the first place.
+        currentThreadId = memoryContext.threadId
 
         let systemPrompt = overrideSystemPrompt ?? {
             assertionFailure("[AIOrchestrator] overrideSystemPrompt is nil — caller must always provide a system prompt")
@@ -165,7 +167,7 @@ public actor AIOrchestrator {
             let tools = await toolService.availableTools
 
             // Marked before the request: that is when the prefix is written or read.
-            lastRequestAtStorage = Date()
+            markRequestSent()
 
             let streamResult = try await streamWithRetry(
                 systemPrompt: systemPrompt,

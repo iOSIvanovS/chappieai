@@ -119,6 +119,26 @@ public enum ContextWindowPolicy {
         }
     }
 
+    /// Whether a prefix written at `lastRequestAt` can still be read at `now`.
+    ///
+    /// Pure so the threshold can be tested without an actor. Returns false when there is no
+    /// profile (the route does not cache) or no recorded request (nothing was ever written).
+    ///
+    /// The margin is deliberate: a request that starts a minute before nominal expiry cannot
+    /// count on a prefix that another turn's write may have pushed past it.
+    public static func cacheIsWarm(
+        lastRequestAt: Date?,
+        now: Date,
+        profile: PromptCacheProfile?,
+        margin: Double = cacheWarmthMargin
+    ) -> Bool {
+        guard let profile, let lastRequestAt else { return false }
+        return now.timeIntervalSince(lastRequestAt) < profile.ttl * margin
+    }
+
+    /// A safety margin below the nominal TTL.
+    public static let cacheWarmthMargin: Double = 0.9
+
     /// The newest messages to send, with the trim decision reported for the log.
     ///
     /// Returns the input untouched while it fits within the mode's allowance; once it grows past

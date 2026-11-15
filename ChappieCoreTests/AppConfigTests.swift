@@ -27,11 +27,11 @@ struct AppConfigTests {
         #expect(config1 == config2)
     }
 
-    @Test("maxMessagesInContext is within valid range [10...1000]")
+    @Test("maxMessagesInContext is within valid range [10...100]")
     func maxMessagesInContextIsReasonable() {
         let config = AppConfig.shared
         #expect(config.maxMessagesInContext >= 10)
-        #expect(config.maxMessagesInContext <= 1000)
+        #expect(config.maxMessagesInContext <= 100)
     }
 
     @Test("requestTimeoutSeconds is sufficient for complex tasks (>= 60s)")
@@ -66,31 +66,34 @@ struct AppConfigTests {
         #expect(config.maxMessagesInContext == 50)
     }
 
-    /// Values outside 10...1000 are clamped automatically.
-    @Test("Clamping: values outside 10...1000 are clamped")
+    /// Values outside 10...100 are clamped automatically.
+    @Test("Clamping: values outside 10...100 are clamped")
     func clampingOutOfRange() {
         // Too small → clamped to 10
         let tooSmall = AppConfig(maxMessagesInContext: 3)
         #expect(tooSmall.maxMessagesInContext == 10)
 
-        // Too large → clamped to 1000
+        // Too large → clamped to 100, including values saved when the range went to 1000
         let tooBig = AppConfig(maxMessagesInContext: 9999)
-        #expect(tooBig.maxMessagesInContext == 1000)
+        #expect(tooBig.maxMessagesInContext == 100)
+
+        let staleSliderValue = AppConfig(maxMessagesInContext: 500)
+        #expect(staleSliderValue.maxMessagesInContext == 100)
 
         // Boundary values — not clamped
         let minValid = AppConfig(maxMessagesInContext: 10)
         #expect(minValid.maxMessagesInContext == 10)
 
-        let maxValid = AppConfig(maxMessagesInContext: 1000)
-        #expect(maxValid.maxMessagesInContext == 1000)
+        let maxValid = AppConfig(maxMessagesInContext: 100)
+        #expect(maxValid.maxMessagesInContext == 100)
     }
 
     @Test("AppConfig(settings:) is created from ThreadSettings correctly")
     func configFromThreadSettings() {
-        let settings = ThreadSettings(maxMessagesInContext: 500)
+        let settings = ThreadSettings(maxMessagesInContext: 70)
         let config = AppConfig(settings: settings)
 
-        #expect(config.maxMessagesInContext == 500)
+        #expect(config.maxMessagesInContext == 70)
     }
 
     // MARK: - Codable tests
@@ -105,24 +108,24 @@ struct AppConfigTests {
 
     @Test("AppConfig(maxMessagesInContext:) Codable roundtrip")
     func dynamicConfigCodableRoundtrip() throws {
-        let original = AppConfig(maxMessagesInContext: 400)
+        let original = AppConfig(maxMessagesInContext: 90)
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(AppConfig.self, from: data)
 
         #expect(decoded == original)
-        #expect(decoded.maxMessagesInContext == 400)
+        #expect(decoded.maxMessagesInContext == 90)
     }
 
     // MARK: - Sendable test
 
     @Test("AppConfig can be passed between actors (Sendable)")
     func appConfigIsSendable() async {
-        let config = AppConfig(maxMessagesInContext: 300)
+        let config = AppConfig(maxMessagesInContext: 80)
 
         let result = await Task.detached {
             return config.maxMessagesInContext
         }.value
 
-        #expect(result == 300)
+        #expect(result == 80)
     }
 }

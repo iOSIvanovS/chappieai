@@ -69,6 +69,7 @@
       }
     },
     "1 000" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -195,6 +196,9 @@
           }
         }
       }
+    },
+    "100" : {
+
     },
     "add_models.add_count" : {
       "localizations" : {

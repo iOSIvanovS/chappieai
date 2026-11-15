@@ -26,7 +26,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
 
     // MARK: - Parameters
 
-    /// Hard limit on message count in context window. Range: 10...1000.
+    /// Hard limit on message count in context window. Range: 10...100.
     ///
     /// A floor, not an exact count: the window policy may send up to three times this many
     /// messages on a route that reads its prompt cache. See ContextWindowPolicy.
@@ -64,13 +64,13 @@ public struct AppConfig: Codable, Equatable, Sendable {
         connectionTimeoutSeconds = 30
         stallTimeoutSeconds      = 300
         maxStallRetries          = 2
-        // Clamp 10...1000 — mirrors ThreadSettings valid range
-        maxMessagesInContext     = max(10, min(1000, settings.maxMessagesInContext))
+        // Clamp 10...100 — mirrors ThreadSettings valid range
+        maxMessagesInContext     = max(10, min(100, settings.maxMessagesInContext))
     }
 
     /// Convenience init from raw message count — for tests and legacy code.
     public init(maxMessagesInContext: Int) {
-        self.maxMessagesInContext = max(10, min(1000, maxMessagesInContext))
+        self.maxMessagesInContext = max(10, min(100, maxMessagesInContext))
         requestTimeoutSeconds    = 300
         connectionTimeoutSeconds = 30
         stallTimeoutSeconds      = 300

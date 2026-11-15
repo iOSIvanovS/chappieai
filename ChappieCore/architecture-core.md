@@ -77,7 +77,8 @@ ChappieCore/
         │   ├── LLMHTTP.swift               # typed ProviderHTTPError, bounded error-body read for streams, Retry-After
         │   └── RetryPolicy.swift           # 5 retries, 1/2/4/8/16 s (cap 30) + jitter; RetryStatus for the UI
         ├── AIOrchestrator+ContextWindow.swift    # buildContextWindow, estimateTokens
-        ├── ContextWindowPolicy.swift             # trim(history:limit:mode:), allowance modes, PromptCacheProfile
+        ├── ContextWindowPolicy.swift             # trim(history:limit:mode:), allowance modes, PromptCacheProfile, cacheIsWarm
+        ├── CacheWarmthStore.swift                # per-thread last-request mark; UserDefaults-backed, survives relaunch
         ├── AIOrchestrator+ToolExecution.swift    # executeToolCalls, parseOutputFilePath
         ├── LoopGuard.swift                       # 3rd identical call with an unchanged result is blocked, with an explanation
         ├── AIProviderStore.swift       # CRUD for AI providers + Keychain (multi-key)
@@ -451,7 +452,7 @@ graph TD
 
 ```swift
 struct ThreadSettings: Codable, Sendable {
-    var maxMessagesInContext: Int   // 10...1000, step 10, default 30 (a FLOOR: see ContextWindowPolicy)
+    var maxMessagesInContext: Int   // 10...100, step 10, default 30 (a FLOOR: see ContextWindowPolicy)
     var activeProviderId: UUID?
     var activeKeyId: UUID?
     var activeModelName: String?
@@ -464,7 +465,7 @@ struct ThreadSettings: Codable, Sendable {
 struct AppConfig: Codable {
     static let shared = AppConfig()            // default: 100 messages
     init(settings: ThreadSettings)             // per-thread config
-    let maxMessagesInContext: Int              // 10...1000
+    let maxMessagesInContext: Int              // 10...100
     let stallTimeoutSeconds: TimeInterval     // 300s, hardcoded
 }
 ```
@@ -534,10 +535,19 @@ both the native protocol and an OpenAI-format route pinned to Anthropic. With a 
 
 **A cold cache makes the wide allowance actively harmful.** After a pause longer than the TTL the old
 prefix is gone, so a long history is written in full for no benefit: 232k tokens is 61.7 RUB in one
-request, while cutting to the window first costs 4.4 RUB. Warmth is tracked in memory in
-`AIOrchestrator` (`lastRequestAtStorage` + `lastRequestThreadId`, reset on a thread switch) against
-`ttl * 0.9`. Not persisted: a restart costs one extra cache write, while persisting would mean a
-database write on every request of the loop.
+request, while cutting to the window first costs 4.4 RUB. Warmth is tracked per thread in
+`CacheWarmthStore` (UserDefaults-backed, `markRequestSent()` before each request) against
+`ttl * 0.9`.
+
+**Why the mark is persisted, and why in UserDefaults.** In memory alone it is lost on every relaunch,
+so the first turn after a restart rewrites the whole prefix — measured on a 104-message history:
+84079 tokens, 23.64 RUB, against 2.29 RUB when the prefix is read. Restarting between turns is normal
+working practice, so that turn is the common case, not an edge one. UserDefaults rather than the SQLite
+store because the mark is worthless within hours and a wrong guess costs one cache write: it does not
+deserve a table, a migration or a write per request. It is a single dictionary under one key
+(`chappie.cacheWarmth.lastRequestAt`), keyed by thread, pruned to 24 hours on write. The default store
+in `AIOrchestrator.init` is the persisted one, so forgetting to pass a store does not silently bring the
+old cost back; tests pass `InMemoryCacheWarmthStore`.
 
 Earlier live measurement on the same gateway, 9 turns, limit 30, ~250-token messages, small slack:
 exact window wrote 160026 tokens and read 22602 (43.94 RUB); with a slack of 4 it wrote 4744 and read
@@ -552,8 +562,11 @@ Split across 4 files:
 - `AIOrchestrator.swift` — core actor, init, `process()` agentic loop
 - `AIOrchestrator+Retry.swift` — `streamWithRetry`, adapter over `LLMRetryRunner` (see "LLM request retry")
 - `AIOrchestrator+ContextWindow.swift` — `buildContextWindow`, `estimateTokens`, cache warmth
-  (`allowanceMode(isCacheWarm:)`, `isCacheWarm()`)
-- `ContextWindowPolicy.swift` — `trim(history:limit:mode:)`, the three allowance modes, `PromptCacheProfile`
+  (`allowanceMode(isCacheWarm:)`, `isCacheWarm()`, `markRequestSent()`)
+- `ContextWindowPolicy.swift` — `trim(history:limit:mode:)`, the three allowance modes, `PromptCacheProfile`,
+  the pure `cacheIsWarm(lastRequestAt:now:profile:)` threshold
+- `CacheWarmthStore.swift` — where the last-request mark per thread lives. UserDefaults by default, so the
+  mark survives a relaunch; see "Why the mark is persisted" below
 - `AIOrchestrator+ToolExecution.swift` — `executeToolCalls`, `parseOutputFilePath`
 - `LoopGuard.swift` — repeated-call guard. The 3rd identical call (same tool + arguments) in a row is blocked,
   but only while every previous result was identical (result hash compared); a changed result is progress and

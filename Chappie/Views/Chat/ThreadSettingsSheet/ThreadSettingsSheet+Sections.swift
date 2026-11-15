@@ -76,14 +76,14 @@ extension ThreadSettingsSheet {
                     .frame(minWidth: 44, alignment: .trailing)
             }
 
-            // Slider works in steps of 10: 10...100 of them → 10...1000 messages.
+            // Messages are the unit here, step 10: 10...100.
             Slider(
                 value: Binding(
-                    get: { Double(draftSettings.maxMessagesInContext / 10) },
-                    set: { draftSettings.maxMessagesInContext = Int($0) * 10 }
+                    get: { Double(draftSettings.maxMessagesInContext) },
+                    set: { draftSettings.maxMessagesInContext = Int($0) }
                 ),
-                in: 1...100,
-                step: 1
+                in: 10...100,
+                step: 10
             )
             .accentColor(Color.accentColor)
 
@@ -92,7 +92,7 @@ extension ThreadSettingsSheet {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text("1 000")
+                Text("100")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }

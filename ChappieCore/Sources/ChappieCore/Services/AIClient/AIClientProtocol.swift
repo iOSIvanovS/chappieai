@@ -49,4 +49,13 @@ public protocol AIClientProtocol: Sendable {
 
     /// Fetches available model IDs from the provider.
     func fetchAvailableModels() async -> [String]
+
+    /// What this route knows about its provider's prefix cache; nil when there is none.
+    ///
+    /// MUST be a protocol requirement, not only an extension member. A default implementation
+    /// that the protocol does not declare is statically dispatched, so a caller holding
+    /// `any AIClientProtocol` would silently get the extension's nil and never see the concrete
+    /// client's answer — the wider cache allowance would then be unreachable at runtime while
+    /// every test on a concrete client still passed.
+    var promptCacheProfile: PromptCacheProfile? { get }
 }

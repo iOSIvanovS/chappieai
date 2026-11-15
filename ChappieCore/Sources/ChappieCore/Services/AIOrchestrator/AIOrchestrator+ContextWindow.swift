@@ -11,7 +11,8 @@ extension AIOrchestrator {
         config: AppConfig
     ) -> [AIMessage] {
         let maxMessages = config.maxMessagesInContext
-        let mode = allowanceMode(isCacheWarm: isCacheWarm())
+        let warm = isCacheWarm()
+        let mode = allowanceMode(isCacheWarm: warm)
 
         print("[AIOrchestrator] History: \(history.count) msgs | Limit: \(maxMessages == Int.max ? "∞" : "\(maxMessages)")")
 
@@ -34,7 +35,8 @@ extension AIOrchestrator {
         )
         if let trimmedFrom {
             print("[AIOrchestrator] Trimmed \(trimmedFrom) → \(cappedHistory.count) messages "
-                  + "(limit \(maxMessages), allowance \(modeLabel(mode, limit: maxMessages)))")
+                  + "(limit \(maxMessages), allowance \(modeLabel(mode, limit: maxMessages)), "
+                  + "cache \(warm ? "warm" : "cold"))")
         }
 
         var contextWindow = cappedHistory
@@ -69,28 +71,35 @@ extension AIOrchestrator {
         }
     }
 
-    // MARK: - Cache Warmth
+    // MARK: - Request Time
 
     /// When the last request of this thread was sent, or nil before the first one.
     ///
-    /// Deliberately in memory only: losing it costs one extra cache write after a restart, while
-    /// persisting it would mean a database write on every single request of the agentic loop.
-    var lastRequestAt: Date? {
-        get { lastRequestAtStorage }
-        set { lastRequestAtStorage = newValue }
+    /// Read from the store rather than held in the actor: the mark must survive an app relaunch,
+    /// otherwise the first turn after every restart rewrites the whole prefix (measured: 84079
+    /// tokens, 23.64 RUB, against 2.29 RUB for a read).
+    func lastRequestAt(threadId: UUID?) -> Date? {
+        cacheWarmth.lastRequestAt(threadId: threadId)
+    }
+
+    /// Records that a request is going out now, for the current thread.
+    ///
+    /// Called before each request of the agentic loop: that is when the provider writes or reads
+    /// the prefix. Each step refreshes the mark, so a multi-step turn settles on its last step.
+    func markRequestSent(now: Date = Date()) {
+        cacheWarmth.setLastRequestAt(now, threadId: currentThreadId)
     }
 
     /// The prefix is gone once a pause outlasts the cache TTL, and cannot be relied on in the
     /// last few percent before expiry either — a request in flight from another turn may have
     /// refreshed it, but the safe assumption is that it expired.
     func isCacheWarm(now: Date = Date()) -> Bool {
-        guard let profile = aiClient.promptCacheProfile, let last = lastRequestAt else { return false }
-        return now.timeIntervalSince(last) < profile.ttl * Self.cacheWarmthMargin
+        ContextWindowPolicy.cacheIsWarm(
+            lastRequestAt: lastRequestAt(threadId: currentThreadId),
+            now: now,
+            profile: aiClient.promptCacheProfile
+        )
     }
-
-    /// A safety margin below the nominal TTL, so a request that starts just before expiry does not
-    /// assume a prefix that another turn's write may have pushed past it.
-    static let cacheWarmthMargin: Double = 0.9
 
     /// Rough token estimate: UTF-8 bytes / 4 * 1.5 overhead factor.
     func estimateTokens(_ message: AIMessage) -> Int {

@@ -63,7 +63,7 @@ public struct ThreadProjectEntry: Codable, Sendable, Identifiable, Hashable {
 /// WHY STRUCT, NOT @Model: Settings always belong to a thread, never standalone.
 public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
 
-    /// Max messages in context window. Range: 10...1000, step 10. Default: 30.
+    /// Max messages in context window. Range: 10...100, step 10. Default: 30.
     ///
     /// This is a floor, not an exact count: on a route that reads its prompt cache the window
     /// policy may send up to three times this many messages. See ContextWindowPolicy.
@@ -104,8 +104,9 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
         curlEnabled: Bool = false,
         curlHosts: [CurlHost] = []
     ) {
-        // Clamp to valid range 10...1000 — guard against corrupted JSON values
-        self.maxMessagesInContext = max(10, min(1000, maxMessagesInContext))
+        // Clamp to valid range 10...100 — guard against corrupted JSON values and against
+        // values saved when the slider still went up to 1000.
+        self.maxMessagesInContext = max(10, min(100, maxMessagesInContext))
         self.activeProviderId = activeProviderId
         self.activeKeyId = activeKeyId
         self.activeModelName = activeModelName
