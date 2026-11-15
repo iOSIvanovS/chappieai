@@ -28,22 +28,7 @@ extension NewThreadProviderSheet {
             Label("new_thread.context_section", systemImage: "clock.arrow.circlepath")
                 .font(.system(size: 13, weight: .semibold))
 
-            Toggle(isOn: $draftSettings.isUnlimitedContext) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("thread.settings.unlimited")
-                        .font(.callout)
-                    Text("thread.settings.unlimited_hint")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .toggleStyle(.switch)
-
-            if !draftSettings.isUnlimitedContext {
-                limitedContextControls
-            }
-
+            limitedContextControls
             contextInfoBox
         }
     }
@@ -83,17 +68,15 @@ extension NewThreadProviderSheet {
 
     // MARK: - Context Info Box
 
-    @ViewBuilder
     var contextInfoBox: some View {
-        if draftSettings.isUnlimitedContext {
-            VStack(alignment: .leading, spacing: 6) {
-                infoRow(icon: "infinity", color: .orange, text: String(localized: "thread.settings.unlimited_info"))
-                infoRow(icon: "bubble.left.and.bubble.right", color: .secondary, text: String(localized: "thread.settings.all_messages_shown"))
-            }
-            .padding(10)
-            .background(Color.primary.opacity(0.04))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-        }
+        infoRow(
+            icon: "bolt.horizontal.circle",
+            color: .secondary,
+            text: String(localized: "thread.settings.cache_allowance_note")
+        )
+        .padding(10)
+        .background(Color.primary.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     // MARK: - Helpers

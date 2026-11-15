@@ -43,10 +43,13 @@ extension ChappieViewModel {
               let store = threadStore,
               let oldest = oldestLoadedChunkIndex else { return }
 
+        // Load enough for the widest allowance the policy can grant, not just the configured
+        // window: on a cache-reading route up to 3x the limit is sent, and if only limit+1 were
+        // loaded that allowance would never be reached — the context would snap back to the limit
+        // right after every chunk rollover. Loading more is harmless; chunks are loaded on demand.
         // +1: the message being sent is in `messages` too.
-        let needed = activeThreadSettings.isUnlimitedContext
-            ? Int.max
-            : activeThreadSettings.maxMessagesInContext + 1
+        let needed = activeThreadSettings.maxMessagesInContext
+            * ContextWindowPolicy.tripleMultiplier + 1
 
         guard let result = try? await store.loadOlderChunks(
             fromThreadId: threadId,

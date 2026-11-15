@@ -57,22 +57,7 @@ extension ThreadSettingsSheet {
         VStack(alignment: .leading, spacing: 14) {
             sectionLabel("thread.settings.context_depth", systemImage: "clock.arrow.circlepath")
 
-            Toggle(isOn: $draftSettings.isUnlimitedContext) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("thread.settings.unlimited")
-                        .font(.callout)
-                    Text("thread.settings.unlimited_hint")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .toggleStyle(.switch)
-
-            if !draftSettings.isUnlimitedContext {
-                limitedContextControls
-            }
-
+            limitedContextControls
             contextInfoBox
         }
     }
@@ -91,15 +76,11 @@ extension ThreadSettingsSheet {
                     .frame(minWidth: 44, alignment: .trailing)
             }
 
-            // Step 10: map slider 1...100 → actual value × 10
+            // Slider works in steps of 10: 10...100 of them → 10...1000 messages.
             Slider(
                 value: Binding(
                     get: { Double(draftSettings.maxMessagesInContext / 10) },
-                    set: {
-                        let newVal = Int($0) * 10
-                        print("[ThreadSettingsSheet] Slider set: raw=\($0) → maxMsgs=\(newVal)")
-                        draftSettings.maxMessagesInContext = newVal
-                    }
+                    set: { draftSettings.maxMessagesInContext = Int($0) * 10 }
                 ),
                 in: 1...100,
                 step: 1
@@ -120,24 +101,20 @@ extension ThreadSettingsSheet {
 
     // MARK: - Context Info Box
 
-    @ViewBuilder
     var contextInfoBox: some View {
-        if draftSettings.isUnlimitedContext {
-            VStack(alignment: .leading, spacing: 6) {
-                infoRow(
-                    icon: "infinity",
-                    color: .orange,
-                    text: String(localized: "thread.settings.unlimited_info")
-                )
-                infoRow(
-                    icon: "bubble.left.and.bubble.right",
-                    color: .secondary,
-                    text: String(localized: "thread.settings.all_messages_shown")
-                )
-            }
-            .padding(12)
-            .background(Color.primary.opacity(0.04))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "bolt.horizontal.circle")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .frame(width: 14)
+                .padding(.top, 1)
+            Text("thread.settings.cache_allowance_note")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .padding(12)
+        .background(Color.primary.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }

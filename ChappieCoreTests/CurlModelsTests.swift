@@ -53,8 +53,9 @@ struct CurlModelsTests {
     func oldThreadSettingsDecode() throws {
         let oldJSON = #"{"maxMessagesInContext":120,"isUnlimitedContext":true,"terminalAccess":"auto","activeModelName":"m"}"#
         let s = try JSONDecoder().decode(ThreadSettings.self, from: Data(oldJSON.utf8))
+        // The removed isUnlimitedContext key is ignored, not rejected: the record still decodes
+        // and every other stored value survives.
         #expect(s.maxMessagesInContext == 120)
-        #expect(s.isUnlimitedContext)
         #expect(s.terminalEnabled)
         #expect(s.activeModelName == "m")
         #expect(s.curlEnabled == false)

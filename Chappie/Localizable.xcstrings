@@ -26382,70 +26382,6 @@
         }
       }
     },
-    "thread.settings.all_messages_shown" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "تُعرض جميع رسائل المحادثة في الدردشة"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Alle Thread-Nachrichten werden im Chat angezeigt"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "All thread messages are displayed in chat"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Todos los mensajes del hilo se muestran en el chat"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tous les messages du fil sont affichés dans le chat"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "सभी थ्रेड संदेश चैट में दिखाए जाते हैं"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "スレッドのすべてのメッセージがチャットに表示されます"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Todas as mensagens da conversa são exibidas no chat"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "В чате отображаются все сообщения"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "所有对话消息都显示在聊天中"
-          }
-        }
-      }
-    },
     "thread.settings.api_key" : {
       "localizations" : {
         "ar" : {
@@ -26506,6 +26442,70 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "API 密钥"
+          }
+        }
+      }
+    },
+    "thread.settings.cache_allowance_note" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "في النماذج التي تدعم التخزين المؤقت للمطالبات، قد يرسل التطبيق ما يصل إلى 3 أضعاف عدد الرسائل لتجنب دفع تكلفة إعادة كتابة الذاكرة المؤقتة في كل دورة."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bei Modellen mit Prompt-Caching kann die App bis zu dreimal so viele Nachrichten senden, damit der Cache nicht bei jeder Runde neu geschrieben werden muss."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "On models with prompt caching the app may send up to 3× more messages, so it does not have to pay for rewriting the cache on every turn."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "En los modelos con caché de prompts la app puede enviar hasta el triple de mensajes, para no pagar la reescritura de la caché en cada turno."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sur les modèles avec mise en cache des prompts, l'app peut envoyer jusqu'à trois fois plus de messages, pour ne pas payer la réécriture du cache à chaque tour."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "प्रॉम्प्ट कैशिंग वाले मॉडल पर ऐप तीन गुना तक अधिक संदेश भेज सकता है, ताकि हर बार कैश दोबारा लिखने का खर्च न उठाना पड़े।"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "プロンプトキャッシュに対応したモデルでは、毎回キャッシュを書き直すコストを避けるため、最大3倍のメッセージを送信することがあります。"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Em modelos com cache de prompts o app pode enviar até três vezes mais mensagens, para não pagar a reescrita do cache a cada turno."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На моделях с кэшем промптов приложение может отправлять до трёх раз больше сообщений, чтобы не платить за перезапись кэша на каждом ходу."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "对于支持提示缓存的模型，应用最多可能发送三倍的消息，以免每轮都为重写缓存付费。"
           }
         }
       }
@@ -27980,198 +27980,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "对话设置"
-          }
-        }
-      }
-    },
-    "thread.settings.unlimited" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "غير محدود"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Unbegrenzt"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Unlimited"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ilimitado"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Illimité"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "असीमित"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "無制限"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ilimitado"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Без ограничений"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无限制"
-          }
-        }
-      }
-    },
-    "thread.settings.unlimited_hint" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "يتم إرسال جميع رسائل المحادثة في الطلب. قد يزيد التكلفة بشكل كبير."
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Alle Thread-Nachrichten werden in der Anfrage gesendet. Kann die Kosten erheblich erhöhen."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "All thread messages are sent in the request. May significantly increase cost."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Todos los mensajes del hilo se envían en la solicitud. Puede aumentar considerablemente el costo."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tous les messages du fil sont envoyés dans la requête. Peut augmenter considérablement le coût."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "सभी थ्रेड संदेश अनुरोध में भेजे जाते हैं। लागत काफी बढ़ सकती है।"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "スレッドのすべてのメッセージがリクエストに含まれます。コストが大幅に増加する可能性があります。"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Todas as mensagens da conversa são enviadas na solicitação. Pode aumentar significativamente o custo."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Все сообщения треда передаются в запросе. Может сильно увеличить стоимость."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "所有对话消息都会包含在请求中，可能大幅增加费用。"
-          }
-        }
-      }
-    },
-    "thread.settings.unlimited_info" : {
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "السياق غير محدود — يتم إرسال جميع الرسائل في الطلب"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kontext unbegrenzt — alle Nachrichten werden in der Anfrage gesendet"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Context is unlimited — all messages are sent in the request"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Contexto ilimitado — todos los mensajes se envían en la solicitud"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Contexte illimité — tous les messages sont envoyés dans la requête"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "संदर्भ असीमित है — सभी संदेश अनुरोध में भेजे जाते हैं"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "コンテキストは無制限 — すべてのメッセージがリクエストに含まれます"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Contexto ilimitado — todas as mensagens são enviadas na solicitação"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Контекст не ограничен — все сообщения передаются в запросе"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "上下文无限制 — 所有消息都包含在请求中"
           }
         }
       }

@@ -64,13 +64,10 @@ public struct ThreadProjectEntry: Codable, Sendable, Identifiable, Hashable {
 public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
 
     /// Max messages in context window. Range: 10...1000, step 10. Default: 30.
-    public var maxMessagesInContext: Int
-
-    /// When true — all trimming is disabled, everything is sent to the model.
     ///
-    /// WHY SEPARATE FLAG, NOT maxMessagesInContext = Int.max:
-    /// Int.max in JSON/Codable is fragile. An explicit Bool is clear and safe.
-    public var isUnlimitedContext: Bool
+    /// This is a floor, not an exact count: on a route that reads its prompt cache the window
+    /// policy may send up to three times this many messages. See ContextWindowPolicy.
+    public var maxMessagesInContext: Int
 
     /// UUID of the AI provider for this thread. nil = use default provider.
     ///
@@ -100,7 +97,6 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
 
     public init(
         maxMessagesInContext: Int = 30,
-        isUnlimitedContext: Bool = false,
         activeProviderId: UUID? = nil,
         activeKeyId: UUID? = nil,
         activeModelName: String? = nil,
@@ -110,7 +106,6 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
     ) {
         // Clamp to valid range 10...1000 — guard against corrupted JSON values
         self.maxMessagesInContext = max(10, min(1000, maxMessagesInContext))
-        self.isUnlimitedContext = isUnlimitedContext
         self.activeProviderId = activeProviderId
         self.activeKeyId = activeKeyId
         self.activeModelName = activeModelName
@@ -125,9 +120,14 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
     // old thread's provider, model and terminal settings.
 
     private enum CodingKeys: String, CodingKey {
-        case maxMessagesInContext, isUnlimitedContext, activeProviderId, activeKeyId
+        case maxMessagesInContext, activeProviderId, activeKeyId
         case activeModelName, terminalEnabled, curlEnabled, curlHosts
     }
+
+    // NOTE: the removed `isUnlimitedContext` key is deliberately absent from CodingKeys rather
+    // than migrated. A stored `true` now simply decodes into the message limit, because JSON
+    // decoding ignores keys it does not ask for — no stored record can fail to decode, and no
+    // settings record can be lost. Threads that had it enabled start trimming at their limit.
 
     /// Read-only key of the pre-switch three-level setting ("none" / "confirm" / "auto").
     private enum LegacyKeys: String, CodingKey {
@@ -145,7 +145,6 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
         let storedEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .terminalEnabled)) ?? nil
         self.init(
             maxMessagesInContext: try c.decodeIfPresent(Int.self, forKey: .maxMessagesInContext) ?? 30,
-            isUnlimitedContext: try c.decodeIfPresent(Bool.self, forKey: .isUnlimitedContext) ?? false,
             activeProviderId: try c.decodeIfPresent(UUID.self, forKey: .activeProviderId),
             activeKeyId: try c.decodeIfPresent(UUID.self, forKey: .activeKeyId),
             activeModelName: try c.decodeIfPresent(String.self, forKey: .activeModelName),
@@ -159,7 +158,6 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(maxMessagesInContext, forKey: .maxMessagesInContext)
-        try c.encode(isUnlimitedContext, forKey: .isUnlimitedContext)
         try c.encodeIfPresent(activeProviderId, forKey: .activeProviderId)
         try c.encodeIfPresent(activeKeyId, forKey: .activeKeyId)
         try c.encodeIfPresent(activeModelName, forKey: .activeModelName)

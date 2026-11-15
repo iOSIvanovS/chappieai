@@ -29,8 +29,8 @@ extension ChappieViewModel {
             do {
                 await persistThreadTitle(newTitle, threadId: threadId)
 
-                // Start from the sheet's draft — it already has correct maxMessagesInContext,
-                // isUnlimitedContext, and activeKeyId set by the sheet's footerView.
+                // Start from the sheet's draft — it already has correct maxMessagesInContext
+                // and activeKeyId set by the sheet's footerView.
                 var updatedSettings = settings
 
                 print("[ChappieViewModel] updateThreadSettings: incoming maxMsgs=\(settings.maxMessagesInContext) keyId=\(settings.activeKeyId?.uuidString ?? "nil") providerId=\(settings.activeProviderId?.uuidString ?? "nil")")

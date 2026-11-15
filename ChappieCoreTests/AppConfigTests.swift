@@ -56,14 +56,14 @@ struct AppConfigTests {
 
     // MARK: - Dynamic config tests
 
-    /// Unlimited context removes the message cap without any token accounting.
-    @Test("Unlimited context → maxMessagesInContext is Int.max")
-    func unlimitedContext() {
-        var settings = ThreadSettings(maxMessagesInContext: 50)
-        settings.isUnlimitedContext = true
+    /// There is no unlimited mode anymore: the window is always a finite message count, and the
+    /// only thing that can exceed it is the cache allowance in ContextWindowPolicy.
+    @Test("Legacy unlimited flag decodes into a finite window")
+    func legacyUnlimitedDecodes() throws {
+        let legacy = #"{"maxMessagesInContext":50,"isUnlimitedContext":true}"#
+        let settings = try JSONDecoder().decode(ThreadSettings.self, from: Data(legacy.utf8))
         let config = AppConfig(settings: settings)
-        #expect(config.isUnlimitedContext)
-        #expect(config.maxMessagesInContext == Int.max)
+        #expect(config.maxMessagesInContext == 50)
     }
 
     /// Values outside 10...1000 are clamped automatically.

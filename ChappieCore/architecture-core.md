@@ -451,8 +451,7 @@ graph TD
 
 ```swift
 struct ThreadSettings: Codable, Sendable {
-    var maxMessagesInContext: Int   // 10...1000, step 10, default 30
-    var isUnlimitedContext: Bool
+    var maxMessagesInContext: Int   // 10...1000, step 10, default 30 (a FLOOR: see ContextWindowPolicy)
     var activeProviderId: UUID?
     var activeKeyId: UUID?
     var activeModelName: String?
@@ -465,11 +464,15 @@ struct ThreadSettings: Codable, Sendable {
 struct AppConfig: Codable {
     static let shared = AppConfig()            // default: 100 messages
     init(settings: ThreadSettings)             // per-thread config
-    let maxMessagesInContext: Int              // 10...1000 (Int.max when unlimited)
-    let isUnlimitedContext: Bool
+    let maxMessagesInContext: Int              // 10...1000
     let stallTimeoutSeconds: TimeInterval     // 300s, hardcoded
 }
 ```
+
+**Unlimited mode is gone (2026-11).** `isUnlimitedContext` was removed from both structs; the window is always a
+finite message count and the only thing that may exceed it is the cache allowance below. Decoding is safe by
+construction: JSON ignores keys nobody asks for, so a stored `"isUnlimitedContext": true` simply decodes into the
+message limit — no record can fail, no settings can be lost. Threads that had it on start trimming at their limit.
 
 **Decision: no token budget and no orchestrator step cap.** Context depth is controlled by message
 count only. Reasons: (1) the old `tokenBudget = messages × 500` was never enforced, only displayed in the
@@ -1030,6 +1033,7 @@ Tests: `MessageTimestampTests`, `MemoryDatesTests`.
 | 2026-11 | Native Anthropic route for gateways. `BuiltInProvider.nativeAnthropic` (`NativeAnthropicRoute`, `modelPrefix`) makes `AIClientFactory` pick `AnthropicClient` per model id: RouterAI sends `anthropic/*` over its own `/api/v1/messages`, everything else over the OpenAI-compatible path. Causation, not preference: the OpenAI route of RouterAI flattened a tool call into plain text 4 times in a day (stream had no `tool_calls` key at all, `finish_reason: stop`, marker split across `delta.content` chunks), while the native route never did. Verified live end-to-end on the user's key: tools non-stream and streamed, full `tool_result` turn, two parallel `tool_use` blocks, `max_tokens` 32k/64k, `cache_control` on blocks. Two bugs found and fixed on the way: `mergeConsecutiveSameRole` glued two parallel `tool_result` blocks into text (HTTP 200, wrong answer — the model lost the ids), and the native route had no `cache_control` at all, which would have raised cost ~11x. Cost per turn read from `GET /api/v1/generation?id=<x-generation-id>` (the header arrives in the stream too), balance from `/api/v1/credits`; both after the stream, both swallowing failure. Tests: `NativeAnthropicLiveTests` (3, only run when a real key is present) + `AnthropicMessageConversionTests`. An empty-arguments regression is covered in `StreamDumpTests` (see above). |
 | 2026-11 | Stream dump (diagnostics pass 2): `StreamDumpRecorder` buffers the raw SSE lines of one request and `StreamDumpWriter` saves them under `Application Support/ChappieAI/StreamDumps` only when the stream looks wrong (flattened tool call, skipped chunks, invalid tool arguments, missing finish reason) or when `CHAPPIE_STREAM_DUMP=1`. Nothing is ever parsed out of the text as a call — a dump is for reading, not executing. Also fixed `AnthropicDelta.type` being required, which silently dropped `message_delta` events and with them the reported cost. Covered by StreamDumpTests (13). |
 | 2026-11 | Exit code of a command without a trailing newline: `ShellSession.parseOutput` split the stream into lines and looked for a line starting with `EXIT_CODE:`, but the session appends that line directly after the command's last bytes, so `printf abc; false` produced the single line `abcEXIT_CODE:1`. The marker had no line start to anchor to: the exit code was read as a coincidental 0 (reported as success) and the marker stayed in the text handed to the model. Both paths now go through one `splitTrailer`, which searches backwards for the marker and cuts it out of the body; the last occurrence is always the injected one, so a command that prints `EXIT_CODE:` itself keeps its own text. The tail-window copy `exitCode(inTail:)` is gone — one implementation for the inline, truncated and spooled cases. Covered by OutputGuardTests (3 new cases). |
+| 2026-11 | Unlimited context removed: `ThreadSettings.isUnlimitedContext` and `AppConfig.isUnlimitedContext` are gone, so the window is always a finite message count and cannot be silently unbounded. Safe by construction — the stored key is simply no longer requested, which JSON ignores, so no thread record can fail to decode. The slider stays a message count (pairs were considered and rejected: the setting reads better as messages than as tokens), the settings sheet replaced the toggle and the "everything is shown" box with one line stating that a cache-reading route may send up to 3x the window, and `ensureModelHistoryLoaded` now loads `limit × 3 + 1` instead of `limit + 1` — without that the wide allowance would never be reached after a chunk rollover. `visibleMessages` still keeps ×10 for the scrollback. Covered by `AppConfigTests`, `CurlModelsTests`. |
 | 2026-11 | `run_ssh` now spools its output like `run_terminal`: both collectors get `OutputSpool.defaultDirectory`. Before, a remote command printing more than `captureCap` lost everything past it, and a result over the command limit was refused by `OutputGuard` — the model saw only a size notice and no output at all. A timeout or Stop used to discard the output received so far and report only the reason; it now carries both streams (`SSHResult.stopped`), because the lines printed before the hang are usually the explanation. The text shaping moved into its own `SSHResult.swift` (TerminalTools was past 400 lines) and is testable without an ssh host. Covered by SSHResultTests (8 cases). |
 
 ### Build and test tools removed (2026-11)

@@ -78,7 +78,8 @@ final class ChappieViewModel {
 
     var visibleMessages: [ChatMessage] {
         let onlyMessages = messages.filter { if case .message = $0 { return true }; return false }
-        if activeThreadSettings.isUnlimitedContext { return onlyMessages }
+        // ×10 is about the screen, not the request: it keeps a long scrollback without loading
+        // every chunk. At the maximum window of 100 this shows the last 1000 messages.
         return Array(onlyMessages.suffix(activeThreadSettings.maxMessagesInContext * 10))
     }
 

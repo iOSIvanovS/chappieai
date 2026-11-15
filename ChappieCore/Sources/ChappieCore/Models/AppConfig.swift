@@ -26,11 +26,11 @@ public struct AppConfig: Codable, Equatable, Sendable {
 
     // MARK: - Parameters
 
-    /// Hard limit on message count in context window. Range: 10...1000. Int.max when unlimited.
+    /// Hard limit on message count in context window. Range: 10...1000.
+    ///
+    /// A floor, not an exact count: the window policy may send up to three times this many
+    /// messages on a route that reads its prompt cache. See ContextWindowPolicy.
     public let maxMessagesInContext: Int
-
-    /// When true — maxMessagesInContext is Int.max. No trimming.
-    public let isUnlimitedContext: Bool
 
     /// API response timeout. 300s covers multi-file refactoring tasks. Hardcoded.
     public let requestTimeoutSeconds: TimeInterval
@@ -52,7 +52,6 @@ public struct AppConfig: Codable, Equatable, Sendable {
     /// Default config: 30 messages — matches ThreadSettings default.
     private init() {
         maxMessagesInContext     = 30
-        isUnlimitedContext       = false
         requestTimeoutSeconds    = 300
         connectionTimeoutSeconds = 30
         stallTimeoutSeconds      = 300
@@ -61,24 +60,17 @@ public struct AppConfig: Codable, Equatable, Sendable {
 
     /// Creates config from thread settings.
     public init(settings: ThreadSettings) {
-        isUnlimitedContext       = settings.isUnlimitedContext
         requestTimeoutSeconds    = 300
         connectionTimeoutSeconds = 30
         stallTimeoutSeconds      = 300
         maxStallRetries          = 2
-
-        if settings.isUnlimitedContext {
-            maxMessagesInContext = Int.max
-        } else {
-            // Clamp 10...1000 — mirrors ThreadSettings valid range
-            maxMessagesInContext = max(10, min(1000, settings.maxMessagesInContext))
-        }
+        // Clamp 10...1000 — mirrors ThreadSettings valid range
+        maxMessagesInContext     = max(10, min(1000, settings.maxMessagesInContext))
     }
 
     /// Convenience init from raw message count — for tests and legacy code.
     public init(maxMessagesInContext: Int) {
         self.maxMessagesInContext = max(10, min(1000, maxMessagesInContext))
-        isUnlimitedContext       = false
         requestTimeoutSeconds    = 300
         connectionTimeoutSeconds = 30
         stallTimeoutSeconds      = 300
