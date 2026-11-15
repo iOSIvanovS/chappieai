@@ -77,7 +77,7 @@ ChappieCore/
         │   ├── LLMHTTP.swift               # typed ProviderHTTPError, bounded error-body read for streams, Retry-After
         │   └── RetryPolicy.swift           # 5 retries, 1/2/4/8/16 s (cap 30) + jitter; RetryStatus for the UI
         ├── AIOrchestrator+ContextWindow.swift    # buildContextWindow, estimateTokens
-        ├── ContextWindowPolicy.swift             # trim(history:limit:): keeps a slack so the cached prefix survives several turns
+        ├── ContextWindowPolicy.swift             # trim(history:limit:mode:), allowance modes, PromptCacheProfile
         ├── AIOrchestrator+ToolExecution.swift    # executeToolCalls, parseOutputFilePath
         ├── LoopGuard.swift                       # 3rd identical call with an unchanged result is blocked, with an explanation
         ├── AIProviderStore.swift       # CRUD for AI providers + Keychain (multi-key)
@@ -508,14 +508,37 @@ while block breakpoints give `read` 16898 -> 17018 with `created` <= 18 (cost 1.
 `anthropic-beta: extended-cache-ttl-2025-04-11` header is sent only when caching is on, and only then does
 `ttl: "1h"` take effect (without it the write silently becomes 0).
 
-**The window keeps a slack, or the cache is worthless.** A cache read needs a prefix byte-identical to
-the previous request. Sending exactly `limit` messages evicts the oldest one on every turn, so the first
-message after `system` changes each time and the cached prefix ends there — the system prompt is read,
-the whole conversation is written again. `ContextWindowPolicy` therefore lets the history grow to
-`limit + slack` (slack = max(4, limit/8)) before cutting it back to `limit`. Measured on the native
-endpoint, 9 turns, limit 30, ~250-token messages: exact window wrote 160026 tokens and read 22602
-(43.94 RUB); with a slack of 4 it wrote 4744 and read 188468 (6.53 RUB). Over 15 user turns of three
-requests each: 3.42 -> 1.87 RUB per turn. The trade is a bounded overshoot of the configured window.
+**The window keeps an allowance, or the cache is worthless.** A cache read needs a prefix byte-identical
+to the previous request. Sending exactly `limit` messages evicts the oldest one on every turn, so the
+first message after `system` changes each time and the cached prefix ends there — the system prompt is
+read, the whole conversation is written again. `ContextWindowPolicy` therefore lets the history grow
+past `limit` before cutting it back to `limit`.
+
+**How far past depends on how the route bills (three modes).** Reading a cached prefix is cheap per
+token but paid on every request and grows with the history; writing one is expensive and happens on
+every trim. Measured on RouterAI's native endpoint (RUB per 1M: input 213, cache read 10, cache write
+266), limit 30, ~5k tokens added per turn, 3 requests per turn:
+allowance 1x -> 6.89 RUB/turn, 2x -> 4.04, **3x -> 3.61 (minimum)**, 4x -> 3.64, 10x -> 4.86,
+55x (1M messages) -> 17.30. The curve is flat between 2x and 4x, so the choice is forgiving; past 10x
+the read cost dominates. Modes: `.triple` for a route whose cache reads are confirmed, `.slack`
+(= max(4, limit/8), the earlier measured value) for a route that accepts `cache_control` but whose
+reads are unverified, `.exact` for a cold cache or no cache at all.
+
+**Which mode is used is decided per turn, not per provider.** `AIClientProtocol.promptCacheProfile`
+is nil by default; `AnthropicClient` reports a one-hour TTL when `supportsCaching` is on, which covers
+both the native protocol and an OpenAI-format route pinned to Anthropic. With a profile the turn gets
+`.triple` while the cache is warm and `.exact` once it is not; without a profile it gets `.slack`.
+
+**A cold cache makes the wide allowance actively harmful.** After a pause longer than the TTL the old
+prefix is gone, so a long history is written in full for no benefit: 232k tokens is 61.7 RUB in one
+request, while cutting to the window first costs 4.4 RUB. Warmth is tracked in memory in
+`AIOrchestrator` (`lastRequestAtStorage` + `lastRequestThreadId`, reset on a thread switch) against
+`ttl * 0.9`. Not persisted: a restart costs one extra cache write, while persisting would mean a
+database write on every request of the loop.
+
+Earlier live measurement on the same gateway, 9 turns, limit 30, ~250-token messages, small slack:
+exact window wrote 160026 tokens and read 22602 (43.94 RUB); with a slack of 4 it wrote 4744 and read
+188468 (6.53 RUB). Over 15 user turns of three requests each: 3.42 -> 1.87 RUB per turn.
 A cut can leave the history starting with an assistant turn; the API accepts that (verified).
 
 ---
@@ -525,8 +548,9 @@ A cut can leave the history starting with an assistant turn; the API accepts tha
 Split across 4 files:
 - `AIOrchestrator.swift` — core actor, init, `process()` agentic loop
 - `AIOrchestrator+Retry.swift` — `streamWithRetry`, adapter over `LLMRetryRunner` (see "LLM request retry")
-- `AIOrchestrator+ContextWindow.swift` — `buildContextWindow`, `estimateTokens`
-- `ContextWindowPolicy.swift` — `trim(history:limit:)`: how many newest messages to send
+- `AIOrchestrator+ContextWindow.swift` — `buildContextWindow`, `estimateTokens`, cache warmth
+  (`allowanceMode(isCacheWarm:)`, `isCacheWarm()`)
+- `ContextWindowPolicy.swift` — `trim(history:limit:mode:)`, the three allowance modes, `PromptCacheProfile`
 - `AIOrchestrator+ToolExecution.swift` — `executeToolCalls`, `parseOutputFilePath`
 - `LoopGuard.swift` — repeated-call guard. The 3rd identical call (same tool + arguments) in a row is blocked,
   but only while every previous result was identical (result hash compared); a changed result is progress and

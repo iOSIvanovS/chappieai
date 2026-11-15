@@ -42,6 +42,13 @@ public struct AnthropicClient: Sendable, AIClientProtocol {
     static let cacheTTLHeader = "extended-cache-ttl-2025-04-11"
     static let cacheControl = AICacheControl(type: "ephemeral", ttl: "1h")
 
+    /// The native protocol writes block breakpoints and reads them back, so the window may grow
+    /// to three times its configured size while the cache is warm. TTL matches `cacheControl`
+    /// above — and matches the beta header that is only sent when caching is on.
+    public var promptCacheProfile: PromptCacheProfile? {
+        supportsCaching ? .anthropicOneHour : nil
+    }
+
     // MARK: - Init
 
     public init(

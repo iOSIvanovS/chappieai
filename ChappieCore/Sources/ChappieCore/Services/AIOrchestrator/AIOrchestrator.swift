@@ -70,6 +70,12 @@ public actor AIOrchestrator {
     // B-04: invalidate() sets this flag; process() checks it before each agentic step.
     var isInvalidated: Bool = false
 
+    /// Time of the last request sent for the current thread; see AIOrchestrator+ContextWindow.
+    var lastRequestAtStorage: Date? = nil
+
+    /// Thread the stored time belongs to, so switching threads does not inherit warmth.
+    var lastRequestThreadId: UUID? = nil
+
     // MARK: - Init
 
     public init(
@@ -120,6 +126,14 @@ public actor AIOrchestrator {
             throw CancellationError()
         }
 
+        // One orchestrator serves whichever thread is active. A different thread means a
+        // different prefix, so the warmth of the previous thread's cache says nothing about this
+        // one — forget it rather than inherit a wrong "warm" answer.
+        if lastRequestThreadId != memoryContext.threadId {
+            lastRequestThreadId = memoryContext.threadId
+            lastRequestAtStorage = nil
+        }
+
         let systemPrompt = overrideSystemPrompt ?? {
             assertionFailure("[AIOrchestrator] overrideSystemPrompt is nil — caller must always provide a system prompt")
             return ""
@@ -149,6 +163,9 @@ public actor AIOrchestrator {
             stepCount += 1
 
             let tools = await toolService.availableTools
+
+            // Marked before the request: that is when the prefix is written or read.
+            lastRequestAtStorage = Date()
 
             let streamResult = try await streamWithRetry(
                 systemPrompt: systemPrompt,
