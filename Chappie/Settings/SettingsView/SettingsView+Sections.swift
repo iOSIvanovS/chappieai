@@ -112,10 +112,10 @@ extension SettingsView {
 
     var memorySection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("settings.memory_section", systemImage: "internaldrive")
+            Label("settings.messages_section", systemImage: "internaldrive")
                 .font(.headline)
 
-            Text("settings.memory_hint")
+            Text("settings.messages_hint")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -134,7 +134,7 @@ extension SettingsView {
                 Spacer()
 
                 Button { showMemory = true } label: {
-                    Label("settings.memory_manage", systemImage: "trash.slash")
+                    Label("settings.messages_manage", systemImage: "trash.slash")
                 }
                 .buttonStyle(.bordered)
             }

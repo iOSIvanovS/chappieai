@@ -33,7 +33,7 @@ struct MemoryManagementView: View {
                 Image(systemName: "internaldrive")
                     .font(.title2)
                     .foregroundStyle(.secondary)
-                Text("settings.memory_manage")
+                Text("settings.messages_manage")
                     .font(.title2.bold())
                 Spacer()
                 Button { dismiss() } label: {
