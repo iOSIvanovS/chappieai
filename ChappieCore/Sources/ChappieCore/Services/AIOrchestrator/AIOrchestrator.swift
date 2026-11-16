@@ -158,11 +158,18 @@ public actor AIOrchestrator {
             return ""
         }()
 
+        // Tools are fetched before the window is decided, because their hash is part of the prefix
+        // check: a changed tool list invalidates the cache as surely as a changed system prompt,
+        // and the window has to know that before it decides how much history to carry.
+        let firstStepTools = await toolService.availableTools
+
         var sessionHistory = buildContextWindow(
             from: history,
             currentPrompt: prompt,
             currentMessage: currentMessage,
-            config: config
+            config: config,
+            systemPrompt: systemPrompt,
+            tools: firstStepTools
         )
 
         var totalCost: Double = 0.0
@@ -181,10 +188,25 @@ public actor AIOrchestrator {
 
             stepCount += 1
 
-            let tools = await toolService.availableTools
+            // The first step reuses the list already fetched for the prefix check; later steps
+            // re-read it, because tool status can change while a turn runs.
+            let tools: [AITool]
+            if stepCount == 1 {
+                tools = firstStepTools
+            } else {
+                tools = await toolService.availableTools
+            }
 
             // Marked before the request: that is when the prefix is written or read.
             markRequestSent()
+
+            // The prefix of the request that is about to go out — overwriting the one recorded
+            // while the window was built. Mid-turn steps carry tool results the window builder
+            // never saw, and it is the LAST request of a turn that the provider holds in cache.
+            windowState.setSentPrefix(
+                PrefixFingerprint.make(tools: tools, system: systemPrompt, messages: sessionHistory),
+                threadId: currentThreadId
+            )
 
             let streamResult = try await streamWithRetry(
                 systemPrompt: systemPrompt,

@@ -78,7 +78,8 @@ ChappieCore/
         │   └── RetryPolicy.swift           # 5 retries, 1/2/4/8/16 s (cap 30) + jitter; RetryStatus for the UI
         ├── AIOrchestrator+ContextWindow.swift    # buildContextWindow, estimateTokens
         ├── ContextWindowPolicy.swift             # slice(history:limit:mode:anchorSignature:), allowance modes, PromptCacheProfile, cacheIsWarm
-        ├── ContextWindowStateStore.swift         # per-thread last-request mark + window anchor; UserDefaults-backed, survives relaunch
+        ├── ContextWindowStateStore.swift         # per-thread last-request mark + window anchor + sent-prefix fingerprint; UserDefaults-backed, survives relaunch
+        ├── SentPrefix.swift                     # head/prefix fingerprint of the request that went out, and the kept/changed verdict
         ├── ../Debug/RequestTrace.swift           # per-request canonical fingerprints of system/tools/messages + what changed; finds cache breaks
         ├── ../Debug/LogClock.swift               # ms timestamps for logs compared across processes
         ├── AIOrchestrator+ToolExecution.swift    # executeToolCalls, parseOutputFilePath
@@ -615,6 +616,34 @@ Both clients set `outputFormatting = [.sortedKeys]`. It is pinned by
 verified by removing it and watching BOTH tests in that suite go red. Note that it also failed the
 "same body twice in one process" test, so the ordering is not even stable within a single process.
 
+**A changed head means a write, not a read — so the prompt is fingerprinted, not guessed about.**
+An anchor keeps the window still, but says nothing about the tools and the system prompt that come
+before it, and those are rebuilt every turn from memory, project settings and tool status. One
+changed byte there kills the cache for the whole request, however perfectly the window is anchored.
+`SentPrefix` records a canonical hash of what actually went out — `headHash` over tools + system
+prompt, `prefixHash` over head + the first N messages, plus N itself — and the next turn compares.
+N is stored because hashing "this request minus the newest exchange" can never match: the previous
+request is always a STRICT PREFIX of the current one, so the two sides would hash different sets
+every time and report a change on every turn. With N stored, the next turn hashes exactly the same
+slice and compares like with like.
+
+The verdict drives the window: `kept` keeps the wide allowance, `changed(head)` and `changed(msgs)`
+force `.exact`, so the turn that is going to be written from scratch carries no more than the
+configured window instead of an oversized prompt that costs the same write and more input tokens.
+`unknown` (first turn of a process, route without a cache, unreadable stored value) is treated as
+"will write" for the *window* decision only through the existing cold-cache path — a corrupt entry
+is never a wrong answer, just one honest cut. The fingerprint is re-recorded before EVERY request of
+the turn, because it is the last request of a turn that the provider holds in cache; mid-turn steps
+carry tool results the window builder never saw. Tools are therefore fetched before the window is
+decided, not inside the loop. Covered by `SentPrefixTests` (11 cases on the comparison) and
+`ContextWindowPrefixTests` (5 on the window decision, verified to fail with the check disabled).
+
+**What is still not stable, and why that is now harmless.** Editing memory mid-thread still changes
+the system prompt, and the next turn is a genuine write — the fingerprint now SAYS so instead of
+being surprised by it, and the window is cut back accordingly. The bytes themselves are already
+stable across processes (see `.sortedKeys` and `promptDisplayValue` below), which is what makes the
+comparison meaningful across a relaunch.
+
 **Request tracing (`Debug/RequestTrace.swift`, `Debug/LogClock.swift`) exists so the next cache
 question is answered by looking, not by inference.** Every outgoing request prints one line with a
 canonical fingerprint of each part and what changed since the previous request:
@@ -649,9 +678,12 @@ Split across 4 files:
 - `ContextWindowPolicy.swift` — `slice(history:limit:mode:anchorSignature:)` (the anchor-aware cut) and
   `trim(history:limit:mode:)` (the anchor-free form, kept for its tests), the three allowance modes,
   `PromptCacheProfile`, the pure `cacheIsWarm(lastRequestAt:now:profile:)` threshold
-- `ContextWindowStateStore.swift` — where the last-request mark and the window anchor per thread live, plus
-  `WindowAnchor` (FNV-1a signature with a copy number). UserDefaults by default, so both survive a relaunch;
-  see "The allowance alone does not stabilise the prefix" below
+- `ContextWindowStateStore.swift` — where the last-request mark, the window anchor and the sent-prefix
+  fingerprint per thread live, plus `WindowAnchor` (FNV-1a signature with a copy number). UserDefaults by
+  default, so all three survive a relaunch; see "The allowance alone does not stabilise the prefix" below
+- `SentPrefix.swift` — `PrefixFingerprint`: a canonical hash of tools + system prompt (`headHash`) and of the
+  head plus the first N messages (`prefixHash`), stored with N so the next turn compares like with like. Verdict
+  is `kept` / `changed(head)` / `changed(msgs)` / `unknown`; see "A changed head means a write, not a read" below
 - `AIOrchestrator+ToolExecution.swift` — `executeToolCalls`, `parseOutputFilePath`
 - `LoopGuard.swift` — repeated-call guard. The 3rd identical call (same tool + arguments) in a row is blocked,
   but only while every previous result was identical (result hash compared); a changed result is progress and
@@ -1133,6 +1165,7 @@ Tests: `MessageTimestampTests`, `MemoryDatesTests`.
 | 2026-11 | Exit code of a command without a trailing newline: `ShellSession.parseOutput` split the stream into lines and looked for a line starting with `EXIT_CODE:`, but the session appends that line directly after the command's last bytes, so `printf abc; false` produced the single line `abcEXIT_CODE:1`. The marker had no line start to anchor to: the exit code was read as a coincidental 0 (reported as success) and the marker stayed in the text handed to the model. Both paths now go through one `splitTrailer`, which searches backwards for the marker and cuts it out of the body; the last occurrence is always the injected one, so a command that prints `EXIT_CODE:` itself keeps its own text. The tail-window copy `exitCode(inTail:)` is gone — one implementation for the inline, truncated and spooled cases. Covered by OutputGuardTests (3 new cases). |
 | 2026-11 | Unlimited context removed: `ThreadSettings.isUnlimitedContext` and `AppConfig.isUnlimitedContext` are gone, so the window is always a finite message count and cannot be silently unbounded. Safe by construction — the stored key is simply no longer requested, which JSON ignores, so no thread record can fail to decode. The slider stays a message count (pairs were considered and rejected: the setting reads better as messages than as tokens), the settings sheet replaced the toggle and the "everything is shown" box with one line stating that a cache-reading route may send up to 3x the window, and `ensureModelHistoryLoaded` now loads `limit × 3 + 1` instead of `limit + 1` — without that the wide allowance would never be reached after a chunk rollover. `visibleMessages` still keeps ×10 for the scrollback. Covered by `AppConfigTests`, `CurlModelsTests`. |
 | 2026-11 | `run_ssh` now spools its output like `run_terminal`: both collectors get `OutputSpool.defaultDirectory`. Before, a remote command printing more than `captureCap` lost everything past it, and a result over the command limit was refused by `OutputGuard` — the model saw only a size notice and no output at all. A timeout or Stop used to discard the output received so far and report only the reason; it now carries both streams (`SSHResult.stopped`), because the lines printed before the hang are usually the explanation. The text shaping moved into its own `SSHResult.swift` (TerminalTools was past 400 lines) and is testable without an ssh host. Covered by SSHResultTests (8 cases). |
+| 2026-11 | The sent-prefix fingerprint (`SentPrefix`): the window decision no longer infers "the provider will read" from elapsed time and a standing anchor, it compares a canonical hash of the tools + system prompt + the messages that went out last time. A changed head or a shifted message run forces `.exact`, so a turn that will be written from scratch stops carrying 3x the window. Stored per thread next to the mark and the anchor (`chappie.contextWindow.sentPrefix`), with the message count so the next turn hashes the same slice — comparing "everything except the newest exchange" can never match, since the previous request is always a strict prefix of the current one. Tools are now fetched before the window is built (their hash is part of the check). Covered by `SentPrefixTests` (11) and `ContextWindowPrefixTests` (5), the latter verified red with the check disabled. |
 | 2026-11 | The window anchor is kept after a cold turn too. `buildContextWindow` stored `warm ? sliced.anchor : nil`, so a cold turn threw away the start of the window it had just sent — and that request is exactly the prefix the provider now holds. Measured live: a cold turn wrote 78824 tokens (21.43 RUB), and the next turn still re-wrote 47k of the same 79k instead of reading them. Now `sliced.anchor` is stored unconditionally; a stale anchor costs nothing because `slice` discards one that left the history or sits too close to the end. Covered by `ContextWindowAnchorPersistenceTests` (6 cases: a cold turn records its anchor, the next turn keeps the same prefix, a route without a cache is unchanged, a long pause still falls back to the exact window, anchors stay per thread). |
 
 ### Build and test tools removed (2026-11)

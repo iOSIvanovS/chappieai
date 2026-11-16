@@ -15,16 +15,38 @@ extension AIOrchestrator {
     ///
     /// The anchor is a message signature, not an index: older history chunks are prepended on
     /// demand between turns, so every index moves. See WindowAnchor.
+    ///
+    /// THE PREFIX IS THEN CHECKED, NOT ASSUMED. An anchor keeps the window still, but it says
+    /// nothing about the tools and the system prompt that precede it — and those are rebuilt from
+    /// memory, project settings and tool status on every turn. A single changed byte there kills
+    /// the cache for the whole request however still the window is. So the prompt that actually
+    /// went out last turn is fingerprinted (see SentPrefix) and compared: a changed head means the
+    /// provider will write, and an oversized window would only make that write bigger.
     func buildContextWindow(
         from history: [AIMessage],
         currentPrompt: String,
         currentMessage: AIMessage? = nil,
-        config: AppConfig
+        config: AppConfig,
+        systemPrompt: String = "",
+        tools: [AITool] = []
     ) -> [AIMessage] {
         let maxMessages = config.maxMessagesInContext
-        let warm = isCacheWarm()
-        let mode = allowanceMode(isCacheWarm: warm)
+        let warmByTime = isCacheWarm()
         let storedAnchor = windowState.anchorSignature(threadId: currentThreadId)
+        let storedPrefix = windowState.sentPrefix(threadId: currentThreadId)
+        let headMatches = storedPrefix.map {
+            PrefixFingerprint.headHash(tools: tools, system: systemPrompt) == $0.headHash
+        }
+        let baseMode = allowanceMode(isCacheWarm: warmByTime)
+        var mode = baseMode
+        var forcedBy: String? = nil
+
+        // A changed head means the provider cannot match a single byte, so the wide allowance buys
+        // nothing and costs a bigger rewrite. Cut to the configured window at once.
+        if headMatches == false, baseMode != .exact {
+            mode = .exact
+            forcedBy = "head changed"
+        }
 
         print("[AIOrchestrator] \(LogClock.stamp()) History: \(history.count) msgs"
               + " | Limit: \(maxMessages == Int.max ? "∞" : "\(maxMessages)")"
@@ -42,25 +64,50 @@ extension AIOrchestrator {
             deduplicatedHistory = history
         }
 
-        let sliced = ContextWindowPolicy.slice(
+        var sliced = ContextWindowPolicy.slice(
             deduplicatedHistory,
             limit: maxMessages,
             mode: mode,
             anchorSignature: storedAnchor
         )
 
+        // The head is what usually moves, but the shared messages can move too: a prepended chunk
+        // can renumber duplicates and shift the anchor, and a re-cut window starts elsewhere. If
+        // that happened while the wide allowance was on, cut again before sending anything.
+        if mode != .exact {
+            let verdict = PrefixFingerprint.verdict(
+                stored: storedPrefix,
+                tools: tools,
+                system: systemPrompt,
+                messages: sliced.messages
+            )
+            if verdict == .messagesChanged {
+                sliced = ContextWindowPolicy.slice(
+                    deduplicatedHistory,
+                    limit: maxMessages,
+                    mode: .exact,
+                    anchorSignature: storedAnchor
+                )
+                mode = .exact
+                forcedBy = "messages changed"
+            }
+        }
+
+        let prefixNote = prefixLabel(headMatches: headMatches, forcedBy: forcedBy)
         if let trimmedFrom = sliced.trimmedFrom {
             print("[AIOrchestrator] \(LogClock.stamp()) Trimmed \(trimmedFrom) → \(sliced.messages.count) messages "
                   + "(limit \(maxMessages), allowance \(modeLabel(mode, limit: maxMessages)), "
-                  + "cache \(warm ? "warm" : "cold") \(cacheAgeDescription()), "
-                  + "anchor \(storedAnchor == nil ? "none" : "found"))")
+                  + "cache \(warmByTime ? "warm" : "cold") \(cacheAgeDescription()), "
+                  + "anchor \(storedAnchor == nil ? "none" : "found"), "
+                  + "\(prefixNote))")
         } else {
             // Nothing was cut, so this line is the only record of the window standing still —
             // which is exactly the case that must show `anchor found` and a stable prefix.
             print("[AIOrchestrator] \(LogClock.stamp()) Window kept: \(sliced.messages.count) of \(history.count) messages "
                   + "(limit \(maxMessages), allowance \(modeLabel(mode, limit: maxMessages)), "
-                  + "cache \(warm ? "warm" : "cold") \(cacheAgeDescription()), "
-                  + "anchor \(storedAnchor == nil ? "none" : "found"))")
+                  + "cache \(warmByTime ? "warm" : "cold") \(cacheAgeDescription()), "
+                  + "anchor \(storedAnchor == nil ? "none" : "found"), "
+                  + "\(prefixNote))")
         }
 
         // The anchor is remembered whether or not the cache was warm. A cold turn still sends its
@@ -82,6 +129,17 @@ extension AIOrchestrator {
             contextWindow.append(AIMessage(role: "user", content: currentPrompt))
         }
 
+        // What leaves this turn, so the next turn can tell a read from a write before it writes.
+        // The HISTORY part only: the new prompt is appended after this and never appears in the
+        // next turn's `sliced.messages`, so including it here would make every comparison fail
+        // on a count mismatch and force `exact` on every turn.
+        // Recorded even when the verdict was "unknown": this request becomes the prefix that the
+        // next one is compared against.
+        windowState.setSentPrefix(
+            PrefixFingerprint.make(tools: tools, system: systemPrompt, messages: sliced.messages),
+            threadId: currentThreadId
+        )
+
         print("[AIOrchestrator] Sending: \(contextWindow.count) msgs")
         return contextWindow
     }
@@ -90,10 +148,13 @@ extension AIOrchestrator {
 
     /// Chooses how much room beyond the window this turn may use.
     ///
-    /// A cache-reading route gets three times the window, but only while the cache is warm: after
-    /// a pause longer than the cache TTL the old prefix is gone, so keeping the history long
-    /// protects nothing and only makes the next write bigger. Everything else gets the small
-    /// measured slack, which is what this code did before the native route existed.
+    /// A cache-reading route gets three times the window, but only while the prefix can still be
+    /// read: after a pause longer than the cache TTL the old prefix is gone, so keeping the
+    /// history long protects nothing and only makes the next write bigger. Everything else gets
+    /// the small measured slack, which is what this code did before the native route existed.
+    ///
+    /// This is the answer by time alone; `buildContextWindow` narrows it further when the tools or
+    /// the system prompt have changed since the last request.
     func allowanceMode(isCacheWarm: Bool) -> ContextWindowAllowance {
         guard aiClient.promptCacheProfile != nil else { return .slack }
         return isCacheWarm ? .triple : .exact
@@ -105,6 +166,13 @@ extension AIOrchestrator {
         case .slack:  return "slack \(ContextWindowPolicy.slack(for: limit))"
         case .triple: return "x\(ContextWindowPolicy.tripleMultiplier)"
         }
+    }
+
+    /// The `prefix` field of the window line, in words that say what was compared.
+    func prefixLabel(headMatches: Bool?, forcedBy: String?) -> String {
+        if let forcedBy { return "prefix \(forcedBy)" }
+        guard let headMatches else { return "prefix unknown" }
+        return headMatches ? "prefix kept" : "prefix changed(head)"
     }
 
     // MARK: - Request Time

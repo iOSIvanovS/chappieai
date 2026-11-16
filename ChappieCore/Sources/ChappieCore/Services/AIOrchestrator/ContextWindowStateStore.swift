@@ -84,7 +84,8 @@ public enum WindowAnchor {
 
 // MARK: - ContextWindowStateStore
 
-/// Remembers the window state of each thread: last request time and window anchor.
+/// Remembers the window state of each thread: last request time, window anchor and the
+/// fingerprint of the prefix that request carried.
 ///
 /// Keyed by thread because the cached prefix belongs to one conversation: another thread's mark
 /// says nothing about this one.
@@ -102,6 +103,14 @@ public protocol ContextWindowStateStore: Sendable {
 
     /// Records the anchor signature. A nil value forgets it, which makes the next turn start cold.
     func setAnchorSignature(_ signature: String?, threadId: UUID?)
+
+    /// Fingerprint of the prefix the last request of this thread carried, or nil if unknown.
+    /// See `SentPrefix`.
+    func sentPrefix(threadId: UUID?) -> SentPrefix?
+
+    /// Records the prefix fingerprint. A nil value forgets it, which forces the next turn to
+    /// assume the provider will write.
+    func setSentPrefix(_ prefix: SentPrefix?, threadId: UUID?)
 }
 
 // MARK: - InMemoryContextWindowStateStore
@@ -113,6 +122,7 @@ public final class InMemoryContextWindowStateStore: ContextWindowStateStore, @un
     private let lock = NSLock()
     private var times: [UUID: Date] = [:]
     private var anchors: [UUID: String] = [:]
+    private var prefixes: [UUID: SentPrefix] = [:]
 
     public init() {}
 
@@ -143,6 +153,20 @@ public final class InMemoryContextWindowStateStore: ContextWindowStateStore, @un
         defer { lock.unlock() }
         anchors[key] = signature
     }
+
+    public func sentPrefix(threadId: UUID?) -> SentPrefix? {
+        guard let key = threadId else { return nil }
+        lock.lock()
+        defer { lock.unlock() }
+        return prefixes[key]
+    }
+
+    public func setSentPrefix(_ prefix: SentPrefix?, threadId: UUID?) {
+        guard let key = threadId else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        prefixes[key] = prefix
+    }
 }
 
 // MARK: - UserDefaultsContextWindowStateStore
@@ -164,15 +188,18 @@ public final class UserDefaultsContextWindowStateStore: ContextWindowStateStore,
     private let defaults: UserDefaults
     private let timeKey: String
     private let anchorKey: String
+    private let prefixKey: String
 
     public init(
         defaults: UserDefaults = .standard,
         timeKey: String = "chappie.cacheWarmth.lastRequestAt",
-        anchorKey: String = "chappie.contextWindow.anchorSignature"
+        anchorKey: String = "chappie.contextWindow.anchorSignature",
+        prefixKey: String = "chappie.contextWindow.sentPrefix"
     ) {
         self.defaults = defaults
         self.timeKey = timeKey
         self.anchorKey = anchorKey
+        self.prefixKey = prefixKey
     }
 
     // MARK: Request time
@@ -220,5 +247,28 @@ public final class UserDefaultsContextWindowStateStore: ContextWindowStateStore,
         }
 
         defaults.set(stored, forKey: anchorKey)
+    }
+
+    // MARK: Sent prefix
+
+    public func sentPrefix(threadId: UUID?) -> SentPrefix? {
+        guard let id = threadId?.uuidString else { return nil }
+        guard let raw = defaults.dictionary(forKey: prefixKey)?[id] as? String else { return nil }
+        // An unreadable entry is "nothing known", never a wrong answer: the turn then behaves as
+        // if no prefix had been sent, which costs one honest cut.
+        return SentPrefix(rawValue: raw)
+    }
+
+    public func setSentPrefix(_ prefix: SentPrefix?, threadId: UUID?) {
+        guard let id = threadId?.uuidString else { return }
+        var stored = defaults.dictionary(forKey: prefixKey) ?? [:]
+
+        if let prefix {
+            stored[id] = prefix.rawValue
+        } else {
+            stored.removeValue(forKey: id)
+        }
+
+        defaults.set(stored, forKey: prefixKey)
     }
 }
