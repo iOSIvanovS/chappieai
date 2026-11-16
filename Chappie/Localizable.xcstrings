@@ -1358,7 +1358,6 @@
       }
     },
     "agent_memory.global_hint" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -1423,7 +1422,6 @@
       }
     },
     "agent_memory.global_title" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -1552,7 +1550,6 @@
       }
     },
     "agent_memory.open" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -1617,7 +1614,6 @@
       }
     },
     "agent_memory.projects_hint" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -1682,7 +1678,6 @@
       }
     },
     "agent_memory.projects_title" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -1811,7 +1806,6 @@
       }
     },
     "agent_memory.thread_hint" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -1876,7 +1870,6 @@
       }
     },
     "agent_memory.thread_title" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -1941,7 +1934,6 @@
       }
     },
     "agent_memory.threads_hint" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -2006,7 +1998,6 @@
       }
     },
     "agent_memory.threads_title" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -2071,7 +2062,6 @@
       }
     },
     "agent_memory.title" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
