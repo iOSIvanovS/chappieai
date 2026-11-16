@@ -27,7 +27,10 @@ ChappieCore/
     │   ├── AITunnelCacheModels.swift    # Cache control models (Anthropic prompt caching)
     │   ├── AppConfig.swift             # Centralized config (dynamic, per-thread). Default: 100 messages.
     │   ├── ChappieError.swift          # ChappieError enum
-    │   ├── MemoryModels.swift          # MemoryEntry, MemoryScope, MemoryStorage
+    │   ├── MemoryModels.swift          # MemoryEntry, MemoryStorage
+    │   ├── MemoryScope.swift           # MemoryScope enum (.global / .thread(uuid) / .project(uuid)) + MemoryKeys.userName; thread and project scopes are both UUIDs, the enum prevents mixing them
+    │   ├── MemoryEntryOrdering.swift   # Display order: type, then key, then id (id breaks ties of duplicate type+key after a backup import)
+    │   ├── MemoryEntryPresentation.swift # Decides whether an entry has fields hidden from the one-line prompt view (drives "Show all fields")
     │   ├── CurlChappie/                # Curl-Chappie data model (HTTP request tool)
     │   │   ├── CurlHost.swift          #   Thread allow-list entry (origin + permission readOnly/readAndLogin/full + loginPath); CurlOrigin = the one definition of "same host"
     │   │   ├── CurlSecret.swift        #   Project secret METADATA (name, kind, host origin); values are never stored here

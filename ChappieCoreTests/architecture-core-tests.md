@@ -33,6 +33,8 @@ ChappieCoreTests/
 ├── CommandSafetyTests.swift            # Catastrophes blocked in every spelling (rm -fr /, sudo, bash -c, ...), harmless look-alikes allowed (rm -rf /tmp/x, "reboot" in text/heredoc), tokenizer
 ├── LoopGuardTests.swift                # 3rd identical call blocked only while results are identical; changed result / different call resets; message explains
 ├── MessageTimestampTests.swift         # Time label format, gap + previous-run duration, omitted short gaps, legacy nil dates, determinism
+├── MemoryScopeTests.swift              # MemoryScope storage strings (global / thread UUID / project UUID; the same UUID gives the same storage key by design, only the compiler tells the two apart), entry ordering (type, key, id tie-break, repeatable, empty input)
+├── MemoryEntryPresentationTests.swift  # Which entries expose extra fields: plain string, single key, empty containers, several keys, determinism, slashes/Cyrillic
 ├── MemoryDatesTests.swift              # Memory entry dates in the prompt: created/updated, same-day form, time zone, stability, createdAt kept on re-save, real SystemPromptBuilder path
 ├── CurlModelsTests.swift               # Curl-Chappie model: origin/path normalization, old JSON decodes with defaults, secret naming and duplicates, Keychain round trip (unique service per test)
 ├── CurlValidationTests.swift           # Curl-Chappie settings rows: host/secret issues, blank rows dropped, normalization on save, save gate, Keychain apply (write/keep/remove/kind switch)

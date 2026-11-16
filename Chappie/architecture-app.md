@@ -39,7 +39,9 @@ Chappie/
 │   └── TerminalLiveState.swift         # Live terminal window state
 ├── Settings/
 │   ├── SettingsView/                   # App settings sheet (+ Sections, Helpers)
-│   ├── MemoryManagementView/           # Memory browser/editor, DeleteMessagesSheet, Actions
+│   ├── MemoryManagementView/           # "Stored messages": per-thread size, DeleteMessagesSheet, Actions (history, not agent memory)
+│   ├── AgentMemory/                    # "Agent memory management": AgentMemoryView (one NavigationStack: global memory + thread list), ThreadMemoryView (thread memory + its attached projects), AgentMemoryRows (link row, section header, entry counter, AgentMemoryRoute enum), MemoryEntriesEditorView (table for ONE MemoryScope), MemoryEntryRow (type capsule, key, promptDisplayValue, expandable full JSON, trash). Entry text and types are shown as stored (English), only labels are localized
+
 │   └── BackupSettingsView/             # BackupExportSheet, BackupImportSheet (encrypted .chappiebackup)
 └── Views/
     ├── Chat/
@@ -91,7 +93,7 @@ graph TD
         Providers["ProvidersSettingsView\nAddProviderSheet\nCatalogPickerSheet\nEditKeySheet\nAddModelSheet"]
         Onboarding["OnboardingView\nEULAView"]
         Toolbar["ToolbarContent"]
-        Settings["SettingsView\nMemoryManagementView"]
+        Settings["SettingsView\nMemoryManagementView\nAgentMemoryView"]
     end
 
     subgraph Core["ChappieCore (Swift Package)"]
@@ -308,4 +310,5 @@ Auto-select: if provider has exactly one key → pre-selected automatically.
 | 2026-07 | SwiftData removal: AppSettingsMigration.swift deleted. ChappieApp uses bootStorage(). |
 | 2026-07 | Legacy migration removed: ThreadStore no longer contains migrateIfNeeded logic. |
 | 2026-08 | Backup Import UI: BackupImportSheet (decrypt/preview → destructive confirm → restore), wired into both SettingsView and OnboardingView welcome step ("Restore from Backup" shortcut skips the wizard entirely). ChappieViewModel+Backup gained previewBackup/importBackup/reloadAfterImport. |
+| 2026-11 | Agent memory editor: Settings section "Agent memory management" opens AgentMemoryView (540x520 sheet). Path: global memory or thread -> thread memory or project of that thread -> MemoryEntriesEditorView. Project memory scope is the ThreadProjectEntry id (issued when a project is attached to a thread), so the same folder in two threads has two separate memories. Deletion removes the whole entry by key (never a fragment), goes through ChappieViewModel.deleteMemoryEntry (ChappieViewModel+MemoryEditor) which also drops the cached system prompt of the active thread, otherwise the agent would keep following a deleted rule. The `user_name` entry is hidden from the table (it is the Settings name field). Old "Memory" section renamed "Stored messages"; its loc keys renamed settings.memory_* -> settings.messages_*. |
 | 2026-11 | Remote providers.json catalog removed: built-in provider presets live in ChappieCore code, models are typed by the user. Settings got a "Support the project" section (donation link). |
