@@ -23114,7 +23114,6 @@
       }
     },
     "settings.agent_memory_hint" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -23179,7 +23178,6 @@
       }
     },
     "settings.agent_memory_section" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {

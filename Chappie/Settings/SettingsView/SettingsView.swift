@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State var userName: String = ""
     @State var showProviders: Bool = false
     @State var showMemory: Bool = false
+    @State var showAgentMemory: Bool = false
     @State var nameSaved: Bool = false
     @State var showOnboardingConfirm: Bool = false
     @State var showEULAConfirm: Bool = false
@@ -34,6 +35,8 @@ struct SettingsView: View {
                     Divider()
                     memorySection
                     Divider()
+                    agentMemorySection
+                    Divider()
                     updatesSection
                     Divider()
                     onboardingSection
@@ -53,6 +56,10 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showMemory) {
             MemoryManagementView(viewModel: viewModel)
+        }
+        .sheet(isPresented: $showAgentMemory) {
+            AgentMemoryView(viewModel: viewModel)
+                .frame(width: 540, height: 520)
         }
         .sheet(isPresented: $showBackupExport) {
             BackupExportSheet(viewModel: viewModel)

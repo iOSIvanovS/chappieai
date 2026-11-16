@@ -108,6 +108,27 @@ extension SettingsView {
         }
     }
 
+    // MARK: - Agent Memory Section
+
+    var agentMemorySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("settings.agent_memory_section", systemImage: "brain")
+                .font(.headline)
+
+            Text("settings.agent_memory_hint")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Spacer()
+                Button { showAgentMemory = true } label: {
+                    Label("settings.messages_manage", systemImage: "slider.horizontal.3")
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+    }
+
     // MARK: - Memory Section
 
     var memorySection: some View {
