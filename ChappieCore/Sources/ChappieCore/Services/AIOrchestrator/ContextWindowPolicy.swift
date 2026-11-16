@@ -36,6 +36,16 @@
 // of rewriting the whole conversation every turn.
 //
 // Cutting may leave the history starting with an assistant turn. Verified: the API accepts it.
+//
+// WHY THE TRIM NEEDS AN ANCHOR, NOT JUST A LIMIT:
+// The caller hands in the whole loaded history, which grows by a couple of messages every turn.
+// Deciding purely on that length makes the window slide instead of standing still: 112 messages
+// cut to the newest 30, then 114 cut to the newest 30 — the first message of the window moves
+// two places forward and the cached prefix dies at its first byte.
+// Measured live: 112 → 30 at 18:55 and 114 → 30 a minute later, both full prefix writes,
+// 23.86 RUB per turn against 2.29 RUB for a read.
+// So the policy remembers how many leading messages it dropped last time and starts from there.
+// The window then grows forward from a fixed point for many turns — which is the whole point.
 
 import Foundation
 
@@ -141,21 +151,92 @@ public enum ContextWindowPolicy {
 
     /// The newest messages to send, with the trim decision reported for the log.
     ///
-    /// Returns the input untouched while it fits within the mode's allowance; once it grows past
-    /// that, it is cut back to exactly `limit`. The prefix therefore survives several turns
-    /// unchanged, which is what lets the provider read its cache instead of rewriting it.
+    /// This is the anchor-free form: it decides on the length of what it is given, so a caller
+    /// that passes the whole growing history gets a sliding window. Kept for its tests and for
+    /// callers that hold nothing between turns; the orchestrator uses `slice` below.
     public static func trim(
         _ history: [AIMessage],
         limit: Int,
         mode: ContextWindowAllowance = .slack
     ) -> (messages: [AIMessage], trimmedFrom: Int?) {
-        guard limit != Int.max, history.count > limit else {
-            return (history, nil)
+        let result = slice(history, limit: limit, mode: mode)
+        return (result.messages, result.trimmedFrom)
+    }
+
+    /// One turn's window: what to send and which message it starts at.
+    public struct Slice: Sendable {
+        /// Messages to send, in order.
+        public let messages: [AIMessage]
+        /// Length of the history this was cut from, or nil when nothing was cut.
+        public let trimmedFrom: Int?
+        /// Signature of the first message sent this turn — the anchor to look up next turn so the
+        /// window stands still instead of sliding. Nil when there is nothing to send.
+        public let anchor: String?
+    }
+
+    /// The newest messages to send, measured from a remembered anchor.
+    ///
+    /// `anchorSignature` identifies the message the window started at last turn. While the window
+    /// from there to the end of the history fits the mode's allowance, the same message starts the
+    /// window again and the prefix is unchanged — that is what the provider reads from cache.
+    /// Once the window outgrows the allowance it is cut back to exactly `limit` and a new anchor
+    /// is returned, which costs one prefix write and then buys many cheap turns.
+    ///
+    /// WHY THE SEARCH IS DETERMINISTIC RATHER THAN CLEVER: two messages can share a signature
+    /// (identical role and text), so the lookup may land on an earlier copy than the one intended.
+    /// That is harmless, because each turn re-stores the signature of whatever it actually sent —
+    /// the choice is stable from turn to turn, and stability is the only thing the cache needs.
+    ///
+    /// A stale anchor (history shrank, another thread, a relaunch onto a shorter chat) is
+    /// discarded rather than trusted: an anchor near the end would send almost nothing.
+    public static func slice(
+        _ history: [AIMessage],
+        limit: Int,
+        mode: ContextWindowAllowance = .slack,
+        anchorSignature: String? = nil
+    ) -> Slice {
+        // Signatures are computed once for the whole history, so that a repeated message is told
+        // apart from its earlier copies. See WindowAnchor.signatures(for:).
+        let signatures = WindowAnchor.signatures(for: history)
+
+        func anchorAt(_ index: Int) -> String? {
+            signatures.indices.contains(index) ? signatures[index] : nil
         }
-        guard history.count > allowance(limit: limit, mode: mode) else {
-            return (history, nil)
+
+        guard limit != Int.max else {
+            return Slice(messages: history, trimmedFrom: nil, anchor: anchorAt(0))
         }
-        return (Array(history.suffix(limit)), history.count)
+        // A history that already fits is sent whole; the anchor is its first message, so that a
+        // window which starts growing next turn grows from the same place.
+        guard history.count > limit else {
+            return Slice(messages: history, trimmedFrom: nil, anchor: anchorAt(0))
+        }
+
+        // Where does the window start? At the remembered message, if it is still in the history
+        // and still far enough back to be worth starting at.
+        var start = 0
+        if let anchorSignature,
+           let index = signatures.firstIndex(of: anchorSignature),
+           history.count - index >= limit {
+            start = index
+        }
+
+        let loaded = history.count - start
+
+        guard loaded > allowance(limit: limit, mode: mode) else {
+            return Slice(
+                messages: Array(history.dropFirst(start)),
+                trimmedFrom: nil,
+                anchor: anchorAt(start)
+            )
+        }
+
+        let newStart = history.count - limit
+        return Slice(
+            messages: Array(history.suffix(limit)),
+            trimmedFrom: history.count,
+            anchor: anchorAt(newStart)
+        )
     }
 }
 

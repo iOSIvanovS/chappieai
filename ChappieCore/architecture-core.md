@@ -77,8 +77,10 @@ ChappieCore/
         │   ├── LLMHTTP.swift               # typed ProviderHTTPError, bounded error-body read for streams, Retry-After
         │   └── RetryPolicy.swift           # 5 retries, 1/2/4/8/16 s (cap 30) + jitter; RetryStatus for the UI
         ├── AIOrchestrator+ContextWindow.swift    # buildContextWindow, estimateTokens
-        ├── ContextWindowPolicy.swift             # trim(history:limit:mode:), allowance modes, PromptCacheProfile, cacheIsWarm
-        ├── CacheWarmthStore.swift                # per-thread last-request mark; UserDefaults-backed, survives relaunch
+        ├── ContextWindowPolicy.swift             # slice(history:limit:mode:anchorSignature:), allowance modes, PromptCacheProfile, cacheIsWarm
+        ├── ContextWindowStateStore.swift         # per-thread last-request mark + window anchor; UserDefaults-backed, survives relaunch
+        ├── ../Debug/RequestTrace.swift           # per-request canonical fingerprints of system/tools/messages + what changed; finds cache breaks
+        ├── ../Debug/LogClock.swift               # ms timestamps for logs compared across processes
         ├── AIOrchestrator+ToolExecution.swift    # executeToolCalls, parseOutputFilePath
         ├── LoopGuard.swift                       # 3rd identical call with an unchanged result is blocked, with an explanation
         ├── AIProviderStore.swift       # CRUD for AI providers + Keychain (multi-key)
@@ -536,18 +538,99 @@ both the native protocol and an OpenAI-format route pinned to Anthropic. With a 
 **A cold cache makes the wide allowance actively harmful.** After a pause longer than the TTL the old
 prefix is gone, so a long history is written in full for no benefit: 232k tokens is 61.7 RUB in one
 request, while cutting to the window first costs 4.4 RUB. Warmth is tracked per thread in
-`CacheWarmthStore` (UserDefaults-backed, `markRequestSent()` before each request) against
+`ContextWindowStateStore` (UserDefaults-backed, `markRequestSent()` before each request) against
 `ttl * 0.9`.
 
-**Why the mark is persisted, and why in UserDefaults.** In memory alone it is lost on every relaunch,
-so the first turn after a restart rewrites the whole prefix — measured on a 104-message history:
-84079 tokens, 23.64 RUB, against 2.29 RUB when the prefix is read. Restarting between turns is normal
-working practice, so that turn is the common case, not an edge one. UserDefaults rather than the SQLite
-store because the mark is worthless within hours and a wrong guess costs one cache write: it does not
-deserve a table, a migration or a write per request. It is a single dictionary under one key
-(`chappie.cacheWarmth.lastRequestAt`), keyed by thread, pruned to 24 hours on write. The default store
-in `AIOrchestrator.init` is the persisted one, so forgetting to pass a store does not silently bring the
-old cost back; tests pass `InMemoryCacheWarmthStore`.
+**The allowance alone does not stabilise the prefix — the window needs an ANCHOR.** This was the
+expensive lesson of 2026-11-15. The caller passes the whole loaded history, which grows by a couple of
+messages per turn; cutting purely on its length gives a window that slides: 112 -> newest 30, next
+turn 114 -> newest 30. The window's first message moves two places, the cached prefix dies at its first
+byte, and every turn is a full write. Live log: 19:39 `Trimmed 114 -> 30 (allowance x3, cache warm)`
+followed by `CACHE WRITE | created: 84010 | cost: 23.8611 RUB`. `ContextWindowPolicy.slice` therefore
+takes the signature of the message the window started at last turn and starts there again; the window
+then grows forward from a fixed point until it genuinely outgrows its allowance (allowance, not limit),
+one write per cycle, prefix reads in between.
+
+**Why the anchor is a content signature with a copy number, not an index.** The app prepends older
+history chunks on demand (`ensureModelHistoryLoaded`), so every index shifts by an unpredictable amount
+between turns. A signature survives prepends. `WindowAnchor.signatures(for:)` adds a per-copy counter
+because repeated text is ordinary — an assistant saying "ok" twenty times — and a plain role+text
+signature would match a different copy each turn and re-cut the window every time. The hash is FNV-1a,
+not Swift's `hashValue`, which is seeded per process: an anchor written before a relaunch would never
+be found after one. Appending never renumbers existing copies (the between-turns case); prepending can,
+which costs one re-cut and then settles.
+
+**A stable window is not enough — the prompt TEXT must be byte-stable too.** Independent of the anchor,
+two separate defects changed the prompt between launches, and each one alone made every restart pay a
+full rewrite (`RequestTrace` showed `changed: first request of process`, `read 0 | wrote 98045`):
+
+1. *Dictionary order in the JSON body.* `JSONEncoder` emits a `Dictionary` in an order seeded per
+   process, and tool schemas hang off dictionaries (`AIToolParameters.properties`). Both clients now
+   encode with `.sortedKeys`. Evidence: an unchanged struct encoded four times by four runs of one
+   binary gave four different byte strings (canonical, i.e. sorted, hash identical throughout).
+2. *Dictionary order inside a memory entry's payload.* A multi-key record (`{incident, pattern,
+   corrective_action}` — long incident notes are stored like that) went through
+   `json.values.first`, so the system prompt showed a *random* field per process. `MemoryEntry
+   .promptDisplayValue` now picks deterministically: `value` if present, otherwise the smallest key;
+   entries are also sorted by key. Measured live: `read 0 | wrote 98045` after relaunch against
+   `read 94292 (99%)` within one process.
+
+Both are invisible in a canonical (sorted) hash by construction, so `RequestTrace` cannot be the only
+guard: the tests in `MemoryDatesTests` assert the *selection rule*, not just cross-run equality, and
+were verified to fail on the old code.
+
+**Why both facts are persisted, and why in UserDefaults.** In memory alone they are lost on every
+relaunch, so the first turn after a restart rewrites the whole prefix — measured on a 104-message
+history: 84079 tokens, 23.64 RUB, against 2.29 RUB when the prefix is read. Restarting between turns is
+normal working practice, so that turn is the common case, not an edge one. UserDefaults rather than the
+SQLite store because both facts are worthless within hours and a wrong guess costs one cache write:
+they do not deserve a table, a migration or a write per request. Two dictionaries under two keys
+(`chappie.cacheWarmth.lastRequestAt`, `chappie.contextWindow.anchorSignature`), keyed by thread, the
+mark pruned to 24 hours on write. The default store in `AIOrchestrator.init` is the persisted one, so
+forgetting to pass a store does not silently bring the old cost back; tests pass
+`InMemoryContextWindowStateStore`.
+
+**The anchor is stored after EVERY turn, warm or cold.** This looks wrong and is not: a cold turn still
+sends its window, and that request IS the new prefix — the provider has it. Forgetting which message
+started it makes the next turn cut at a different place and pay for most of the same prefix twice.
+Measured 2026-11-16: a cold turn after a relaunch wrote 78824 tokens (21.43 RUB); the turn after it
+still re-wrote 47k of the same 79k instead of reading them, because the anchor had been discarded. The
+rule was "a cold cache means the prefix is gone anyway", which is true of the OLD prefix and false of the
+one the cold turn just wrote. A stale anchor is harmless on its own terms: `slice` ignores one that is no
+longer in the history and one too close to the end to fill a window, and never lets the window shrink
+below `limit`. Covered by `ContextWindowAnchorPersistenceTests`.
+
+**THE REQUEST BODY IS ENCODED WITH `.sortedKeys`, AND THAT IS A CACHE FIX, NOT A STYLE CHOICE.**
+`JSONEncoder` writes a Swift `Dictionary` in an iteration order seeded PER PROCESS — it is neither
+sorted nor stable. Measured 2026-11-16: one struct with a five-key dictionary, four separate runs of
+the same binary, four different byte streams (canonical content hash identical all four times).
+Tool schemas hang off dictionaries (`AIToolParameters.properties`) and `tools` is the FIRST part of
+the prompt, so a new process changed the first bytes and everything after them was written again.
+This is the real explanation of the relaunch behaviour chased through the whole of 2026-11-16:
+within one process the first request read 98% of the prefix (`read: 85547, created: 1063`); the
+first request after a relaunch read 0% and wrote all 85479 tokens. Every earlier theory — a sliding
+window, a discarded anchor, an unstable system prompt — was a symptom of this one line.
+Both clients set `outputFormatting = [.sortedKeys]`. It is pinned by
+`RequestBodyDeterminismTests.toolKeysAreSorted`, which fails the moment the flag is removed —
+verified by removing it and watching BOTH tests in that suite go red. Note that it also failed the
+"same body twice in one process" test, so the ordering is not even stable within a single process.
+
+**Request tracing (`Debug/RequestTrace.swift`, `Debug/LogClock.swift`) exists so the next cache
+question is answered by looking, not by inference.** Every outgoing request prints one line with a
+canonical fingerprint of each part and what changed since the previous request:
+
+```
+[RequestTrace] 10:59:57.355 native+cache turn#4 req#2 | sys 65000ch h=92ba9d | tools 24 h=402ab8
+  | msgs 33 h=c6791f | body 66919B raw=d01549 | changed: msgs
+[RequestTrace] 10:59:57.358 native+cache turn#4 req#3 | … | changed: none
+[RequestTrace] 10:59:57.361 RESPONSE anthropic | read 85547 | wrote 1063 | fresh 0 | out 263 | finish end_turn
+```
+
+`changed: none` is the line the cache wants. `bytes(encoding order only)` means the content matched
+by canonical measure while the wire bytes did not — encoder ordering moved, which is exactly the
+defect above. The window line carries the pause against the threshold (`cache warm (2m since last
+of 54m)`) and the anchor state, and prints one line whether or not a cut happened, because the
+"nothing was cut" case is the one that must show a standing window.
 
 Earlier live measurement on the same gateway, 9 turns, limit 30, ~250-token messages, small slack:
 exact window wrote 160026 tokens and read 22602 (43.94 RUB); with a slack of 4 it wrote 4744 and read
@@ -561,12 +644,14 @@ A cut can leave the history starting with an assistant turn; the API accepts tha
 Split across 4 files:
 - `AIOrchestrator.swift` — core actor, init, `process()` agentic loop
 - `AIOrchestrator+Retry.swift` — `streamWithRetry`, adapter over `LLMRetryRunner` (see "LLM request retry")
-- `AIOrchestrator+ContextWindow.swift` — `buildContextWindow`, `estimateTokens`, cache warmth
+- `AIOrchestrator+ContextWindow.swift` — `buildContextWindow` (anchor-aware), `estimateTokens`, cache warmth
   (`allowanceMode(isCacheWarm:)`, `isCacheWarm()`, `markRequestSent()`)
-- `ContextWindowPolicy.swift` — `trim(history:limit:mode:)`, the three allowance modes, `PromptCacheProfile`,
-  the pure `cacheIsWarm(lastRequestAt:now:profile:)` threshold
-- `CacheWarmthStore.swift` — where the last-request mark per thread lives. UserDefaults by default, so the
-  mark survives a relaunch; see "Why the mark is persisted" below
+- `ContextWindowPolicy.swift` — `slice(history:limit:mode:anchorSignature:)` (the anchor-aware cut) and
+  `trim(history:limit:mode:)` (the anchor-free form, kept for its tests), the three allowance modes,
+  `PromptCacheProfile`, the pure `cacheIsWarm(lastRequestAt:now:profile:)` threshold
+- `ContextWindowStateStore.swift` — where the last-request mark and the window anchor per thread live, plus
+  `WindowAnchor` (FNV-1a signature with a copy number). UserDefaults by default, so both survive a relaunch;
+  see "The allowance alone does not stabilise the prefix" below
 - `AIOrchestrator+ToolExecution.swift` — `executeToolCalls`, `parseOutputFilePath`
 - `LoopGuard.swift` — repeated-call guard. The 3rd identical call (same tool + arguments) in a row is blocked,
   but only while every previous result was identical (result hash compared); a changed result is progress and
@@ -1048,6 +1133,7 @@ Tests: `MessageTimestampTests`, `MemoryDatesTests`.
 | 2026-11 | Exit code of a command without a trailing newline: `ShellSession.parseOutput` split the stream into lines and looked for a line starting with `EXIT_CODE:`, but the session appends that line directly after the command's last bytes, so `printf abc; false` produced the single line `abcEXIT_CODE:1`. The marker had no line start to anchor to: the exit code was read as a coincidental 0 (reported as success) and the marker stayed in the text handed to the model. Both paths now go through one `splitTrailer`, which searches backwards for the marker and cuts it out of the body; the last occurrence is always the injected one, so a command that prints `EXIT_CODE:` itself keeps its own text. The tail-window copy `exitCode(inTail:)` is gone — one implementation for the inline, truncated and spooled cases. Covered by OutputGuardTests (3 new cases). |
 | 2026-11 | Unlimited context removed: `ThreadSettings.isUnlimitedContext` and `AppConfig.isUnlimitedContext` are gone, so the window is always a finite message count and cannot be silently unbounded. Safe by construction — the stored key is simply no longer requested, which JSON ignores, so no thread record can fail to decode. The slider stays a message count (pairs were considered and rejected: the setting reads better as messages than as tokens), the settings sheet replaced the toggle and the "everything is shown" box with one line stating that a cache-reading route may send up to 3x the window, and `ensureModelHistoryLoaded` now loads `limit × 3 + 1` instead of `limit + 1` — without that the wide allowance would never be reached after a chunk rollover. `visibleMessages` still keeps ×10 for the scrollback. Covered by `AppConfigTests`, `CurlModelsTests`. |
 | 2026-11 | `run_ssh` now spools its output like `run_terminal`: both collectors get `OutputSpool.defaultDirectory`. Before, a remote command printing more than `captureCap` lost everything past it, and a result over the command limit was refused by `OutputGuard` — the model saw only a size notice and no output at all. A timeout or Stop used to discard the output received so far and report only the reason; it now carries both streams (`SSHResult.stopped`), because the lines printed before the hang are usually the explanation. The text shaping moved into its own `SSHResult.swift` (TerminalTools was past 400 lines) and is testable without an ssh host. Covered by SSHResultTests (8 cases). |
+| 2026-11 | The window anchor is kept after a cold turn too. `buildContextWindow` stored `warm ? sliced.anchor : nil`, so a cold turn threw away the start of the window it had just sent — and that request is exactly the prefix the provider now holds. Measured live: a cold turn wrote 78824 tokens (21.43 RUB), and the next turn still re-wrote 47k of the same 79k instead of reading them. Now `sliced.anchor` is stored unconditionally; a stale anchor costs nothing because `slice` discards one that left the history or sits too close to the end. Covered by `ContextWindowAnchorPersistenceTests` (6 cases: a cold turn records its anchor, the next turn keeps the same prefix, a route without a cache is unchanged, a long pause still falls back to the exact window, anchors stay per thread). |
 
 ### Build and test tools removed (2026-11)
 

@@ -70,10 +70,11 @@ public actor AIOrchestrator {
     // B-04: invalidate() sets this flag; process() checks it before each agentic step.
     var isInvalidated: Bool = false
 
-    /// Where the last-request mark lives; see AIOrchestrator+ContextWindow and CacheWarmthStore.
+    /// Where the window state lives — last-request mark and window anchor.
+    /// See AIOrchestrator+ContextWindow and ContextWindowStateStore.
     ///
     /// Persisted by default so a relaunch between turns does not throw away a warm prefix.
-    let cacheWarmth: any CacheWarmthStore
+    let windowState: any ContextWindowStateStore
 
     /// Thread the current turn belongs to, taken from MemoryContext at the start of process().
     var currentThreadId: UUID? = nil
@@ -87,7 +88,7 @@ public actor AIOrchestrator {
         memoryManager: MemoryManager,
         config: AppConfig = .shared,
         retryPolicy: RetryPolicy = .standard,
-        cacheWarmth: (any CacheWarmthStore)? = nil
+        windowState: (any ContextWindowStateStore)? = nil
     ) {
         self.retryPolicy = retryPolicy
         self.aiClient = aiClient
@@ -97,7 +98,17 @@ public actor AIOrchestrator {
         self.defaultConfig = config
         // Persisted unless the caller asks otherwise: an in-memory default would bring back the
         // full prefix write on the first turn after every relaunch.
-        self.cacheWarmth = cacheWarmth ?? UserDefaultsCacheWarmthStore()
+        self.windowState = windowState ?? UserDefaultsContextWindowStateStore()
+    }
+
+    // MARK: - Testing Support
+
+    /// Sets the thread the window builder keys its state by.
+    ///
+    /// `process()` takes this from MemoryContext; tests exercise `buildContextWindow` directly and
+    /// cannot set an actor property across the boundary.
+    func setThreadForTests(_ threadId: UUID) {
+        currentThreadId = threadId
     }
 
     // MARK: - Invalidation (B-04)
@@ -135,6 +146,12 @@ public actor AIOrchestrator {
         // No thread-switch reset here any more: the mark is keyed by thread in the store, so
         // another thread's warmth is never read in the first place.
         currentThreadId = memoryContext.threadId
+
+        // Numbers the requests of this run, so a log line says which step of which turn it is.
+        RequestTrace.beginTurn()
+        print("[AIOrchestrator] \(LogClock.stamp()) TURN START | thread \(LogClock.short(currentThreadId))"
+              + " | projects \(memoryContext.projectInfos.count)"
+              + " | prompt \(prompt.count)ch")
 
         let systemPrompt = overrideSystemPrompt ?? {
             assertionFailure("[AIOrchestrator] overrideSystemPrompt is nil — caller must always provide a system prompt")
@@ -210,6 +227,9 @@ public actor AIOrchestrator {
                 continue
             } else {
                 let finalResponse = streamResult.text.isEmpty ? "No response from model." : streamResult.text
+                print("[AIOrchestrator] \(LogClock.stamp()) TURN END | steps \(stepCount)"
+                      + " | cost \(totalCost > 0 ? String(format: "%.4f RUB", totalCost) : "n/a")"
+                      + " | answer \(finalResponse.count)ch")
                 return AIOrchestratorResult(
                     finalResponse: finalResponse,
                     totalCost: totalCost > 0 ? totalCost : nil,

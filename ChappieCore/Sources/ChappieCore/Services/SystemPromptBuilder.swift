@@ -132,22 +132,11 @@ public struct SystemPromptBuilder {
 
         var lines = ["## \(title)"]
         for entry in entries.sorted(by: { $0.key < $1.key }) {
-            let displayValue = formatEntryValue(entry.jsonString)
+            // Deterministic payload (MemoryEntry.promptDisplayValue) — a random pick here used to
+            // change the prompt text between launches and kill the provider cache on every restart.
             let dates = MessageTimestamp.entryDates(created: entry.createdAt, updated: entry.updatedAt)
-            lines.append("- [\(entry.type)] \(entry.key) \(dates): \(displayValue)")
+            lines.append("- [\(entry.type)] \(entry.key) \(dates): \(entry.promptDisplayValue)")
         }
         return lines.joined(separator: "\n")
-    }
-
-    /// Unwraps single-value JSON objects for readability.
-    /// { "value": "foo" } → "foo". Anything else → raw string.
-    private func formatEntryValue(_ jsonString: String) -> String {
-        guard let data = jsonString.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let first = json.values.first
-        else {
-            return jsonString
-        }
-        return "\(first)"
     }
 }

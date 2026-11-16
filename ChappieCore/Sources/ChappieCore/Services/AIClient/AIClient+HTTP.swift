@@ -86,6 +86,9 @@ extension AIClient {
         } else {
             print("[AIClient] CACHE MISS | prompt: \(promptTokens) | completion: \(completionTokens) | cost: \(costStr)")
         }
+        print("[RequestTrace] \(LogClock.stamp()) RESPONSE openai"
+              + " | read \(cacheRead) | wrote \(cacheCreation)"
+              + " | prompt \(promptTokens) | out \(completionTokens)")
     }
 
     // MARK: - HTTP Helpers
@@ -97,7 +100,14 @@ extension AIClient {
         applyAuth(to: &request)
         request.timeoutInterval = AppConfig.shared.requestTimeoutSeconds
         do {
-            request.httpBody = try JSONEncoder().encode(body)
+            // Sorted keys for the same reason as in AnthropicClient.buildRequest: JSONEncoder's
+            // dictionary order is seeded per process, so an unsorted body differs after every
+            // relaunch and any prefix cache on this route would never be read back.
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            let encoded = try encoder.encode(body)
+            request.httpBody = encoded
+            RequestTrace.log(body: encoded, route: "openai")
         } catch {
             throw ChappieError.parsingError("Failed to serialize request body: \(error.localizedDescription)")
         }

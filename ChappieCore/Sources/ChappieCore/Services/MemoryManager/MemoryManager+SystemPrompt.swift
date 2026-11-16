@@ -110,16 +110,10 @@ extension MemoryManager {
         guard !entries.isEmpty else { return nil }
 
         var lines = ["## \(title)"]
-        for entry in entries {
-            let displayValue: String
-            if let data = entry.jsonString.data(using: .utf8),
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let value = json.values.first {
-                displayValue = "\(value)"
-            } else {
-                displayValue = entry.jsonString
-            }
-            lines.append("- [\(entry.type)] \(entry.key) \(datesLabel(for: entry, timeZone: timeZone)): \(displayValue)")
+        // Sorted: dictionary order is seeded per process, so an unsorted walk would reorder the
+        // prompt between launches and defeat the provider cache.
+        for entry in entries.sorted(by: { $0.key < $1.key }) {
+            lines.append("- [\(entry.type)] \(entry.key) \(datesLabel(for: entry, timeZone: timeZone)): \(entry.promptDisplayValue)")
         }
 
         return lines.joined(separator: "\n")

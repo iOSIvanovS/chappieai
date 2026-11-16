@@ -189,7 +189,21 @@ public struct AnthropicClient: Sendable, AIClientProtocol {
 
         request.timeoutInterval = AppConfig.shared.requestTimeoutSeconds
         do {
-            request.httpBody = try JSONEncoder().encode(body)
+            // SORTED KEYS ARE NOT COSMETIC — THEY ARE WHAT MAKES THE CACHE SURVIVE A RELAUNCH.
+            // JSONEncoder writes a Swift Dictionary in an order seeded per process. Measured
+            // 2026-11-16 with the same struct in four separate runs: identical content, four
+            // different byte streams. Tool schemas hang off dictionaries, and tools are the FIRST
+            // part of the prompt, so a new process invalidated everything after them — the live
+            // log shows exactly that: within one process the first request read 98% of the prefix,
+            // and the first request after a relaunch read 0% and wrote all 85479 tokens.
+            // Sorted keys make the bytes identical in every process, so a warm prefix stays
+            // readable across a relaunch.
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            let encoded = try encoder.encode(body)
+            request.httpBody = encoded
+            // Fingerprints are taken from the bytes that actually go on the wire, after encoding.
+            RequestTrace.log(body: encoded, route: supportsCaching ? "native+cache" : "native")
         } catch {
             throw ChappieError.parsingError("Failed to serialize Anthropic request: \(error.localizedDescription)")
         }

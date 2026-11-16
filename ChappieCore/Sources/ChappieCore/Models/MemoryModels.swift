@@ -142,4 +142,32 @@ public struct MemoryEntry: Codable, Sendable, Identifiable, Equatable {
         case createdAt  = "created_at"
         case updatedAt  = "updated_at"
     }
+
+    /// Human-readable payload for the system prompt.
+    ///
+    /// WHY not `json.values.first`: multi-key records (a long incident note is stored as
+    /// {incident, pattern, corrective_action}) made that pick a RANDOM field per process —
+    /// JSONSerialization turns a JSON object into a Dictionary and its order is seeded per
+    /// process. The prompt text changed between launches, so the provider cache never matched
+    /// after a restart and the whole prefix was rewritten (~25 RUB per restart).
+    /// Now the field is chosen deterministically: "value" if present, otherwise the smallest key.
+    public var promptDisplayValue: String {
+        guard let data = jsonString.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              !json.isEmpty
+        else {
+            return jsonString
+        }
+
+        if let direct = json["value"] {
+            return "\(direct)"
+        }
+
+        // Deterministic fallback: sorted keys, not dictionary order.
+        if let key = json.keys.sorted().first, let picked = json[key] {
+            return "\(picked)"
+        }
+
+        return jsonString
+    }
 }

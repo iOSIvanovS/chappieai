@@ -225,6 +225,12 @@ extension AnthropicClient {
             cost: cost,
             balance: balance
         )
+        print("[RequestTrace] \(LogClock.stamp()) RESPONSE anthropic"
+              + " | read \(state.usage?.cacheReadInputTokens ?? 0)"
+              + " | wrote \(state.usage?.cacheCreationInputTokens ?? 0)"
+              + " | fresh \(state.usage?.inputTokens ?? 0)"
+              + " | out \(state.usage?.outputTokens ?? 0)"
+              + " | finish \(state.finishReason ?? "none")")
 
         return AIStreamResult(
             text: state.accumulatedText,

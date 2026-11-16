@@ -156,6 +156,181 @@ struct ContextWindowPolicyTests {
         #expect(result.trimmedFrom == nil)
     }
 
+    // MARK: - The anchor (why the window stops sliding)
+
+    // Without an anchor the window slides: 112 messages cut to the newest 30, next turn 114 cut to
+    // 30 — the first message moves and the cached prefix dies. Measured live twice at ~84000
+    // tokens written and 23.86 RUB per turn. These tests pin the fix.
+
+    @Test("A trimmed window returns an anchor naming the message it starts at")
+    func trimReturnsAnchorOfFirstMessage() {
+        let result = ContextWindowPolicy.slice(history(91), limit: 30, mode: .triple)
+        #expect(result.trimmedFrom == 91)
+        #expect(result.messages.first?.contentString == "m61")
+        // Index 61 is odd, so this message is the assistant's.
+        #expect(result.anchor == WindowAnchor.signature(of: AIMessage(role: "assistant", content: "m61")))
+    }
+
+    @Test("Turns after a trim keep the same prefix instead of sliding")
+    func anchorStopsSliding() {
+        var messages = history(91)
+        let first = ContextWindowPolicy.slice(messages, limit: 30, mode: .triple)
+        #expect(first.trimmedFrom == 91)
+        let anchor = first.anchor
+        #expect(anchor != nil)
+
+        // The next turn grows the history by two; the window must start where it started before.
+        messages.append(AIMessage(role: "user", content: "q1"))
+        messages.append(AIMessage(role: "assistant", content: "a1"))
+
+        let second = ContextWindowPolicy.slice(messages, limit: 30, mode: .triple, anchorSignature: anchor)
+        #expect(second.trimmedFrom == nil, "the window has not outgrown the allowance yet")
+        #expect(second.messages.first?.contentString == "m61", "the window still starts where it did")
+        #expect(Array(contents(second.messages).prefix(first.messages.count)) == contents(first.messages),
+                "the old window must still be a prefix: that is the only thing the cache compares")
+
+        // And a third turn still starts at the same message.
+        messages.append(AIMessage(role: "user", content: "q2"))
+        let third = ContextWindowPolicy.slice(messages, limit: 30, mode: .triple, anchorSignature: second.anchor)
+        #expect(third.messages.first?.contentString == "m61")
+    }
+
+    @Test("The window grows from its anchored start until the allowance runs out")
+    func anchoredWindowGrows() {
+        var messages = history(91)
+        var anchor = ContextWindowPolicy.slice(messages, limit: 30, mode: .triple).anchor
+
+        // Fill up to the 90-message allowance the window now spans, measured from the anchor.
+        var count = 30
+        while count < 90 {
+            messages.append(AIMessage(role: "user", content: "fill\(count)"))
+            count += 1
+        }
+        #expect(messages.count == 151, "91 original plus 60 fills")
+
+        let full = ContextWindowPolicy.slice(messages, limit: 30, mode: .triple, anchorSignature: anchor)
+        #expect(full.messages.count == 90)
+        #expect(full.trimmedFrom == nil, "exactly at the allowance is still sent whole")
+        #expect(full.messages.first?.contentString == "m61")
+
+        // One more message and the window is re-cut, producing a new anchor.
+        messages.append(AIMessage(role: "user", content: "one past"))
+        let recut = ContextWindowPolicy.slice(messages, limit: 30, mode: .triple, anchorSignature: anchor)
+        #expect(recut.trimmedFrom == 152)
+        #expect(recut.messages.count == 30)
+        #expect(recut.anchor != anchor, "a re-cut establishes a new starting point")
+        anchor = recut.anchor
+
+        // And the new anchor holds the prefix steady again: one more message, same start.
+        messages.append(AIMessage(role: "user", content: "after recut"))
+        let after = ContextWindowPolicy.slice(messages, limit: 30, mode: .triple, anchorSignature: anchor)
+        #expect(after.messages.first?.contentString == recut.messages.first?.contentString)
+        #expect(after.trimmedFrom == nil)
+    }
+
+    @Test("An unknown anchor falls back to the newest messages")
+    func unknownAnchorFallsBack() {
+        let result = ContextWindowPolicy.slice(
+            history(120), limit: 30, mode: .triple,
+            anchorSignature: WindowAnchor.signature(of: AIMessage(role: "user", content: "not here"))
+        )
+        #expect(result.messages.count == 30)
+        #expect(result.trimmedFrom == 120, "nothing matched, so the usual cut applies")
+        #expect(result.messages.first?.contentString == "m90")
+    }
+
+    @Test("An anchor too close to the end is ignored, so a window is never starved")
+    func nearEndAnchorIsIgnored() {
+        // The anchor names the very last message: honouring it would send one message.
+        let last = AIMessage(role: "assistant", content: "m119")
+        let result = ContextWindowPolicy.slice(
+            history(120), limit: 30, mode: .triple,
+            anchorSignature: WindowAnchor.signature(of: last)
+        )
+        #expect(result.messages.count == 30)
+        #expect(result.messages.first?.contentString == "m90")
+    }
+
+    @Test("Repeated text is told apart by copy number, so the window does not slide on duplicates")
+    func duplicateTextKeepsSameStart() {
+        // An assistant answering "ok" twenty times is an ordinary conversation. A plain
+        // role-and-text signature would match a different copy each turn and re-cut the window
+        // every time — the sliding window would come straight back.
+        var messages: [AIMessage] = []
+        for index in 0..<100 {
+            messages.append(AIMessage(role: "user", content: "q\(index)"))
+            messages.append(AIMessage(role: "assistant", content: "ok"))
+        }
+
+        let first = ContextWindowPolicy.slice(messages, limit: 30, mode: .triple)
+        #expect(first.trimmedFrom == 200)
+        // The cut lands on an assistant "ok" (200 - 30 = 170, even index is a user turn, so 170 is
+        // "q85"; the copy number is what matters here).
+        let anchor = first.anchor
+
+        messages.append(AIMessage(role: "user", content: "next"))
+        messages.append(AIMessage(role: "assistant", content: "ok"))
+
+        let second = ContextWindowPolicy.slice(messages, limit: 30, mode: .triple, anchorSignature: anchor)
+        #expect(second.trimmedFrom == nil, "no re-cut just because the same text appeared again")
+        #expect(second.messages.first?.contentString == first.messages.first?.contentString)
+        #expect(Array(contents(second.messages).prefix(first.messages.count)) == contents(first.messages))
+
+        // One more turn, still standing on the same anchored message.
+        messages.append(AIMessage(role: "user", content: "next again"))
+        let third = ContextWindowPolicy.slice(messages, limit: 30, mode: .triple, anchorSignature: second.anchor)
+        #expect(third.trimmedFrom == nil)
+        #expect(third.messages.first?.contentString == first.messages.first?.contentString)
+    }
+
+    @Test("Copy numbers make otherwise identical signatures distinct")
+    func signaturesDistinguishCopies() {
+        let messages = [
+            AIMessage(role: "assistant", content: "ok"),
+            AIMessage(role: "assistant", content: "ok"),
+            AIMessage(role: "assistant", content: "ok")
+        ]
+        let signatures = WindowAnchor.signatures(for: messages)
+        #expect(Set(signatures).count == 3, "three copies must be three distinct anchors")
+        #expect(signatures[1].hasSuffix("#1"))
+        #expect(signatures[2].hasSuffix("#2"))
+    }
+
+    @Test("Appending messages never renumbers existing signatures")
+    func appendingKeepsSignatures() {
+        // This is the guarantee the anchor relies on between two turns.
+        let original = history(40)
+        let before = WindowAnchor.signatures(for: original)
+
+        var grown = original
+        grown.append(AIMessage(role: "assistant", content: "new reply"))
+        let after = WindowAnchor.signatures(for: grown)
+
+        #expect(Array(after.prefix(before.count)) == before)
+    }
+
+    @Test("Prepended older chunks do not disturb the anchor")
+    func prependedChunksKeepAnchor() {
+        // The app prepends older history chunks between turns, so every index moves. An index-based
+        // anchor would point at a different message; a signature-based one still finds its message.
+        var messages = history(91)
+        let anchor = ContextWindowPolicy.slice(messages, limit: 30, mode: .triple).anchor
+
+        let older = (0..<500).map { AIMessage(role: "user", content: "old\($0)") }
+        messages = older + messages
+
+        let result = ContextWindowPolicy.slice(messages, limit: 30, mode: .triple, anchorSignature: anchor)
+        #expect(result.messages.first?.contentString == "m61", "the window still starts at m61")
+        #expect(result.messages.count == 30, "and it does not sprawl over the prepended chunk")
+    }
+
+    @Test("A history that fits reports an anchor, so the window can start growing from it")
+    func fittingHistoryHasAnchor() {
+        let result = ContextWindowPolicy.slice(history(20), limit: 30, mode: .triple)
+        #expect(result.trimmedFrom == nil)
+        #expect(result.anchor == WindowAnchor.signature(of: AIMessage(role: "user", content: "m0")))
+    }
+
     // MARK: - Cache warmth threshold
 
     // The allowance only widens while the prefix is still readable. These pin the boundary: the
