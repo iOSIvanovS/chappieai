@@ -1,0 +1,89 @@
+name: Bug report
+description: Something in ChappieAI does not work as expected.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a problem.
+
+        **Do not paste API keys, tokens, passwords or private source code.** If you need to show a request or a response, replace the secret parts with `***`.
+
+  - type: input
+    id: app_version
+    attributes:
+      label: ChappieAI version
+      description: Shown in the app settings, or in the name of the DMG you installed.
+      placeholder: 1.0.30 (build 29)
+    validations:
+      required: true
+
+  - type: input
+    id: macos_version
+    attributes:
+      label: macOS version
+      description: Apple menu → About This Mac.
+      placeholder: macOS 15.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: cpu
+    attributes:
+      label: Mac
+      options:
+        - Apple Silicon
+        - Intel
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Model provider
+      description: Pick the one used when the problem happened.
+      options:
+        - Anthropic
+        - OpenAI
+        - Gemini
+        - DeepSeek
+        - Ollama
+        - Another OpenAI-compatible API
+        - Not related to a provider
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What you did, in order. If it happens only in a certain project, say what kind of project it is.
+      placeholder: |
+        1. Connect a project folder
+        2. Ask the agent to ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+      description: The exact error text is more useful than a paraphrase. Screenshots are welcome.
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Terminal output, logs, related issues, a workaround you found.
+    validations:
+      required: false

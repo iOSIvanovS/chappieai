@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security problem
+    url: https://t.me/serebanium
+    about: Please report vulnerabilities privately on Telegram, not as a public issue.
+  - name: First launch and Gatekeeper
+    url: https://github.com/iOSIvanovS/chappieai/blob/main/docs/gatekeeper.md
+    about: The app is not notarized yet — read this before reporting that macOS blocked it.

@@ -1,0 +1,32 @@
+name: Idea or question
+description: Suggest an improvement, or ask how something works.
+title: "[Idea]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Bug reports have their own form — please use it if something is broken.
+
+  - type: textarea
+    id: subject
+    attributes:
+      label: What would you like to see, or what is unclear?
+      description: One or two sentences are enough.
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it matters for your work
+      description: The task you are trying to get done, and where ChappieAI gets in the way. This is what makes a suggestion actionable.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do today instead
+      description: Another app, a script, a manual workaround. Optional.
+    validations:
+      required: false
