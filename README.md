@@ -26,6 +26,18 @@ You bring the task. Chappie brings the execution.
 
 ---
 
+## See it in action
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=oZSBLJ_84QA">
+    <img src="https://raw.githubusercontent.com/iOSIvanovS/chappieai/main/docs/screenshots/video-cover.jpg" alt="ChappieAI building a landing page from a single request" width="100%">
+  </a>
+</p>
+
+A whole landing page — markup, styles, animation and ten languages — from one request. No scaffolding, no boilerplate. *(The recording is in Russian; the interface itself ships in ten languages.)*
+
+---
+
 ## Screenshots
 
 <p align="center">
