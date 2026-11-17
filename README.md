@@ -44,8 +44,11 @@ You bring the task. Chappie brings the execution.
 
 - **Any provider.** OpenAI, Anthropic, Gemini, DeepSeek, Ollama or any OpenAI-compatible API. You enter your own API keys and model names; requests go straight to the provider.
 - **Project mode.** Connect a folder and the agent can read and write files, use git, build and run tests (Xcode, SwiftPM, Gradle, Cargo, Go, Node, Python and more).
-- **Three-level memory.** Global, project and thread memory that survives between sessions.
+- **Any language, any stack.** Swift, Kotlin, Python, Go, Rust, TypeScript, C++, PHP, Ruby — the agent picks up whichever project you attach, with the build and test commands for that stack.
+- **Three-level memory.** Global, thread and project memory that survives between sessions — and you can browse and prune all three from settings.
 - **Curl-Chappie.** HTTP client for debugging backends: per-thread host allow-list with access levels, secrets kept in Keychain and never shown to the model, shared login sessions, repeatable scenarios.
+- **Smart prompt caching.** On Anthropic-protocol models the prompt cache is kept warm across turns and across relaunches, which cuts the cost of long sessions.
+- **JSON tools.** Inspect, search and edit a JSON file of any size without loading it into the context, leaving every other byte untouched.
 - **Documents and PDF.** Reads Word, Excel, PowerPoint and PDF, including embedded images and scanned pages.
 - **Safety gates.** Access levels for terminal and git, command checks, loop guard, timeouts.
 - **Chat.** Streaming, Markdown, syntax highlighting, attachments, encrypted backup and restore.
@@ -57,6 +60,8 @@ You bring the task. Chappie brings the execution.
 ## Download
 
 Get the latest `.dmg` from the [Releases](https://github.com/iOSIvanovS/chappieai/releases) page.
+
+What changed in each version: [CHANGELOG.md](CHANGELOG.md).
 
 **System requirements:** macOS 14 Sonoma or later · Apple Silicon or Intel
 
