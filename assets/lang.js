@@ -19,6 +19,9 @@ window.I18N = {
     f4t: "Curl-Chappie", f4d: "An HTTP client for debugging backends: per-thread host allow-list, secrets kept in Keychain and never shown to the model, repeatable scenarios.",
     f5t: "Documents and PDF", f5d: "Reads Word, Excel, PowerPoint and PDF, including embedded images and scanned pages.",
     f6t: "Safety gates", f6d: "Access levels for terminal and git, command checks, loop guard and timeouts.",
+    f7t: "Any language, any stack", f7d: "Swift, Kotlin, Python, Go, Rust, TypeScript and more. The agent picks up whichever project you attach, with the build and test commands for that stack.",
+    f8t: "Agent memory", f8d: "Browse and prune global, thread and project memory from settings. The agent forgets the rule you delete on its very next message.",
+    f9t: "Smart prompt caching", f9d: "On Anthropic-protocol models the prompt cache stays warm across turns and across relaunches, so long sessions cost less.",
     s_title: "See it in action",
     o_title: "Free and open source",
     o_text: "ChappieAI is released under the GNU GPL v3.0. Read the code, build it yourself, fork it. Requests go straight from your Mac to the provider you choose.",
@@ -28,6 +31,7 @@ window.I18N = {
     d_btn: "Send a donation",
     copy: "© 2026 Sergei Ivanov. The name “ChappieAI” and the logo are not covered by the code license.",
     lbc: "Close", lbp: "Previous", lbn: "Next",
+    chg: "Release notes",
     tm: "Trademark policy", bugs: "Report a bug"
   },
   "ru": {
@@ -45,6 +49,9 @@ window.I18N = {
     f4t: "Curl-Chappie", f4d: "HTTP-клиент для отладки бэкендов: список разрешённых хостов для каждого треда, секреты в Keychain, которые модель не видит, повторяемые сценарии.",
     f5t: "Документы и PDF", f5d: "Читает Word, Excel, PowerPoint и PDF, включая встроенные картинки и сканы.",
     f6t: "Защитные ворота", f6d: "Уровни доступа к терминалу и git, проверка команд, защита от зацикливания и таймауты.",
+    f7t: "Любой язык, любой стек", f7d: "Swift, Kotlin, Python, Go, Rust, TypeScript и другие. Агент разбирается в том проекте, который вы подключили, вместе с командами сборки и тестов для его стека.",
+    f8t: "Память агента", f8d: "Просматривайте и чистите глобальную память, память треда и проекта прямо из настроек. Правило, которое вы удалили, агент забудет уже на следующем сообщении.",
+    f9t: "Умное кэширование", f9d: "На моделях с протоколом Anthropic кэш промпта остаётся тёплым между ходами и между перезапусками, поэтому долгие сессии стоят дешевле.",
     s_title: "Как это выглядит",
     o_title: "Бесплатно и с открытым кодом",
     o_text: "ChappieAI распространяется под лицензией GNU GPL v3.0. Читайте код, собирайте сами, делайте форки. Запросы идут с вашего Mac напрямую выбранному провайдеру.",
@@ -54,6 +61,7 @@ window.I18N = {
     d_btn: "Отправить донат",
     copy: "© 2026 Sergei Ivanov. Название «ChappieAI» и логотип не входят в лицензию на код.",
     lbc: "Закрыть", lbp: "Назад", lbn: "Вперёд",
+    chg: "Описание версий",
     tm: "Политика использования названия", bugs: "Сообщить об ошибке"
   },
   "zh-Hans": {
@@ -71,6 +79,9 @@ window.I18N = {
     f4t: "Curl-Chappie", f4d: "用于调试后端的 HTTP 客户端：每个会话单独的主机白名单，密钥保存在钥匙串中且不会展示给模型，可重复执行的场景。",
     f5t: "文档与 PDF", f5d: "读取 Word、Excel、PowerPoint 和 PDF，包括内嵌图片和扫描页。",
     f6t: "安全防护", f6d: "终端和 git 的访问级别、命令检查、循环保护和超时。",
+    f7t: "任意语言与工具链", f7d: "Swift、Kotlin、Python、Go、Rust、TypeScript 等。智能体会识别你附加的项目，并使用该技术栈对应的构建与测试命令。",
+    f8t: "智能体记忆", f8d: "在设置中查看并清理全局记忆、线程记忆与项目记忆。你删除的规则，智能体在下一则消息中就不再遵守。",
+    f9t: "智能提示缓存", f9d: "在采用 Anthropic 协议的模型上，提示缓存会在多轮对话和重启后保持有效，长会话因此更省费用。",
     s_title: "实际效果",
     o_title: "免费且开源",
     o_text: "ChappieAI 以 GNU GPL v3.0 发布。你可以阅读代码、自行构建、创建分支。请求从你的 Mac 直接发送给你选择的服务商。",
@@ -80,6 +91,7 @@ window.I18N = {
     d_btn: "捐赠",
     copy: "© 2026 Sergei Ivanov。“ChappieAI”名称和标志不在代码许可证范围内。",
     lbc: "关闭", lbp: "上一张", lbn: "下一张",
+    chg: "版本说明",
     tm: "商标政策", bugs: "报告问题"
   },
   "es": {
@@ -97,6 +109,9 @@ window.I18N = {
     f4t: "Curl-Chappie", f4d: "Un cliente HTTP para depurar backends: lista de hosts permitidos por hilo, secretos en el llavero que el modelo nunca ve y escenarios repetibles.",
     f5t: "Documentos y PDF", f5d: "Lee Word, Excel, PowerPoint y PDF, incluidas imágenes incrustadas y páginas escaneadas.",
     f6t: "Controles de seguridad", f6d: "Niveles de acceso a terminal y git, comprobación de comandos, protección contra bucles y tiempos límite.",
+    f7t: "Cualquier lenguaje y stack", f7d: "Swift, Kotlin, Python, Go, Rust, TypeScript y más. El agente reconoce el proyecto que adjuntes, con los comandos de compilación y pruebas de su stack.",
+    f8t: "Memoria del agente", f8d: "Consulta y depura la memoria global, de hilo y de proyecto desde los ajustes. El agente olvida la regla que borres en su siguiente mensaje.",
+    f9t: "Caché de prompt inteligente", f9d: "En los modelos con protocolo Anthropic la caché del prompt se mantiene entre turnos y entre reinicios, así que las sesiones largas cuestan menos.",
     s_title: "Míralo en acción",
     o_title: "Gratis y de código abierto",
     o_text: "ChappieAI se publica bajo la GNU GPL v3.0. Lee el código, compílalo tú mismo, haz un fork. Las peticiones van directamente de tu Mac al proveedor que elijas.",
@@ -106,6 +121,7 @@ window.I18N = {
     d_btn: "Enviar una donación",
     copy: "© 2026 Sergei Ivanov. El nombre «ChappieAI» y el logotipo no están cubiertos por la licencia del código.",
     lbc: "Cerrar", lbp: "Anterior", lbn: "Siguiente",
+    chg: "Notas de versión",
     tm: "Política de marca", bugs: "Informar de un error"
   },
   "ar": {
@@ -123,6 +139,9 @@ window.I18N = {
     f4t: "Curl-Chappie", f4d: "عميل HTTP لتصحيح الخوادم الخلفية: قائمة مضيفين مسموحة لكل محادثة، وأسرار محفوظة في سلسلة المفاتيح ولا يراها النموذج، وسيناريوهات قابلة للتكرار.",
     f5t: "المستندات وPDF", f5d: "يقرأ Word وExcel وPowerPoint وPDF، بما في ذلك الصور المضمّنة والصفحات الممسوحة.",
     f6t: "بوابات الأمان", f6d: "مستويات وصول إلى الطرفية وgit، وفحص الأوامر، والحماية من التكرار اللانهائي، وحدود زمنية.",
+    f7t: "أي لغة وأي بيئة", f7d: "Swift وKotlin وPython وGo وRust وTypeScript وغيرها. يتعرّف الوكيل على المشروع الذي تربطه، مع أوامر البناء والاختبار الخاصة به.",
+    f8t: "ذاكرة الوكيل", f8d: "استعرض ذاكرة الوكيل العامة وذاكرة الخيط والمشروع ونظّفها من الإعدادات. القاعدة التي تحذفها يتوقف الوكيل عن اتباعها في رسالته التالية.",
+    f9t: "تخزين مؤقت ذكي", f9d: "في النماذج التي تدعم بروتوكول Anthropic يبقى التخزين المؤقت للمطالبة جاهزًا بين الجولات وبين إعادات التشغيل، فتنخفض تكلفة الجلسات الطويلة.",
     s_title: "شاهده أثناء العمل",
     o_title: "مجاني ومفتوح المصدر",
     o_text: "يصدر ChappieAI بموجب رخصة GNU GPL v3.0. اقرأ الشيفرة وابنِها بنفسك وأنشئ نسخة منها. تذهب الطلبات مباشرة من جهاز Mac إلى المزوّد الذي تختاره.",
@@ -132,6 +151,7 @@ window.I18N = {
     d_btn: "إرسال تبرع",
     copy: "© 2026 Sergei Ivanov. اسم «ChappieAI» والشعار غير مشمولين برخصة الشيفرة.",
     lbc: "إغلاق", lbp: "السابق", lbn: "التالي",
+    chg: "ملاحظات الإصدار",
     tm: "سياسة العلامة التجارية", bugs: "الإبلاغ عن خطأ"
   },
   "fr": {
@@ -149,6 +169,9 @@ window.I18N = {
     f4t: "Curl-Chappie", f4d: "Un client HTTP pour déboguer les backends : liste d’hôtes autorisés par fil, secrets stockés dans le Trousseau et jamais montrés au modèle, scénarios reproductibles.",
     f5t: "Documents et PDF", f5d: "Lit Word, Excel, PowerPoint et PDF, y compris les images intégrées et les pages numérisées.",
     f6t: "Garde-fous", f6d: "Niveaux d’accès au terminal et à git, vérification des commandes, protection contre les boucles et délais d’expiration.",
+    f7t: "Tout langage, toute pile", f7d: "Swift, Kotlin, Python, Go, Rust, TypeScript et d’autres. L’agent reconnaît le projet que vous joignez, avec les commandes de compilation et de test de sa pile.",
+    f8t: "Mémoire de l’agent", f8d: "Consultez et purgez la mémoire globale, de fil et de projet depuis les réglages. L’agent oublie la règle supprimée dès votre message suivant.",
+    f9t: "Mise en cache intelligente", f9d: "Sur les modèles au protocole Anthropic, le cache du prompt reste chaud entre les tours et entre les relances : les longues sessions coûtent moins cher.",
     s_title: "Voir en action",
     o_title: "Gratuit et open source",
     o_text: "ChappieAI est publié sous licence GNU GPL v3.0. Lisez le code, compilez-le vous-même, forkez-le. Les requêtes vont directement de votre Mac au fournisseur que vous choisissez.",
@@ -158,6 +181,7 @@ window.I18N = {
     d_btn: "Faire un don",
     copy: "© 2026 Sergei Ivanov. Le nom « ChappieAI » et le logo ne sont pas couverts par la licence du code.",
     lbc: "Fermer", lbp: "Précédent", lbn: "Suivant",
+    chg: "Notes de version",
     tm: "Politique de marque", bugs: "Signaler un bug"
   },
   "de": {
@@ -175,6 +199,9 @@ window.I18N = {
     f4t: "Curl-Chappie", f4d: "Ein HTTP-Client zum Debuggen von Backends: Host-Freigabeliste pro Thread, Secrets im Schlüsselbund, die das Modell nie sieht, wiederholbare Szenarien.",
     f5t: "Dokumente und PDF", f5d: "Liest Word, Excel, PowerPoint und PDF, einschließlich eingebetteter Bilder und gescannter Seiten.",
     f6t: "Sicherheitsschranken", f6d: "Zugriffsstufen für Terminal und git, Befehlsprüfung, Schleifenschutz und Zeitlimits.",
+    f7t: "Jede Sprache, jeder Stack", f7d: "Swift, Kotlin, Python, Go, Rust, TypeScript und mehr. Der Agent erkennt das angehängte Projekt samt den Build- und Testbefehlen für dessen Stack.",
+    f8t: "Gedächtnis des Agenten", f8d: "Globales Gedächtnis, Thread- und Projektgedächtnis in den Einstellungen ansehen und aufräumen. Eine gelöschte Regel befolgt der Agent schon bei der nächsten Nachricht nicht mehr.",
+    f9t: "Intelligentes Prompt-Caching", f9d: "Bei Modellen mit Anthropic-Protokoll bleibt der Prompt-Cache über Züge und Neustarts hinweg warm — lange Sitzungen kosten dadurch weniger.",
     s_title: "So sieht es aus",
     o_title: "Kostenlos und Open Source",
     o_text: "ChappieAI steht unter der GNU GPL v3.0. Code lesen, selbst bauen, forken. Anfragen gehen direkt von Ihrem Mac an den gewählten Anbieter.",
@@ -184,6 +211,7 @@ window.I18N = {
     d_btn: "Spenden",
     copy: "© 2026 Sergei Ivanov. Der Name „ChappieAI“ und das Logo sind von der Code-Lizenz nicht erfasst.",
     lbc: "Schließen", lbp: "Zurück", lbn: "Weiter",
+    chg: "Versionshinweise",
     tm: "Markenrichtlinie", bugs: "Fehler melden"
   },
   "ja": {
@@ -201,6 +229,9 @@ window.I18N = {
     f4t: "Curl-Chappie", f4d: "バックエンドのデバッグ用 HTTP クライアント。スレッドごとのホスト許可リスト、モデルに見せずキーチェーンに保管されるシークレット、再実行可能なシナリオ。",
     f5t: "ドキュメントと PDF", f5d: "Word、Excel、PowerPoint、PDF を読み取ります。埋め込み画像やスキャンページにも対応。",
     f6t: "安全ゲート", f6d: "ターミナルと git のアクセスレベル、コマンドチェック、ループ防止、タイムアウト。",
+    f7t: "あらゆる言語、あらゆるスタック", f7d: "Swift、Kotlin、Python、Go、Rust、TypeScript など。接続したプロジェクトを判別し、そのスタックのビルドとテストのコマンドを使います。",
+    f8t: "エージェントのメモリ", f8d: "グローバルメモリ、スレッドメモリ、プロジェクトメモリを設定から閲覧・整理できます。削除したルールは、次のメッセージから適用されません。",
+    f9t: "スマートなプロンプトキャッシュ", f9d: "Anthropic プロトコルのモデルでは、プロンプトキャッシュがターンをまたいでも再起動後も維持されるため、長いセッションの費用を抑えられます。",
     s_title: "動作イメージ",
     o_title: "無料でオープンソース",
     o_text: "ChappieAI は GNU GPL v3.0 で公開されています。コードを読み、自分でビルドし、フォークできます。リクエストはお使いの Mac から選んだプロバイダへ直接送られます。",
@@ -210,6 +241,7 @@ window.I18N = {
     d_btn: "寄付する",
     copy: "© 2026 Sergei Ivanov。「ChappieAI」の名称とロゴはコードのライセンスの対象外です。",
     lbc: "閉じる", lbp: "前へ", lbn: "次へ",
+    chg: "リリースノート",
     tm: "商標ポリシー", bugs: "不具合を報告"
   },
   "pt-BR": {
@@ -227,6 +259,9 @@ window.I18N = {
     f4t: "Curl-Chappie", f4d: "Um cliente HTTP para depurar backends: lista de hosts permitidos por conversa, segredos guardados no Chaveiro e nunca mostrados ao modelo, cenários repetíveis.",
     f5t: "Documentos e PDF", f5d: "Lê Word, Excel, PowerPoint e PDF, incluindo imagens embutidas e páginas digitalizadas.",
     f6t: "Travas de segurança", f6d: "Níveis de acesso ao terminal e ao git, verificação de comandos, proteção contra loops e limites de tempo.",
+    f7t: "Qualquer linguagem e stack", f7d: "Swift, Kotlin, Python, Go, Rust, TypeScript e mais. O agente reconhece o projeto anexado, com os comandos de build e teste do stack dele.",
+    f8t: "Memória do agente", f8d: "Veja e limpe a memória global, de tópico e de projeto nos ajustes. O agente deixa de seguir a regra excluída já na próxima mensagem.",
+    f9t: "Cache de prompt inteligente", f9d: "Nos modelos com protocolo Anthropic o cache do prompt permanece quente entre turnos e entre reinícios, então sessões longas custam menos.",
     s_title: "Veja em ação",
     o_title: "Grátis e de código aberto",
     o_text: "O ChappieAI é distribuído sob a GNU GPL v3.0. Leia o código, compile você mesmo, faça um fork. As requisições vão direto do seu Mac para o provedor que você escolher.",
@@ -236,6 +271,7 @@ window.I18N = {
     d_btn: "Enviar uma doação",
     copy: "© 2026 Sergei Ivanov. O nome “ChappieAI” e o logotipo não são cobertos pela licença do código.",
     lbc: "Fechar", lbp: "Anterior", lbn: "Próxima",
+    chg: "Notas da versão",
     tm: "Política de marca", bugs: "Relatar um bug"
   },
   "hi": {
@@ -253,6 +289,9 @@ window.I18N = {
     f4t: "Curl-Chappie", f4d: "बैकएंड डीबग करने के लिए HTTP क्लाइंट: प्रति-थ्रेड होस्ट अनुमति-सूची, कीचेन में रखे सीक्रेट जो मॉडल को कभी नहीं दिखते, दोहराए जा सकने वाले परिदृश्य।",
     f5t: "दस्तावेज़ और PDF", f5d: "Word, Excel, PowerPoint और PDF पढ़ता है, एम्बेडेड चित्रों और स्कैन किए पृष्ठों सहित।",
     f6t: "सुरक्षा द्वार", f6d: "टर्मिनल और git के लिए एक्सेस स्तर, कमांड जाँच, लूप सुरक्षा और टाइमआउट।",
+    f7t: "हर भाषा, हर स्टैक", f7d: "Swift, Kotlin, Python, Go, Rust, TypeScript और अन्य। एजेंट जुड़े प्रोजेक्ट को पहचानता है और उस स्टैक के बिल्ड व टेस्ट कमांड इस्तेमाल करता है।",
+    f8t: "एजेंट की मेमोरी", f8d: "सेटिंग्स से ग्लोबल, थ्रेड और प्रोजेक्ट मेमोरी देखें और साफ़ करें। जो नियम आप हटाते हैं, एजेंट अगले संदेश से उसे मानना बंद कर देता है।",
+    f9t: "स्मार्ट प्रॉम्प्ट कैशिंग", f9d: "Anthropic प्रोटोकॉल वाले मॉडल पर प्रॉम्प्ट कैश बातचीत के दौरान और पुनः आरंभ के बाद भी बना रहता है, इसलिए लंबे सत्र कम खर्च करते हैं।",
     s_title: "इसे काम करते देखें",
     o_title: "मुफ़्त और ओपन सोर्स",
     o_text: "ChappieAI GNU GPL v3.0 के तहत जारी है। कोड पढ़ें, खुद बिल्ड करें, फ़ोर्क करें। अनुरोध आपके Mac से सीधे आपके चुने प्रदाता तक जाते हैं।",
@@ -262,6 +301,7 @@ window.I18N = {
     d_btn: "दान भेजें",
     copy: "© 2026 Sergei Ivanov। “ChappieAI” नाम और लोगो कोड लाइसेंस के दायरे में नहीं हैं।",
     lbc: "बंद करें", lbp: "पिछला", lbn: "अगला",
+    chg: "रिलीज़ नोट्स",
     tm: "ट्रेडमार्क नीति", bugs: "बग रिपोर्ट करें"
   }
 };
