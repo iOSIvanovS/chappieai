@@ -163,6 +163,10 @@ public actor AIOrchestrator {
         // and the window has to know that before it decides how much history to carry.
         let firstStepTools = await toolService.availableTools
 
+        // TODO: diagnostic aid for the tool-injection investigation — remove once the
+        // "only read tools reach the model" case is closed. Prints the exact list sent upstream.
+        print("[ToolTrace] \(firstStepTools.count): \(firstStepTools.map(\.function.name).joined(separator: ","))")
+
         var sessionHistory = buildContextWindow(
             from: history,
             currentPrompt: prompt,

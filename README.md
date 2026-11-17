@@ -34,7 +34,7 @@ You bring the task. Chappie brings the execution.
   </a>
 </p>
 
-A whole landing page — markup, styles, animation and ten languages — from one request. No scaffolding, no boilerplate. *(The recording is in Russian; the interface itself ships in ten languages.)*
+A whole landing page — markup, styles, animation and ten languages — from one request. No scaffolding, no boilerplate.
 
 ---
 
