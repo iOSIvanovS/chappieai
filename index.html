@@ -80,6 +80,14 @@ h2 { font-size: clamp(1.6rem, 4vw, 2.1rem); margin: 0 0 32px; text-align: center
 .ico { font-size: 1.7rem; line-height: 1; margin-bottom: 12px; }
 .card h3 { margin: 0 0 8px; font-size: 1.1rem; }
 .card p { margin: 0; color: var(--muted); font-size: .98rem; }
+.vid { position: relative; display: block; max-width: 860px; margin: 0 auto 28px; border-radius: 16px; overflow: hidden; box-shadow: var(--shadow); text-decoration: none; }
+.vid img { display: block; width: 100%; height: auto; }
+.vid::after { content: ""; position: absolute; inset: 0; background: rgba(0, 0, 0, .18); transition: background .2s; }
+.vid:hover::after { background: rgba(0, 0, 0, .04); }
+.vid .play { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 76px; height: 76px; border-radius: 50%; background: rgba(255, 255, 255, .94); box-shadow: 0 8px 26px rgba(0, 0, 0, .35); z-index: 1; display: flex; align-items: center; justify-content: center; transition: transform .2s; }
+.vid .play::before { content: ""; margin-left: 5px; border-style: solid; border-width: 13px 0 13px 21px; border-color: transparent transparent transparent #111; }
+.vid:hover .play { transform: translate(-50%, -50%) scale(1.08); }
+.vid-cap { max-width: 860px; margin: 0 auto 30px; text-align: center; color: var(--muted); font-size: .95rem; }
 .shots { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; align-items: flex-start; }
 .shot { width: calc((100% - 40px) / 3); min-width: 240px; flex: 0 1 auto; padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: 12px; transition: transform .2s; }
 .shot:hover { transform: scale(1.02); }
@@ -154,6 +162,11 @@ footer nav { display: flex; flex-wrap: wrap; gap: 8px 22px; justify-content: cen
 <section aria-labelledby="s">
   <div class="wrap">
     <h2 id="s" data-i18n="s_title">See it in action</h2>
+    <a class="vid" href="https://www.youtube.com/watch?v=oZSBLJ_84QA" rel="noopener" aria-label="Watch the demo on YouTube">
+      <img src="assets/video-cover.jpg" width="1280" height="720" loading="lazy" alt="ChappieAI building a landing page from a single request">
+      <span class="play" aria-hidden="true"></span>
+    </a>
+    <p class="vid-cap" data-i18n="vid_cap">A whole landing page — markup, styles, animation and ten languages — from one request. The recording is in Russian.</p>
     <div class="shots">
       <button class="shot" type="button"><img src="assets/welcome.png" width="800" height="1100" loading="lazy" alt="ChappieAI welcome screen listing what the agent can do"></button>
       <button class="shot" type="button"><img src="assets/code.png" width="850" height="1100" loading="lazy" alt="ChappieAI working on code in a project"></button>
