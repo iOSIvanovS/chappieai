@@ -22,14 +22,18 @@ enum AgentMemoryRoute: Hashable {
 enum AgentMemoryCounter {
 
     /// "3 entries" with the Slavic plural rule the rest of Settings uses.
+    ///
+    /// Every key is written out as a literal on purpose: Xcode's string extraction only sees
+    /// literals passed to String(localized:), so a key assembled in a variable is reported as
+    /// unused and gets deleted from the catalog on the next cleanup.
     static func text(_ count: Int) -> String {
-        let key: String
+        let label: String
         switch count {
-        case 1: key = "agent_memory.entries_one"
-        case 2...4: key = "agent_memory.entries_few"
-        default: key = "agent_memory.entries_many"
+        case 1: label = String(localized: "agent_memory.entries_one")
+        case 2...4: label = String(localized: "agent_memory.entries_few")
+        default: label = String(localized: "agent_memory.entries_many")
         }
-        return "\(count) \(String(localized: String.LocalizationValue(key)))"
+        return "\(count) \(label)"
     }
 }
 

@@ -840,7 +840,6 @@
       }
     },
     "agent_memory.delete_message" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -905,7 +904,6 @@
       }
     },
     "agent_memory.delete_message_global" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -1098,7 +1096,6 @@
       }
     },
     "agent_memory.entries_few" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -1163,7 +1160,6 @@
       }
     },
     "agent_memory.entries_many" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -1228,7 +1224,6 @@
       }
     },
     "agent_memory.entries_one" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {

@@ -104,9 +104,13 @@ struct MemoryEntriesEditorView: View {
     }
 
     private func confirmationText(for entry: MemoryEntry) -> String {
-        let format = String(localized: scope == .global
-            ? "agent_memory.delete_message_global"
-            : "agent_memory.delete_message")
+        // Each key is a separate literal so Xcode's string extraction can see both of them.
+        let format: String
+        if scope == .global {
+            format = String(localized: "agent_memory.delete_message_global")
+        } else {
+            format = String(localized: "agent_memory.delete_message")
+        }
         return String(format: format, entry.key)
     }
 }

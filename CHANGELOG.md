@@ -12,7 +12,7 @@ were bumped in the project file but never published; they are not listed here.
 
 ---
 
-## [Unreleased]
+## [1.0.30] — 2026-11-17
 
 ### Prompt caching for Anthropic-protocol routes
 
