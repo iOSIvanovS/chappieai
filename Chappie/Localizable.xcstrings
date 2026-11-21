@@ -27921,6 +27921,326 @@
         }
       }
     },
+    "thread.settings.computer_use_auto_warning" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "سيتمكن المساعد من التحكم في الماوس ولوحة المفاتيح. تأكد من أنك تثق بالمهمة قبل تفعيل هذا الخيار."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Assistent kann Maus und Tastatur steuern. Vergewissere dich, dass du der Aufgabe vertraust, bevor du dies aktivierst."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The assistant will be able to control the mouse and keyboard. Make sure you trust the task before enabling this."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El asistente podrá controlar el ratón y el teclado. Asegúrate de confiar en la tarea antes de activar esto."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L'assistant pourra contrôler la souris et le clavier. Assurez-vous de faire confiance à la tâche avant d'activer ceci."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "सहायक माउस और कीबोर्ड को नियंत्रित कर सकेगा। इसे सक्षम करने से पहले सुनिश्चित करें कि आप कार्य पर भरोसा करते हैं।"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アシスタントがマウスとキーボードを操作できるようになります。有効にする前に、タスクを信頼していることを確認してください。"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O assistente poderá controlar o mouse e o teclado. Certifique-se de confiar na tarefa antes de ativar isso."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ассистент сможет управлять мышью и клавиатурой. Убедитесь, что доверяете задаче, прежде чем включать это."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "助手将能够控制鼠标和键盘。启用前请确保您信任该任务。"
+          }
+        }
+      }
+    },
+    "thread.settings.computer_use_privacy_hint" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "لقطات الشاشة مضغوطة بجودة 70% بحجم أقصاه 1440 بكسل. لا يتم حفظها محلياً بعد الإرسال."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Screenshots werden mit 70% Qualität auf max. 1440 px komprimiert. Sie werden nach dem Senden nicht lokal gespeichert."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Screenshots are compressed at 70% quality up to 1440 px wide. They are not stored locally after being sent."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Las capturas se comprimen al 70% de calidad con un máximo de 1440 px. No se almacenan localmente tras enviarse."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les captures sont compressées à 70% de qualité jusqu'à 1440 px. Elles ne sont pas stockées localement après envoi."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "स्क्रीनशॉट 70% गुणवत्ता पर 1440 पिक्सेल तक संपीड़ित होते हैं। भेजने के बाद स्थानीय रूप से संग्रहीत नहीं होते।"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スクリーンショットは最大1440px・70%品質で圧縮されます。送信後はローカルに保存されません。"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Capturas são comprimidas a 70% de qualidade com no máximo 1440 px. Não são armazenadas localmente após o envio."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скриншоты сжимаются с качеством 70% до 1440 px в ширину. После отправки локально не хранятся."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "截图以 70% 质量压缩，最宽 1440 像素。发送后不在本地存储。"
+          }
+        }
+      }
+    },
+    "thread.settings.computer_use_section" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "استخدام الحاسوب"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Computer-Steuerung"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Computer Use"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Uso del equipo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Contrôle de l'ordinateur"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "कंप्यूटर उपयोग"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コンピュータ操作"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Uso do computador"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Управление компьютером"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "电脑控制"
+          }
+        }
+      }
+    },
+    "thread.settings.computer_use_toggle" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تمكين استخدام الحاسوب"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Computer-Steuerung aktivieren"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable Computer Use"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Activar uso del equipo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Activer le contrôle de l'ordinateur"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "कंप्यूटर उपयोग सक्षम करें"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コンピュータ操作を有効にする"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ativar uso do computador"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включить управление компьютером"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "启用电脑控制"
+          }
+        }
+      }
+    },
+    "thread.settings.computer_use_toggle_description" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "يتيح للمساعد التقاط صور الشاشة والنقر وإدخال النص والتمرير. الصور مضغوطة وترسل إلى مزود الذكاء الاصطناعي."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erlaubt dem Assistenten, Screenshots aufzunehmen, zu klicken, Text einzugeben und zu scrollen. Bilder werden komprimiert und an den KI-Anbieter gesendet."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lets the assistant take screenshots, click, type, and scroll. Images are compressed and sent to the AI provider."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Permite al asistente tomar capturas de pantalla, hacer clic, escribir y desplazarse. Las imágenes se comprimen y envían al proveedor de IA."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Permet à l'assistant de prendre des captures d'écran, de cliquer, de taper et de faire défiler. Les images sont compressées et envoyées au fournisseur d'IA."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "सहायक को स्क्रीनशॉट लेने, क्लिक करने, टाइप करने और स्क्रॉल करने देता है। छवियां संपीड़ित होकर AI प्रदाता को भेजी जाती हैं।"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アシスタントがスクリーンショットの撮影、クリック、入力、スクロールを行えるようにします。画像は圧縮されてAIプロバイダに送信されます。"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Permite que o assistente tire capturas de tela, clique, digite e role. As imagens são comprimidas e enviadas ao provedor de IA."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Позволяет ассистенту делать скриншоты, кликать, вводить текст и прокручивать экран. Изображения сжимаются и отправляются провайдеру ИИ."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许助手截图、点击、输入文字和滚动。图像将被压缩后发送给 AI 提供商。"
+          }
+        }
+      }
+    },
     "thread.settings.context_depth" : {
       "localizations" : {
         "ar" : {
