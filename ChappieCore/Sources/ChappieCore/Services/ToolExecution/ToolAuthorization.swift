@@ -29,10 +29,11 @@ extension ToolExecutionService {
     func authorize(toolName: String, argsData: Data) -> ToolAuthorization {
         let terminal = activeMemoryContext.threadTerminalEnabled
         let curl = activeMemoryContext.curlEnabled
+        let computerUse = activeMemoryContext.threadComputerUseEnabled
 
         guard let capability = ToolPolicy.capability(of: toolName) else {
             // Unknown or forbidden tool: denied whatever the arguments look like.
-            let decision = ToolPolicy.decide(tool: toolName, project: nil, terminalEnabled: terminal, curlEnabled: curl)
+            let decision = ToolPolicy.decide(tool: toolName, project: nil, terminalEnabled: terminal, curlEnabled: curl, computerUseEnabled: computerUse)
             return finish(decision, argsData: argsData, args: [:])
         }
 
@@ -54,8 +55,8 @@ extension ToolExecutionService {
         }
 
         guard capability.needsProject else {
-            // No project involved (always-on, terminal).
-            let decision = ToolPolicy.decide(tool: toolName, project: nil, terminalEnabled: terminal, curlEnabled: curl)
+            // No project involved (always-on, terminal, computerUse).
+            let decision = ToolPolicy.decide(tool: toolName, project: nil, terminalEnabled: terminal, curlEnabled: curl, computerUseEnabled: computerUse)
             return finish(decision, argsData: argsData, args: args)
         }
 
@@ -70,7 +71,7 @@ extension ToolExecutionService {
         }
 
         let decision = ToolPolicy.decide(
-            tool: toolName, project: settings(of: target), terminalEnabled: terminal, curlEnabled: curl
+            tool: toolName, project: settings(of: target), terminalEnabled: terminal, curlEnabled: curl, computerUseEnabled: computerUse
         )
         if case .denied(let message) = decision {
             let hint = whereItWorks(toolName, capability, excluding: target.name, terminal: terminal, curl: curl)
@@ -98,10 +99,11 @@ extension ToolExecutionService {
         _ capability: ToolCapability,
         excluding: String?,
         terminal: Bool,
-        curl: Bool
+        curl: Bool,
+        computerUse: Bool = false
     ) -> String {
         guard capability.needsProject,
-              ToolPolicy.threadBlock(capability, terminalEnabled: terminal, curlEnabled: curl) == nil
+              ToolPolicy.threadBlock(capability, terminalEnabled: terminal, curlEnabled: curl, computerUseEnabled: computerUse) == nil
         else { return "" }
 
         let projects = activeMemoryContext.projects

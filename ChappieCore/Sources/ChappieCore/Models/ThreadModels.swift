@@ -88,6 +88,10 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
     /// Thread-level setting — independent of any attached project role.
     public var terminalEnabled: Bool
 
+    /// Whether computer use tools are available in this thread. Off by default.
+    /// Thread-level setting — independent of any attached project role.
+    public var computerUseEnabled: Bool
+
     /// Curl-Chappie (HTTP request tool) switch for this thread. Off by default.
     public var curlEnabled: Bool
 
@@ -101,6 +105,7 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
         activeKeyId: UUID? = nil,
         activeModelName: String? = nil,
         terminalEnabled: Bool = false,
+        computerUseEnabled: Bool = false,
         curlEnabled: Bool = false,
         curlHosts: [CurlHost] = []
     ) {
@@ -111,6 +116,7 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
         self.activeKeyId = activeKeyId
         self.activeModelName = activeModelName
         self.terminalEnabled = terminalEnabled
+        self.computerUseEnabled = computerUseEnabled
         self.curlEnabled = curlEnabled
         self.curlHosts = curlHosts
     }
@@ -122,7 +128,7 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
 
     private enum CodingKeys: String, CodingKey {
         case maxMessagesInContext, activeProviderId, activeKeyId
-        case activeModelName, terminalEnabled, curlEnabled, curlHosts
+        case activeModelName, terminalEnabled, computerUseEnabled, curlEnabled, curlHosts
     }
 
     // NOTE: the removed `isUnlimitedContext` key is deliberately absent from CodingKeys rather
@@ -150,6 +156,7 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
             activeKeyId: try c.decodeIfPresent(UUID.self, forKey: .activeKeyId),
             activeModelName: try c.decodeIfPresent(String.self, forKey: .activeModelName),
             terminalEnabled: storedEnabled ?? migratedEnabled,
+            computerUseEnabled: try c.decodeIfPresent(Bool.self, forKey: .computerUseEnabled) ?? false,
             curlEnabled: try c.decodeIfPresent(Bool.self, forKey: .curlEnabled) ?? false,
             curlHosts: try c.decodeIfPresent([CurlHost].self, forKey: .curlHosts) ?? []
         )
@@ -163,6 +170,7 @@ public struct ThreadSettings: Codable, Sendable, Equatable, Hashable {
         try c.encodeIfPresent(activeKeyId, forKey: .activeKeyId)
         try c.encodeIfPresent(activeModelName, forKey: .activeModelName)
         try c.encode(terminalEnabled, forKey: .terminalEnabled)
+        try c.encode(computerUseEnabled, forKey: .computerUseEnabled)
         try c.encode(curlEnabled, forKey: .curlEnabled)
         try c.encode(curlHosts, forKey: .curlHosts)
     }

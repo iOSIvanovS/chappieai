@@ -35,7 +35,8 @@ extension ToolPolicy {
         of tool: String,
         projects: [ToolStatusProject],
         terminalEnabled: Bool,
-        curlEnabled: Bool
+        curlEnabled: Bool,
+        computerUseEnabled: Bool = false
     ) -> ToolStatus {
         guard let capability = capability(of: tool) else {
             let block = ToolBlock(reason: "unknown tool, it is not registered in the tool policy", fix: nil, permanent: true)
@@ -51,10 +52,16 @@ extension ToolPolicy {
             return ToolStatus(isAvailable: false, label: "[FORBIDDEN — \(block?.summary ?? "never allowed")]")
 
         case .terminal:
-            if let block = threadBlock(capability, terminalEnabled: terminalEnabled, curlEnabled: curlEnabled) {
+            if let block = threadBlock(capability, terminalEnabled: terminalEnabled, curlEnabled: curlEnabled, computerUseEnabled: computerUseEnabled) {
                 return ToolStatus(isAvailable: false, label: "[UNAVAILABLE — \(block.summary)]")
             }
             return ToolStatus(isAvailable: true, label: "[AVAILABLE — thread terminal switch is on: commands run automatically]")
+
+        case .computerUse:
+            if let block = threadBlock(capability, terminalEnabled: terminalEnabled, curlEnabled: curlEnabled, computerUseEnabled: computerUseEnabled) {
+                return ToolStatus(isAvailable: false, label: "[UNAVAILABLE — \(block.summary)]")
+            }
+            return ToolStatus(isAvailable: true, label: "[AVAILABLE — thread computer use switch is on: commands run automatically]")
 
         case .curl:
             return curlStatus(tool, capability, projects, terminalEnabled, curlEnabled)

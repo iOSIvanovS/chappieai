@@ -49,6 +49,9 @@ public struct ActiveMemoryContext: Sendable {
     /// Thread-level terminal access. Independent of project roles.
     public let threadTerminalEnabled: Bool
 
+    /// Thread-level computer use access. Independent of project roles.
+    public let threadComputerUseEnabled: Bool
+
     /// Curl-Chappie switch and host allow-list of the thread. Secrets are per project (ProjectSettings).
     public let curlEnabled: Bool
     public let curlHosts: [CurlHost]
@@ -58,6 +61,7 @@ public struct ActiveMemoryContext: Sendable {
         projects: [ProjectInfo] = [],
         projectPathMap: [String: String] = [:],
         threadTerminalEnabled: Bool = false,
+        threadComputerUseEnabled: Bool = false,
         curlEnabled: Bool = false,
         curlHosts: [CurlHost] = []
     ) {
@@ -65,6 +69,7 @@ public struct ActiveMemoryContext: Sendable {
         self.projects = projects
         self.projectPathMap = projectPathMap
         self.threadTerminalEnabled = threadTerminalEnabled
+        self.threadComputerUseEnabled = threadComputerUseEnabled
         self.curlEnabled = curlEnabled
         self.curlHosts = curlHosts
     }

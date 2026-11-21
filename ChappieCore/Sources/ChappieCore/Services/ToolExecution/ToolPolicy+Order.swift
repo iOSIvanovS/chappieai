@@ -18,6 +18,8 @@ extension ToolPolicy {
     /// run_terminal and run_ssh are listed first so they survive provider-side tool-list truncation
     /// (RouterAI was observed dropping tools beyond position ~22).
     public static let dangerOrder: [String] = [
+        // Computer Use — first to survive provider tool-list truncation alongside terminal
+        "computer_screenshot", "computer_click", "computer_scroll", "computer_type",
         // Arbitrary commands — promoted to front to survive provider tool-list truncation
         "run_terminal", "run_ssh",
         // Orientation and memory
@@ -51,13 +53,14 @@ extension ToolPolicy {
     public static func groupTitle(of tool: String) -> String {
         guard let capability = capability(of: tool) else { return tool }
         switch capability {
-        case .alwaysOn:   return "General tools"
-        case .terminal:   return "Terminal and SSH"
-        case .forbidden:  return tool
-        case .fileRead:   return "Project file reading"
-        case .fileWrite:  return "Project file changes"
-        case .git:        return "Git"
-        case .curl:       return "Curl-Chappie (HTTP requests and scenarios)"
+        case .alwaysOn:     return "General tools"
+        case .terminal:     return "Terminal and SSH"
+        case .computerUse:  return "Computer Use"
+        case .forbidden:    return tool
+        case .fileRead:     return "Project file reading"
+        case .fileWrite:    return "Project file changes"
+        case .git:          return "Git"
+        case .curl:         return "Curl-Chappie (HTTP requests and scenarios)"
         }
     }
 }

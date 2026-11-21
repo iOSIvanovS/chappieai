@@ -69,6 +69,8 @@ public enum ToolCapability: Sendable {
     case alwaysOn
     /// run_terminal / run_ssh: thread-level switch, no project.
     case terminal
+    /// computer_screenshot / computer_click / computer_scroll / computer_type: thread-level switch, no project.
+    case computerUse
     /// Never allowed, whatever the settings (git_diff).
     case forbidden
     /// Read files and documents of a project (ADVISOR and EXECUTOR).
@@ -84,7 +86,7 @@ public enum ToolCapability: Sendable {
     /// True when the call targets one concrete project and that project's rights apply.
     public var needsProject: Bool {
         switch self {
-        case .alwaysOn, .terminal, .forbidden: return false
+        case .alwaysOn, .terminal, .computerUse, .forbidden: return false
         default: return true
         }
     }
@@ -112,6 +114,9 @@ public enum ToolPolicy {
             "pdf_info", "pdf_page_as_txt", "pdf_page_as_image"
         ])
         add(.terminal, ["run_terminal", "run_ssh"])
+        add(.computerUse, [
+            "computer_screenshot", "computer_click", "computer_scroll", "computer_type"
+        ])
         add(.forbidden, ["git_diff"])
         add(.fileRead, [
             "list_files", "read_file", "get_file_info", "view_image",
@@ -150,10 +155,11 @@ public enum ToolPolicy {
         tool: String,
         project: ProjectSettings?,
         terminalEnabled: Bool,
-        curlEnabled: Bool = false
+        curlEnabled: Bool = false,
+        computerUseEnabled: Bool = false
     ) -> ToolDecision {
         guard let block = evaluate(
-            tool: tool, project: project, terminalEnabled: terminalEnabled, curlEnabled: curlEnabled
+            tool: tool, project: project, terminalEnabled: terminalEnabled, curlEnabled: curlEnabled, computerUseEnabled: computerUseEnabled
         ) else { return .allowed }
         return .denied(block.message(tool: tool))
     }

@@ -76,6 +76,7 @@ extension ChappieViewModel {
             projects: projectInfos,
             projectPathMap: pathMap,
             threadTerminalEnabled: activeThreadSettings.terminalEnabled,
+            threadComputerUseEnabled: activeThreadSettings.computerUseEnabled,
             curlEnabled: activeThreadSettings.curlEnabled,
             curlHosts: activeThreadSettings.curlHosts
         )

@@ -22,11 +22,12 @@ extension ToolExecutionService {
         let allInfos = activeMemoryContext.projects
         let terminal = activeMemoryContext.threadTerminalEnabled
         let curl = activeMemoryContext.curlEnabled
+        let computerUse = activeMemoryContext.threadComputerUseEnabled
         let statusProjects = allInfos.map { ToolStatusProject(name: $0.name, settings: settings(of: $0)) }
 
         let entries: [ToolCatalog.Entry] = allToolDefinitions(allInfos: allInfos).map { tool in
             let status = ToolPolicy.status(
-                of: tool.function.name, projects: statusProjects, terminalEnabled: terminal, curlEnabled: curl
+                of: tool.function.name, projects: statusProjects, terminalEnabled: terminal, curlEnabled: curl, computerUseEnabled: computerUse
             )
             return (tool, status)
         }
@@ -64,6 +65,7 @@ extension ToolExecutionService {
         tools.append(gitDiffTool())
         tools.append(contentsOf: curlTools(allInfos: allInfos))
         tools.append(contentsOf: projectManagementTools())
+        tools.append(contentsOf: computerUseTools())
         tools.append(contentsOf: terminalTools(allInfos: allInfos))
         return tools
     }

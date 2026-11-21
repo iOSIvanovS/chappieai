@@ -39,7 +39,8 @@ private struct Rig {
     init(
         _ spec: [(String, ProjectSettings)],
         terminal: Bool = false,
-        curl: Bool = false
+        curl: Bool = false,
+        computerUse: Bool = false
     ) async {
         let dir = FileManager.default.temporaryDirectory
         service = ToolExecutionService(
@@ -52,6 +53,7 @@ private struct Rig {
         for (info, entry) in zip(projects, spec) { settings[info.id] = entry.1 }
         await service.setMemoryContextAndSettings(
             context: ActiveMemoryContext(threadId: UUID(), projects: projects, threadTerminalEnabled: terminal,
+                                         threadComputerUseEnabled: computerUse,
                                          curlEnabled: curl,
                                          curlHosts: [CurlHost(name: "Dev", origin: "https://dev.x.ru", permission: .readOnly)]),
             settings: settings
@@ -372,7 +374,7 @@ struct ToolExposureTests {
         for setup in setups {
             let rig = await Rig(setup, terminal: false)
             #expect(await rig.names() == ToolPolicy.knownTools)
-            let maxRig = await Rig(setup, terminal: true, curl: true)
+            let maxRig = await Rig(setup, terminal: true, curl: true, computerUse: true)
             #expect(await maxRig.names() == ToolPolicy.knownTools)
         }
     }
