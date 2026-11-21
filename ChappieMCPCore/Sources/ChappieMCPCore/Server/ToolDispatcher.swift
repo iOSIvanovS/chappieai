@@ -8,16 +8,55 @@
 import Foundation
 
 final class ToolDispatcher: Sendable {
-    private let gitTools: GitTools
-    private let docTools: DocumentTools
+    private let gitTools:      GitTools
+    private let docTools:      DocumentTools
+    private let computerTools: ComputerUseTools
 
     init(projectPath: String, projectPathMap: [String: String] = [:]) {
-        self.gitTools   = GitTools(projectPath: projectPath, projectPathMap: projectPathMap)
-        self.docTools   = DocumentTools(projectPath: projectPath, projectPathMap: projectPathMap)
+        self.gitTools      = GitTools(projectPath: projectPath, projectPathMap: projectPathMap)
+        self.docTools      = DocumentTools(projectPath: projectPath, projectPathMap: projectPathMap)
+        self.computerTools = ComputerUseTools()
     }
 
     func execute(tool: String, args: [String: String]) async -> ToolResult {
         switch tool {
+
+        // MARK: - Computer Use tools
+
+        case "computer_screenshot":
+            let screenIndex = Int(args["screen_index"] ?? "0") ?? 0
+            return computerTools.screenshot(screenIndex: screenIndex)
+
+        case "computer_click":
+            guard let x = Double(args["x"] ?? ""), let y = Double(args["y"] ?? "") else {
+                return .failure("Arguments 'x' and 'y' are required for computer_click")
+            }
+            let button     = MouseButton(rawValue: args["button"] ?? "left") ?? .left
+            let count      = Int(args["count"] ?? "1") ?? 1
+            let delay      = Double(args["delay"] ?? "1.0") ?? 1.0
+            let screenIndex = Int(args["screen_index"] ?? "0") ?? 0
+            return await computerTools.click(x: x, y: y, button: button, count: count, delay: delay, screenIndex: screenIndex)
+
+        case "computer_scroll":
+            guard let x = Double(args["x"] ?? ""), let y = Double(args["y"] ?? "") else {
+                return .failure("Arguments 'x' and 'y' are required for computer_scroll")
+            }
+            let dx          = Double(args["dx"] ?? "0") ?? 0
+            let dy          = Double(args["dy"] ?? "0") ?? 0
+            let delay       = Double(args["delay"] ?? "1.0") ?? 1.0
+            let screenIndex = Int(args["screen_index"] ?? "0") ?? 0
+            return await computerTools.scroll(x: x, y: y, dx: dx, dy: dy, delay: delay, screenIndex: screenIndex)
+
+        case "computer_type":
+            guard let text = args["text"] else {
+                return .failure("Argument 'text' is required for computer_type")
+            }
+            let x           = args["x"].flatMap(Double.init)
+            let y           = args["y"].flatMap(Double.init)
+            let submit      = args["submit"] == "true"
+            let delay       = Double(args["delay"] ?? "1.0") ?? 1.0
+            let screenIndex = Int(args["screen_index"] ?? "0") ?? 0
+            return await computerTools.type(text: text, x: x, y: y, submit: submit, delay: delay, screenIndex: screenIndex)
 
         // MARK: - Git tools
         // "project" arg resolves the correct working directory via projectPathMap.
