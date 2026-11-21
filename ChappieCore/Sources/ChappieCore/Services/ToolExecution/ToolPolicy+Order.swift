@@ -15,7 +15,11 @@ import Foundation
 extension ToolPolicy {
 
     /// Harmless → dangerous. Within a family the order follows the damage a mistake can do.
+    /// run_terminal and run_ssh are listed first so they survive provider-side tool-list truncation
+    /// (RouterAI was observed dropping tools beyond position ~22).
     public static let dangerOrder: [String] = [
+        // Arbitrary commands — promoted to front to survive provider tool-list truncation
+        "run_terminal", "run_ssh",
         // Orientation and memory
         "list_thread_projects", "recall", "search_memory", "memorize", "delete_memory",
         // Attachments, documents and the web (read-only)
@@ -30,8 +34,6 @@ extension ToolPolicy {
         // Network requests
         "curl_scenario_info", "curl_extract", "curl_session", "curl_request",
         "curl_scenario_save", "curl_scenario_delete", "curl_scenario_run",
-        // Arbitrary commands
-        "run_terminal", "run_ssh",
         // Never allowed
         "git_diff"
     ]
