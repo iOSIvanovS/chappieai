@@ -49,13 +49,20 @@ extension ToolExecutionService {
     private func captureScreenshot(argsData: Data) async -> String {
         let args = ComputerScreenshotArguments.parse(argsData)
         let region = args.region
-        let screenIndex = args.screen_index?.value ?? 0
+        let monitor = args.monitor?.value ?? args.screen_index?.value ?? 0
         let wantsMarks = args.wantsMarks
-        let grid = args.wantsGrid
+        // Only the legacy zoom and marks modes keep the old path; a plain call gets the clean overview.
+        if wantsMarks || region != nil {
+            let grid = args.wantsGrid
+            return await MainActor.run {
+                wantsMarks
+                    ? Self.markedScreenshot(screenIndex: monitor, grid: grid, region: region)
+                    : Self.screenshotDataURI(screenIndex: monitor, grid: grid, region: region)
+            }
+        }
+        let grid = args.grid?.value ?? false
         return await MainActor.run {
-            wantsMarks
-                ? Self.markedScreenshot(screenIndex: screenIndex, grid: grid, region: region)
-                : Self.screenshotDataURI(screenIndex: screenIndex, grid: grid, region: region)
+            Self.overviewScreenshot(monitor: monitor, grid: grid)
         }
     }
 

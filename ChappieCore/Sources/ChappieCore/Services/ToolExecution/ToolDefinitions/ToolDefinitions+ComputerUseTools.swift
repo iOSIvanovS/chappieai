@@ -25,42 +25,19 @@ extension ToolExecutionService {
         AITool(function: AIFunctionDefinition(
             name: "computer_screenshot",
             description: """
-            Capture the screen and return it as an image. Two modes.
-            OVERVIEW — omit width/height. The whole screen, downscaled, with a coordinate grid drawn over it. Read a position off the labelled lines and pass those numbers to computer_click; no estimating from the edges.
-            ZOOM — pass x, y, width and height. That region comes back at native display resolution with a finer grid. Use it for small targets where a few pixels decide the outcome: window buttons, toolbar icons, checkboxes, menu items, table cells.
-            Grid labels are always pixels of the overview image, so a number read in a zoomed image goes to computer_click unchanged. Pass grid:false for a clean picture when you only want to read content.
-            MARKS — pass marks:true to have the controls of the application you are working in boxed and numbered, with a list of them as the tool result. Then click a number (computer_click element:7) instead of a pixel: the centre comes from the system, so small buttons are hit exactly. This is the reliable way to drive another app; pixels are the fallback for apps that report no controls.
-            Every click, scroll and keystroke already returns a freshly numbered picture, so take one with marks:true when you need numbers for the first time.
+            Capture one whole monitor as a clean image, exactly as it is on screen. The text result says how many monitors are connected, so you can look at any of them with the monitor parameter.
+            To click, do not read pixel coordinates off this picture: pick the area, call computer_aim with x and y as fractions 0...1 of this image, check the crosshair, then call computer_click.
+            Pass grid:true only if you need help choosing the area: it draws a coarse 10x10 grid with lines labelled 0.1 ... 0.9, which are the same fractions computer_aim takes. The grid is off by default so you see the true screen.
             """,
             parameters: AIToolParameters(
                 properties: [
-                    "screen_index": AIToolProperty(
+                    "monitor": AIToolProperty(
                         type: "integer",
-                        description: "Zero-based index of the screen to capture. 0 = main display (default). Omit for the main display."
-                    ),
-                    "marks": AIToolProperty(
-                        type: "boolean",
-                        description: "Box and number the controls of the other application's window, and return them as a list. Default: false. Numbers are then used by computer_click(element:)."
+                        description: "Zero-based monitor index. 0 = main display (default)."
                     ),
                     "grid": AIToolProperty(
                         type: "boolean",
-                        description: "Draw the labelled coordinate grid. Default: true, or false when marks:true."
-                    ),
-                    "x": AIToolProperty(
-                        type: "number",
-                        description: "Zoom mode only: left edge of the region, in overview-image pixels."
-                    ),
-                    "y": AIToolProperty(
-                        type: "number",
-                        description: "Zoom mode only: top edge of the region, in overview-image pixels."
-                    ),
-                    "width": AIToolProperty(
-                        type: "number",
-                        description: "Zoom mode: width of the region in overview-image pixels. Give it together with height; without them the whole screen is returned."
-                    ),
-                    "height": AIToolProperty(
-                        type: "number",
-                        description: "Zoom mode: height of the region in overview-image pixels. Give it together with width."
+                        description: "Draw the coarse fraction grid (step 0.1). Default: false."
                     )
                 ],
                 required: []

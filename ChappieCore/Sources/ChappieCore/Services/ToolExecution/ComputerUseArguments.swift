@@ -62,6 +62,8 @@ struct FlexBool: Decodable {
 /// Arguments of computer_screenshot.
 struct ComputerScreenshotArguments: Decodable {
     var screen_index: FlexInt?
+    // The new name for screen_index; screen_index stays until the legacy zoom and marks modes are removed.
+    var monitor: FlexInt?
     var grid: FlexBool?
     var marks: FlexBool?
     var x: FlexDouble?
