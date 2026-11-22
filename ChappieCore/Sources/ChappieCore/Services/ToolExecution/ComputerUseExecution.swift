@@ -38,7 +38,7 @@ extension ToolExecutionService {
         case "computer_screenshot": return await captureScreenshot(argsData: argsData)
         case "computer_click":     return await performClick(argsData: argsData)
         case "computer_scroll":    return await performScroll(argsData: argsData)
-        case "computer_type":      return await performType(argsData: argsData)
+        case "computer_type":      return await performAimedType(argsData: argsData)
         case "computer_aim":       return await performAim(argsData: argsData)
         default:                   return "Error: Unknown computer use tool \(name)"
         }
@@ -262,7 +262,7 @@ extension ToolExecutionService {
     // Activate the frontmost app whose window sits at the given screen point.
     // This transfers focus away from Chappie so the subsequent CGEvent lands in the right window.
     @MainActor
-    private static func activateApp(at point: CGPoint) {
+    static func activateApp(at point: CGPoint) {
         // Walk the on-screen window list to find the topmost window that contains the point.
         // CGWindowBounds uses CG coordinates (top-left origin) — same space as `point`.
         let windowList = CGWindowListCopyWindowInfo(
@@ -298,7 +298,7 @@ extension ToolExecutionService {
         return false
     }
 
-    private static func postMouseEvent(type: CGEventType, point: CGPoint, button: CGMouseButton) {
+    static func postMouseEvent(type: CGEventType, point: CGPoint, button: CGMouseButton) {
         guard let e = CGEvent(mouseEventSource: nil,
                               mouseType: type,
                               mouseCursorPosition: point,
@@ -313,7 +313,7 @@ extension ToolExecutionService {
         e.post(tap: .cghidEventTap)
     }
 
-    private static func postRawKey(keyCode: CGKeyCode, keyDown: Bool) {
+    static func postRawKey(keyCode: CGKeyCode, keyDown: Bool) {
         guard let e = CGEvent(keyboardEventSource: nil,
                               virtualKey: keyCode, keyDown: keyDown) else { return }
         e.post(tap: .cghidEventTap)

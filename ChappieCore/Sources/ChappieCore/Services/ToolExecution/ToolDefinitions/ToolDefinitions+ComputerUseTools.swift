@@ -125,22 +125,10 @@ extension ToolExecutionService {
     private func computerTypeTool() -> AITool {
         AITool(function: AIFunctionDefinition(
             name: "computer_type",
-            description: "Type text at the current keyboard focus. Optionally focus a field first — by element number, which is the reliable way — then type. Returns a freshly numbered screenshot taken after the action.",
+            description: "Click the point set by the latest computer_aim to focus the input field, then paste the given text there. Takes no coordinates: call computer_aim at the field first and check the crosshair. An aim is used up by one click or type, so a second call needs a new aim. The clipboard is saved and restored around the paste. Returns a screenshot of the aimed monitor taken after the action.",
             parameters: AIToolParameters(
                 properties: [
-                    "text": AIToolProperty(type: "string", description: "The text to type. Supports Unicode."),
-                    "element": AIToolProperty(
-                        type: "integer",
-                        description: "Number of a field in the latest numbered screenshot: click it to place the focus, then type. Preferred over x/y."
-                    ),
-                    "x": AIToolProperty(
-                        type: "number",
-                        description: "Without element: click this position first to focus the input field, then type. Coordinates in screenshot-image space."
-                    ),
-                    "y": AIToolProperty(
-                        type: "number",
-                        description: "Without element: click this position first to focus the input field, then type. Coordinates in screenshot-image space."
-                    ),
+                    "text": AIToolProperty(type: "string", description: "The text to enter. Supports Unicode."),
                     "submit": AIToolProperty(
                         type: "boolean",
                         description: "If true — press Return after typing. Useful for search fields and single-line forms. Default: false."
@@ -148,10 +136,6 @@ extension ToolExecutionService {
                     "delay": AIToolProperty(
                         type: "number",
                         description: "Seconds to wait after typing (and submitting, if submit=true) before taking the screenshot. Default: 1.0. Use 3.0 when submit triggers navigation."
-                    ),
-                    "screen_index": AIToolProperty(
-                        type: "integer",
-                        description: "Zero-based index of the screen. 0 = main display (default)."
                     )
                 ],
                 required: ["text"]
