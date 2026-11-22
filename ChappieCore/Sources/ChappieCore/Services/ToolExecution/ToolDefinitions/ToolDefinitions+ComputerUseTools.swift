@@ -95,11 +95,11 @@ extension ToolExecutionService {
     private func computerScrollTool() -> AITool {
         AITool(function: AIFunctionDefinition(
             name: "computer_scroll",
-            description: "Scroll at a position on the screen. Coordinates are in screenshot-image space. Returns a freshly numbered screenshot taken after the action.",
+            description: "Scroll at a position on a monitor. Pass x and y as fractions from 0 to 1 of that monitor's image (0.5, 0.5 is the centre); no aim is needed. Positive dy scrolls down, positive dx scrolls right. Returns a clean screenshot of the monitor taken after the action.",
             parameters: AIToolParameters(
                 properties: [
-                    "x": AIToolProperty(type: "number", description: "Horizontal position of the scroll target in screenshot-image pixels."),
-                    "y": AIToolProperty(type: "number", description: "Vertical position of the scroll target in screenshot-image pixels."),
+                    "x": AIToolProperty(type: "number", description: "Horizontal position of the scroll target as a fraction 0...1 of the monitor image."),
+                    "y": AIToolProperty(type: "number", description: "Vertical position of the scroll target as a fraction 0...1 of the monitor image."),
                     "dx": AIToolProperty(
                         type: "number",
                         description: "Horizontal scroll amount in ticks. Negative = left, positive = right. One screen-width ≈ 15–20 ticks."
@@ -112,12 +112,12 @@ extension ToolExecutionService {
                         type: "number",
                         description: "Seconds to wait after scrolling before taking the screenshot. Default: 1.0."
                     ),
-                    "screen_index": AIToolProperty(
+                    "monitor": AIToolProperty(
                         type: "integer",
-                        description: "Zero-based index of the screen. 0 = main display (default)."
+                        description: "Zero-based monitor index. 0 = main display (default)."
                     )
                 ],
-                required: ["x", "y", "dy"]
+                required: ["x", "y"]
             )
         ))
     }

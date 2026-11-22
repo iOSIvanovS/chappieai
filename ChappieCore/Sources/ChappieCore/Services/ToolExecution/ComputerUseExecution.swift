@@ -37,7 +37,7 @@ extension ToolExecutionService {
         switch name {
         case "computer_screenshot": return await captureScreenshot(argsData: argsData)
         case "computer_click":     return await performClick(argsData: argsData)
-        case "computer_scroll":    return await performScroll(argsData: argsData)
+        case "computer_scroll":    return await performFractionScroll(argsData: argsData)
         case "computer_type":      return await performAimedType(argsData: argsData)
         case "computer_aim":       return await performAim(argsData: argsData)
         default:                   return "Error: Unknown computer use tool \(name)"
