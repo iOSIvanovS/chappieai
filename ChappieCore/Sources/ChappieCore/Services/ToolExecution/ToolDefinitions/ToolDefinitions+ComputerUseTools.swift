@@ -92,19 +92,11 @@ extension ToolExecutionService {
         AITool(function: AIFunctionDefinition(
             name: "computer_click",
             description: """
-            Click a control, by number where possible. Two ways, and the first one is strongly preferred:
-            element — pass the number from a numbered screenshot (computer_screenshot with marks:true, or the picture any computer action returned). The click lands exactly in the centre of the control as the system reports it, so a 12-pixel window button is hit as reliably as a big one.
-            x/y — a position read off the coordinate grid, in screenshot-image pixels. Use it only when the target has no number: an app that reports no controls, or a spot on a canvas.
-            Returns a fresh numbered screenshot taken after the action.
+            Click the point set by the latest computer_aim. This tool takes no coordinates: call computer_aim first, check that the crosshair sits on the target, then call computer_click. One aim is used up by one click, so a second click needs a new aim. The click goes to the monitor that was aimed at.
+            Returns a screenshot taken after the action.
             """,
             parameters: AIToolParameters(
                 properties: [
-                    "element": AIToolProperty(
-                        type: "integer",
-                        description: "Number of the control in the latest numbered screenshot. Preferred over x/y."
-                    ),
-                    "x": AIToolProperty(type: "number", description: "Horizontal position in screenshot-image pixels. Only without element."),
-                    "y": AIToolProperty(type: "number", description: "Vertical position in screenshot-image pixels. Only without element."),
                     "button": AIToolProperty(
                         type: "string",
                         description: "Mouse button to use: 'left' (default), 'right', or 'middle'."
@@ -116,10 +108,6 @@ extension ToolExecutionService {
                     "delay": AIToolProperty(
                         type: "number",
                         description: "Seconds to wait after the click before taking the screenshot. Default: 1.0. Use 3.0 or more when clicking a link or button that triggers navigation or a slow animation."
-                    ),
-                    "screen_index": AIToolProperty(
-                        type: "integer",
-                        description: "Zero-based index of the screen. 0 = main display (default)."
                     )
                 ],
                 required: []

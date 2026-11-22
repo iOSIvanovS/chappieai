@@ -67,48 +67,22 @@ extension ToolExecutionService {
             return "❌ computer_click: Accessibility permission is required. Please grant it in System Settings → Privacy & Security → Accessibility, then try again."
         }
         struct Args: Decodable {
-            var x: FlexDouble?; var y: FlexDouble?
-            var element: FlexInt?
             var button: String?; var count: FlexInt?
-            var delay: FlexDouble?; var screen_index: FlexInt?
+            var delay: FlexDouble?
         }
-        let rawJSON = String(data: argsData, encoding: .utf8) ?? "<non-utf8>"
-        guard let args = try? JSONDecoder().decode(Args.self, from: argsData) else {
-            return "❌ computer_click: Could not read the arguments. Raw args: \(rawJSON)"
+        // take() forgets the aim at once, so a failed or finished click can never reuse a stale point.
+        guard let aim = Self.aimStore.take() else {
+            return "❌ computer_click: No aim is set. Call computer_aim first, check the crosshair, then click. An aim is used up by one click."
         }
-        let screenIndex = args.screen_index?.value ?? 0
+        // All options are optional, so unreadable arguments fall back to a single left click.
+        let args = (try? JSONDecoder().decode(Args.self, from: argsData)) ?? Args()
+        let screenIndex = aim.monitor
         let clicks      = args.count?.value ?? 1
         let delay       = args.delay?.value ?? 1.0
         let button      = args.button ?? "left"
-
-        // Where to click: a number from the last numbered picture, or a point read off the grid.
-        let pt: CGPoint
-        let what: String
-        if let number = args.element?.value {
-            switch Self.resolveElement(number) {
-            case .failure(let message):
-                return "❌ computer_click(element: \(number)): \(message)"
-            case .point(let point, let description, _):
-                // No focus transfer: the AX centre is inside the control's own window, and asking
-                // for the topmost app at that point could well hand focus back to Chappie.
-                pt = point
-                what = "Clicked \(description)."
-            }
-        } else if let x = args.x?.value, let y = args.y?.value {
-            // Resolve screen-space coordinates on MainActor, then post events off it.
-            let maybePoint: CGPoint? = await MainActor.run {
-                guard let screen = Self.screen(at: screenIndex) else { return nil }
-                return Self.scaleToScreen(x: x, y: y, screen: screen)
-            }
-            guard let point = maybePoint else {
-                return "❌ computer_click: Screen index \(screenIndex) not found."
-            }
-            pt = point
-            what = "Clicked at (\(Int(x)), \(Int(y))) on the screenshot grid."
-        } else {
-            return "❌ computer_click: pass element:<number> from a numbered screenshot, or x and y in"
-                + " screenshot-image pixels. Raw args: \(rawJSON)"
-        }
+        let pt          = aim.eventPoint
+        let what = String(format: "Clicked the aimed point (x=%.4f y=%.4f of monitor %d).",
+                          aim.fraction.x, aim.fraction.y, aim.monitor)
         let (dn, up) = Self.cgButtonTypes(for: button)
         let btn      = Self.cgMouseButton(for: button)
 
