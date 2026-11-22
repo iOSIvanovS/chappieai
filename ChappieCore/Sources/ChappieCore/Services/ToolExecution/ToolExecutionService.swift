@@ -190,11 +190,21 @@ public actor ToolExecutionService {
 
     /// Only these tools may return an image behind the marker. Any other tool whose text merely starts
     /// with the marker (a file that imitates it) is treated as ordinary text.
-    public static let imageResultTools: Set<String> = ["view_image", "fetch_attachment"]
+    public static let imageResultTools: Set<String> = [
+        "view_image", "fetch_attachment",
+        "computer_screenshot", "computer_aim", "computer_click", "computer_scroll", "computer_type"
+    ]
 
     /// Tools whose result may be a document's text plus its pictures (ToolImageResult marker).
     /// Everything else that starts with the marker is plain text.
     public static let documentImageTools: Set<String> = ["read_document", "fetch_attachment", "pdf_page_as_image"]
+
+    /// Tools allowed to answer with text PLUS a picture. The computer tools belong here because a
+    /// numbered screenshot is not one image: the element list is the half the model reasons about,
+    /// and it has to reach the model as a tool result, not only baked into the pixels.
+    public static let textAndImageTools: Set<String> = documentImageTools.union([
+        "computer_screenshot", "computer_aim", "computer_click", "computer_scroll", "computer_type"
+    ])
 
     // MARK: - Tool execution dispatcher
 
@@ -286,6 +296,9 @@ public actor ToolExecutionService {
             case "git_status", "git_diff", "git_add", "git_commit", "git_push",
                  "git_log", "git_reset", "git_revert", "git_checkout":
                 return try await executeGitTool(name: name, argsData: argsData)
+
+            case "computer_screenshot", "computer_aim", "computer_click", "computer_scroll", "computer_type":
+                return try await executeComputerUseTool(name: name, argsData: argsData)
 
             case "run_terminal":
                 return try await executeTerminalTool(argsData: argsData, onOutput: onOutput)

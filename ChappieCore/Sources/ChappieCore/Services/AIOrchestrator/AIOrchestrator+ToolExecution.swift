@@ -61,10 +61,11 @@ extension AIOrchestrator {
                 }
             }
 
-            // view_image / fetch_attachment (image): tool results can't carry images (providers only accept image_url
-            // inside user-role multimodal content). Strip the marker, keep a short text
-            // acknowledgment in the tool message, and inject the actual image as a synthetic
-            // user message right after — this is the only way the model actually "sees" it.
+            // view_image / fetch_attachment / computer_screenshot / computer_click / computer_scroll /
+            // computer_type: tool results can't carry images (providers only accept image_url inside
+            // user-role multimodal content). Strip the marker, keep a short text acknowledgment in the
+            // tool message, and inject the actual image as a synthetic user message right after — this
+            // is the only way the model actually "sees" it.
             if ToolExecutionService.imageResultTools.contains(toolName),
                resultString.hasPrefix(ToolExecutionService.viewImageMarker) {
                 let dataURI = String(resultString.dropFirst(ToolExecutionService.viewImageMarker.count))
@@ -78,9 +79,11 @@ extension AIOrchestrator {
                 continue
             }
 
-            // read_document / fetch_attachment of an Office file: the text goes back as the tool result,
-            // the pictures of the document follow as a user message so the model sees them as images.
-            if ToolExecutionService.documentImageTools.contains(toolName),
+            // Text plus pictures — a document's content, or a numbered computer screenshot: the text
+            // goes back as the tool result, the pictures follow as a user message so the model sees
+            // them as images. A numbered screenshot NEEDS both halves: the list says what 7 is, the
+            // picture says where it is.
+            if ToolExecutionService.textAndImageTools.contains(toolName),
                let withImages = ToolImageResult.decode(resultString) {
                 sessionHistory.append(AIMessage(
                     role: "tool",
@@ -88,7 +91,7 @@ extension AIOrchestrator {
                     tool_call_id: toolCall.id,
                     name: toolName
                 ))
-                var parts: [AIMultimodalPart] = [.text("Images contained in the document returned by `\(toolName)` (numbered as in its [image N] markers):")]
+                var parts: [AIMultimodalPart] = [.text(Self.imageIntro(toolName: toolName))]
                 parts.append(contentsOf: withImages.multimodalParts)
                 sessionHistory.append(AIMessage(role: "user", multimodalParts: parts))
                 continue
@@ -104,6 +107,18 @@ extension AIOrchestrator {
     }
 
     // MARK: - Helpers
+
+    /// A document's pictures and a numbered screenshot are introduced differently: the first are
+    /// parts of one file, the second is the very screen the list above describes.
+    static func imageIntro(toolName: String) -> String {
+        if toolName == "computer_aim" {
+            return "The aim crop at native resolution — the crosshair intersection is the point computer_click will hit:"
+        }
+        if toolName.hasPrefix("computer_") {
+            return "The screen as it is now — the numbered boxes match the element list above:"
+        }
+        return "Images contained in the document returned by `\(toolName)` (numbered as in its [image N] markers):"
+    }
 
     /// Parses the structured JSON response from send_attachment / write_document.
     /// Expected format: {"status":"ok","saved_path":"/absolute/path/file.docx","filename":"..."}

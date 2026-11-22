@@ -63,9 +63,9 @@ public enum OutputGuard {
         if ToolExecutionService.imageResultTools.contains(toolName),
            output.hasPrefix(ToolExecutionService.viewImageMarker) { return output }
 
-        // A document with pictures: the TEXT is judged like any other read; the pictures were already
+        // Text plus pictures: the TEXT is judged like any other read; the pictures were already
         // bounded by the image pipeline. A size cap on the whole thing guards against an imitation.
-        if ToolExecutionService.documentImageTools.contains(toolName),
+        if ToolExecutionService.textAndImageTools.contains(toolName),
            let withImages = ToolImageResult.decode(output) {
             guard output.utf8.count <= documentImagesCap else {
                 return oversizeNotice(toolName: toolName, bytes: output.utf8.count)

@@ -12,6 +12,7 @@ extension ToolExecutionService {
     func computerUseTools() -> [AITool] {
         [
             computerScreenshotTool(),
+            computerAimTool(),
             computerClickTool(),
             computerScrollTool(),
             computerTypeTool()
@@ -23,12 +24,43 @@ extension ToolExecutionService {
     private func computerScreenshotTool() -> AITool {
         AITool(function: AIFunctionDefinition(
             name: "computer_screenshot",
-            description: "Capture a screenshot of the screen and return it as an image. Use to observe the current state of the screen before acting, or to verify the result of a previous action without performing a new one.",
+            description: """
+            Capture the screen and return it as an image. Two modes.
+            OVERVIEW — omit width/height. The whole screen, downscaled, with a coordinate grid drawn over it. Read a position off the labelled lines and pass those numbers to computer_click; no estimating from the edges.
+            ZOOM — pass x, y, width and height. That region comes back at native display resolution with a finer grid. Use it for small targets where a few pixels decide the outcome: window buttons, toolbar icons, checkboxes, menu items, table cells.
+            Grid labels are always pixels of the overview image, so a number read in a zoomed image goes to computer_click unchanged. Pass grid:false for a clean picture when you only want to read content.
+            MARKS — pass marks:true to have the controls of the application you are working in boxed and numbered, with a list of them as the tool result. Then click a number (computer_click element:7) instead of a pixel: the centre comes from the system, so small buttons are hit exactly. This is the reliable way to drive another app; pixels are the fallback for apps that report no controls.
+            Every click, scroll and keystroke already returns a freshly numbered picture, so take one with marks:true when you need numbers for the first time.
+            """,
             parameters: AIToolParameters(
                 properties: [
                     "screen_index": AIToolProperty(
                         type: "integer",
                         description: "Zero-based index of the screen to capture. 0 = main display (default). Omit for the main display."
+                    ),
+                    "marks": AIToolProperty(
+                        type: "boolean",
+                        description: "Box and number the controls of the other application's window, and return them as a list. Default: false. Numbers are then used by computer_click(element:)."
+                    ),
+                    "grid": AIToolProperty(
+                        type: "boolean",
+                        description: "Draw the labelled coordinate grid. Default: true, or false when marks:true."
+                    ),
+                    "x": AIToolProperty(
+                        type: "number",
+                        description: "Zoom mode only: left edge of the region, in overview-image pixels."
+                    ),
+                    "y": AIToolProperty(
+                        type: "number",
+                        description: "Zoom mode only: top edge of the region, in overview-image pixels."
+                    ),
+                    "width": AIToolProperty(
+                        type: "number",
+                        description: "Zoom mode: width of the region in overview-image pixels. Give it together with height; without them the whole screen is returned."
+                    ),
+                    "height": AIToolProperty(
+                        type: "number",
+                        description: "Zoom mode: height of the region in overview-image pixels. Give it together with width."
                     )
                 ],
                 required: []
@@ -36,14 +68,43 @@ extension ToolExecutionService {
         ))
     }
 
+    private func computerAimTool() -> AITool {
+        AITool(function: AIFunctionDefinition(
+            name: "computer_aim",
+            description: """
+            Aim at a point before clicking. Pass x and y as fractions from 0 to 1 of the monitor image (x=0.5, y=0.5 is the centre, 0,0 is the top-left corner). Returns a native-resolution square crop around that point, about 200 points on a side, with a crosshair whose intersection is the exact point. Judge whether it sits on the target; if not, call computer_aim again with corrected fractions, as many times as needed. The latest aim is remembered for the click.
+            """,
+            parameters: AIToolParameters(
+                properties: [
+                    "x": AIToolProperty(type: "number", description: "Horizontal position as a fraction 0...1 of the monitor image."),
+                    "y": AIToolProperty(type: "number", description: "Vertical position as a fraction 0...1 of the monitor image."),
+                    "monitor": AIToolProperty(
+                        type: "integer",
+                        description: "Zero-based monitor index. 0 = main display (default)."
+                    )
+                ],
+                required: ["x", "y"]
+            )
+        ))
+    }
+
     private func computerClickTool() -> AITool {
         AITool(function: AIFunctionDefinition(
             name: "computer_click",
-            description: "Click at a position on the screen. Coordinates are in the space of the screenshot image returned by computer_screenshot — the app maps them back to real screen pixels automatically. Returns a screenshot taken after the action.",
+            description: """
+            Click a control, by number where possible. Two ways, and the first one is strongly preferred:
+            element — pass the number from a numbered screenshot (computer_screenshot with marks:true, or the picture any computer action returned). The click lands exactly in the centre of the control as the system reports it, so a 12-pixel window button is hit as reliably as a big one.
+            x/y — a position read off the coordinate grid, in screenshot-image pixels. Use it only when the target has no number: an app that reports no controls, or a spot on a canvas.
+            Returns a fresh numbered screenshot taken after the action.
+            """,
             parameters: AIToolParameters(
                 properties: [
-                    "x": AIToolProperty(type: "number", description: "Horizontal position in screenshot-image pixels."),
-                    "y": AIToolProperty(type: "number", description: "Vertical position in screenshot-image pixels."),
+                    "element": AIToolProperty(
+                        type: "integer",
+                        description: "Number of the control in the latest numbered screenshot. Preferred over x/y."
+                    ),
+                    "x": AIToolProperty(type: "number", description: "Horizontal position in screenshot-image pixels. Only without element."),
+                    "y": AIToolProperty(type: "number", description: "Vertical position in screenshot-image pixels. Only without element."),
                     "button": AIToolProperty(
                         type: "string",
                         description: "Mouse button to use: 'left' (default), 'right', or 'middle'."
@@ -61,7 +122,7 @@ extension ToolExecutionService {
                         description: "Zero-based index of the screen. 0 = main display (default)."
                     )
                 ],
-                required: ["x", "y"]
+                required: []
             )
         ))
     }
@@ -69,7 +130,7 @@ extension ToolExecutionService {
     private func computerScrollTool() -> AITool {
         AITool(function: AIFunctionDefinition(
             name: "computer_scroll",
-            description: "Scroll at a position on the screen. Coordinates are in screenshot-image space. Returns a screenshot taken after the action.",
+            description: "Scroll at a position on the screen. Coordinates are in screenshot-image space. Returns a freshly numbered screenshot taken after the action.",
             parameters: AIToolParameters(
                 properties: [
                     "x": AIToolProperty(type: "number", description: "Horizontal position of the scroll target in screenshot-image pixels."),
@@ -99,17 +160,21 @@ extension ToolExecutionService {
     private func computerTypeTool() -> AITool {
         AITool(function: AIFunctionDefinition(
             name: "computer_type",
-            description: "Type text at the current keyboard focus. Optionally click a target first to place the focus, then type. Returns a screenshot taken after the action.",
+            description: "Type text at the current keyboard focus. Optionally focus a field first — by element number, which is the reliable way — then type. Returns a freshly numbered screenshot taken after the action.",
             parameters: AIToolParameters(
                 properties: [
                     "text": AIToolProperty(type: "string", description: "The text to type. Supports Unicode."),
+                    "element": AIToolProperty(
+                        type: "integer",
+                        description: "Number of a field in the latest numbered screenshot: click it to place the focus, then type. Preferred over x/y."
+                    ),
                     "x": AIToolProperty(
                         type: "number",
-                        description: "If provided together with y — click this position first to focus the input field, then type. Coordinates in screenshot-image space."
+                        description: "Without element: click this position first to focus the input field, then type. Coordinates in screenshot-image space."
                     ),
                     "y": AIToolProperty(
                         type: "number",
-                        description: "If provided together with x — click this position first to focus the input field, then type. Coordinates in screenshot-image space."
+                        description: "Without element: click this position first to focus the input field, then type. Coordinates in screenshot-image space."
                     ),
                     "submit": AIToolProperty(
                         type: "boolean",
