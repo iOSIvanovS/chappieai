@@ -164,14 +164,27 @@ final class MCPHelperLauncher {
     // MARK: - Launch Logic
 
     private func startHelper() {
+        // In a release build the helper lives inside the app bundle.
+        // During Xcode development Xcode does not always copy the helper into the bundle
+        // after an incremental build, but it always places a fresh binary next to the bundle
+        // in the Products folder — prefer that one so changes take effect immediately.
         let bundled = Bundle.main.url(forAuxiliaryExecutable: "ChappieMCP")
-        let fallback = Bundle.main.bundleURL
+        let insideBundle = Bundle.main.bundleURL
             .appendingPathComponent("Contents/Helpers/ChappieMCP")
+        let siblingOfBundle = Bundle.main.bundleURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("ChappieMCP")
 
-        if let url = bundled {
+        let candidates: [URL?] = [
+            siblingOfBundle,   // fresh Xcode build artefact — checked first
+            bundled,           // normal bundle lookup
+            insideBundle,      // explicit bundle-internal path
+        ]
+
+        if let url = candidates.compactMap({ $0 }).first(where: {
+            FileManager.default.isExecutableFile(atPath: $0.path)
+        }) {
             startProcess(at: url)
-        } else if FileManager.default.fileExists(atPath: fallback.path) {
-            startProcess(at: fallback)
         } else {
             print("[MCPHelperLauncher] ❌ ChappieMCP binary not found in bundle!")
             status = .failed("Binary not found in bundle")
