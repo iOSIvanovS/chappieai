@@ -90,18 +90,17 @@ extension ToolExecutionService {
 
     /// Captures the display including the real system cursor.
     /// Falls back to CGDisplayCreateImage (no cursor) on older OS or if SC permission is denied.
-    @MainActor
-    static func captureWithCursor(_ screen: NSScreen) async -> CGImage? {
-        let dispID = Self.displayID(of: screen)
+    /// NOT @MainActor — SCScreenshotManager completes on a background thread and must not
+    /// try to re-enter the main actor, which would deadlock if the caller holds it.
+    static func captureWithCursor(displayID: CGDirectDisplayID) async -> CGImage? {
         if #available(macOS 14.0, *) {
-            if let img = await Self.captureViaSC(displayID: dispID) { return img }
+            if let img = await Self.captureViaSC(displayID: displayID) { return img }
         }
         // Fallback: cursor-free capture so the tool still works.
-        return CGDisplayCreateImage(dispID)
+        return CGDisplayCreateImage(displayID)
     }
 
     @available(macOS 14.0, *)
-    @MainActor
     private static func captureViaSC(displayID: CGDirectDisplayID) async -> CGImage? {
         // Find the SCDisplay matching this CGDirectDisplayID.
         guard let content = try? await SCShareableContent.excludingDesktopWindows(false,

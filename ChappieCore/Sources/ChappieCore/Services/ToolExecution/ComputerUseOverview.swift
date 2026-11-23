@@ -14,23 +14,16 @@ extension ToolExecutionService {
 
     /// Captures the monitor and returns a ToolImageResult with cursor coordinates.
     @MainActor
-    static func overviewScreenshot(monitor: Int) -> String {
+    static func overviewScreenshot(monitor: Int) async -> String {
         let count = NSScreen.screens.count
         guard let screen = Self.screen(at: monitor) else {
             return "❌ computer_screenshot: Monitor \(monitor) not found. Connected monitors: \(count)."
         }
-        // Capture is async (SCScreenshotManager); bridge via a semaphore so this @MainActor
-        // func stays synchronous for callers that cannot be async themselves.
-        // This is intentional: captureWithCursor is fast (single frame, no stream setup).
-        let semaphore = DispatchSemaphore(value: 0)
-        var captured: CGImage?
-        Task {
-            captured = await Self.captureWithCursor(screen)
-            semaphore.signal()
-        }
-        semaphore.wait()
 
-        guard let full = captured else {
+        // Obtain displayID on MainActor, then leave the actor for the SC capture so the
+        // SCScreenshotManager completion handler is not forced back onto a busy main thread.
+        let dispID = Self.displayID(of: screen)
+        guard let full = await Self.captureWithCursor(displayID: dispID) else {
             return "❌ computer_screenshot: Failed to capture monitor \(monitor)."
         }
 

@@ -49,7 +49,7 @@ extension ToolExecutionService {
 
         await Self.pasteText(args.text, submit: args.submit?.value == true)
         if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
-        return await MainActor.run { Self.overviewScreenshot(monitor: monitor) }
+        return await Self.overviewScreenshot(monitor: monitor)
     }
 
     // MARK: - Paste

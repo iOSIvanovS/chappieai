@@ -56,9 +56,7 @@ extension ToolExecutionService {
         }
         if let failure { return failure }
         if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
-        return await MainActor.run {
-            Self.overviewScreenshot(monitor: monitor)
-        }
+        return await Self.overviewScreenshot(monitor: monitor)
     }
 
     // MARK: - Geometry

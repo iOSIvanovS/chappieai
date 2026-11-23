@@ -35,7 +35,7 @@ extension ToolExecutionService {
     private func captureScreenshot(argsData: Data) async -> String {
         let args = ComputerScreenshotArguments.parse(argsData)
         let monitor = args.monitor?.value ?? args.screen_index?.value ?? 0
-        return await MainActor.run { Self.overviewScreenshot(monitor: monitor) }
+        return await Self.overviewScreenshot(monitor: monitor)
     }
 
     // MARK: - Move to absolute picture position
@@ -64,7 +64,7 @@ extension ToolExecutionService {
         }
         guard moved else { return "❌ computer_move_to: Monitor \(monitor) not found." }
         if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
-        return await MainActor.run { Self.overviewScreenshot(monitor: monitor) }
+        return await Self.overviewScreenshot(monitor: monitor)
     }
 
     // MARK: - Move by relative delta
@@ -99,9 +99,7 @@ extension ToolExecutionService {
         CGWarpMouseCursorPosition(eventPt)
         CGAssociateMouseAndMouseCursorPosition(1)
         if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
-        return await MainActor.run {
-            Self.overviewScreenshot(monitor: monitor)
-        }
+        return await Self.overviewScreenshot(monitor: monitor)
     }
 
     // MARK: - Click at current cursor position
@@ -138,7 +136,7 @@ extension ToolExecutionService {
             if i < clicks - 1 { try? await Task.sleep(for: .milliseconds(100)) }
         }
         if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
-        return await MainActor.run { Self.overviewScreenshot(monitor: monitor) }
+        return await Self.overviewScreenshot(monitor: monitor)
     }
 
     // MARK: - Shared geometry helpers
