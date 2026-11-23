@@ -4,11 +4,10 @@
 // WHY THIS FILE:
 // Tool arguments arrive from the model as JSON, and providers routinely quote scalars: "true",
 // "400", "12.5". Strict decoding turns one quoted value into a typeMismatch, and every caller here
-// falls back to defaults on a failed decode — so ONE quoted boolean silently discarded marks:true,
-// the zoom region and grid:false together. These lenient wrappers accept both encodings.
+// falls back to defaults on a failed decode, so ONE quoted value would silently discard all the
+// others. These lenient wrappers accept both encodings.
 
 import Foundation
-import CoreGraphics
 
 /// Number, or a string holding one.
 struct FlexDouble: Decodable {
@@ -61,15 +60,9 @@ struct FlexBool: Decodable {
 
 /// Arguments of computer_screenshot.
 struct ComputerScreenshotArguments: Decodable {
+    /// Older name of `monitor`, still accepted as a fallback.
     var screen_index: FlexInt?
-    // The new name for screen_index; screen_index stays until the legacy zoom and marks modes are removed.
     var monitor: FlexInt?
-    var grid: FlexBool?
-    var marks: FlexBool?
-    var x: FlexDouble?
-    var y: FlexDouble?
-    var width: FlexDouble?
-    var height: FlexDouble?
 
     /// A malformed payload still yields a plain overview rather than an error: the model can always
     /// look at the screen, it just does not get the options it garbled.
@@ -77,16 +70,4 @@ struct ComputerScreenshotArguments: Decodable {
         (try? JSONDecoder().decode(ComputerScreenshotArguments.self, from: data))
             ?? ComputerScreenshotArguments()
     }
-
-    /// A zoom needs both sizes; x/y alone only move an origin, which omitting them already means.
-    var region: CGRect? {
-        guard let w = width?.value, let h = height?.value, w > 1, h > 1 else { return nil }
-        return CGRect(x: x?.value ?? 0, y: y?.value ?? 0, width: w, height: h)
-    }
-
-    var wantsMarks: Bool { marks?.value ?? false }
-
-    /// A numbered picture is about its boxes; grid lines only crowd them. Asking for the grid
-    /// explicitly still gets both.
-    var wantsGrid: Bool { grid?.value ?? !wantsMarks }
 }

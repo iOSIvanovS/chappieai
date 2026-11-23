@@ -57,14 +57,14 @@ extension ToolExecutionService {
         if let failure { return failure }
         if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
         return await MainActor.run {
-            Self.overviewScreenshot(monitor: monitor, grid: false)
+            Self.overviewScreenshot(monitor: monitor)
         }
     }
 
     // MARK: - Geometry
 
-    /// Fractions of the monitor image to a CGEvent point. Out-of-range and NaN input is clamped,
-    /// the same way computer_aim treats it.
+    /// Fractions of the monitor image to a CGEvent point. Out-of-range and NaN input is clamped
+    /// to the display edge.
     static func scrollPoint(fractionX: Double, fractionY: Double, bounds: CGRect) -> CGPoint {
         func unit(_ v: Double) -> CGFloat { v.isNaN ? 0.5 : CGFloat(min(max(v, 0), 1)) }
         return CGPoint(x: bounds.minX + unit(fractionX) * bounds.width,

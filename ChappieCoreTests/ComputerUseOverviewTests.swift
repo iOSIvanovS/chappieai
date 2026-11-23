@@ -1,8 +1,8 @@
 // ComputerUseOverviewTests.swift
 // ChappieCoreTests
 //
-// The clean overview of computer_screenshot: the picture stays untouched unless the coarse grid is
-// requested, grid lines sit exactly on fractions of 0.1, and the monitor argument survives quoting.
+// Tests for the clean overview: picture is rendered correctly, cursor coordinates
+// are reported in picture pixels, and screenshot arguments survive quoting.
 
 import Testing
 import Foundation
@@ -10,74 +10,125 @@ import CoreGraphics
 import AppKit
 @testable import ChappieCore
 
-private func flatRetinaScreen() -> CGImage {
-    let ctx = CGContext(data: nil, width: 2880, height: 1800,
+private func flatImage(width: Int, height: Int, red: CGFloat = 0.5) -> CGImage {
+    let ctx = CGContext(data: nil, width: width, height: height,
                         bitsPerComponent: 8, bytesPerRow: 0,
                         space: CGColorSpace(name: CGColorSpace.sRGB)!,
                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-    ctx.setFillColor(CGColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1))
-    ctx.fill(CGRect(x: 0, y: 0, width: 2880, height: 1800))
+    ctx.setFillColor(CGColor(red: red, green: 0.5, blue: 0.5, alpha: 1))
+    ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
     return ctx.makeImage()!
 }
 
-private func red(_ rep: NSBitmapImageRep, _ x: Int, _ y: Int) -> CGFloat {
-    rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)?.redComponent ?? -1
+@Suite("renderPicture output")
+@MainActor
+struct OverviewRenderTests {
+
+    @Test("2880×1800 native renders to 1440×900 picture")
+    func retinaRender() throws {
+        let m = MonitorMapping(
+            displayBounds: CGRect(x: 0, y: 0, width: 1440, height: 900),
+            nativeSize: CGSize(width: 2880, height: 1800))
+        let bmp = try #require(ToolExecutionService.renderPicture(flatImage(width: 2880, height: 1800), mapping: m))
+        #expect(bmp.pixelsWide == 1440)
+        #expect(bmp.pixelsHigh == 900)
+    }
+
+    @Test("1200×800 native renders at 1:1")
+    func smallRender() throws {
+        let m = MonitorMapping(
+            displayBounds: CGRect(x: 0, y: 0, width: 1200, height: 800),
+            nativeSize: CGSize(width: 1200, height: 800))
+        let bmp = try #require(ToolExecutionService.renderPicture(flatImage(width: 1200, height: 800), mapping: m))
+        #expect(bmp.pixelsWide == 1200)
+        #expect(bmp.pixelsHigh == 800)
+    }
+
+    @Test("Picture content is not altered during downscale")
+    func contentPreserved() throws {
+        let m = MonitorMapping(
+            displayBounds: CGRect(x: 0, y: 0, width: 1440, height: 900),
+            nativeSize: CGSize(width: 2880, height: 1800))
+        let bmp = try #require(ToolExecutionService.renderPicture(flatImage(width: 2880, height: 1800, red: 0.8), mapping: m))
+        // A flat red-ish fill should remain red-ish after downscale (not go black or white).
+        let color = bmp.colorAt(x: 720, y: 450)?.usingColorSpace(.deviceRGB)
+        let r = try #require(color?.redComponent)
+        #expect(r > 0.5)
+    }
 }
 
-@Suite("Clean overview")
-@MainActor
-struct ComputerUseOverviewTests {
+@Suite("MonitorMapping cursor conversion")
+struct CursorConversionTests {
 
-    @Test("A clean render is the flat capture, with nothing drawn on it")
-    func cleanIsUntouched() throws {
-        let rep = try #require(ToolExecutionService.renderScreenshot(
-            flatRetinaScreen(), region: nil, grid: false))
-        // A flat fill stays flat: pixels where grid lines would fall equal pixels far from them.
-        let reference = red(rep, 72, 405)
-        #expect(reference >= 0)
-        #expect(abs(red(rep, 144, 405) - reference) < 0.01)
-        #expect(abs(red(rep, 700, 450) - reference) < 0.01)
-        #expect(abs(red(rep, 720, 300) - reference) < 0.01)
+    @Test("Cursor at display top-left maps to picture (0,0)")
+    func cursorTopLeft() {
+        let m = MonitorMapping(
+            displayBounds: CGRect(x: 0, y: 0, width: 1440, height: 900),
+            nativeSize: CGSize(width: 2880, height: 1800))
+        let pic = m.toPicture(CGPoint(x: 0, y: 0))
+        #expect(pic.x == 0)
+        #expect(pic.y == 0)
     }
 
-    @Test("Grid lines sit on the 0.1 fractions and leave the cells between them untouched")
-    func gridOnFractions() throws {
-        let plain = try #require(ToolExecutionService.renderScreenshot(
-            flatRetinaScreen(), region: nil, grid: false))
-        let gridded = try #require(ToolExecutionService.renderScreenshot(
-            flatRetinaScreen(), region: nil, grid: false))
-        ToolExecutionService.drawFractionGrid(on: gridded)
-
-        // 0.1 of 1440 px is column 144; column 72 and row 405 are mid-cell and carry no line.
-        #expect(red(gridded, 144, 405) - red(plain, 144, 405) > 0.1)
-        #expect(abs(red(gridded, 72, 405) - red(plain, 72, 405)) < 0.02)
-        // 0.5 of 900 px is row 450.
-        #expect(red(gridded, 700, 450) - red(plain, 700, 450) > 0.1)
+    @Test("Cursor at display centre maps to picture centre")
+    func cursorCentre() {
+        let m = MonitorMapping(
+            displayBounds: CGRect(x: 0, y: 0, width: 1440, height: 900),
+            nativeSize: CGSize(width: 2880, height: 1800))
+        let pic = m.toPicture(CGPoint(x: 720, y: 450))
+        #expect(abs(pic.x - 720) < 1)
+        #expect(abs(pic.y - 450) < 1)
     }
 
-    @Test("The grid does not change the size of the picture")
-    func gridKeepsSize() throws {
-        let rep = try #require(ToolExecutionService.renderScreenshot(
-            flatRetinaScreen(), region: nil, grid: false))
-        ToolExecutionService.drawFractionGrid(on: rep)
-        #expect(rep.pixelsWide == 1440)
-        #expect(rep.pixelsHigh == 900)
+    @Test("Cursor outside the display is clamped to the picture boundary")
+    func cursorClamped() {
+        let m = MonitorMapping(
+            displayBounds: CGRect(x: 0, y: 0, width: 1440, height: 900),
+            nativeSize: CGSize(width: 2880, height: 1800))
+        let pic = m.toPicture(CGPoint(x: 9999, y: 9999))
+        #expect(pic.x <= m.pictureSize.width)
+        #expect(pic.y <= m.pictureSize.height)
     }
 
-    @Test("monitor and grid are read even when the provider quotes them")
-    func quotedArguments() {
-        let data = Data(#"{"monitor":"1","grid":"true"}"#.utf8)
+    @Test("Cursor on a second monitor (offset origin) converts correctly")
+    func cursorSecondMonitor() {
+        let m = MonitorMapping(
+            displayBounds: CGRect(x: 1440, y: 0, width: 1280, height: 800),
+            nativeSize: CGSize(width: 1280, height: 800))
+        // A cursor at the top-left of the second display should land at picture (0,0).
+        let pic = m.toPicture(CGPoint(x: 1440, y: 0))
+        #expect(pic.x == 0)
+        #expect(pic.y == 0)
+    }
+}
+
+@Suite("ComputerScreenshotArguments parsing")
+struct ScreenshotArgumentsTests {
+
+    @Test("monitor is read when the provider quotes it as a string")
+    func quotedMonitor() {
+        let data = Data(#"{"monitor":"1"}"#.utf8)
         let args = ComputerScreenshotArguments.parse(data)
         #expect(args.monitor?.value == 1)
-        #expect(args.grid?.value == true)
     }
 
-    @Test("Without arguments the grid is off and the main monitor is used")
-    func defaults() {
+    @Test("screen_index is accepted as a fallback for monitor")
+    func screenIndexFallback() {
+        let data = Data(#"{"screen_index":2}"#.utf8)
+        let args = ComputerScreenshotArguments.parse(data)
+        #expect(args.screen_index?.value == 2)
+    }
+
+    @Test("Empty payload produces all-nil arguments without throwing")
+    func emptyPayload() {
         let args = ComputerScreenshotArguments.parse(Data("{}".utf8))
         #expect(args.monitor == nil)
-        #expect(args.grid == nil)
-        #expect(args.region == nil)
-        #expect(args.wantsMarks == false)
+        #expect(args.screen_index == nil)
+    }
+
+    @Test("Malformed payload produces all-nil arguments without throwing")
+    func malformedPayload() {
+        let args = ComputerScreenshotArguments.parse(Data("not json".utf8))
+        #expect(args.monitor == nil)
     }
 }

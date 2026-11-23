@@ -111,11 +111,8 @@ extension AIOrchestrator {
     /// A document's pictures and a numbered screenshot are introduced differently: the first are
     /// parts of one file, the second is the very screen the list above describes.
     static func imageIntro(toolName: String) -> String {
-        if toolName == "computer_aim" {
-            return "The aim crop at native resolution — the crosshair intersection is the point computer_click will hit:"
-        }
         if toolName.hasPrefix("computer_") {
-            return "The screen as it is now — the numbered boxes match the element list above:"
+            return "The screen as it is now, with the real cursor visible:"
         }
         return "Images contained in the document returned by `\(toolName)` (numbered as in its [image N] markers):"
     }

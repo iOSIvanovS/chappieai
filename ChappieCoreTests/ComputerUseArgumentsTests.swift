@@ -2,12 +2,10 @@
 // ChappieCoreTests
 //
 // Providers quote scalars ("true", "400"). A strict decode used to fail on the first quoted value
-// and throw away EVERY argument, so marks:true, the zoom region and grid:false were all ignored
-// at once while the call still "succeeded" with a plain gridded overview.
+// and throw away EVERY argument while the call still "succeeded" with default options.
 
 import Testing
 import Foundation
-import CoreGraphics
 @testable import ChappieCore
 
 @Suite("Computer screenshot arguments")
@@ -19,61 +17,41 @@ struct ComputerScreenshotArgumentsTests {
 
     @Test("Native JSON types are read as they are")
     func native() {
-        let a = parse(#"{"marks":true,"grid":false,"x":10,"y":20,"width":300,"height":200,"screen_index":1}"#)
-        #expect(a.wantsMarks)
-        #expect(!a.wantsGrid)
-        #expect(a.region == CGRect(x: 10, y: 20, width: 300, height: 200))
-        #expect(a.screen_index?.value == 1)
+        #expect(parse(#"{"monitor":1}"#).monitor?.value == 1)
     }
 
-    @Test("Quoted booleans still count — the bug that made marks:true vanish")
-    func quotedBooleans() {
-        let a = parse(#"{"marks":"true","grid":"false"}"#)
-        #expect(a.wantsMarks)
-        #expect(!a.wantsGrid)
-        #expect(parse(#"{"marks":"TRUE"}"#).wantsMarks)
+    @Test("Quoted values still count")
+    func quoted() {
+        #expect(parse(#"{"monitor":"1"}"#).monitor?.value == 1)
     }
 
-    @Test("Quoted numbers still define the zoom region")
-    func quotedNumbers() {
-        let a = parse(#"{"x":"0","y":"60","width":"400","height":"300"}"#)
-        #expect(a.region == CGRect(x: 0, y: 60, width: 400, height: 300))
+    @Test("The older screen_index name is still read")
+    func legacyIndex() {
+        #expect(parse(#"{"screen_index":2}"#).screen_index?.value == 2)
     }
 
-    @Test("One garbled field does not discard the others")
-    func independentFields() {
-        // A single bad value fails the whole decode, so the contract is: fall back to a plain
-        // overview, never to a half-read request. The valid siblings are not trusted either.
-        let a = parse(#"{"marks":"maybe","x":0,"y":0,"width":100,"height":100}"#)
-        #expect(!a.wantsMarks)
-        #expect(a.region == nil)
+    @Test("A garbled field falls back to defaults for all fields")
+    func garbledField() {
+        let a = parse(#"{"monitor":"maybe","screen_index":1}"#)
+        #expect(a.monitor == nil)
+        #expect(a.screen_index == nil)
     }
 
-    @Test("Without options: whole screen, grid on, no marks")
+    @Test("A removed argument such as grid is ignored, not an error")
+    func removedGridIsIgnored() {
+        #expect(parse(#"{"grid":true,"monitor":1}"#).monitor?.value == 1)
+    }
+
+    @Test("Without options nothing is set")
     func defaults() {
-        let a = parse("{}")
-        #expect(!a.wantsMarks)
-        #expect(a.wantsGrid)
-        #expect(a.region == nil)
-    }
-
-    @Test("Marks switch the grid off unless it is asked for explicitly")
-    func marksImplyNoGrid() {
-        #expect(!parse(#"{"marks":true}"#).wantsGrid)
-        #expect(parse(#"{"marks":true,"grid":true}"#).wantsGrid)
-    }
-
-    @Test("A region needs both sizes")
-    func regionNeedsSizes() {
-        #expect(parse(#"{"x":10,"y":10}"#).region == nil)
-        #expect(parse(#"{"x":10,"y":10,"width":1,"height":1}"#).region == nil)
+        #expect(parse("{}").monitor == nil)
     }
 
     @Test("Garbage payload falls back to defaults")
     func garbage() {
         let a = ComputerScreenshotArguments.parse(Data("not json".utf8))
-        #expect(!a.wantsMarks)
-        #expect(a.region == nil)
+        #expect(a.monitor == nil)
+        #expect(a.screen_index == nil)
     }
 }
 
