@@ -67,7 +67,12 @@ extension ToolExecutionService {
 
     /// Captures the monitor and returns a native crop around the current cursor position.
     @MainActor
-    static func zoomScreenshot(monitor: Int, span: CGFloat, center: CGPoint?) async -> String {
+    static func zoomScreenshot(
+        monitor: Int,
+        span: CGFloat,
+        center: CGPoint?,
+        note: String = ""
+    ) async -> String {
         let count = NSScreen.screens.count
         guard let screen = Self.screen(at: monitor) else {
             return "❌ computer_zoom: Monitor \(monitor) not found. Connected monitors: \(count)."
@@ -83,7 +88,8 @@ extension ToolExecutionService {
             full: full,
             cursorEventPt: Self.currentCursorPosition(),
             span: span,
-            center: center
+            center: center,
+            note: note
         )
     }
 
@@ -97,7 +103,8 @@ extension ToolExecutionService {
         full: CGImage,
         cursorEventPt: CGPoint,
         span requested: CGFloat,
-        center: CGPoint?
+        center: CGPoint?,
+        note: String = ""
     ) -> String {
         // Build the mapping from the captured picture itself, so pixels and fractions cannot drift.
         let bounds = CGDisplayBounds(Self.displayID(of: screen))
@@ -126,7 +133,8 @@ extension ToolExecutionService {
         let top    = rect.minY / nh
         let bottom = rect.maxY / nh
 
-        var text = "Zoom on monitor \(monitorIndex) of \(monitorCount). Native crop 1:1, no downscale. "
+        var text = (note.isEmpty ? "" : note + "\n") 
+            + "Zoom on monitor \(monitorIndex) of \(monitorCount). Native crop 1:1, no downscale. "
             + "crop x \(MonitorMapping.format(left))–\(MonitorMapping.format(right)), "
             + "y \(MonitorMapping.format(top))–\(MonitorMapping.format(bottom)) as FRACTIONS of the MONITOR. "
             + "cursor \(MonitorMapping.format(cursor.x)), \(MonitorMapping.format(cursor.y)). "

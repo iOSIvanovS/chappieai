@@ -30,6 +30,8 @@ extension ToolExecutionService {
         case "computer_type":       return await performAimedType(argsData: argsData)
         case "computer_zoom":       return await performZoom(argsData: argsData)
         case "computer_elements":   return await performElements(argsData: argsData)
+        case "computer_target_ax_action":
+            return await performTargetAXAction(argsData: argsData)
         default:                    return "Error: Unknown computer use tool \(name)"
         }
     }

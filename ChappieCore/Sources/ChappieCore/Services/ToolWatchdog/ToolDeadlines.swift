@@ -30,6 +30,12 @@ public enum ToolDeadlines {
     /// curl_scenario_run: a chain of up to 60 requests (30 s network timeout each), plus cleanup.
     static let scenarioRun: TimeInterval = 600
 
+    /// Accessibility walk. Reading the action list costs one cross-process call PER ELEMENT, and an
+    /// app that is busy indexing can take a second to answer one; a hundred and twenty of those is
+    /// the honest worst case. The walk stops itself at three minutes and reports a partial list, so
+    /// this ceiling only catches an app that stopped answering entirely.
+    static let axWalk: TimeInterval = 240
+
     /// Extra seconds on top of a requested terminal timeout, so the shell's own timeout (which
     /// reports partial output) fires before the watchdog does.
     static let terminalGrace: TimeInterval = 30
@@ -44,6 +50,8 @@ public enum ToolDeadlines {
             return min(terminalCeiling, max(terminalBase, requested + terminalGrace))
         case "curl_scenario_run":
             return scenarioRun
+        case "computer_elements", "computer_target_ax_action":
+            return axWalk
         case "git_commit", "git_revert", "git_push":
             return gitSlow
         case "git_status", "git_log", "git_add", "git_reset", "git_checkout":

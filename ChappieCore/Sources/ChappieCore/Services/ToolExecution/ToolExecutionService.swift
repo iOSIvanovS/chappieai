@@ -193,7 +193,7 @@ public actor ToolExecutionService {
     public static let imageResultTools: Set<String> = [
         "view_image", "fetch_attachment",
         "computer_screenshot", "computer_move_to", "computer_move_by", "computer_click", "computer_scroll",
-        "computer_type", "computer_zoom", "computer_elements"
+        "computer_type", "computer_zoom", "computer_elements", "computer_target_ax_action"
     ]
 
     /// Tools whose result may be a document's text plus its pictures (ToolImageResult marker).
@@ -205,7 +205,7 @@ public actor ToolExecutionService {
     /// and it has to reach the model as a tool result, not only baked into the pixels.
     public static let textAndImageTools: Set<String> = documentImageTools.union([
         "computer_screenshot", "computer_move_to", "computer_move_by", "computer_click", "computer_scroll",
-        "computer_type", "computer_zoom", "computer_elements"
+        "computer_type", "computer_zoom", "computer_elements", "computer_target_ax_action"
     ])
 
     // MARK: - Tool execution dispatcher
@@ -300,7 +300,7 @@ public actor ToolExecutionService {
                 return try await executeGitTool(name: name, argsData: argsData)
 
             case "computer_screenshot", "computer_move_to", "computer_move_by", "computer_click", "computer_scroll",
-                 "computer_type", "computer_zoom", "computer_elements":
+                 "computer_type", "computer_zoom", "computer_elements", "computer_target_ax_action":
                 return try await executeComputerUseTool(name: name, argsData: argsData)
 
             case "run_terminal":

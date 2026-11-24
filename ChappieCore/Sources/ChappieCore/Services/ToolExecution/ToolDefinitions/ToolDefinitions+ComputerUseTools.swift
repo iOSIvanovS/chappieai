@@ -18,8 +18,54 @@ extension ToolExecutionService {
             computerScrollTool(),
             computerTypeTool(),
             computerZoomTool(),
-            computerElementsTool()
+            computerElementsTool(),
+            computerTargetAXActionTool()
         ]
+    }
+
+    private func computerTargetAXActionTool() -> AITool {
+        AITool(function: AIFunctionDefinition(
+            name: "computer_target_ax_action",
+            description: """
+            Act on one element of the accessibility directory by NAME — the trusted path, and the \
+            cheap one: it finds the element, aims at it exactly, and acts, without moving the cursor \
+            by eye and without a magnifier call. Use it whenever computer_elements has listed the \
+            target; aim by hand only when AX is unavailable (a canvas, a game, an app that exposes \
+            nothing). \
+            target is role:name exactly as the directory prints it, for example twist:ViewModels or \
+            row:Chappie#2 (the #n picks the second of several equal matches). \
+            action is one of the words in that element's [brackets]: press, menu, confirm, inc, dec, \
+            pick, cancel — sent as the element's own AX action, or "mouse" to click the element's own \
+            point with a real mouse event. Default: press. \
+            The answer says what was found, where it aimed, and whether the element's state changed, \
+            so a silently ignored action is visible rather than assumed.
+            """,
+            parameters: AIToolParameters(
+                properties: [
+                    "target": AIToolProperty(
+                        type: "string",
+                        description: "role:name as printed by computer_elements, optionally with #n. Example: twist:ViewModels."
+                    ),
+                    "action": AIToolProperty(
+                        type: "string",
+                        description: "press (default), menu, confirm, inc, dec, pick, cancel — or mouse to click the element's point with a real mouse event."
+                    ),
+                    "monitor": AIToolProperty(
+                        type: "integer",
+                        description: "Zero-based monitor index. 0 = main display (default)."
+                    ),
+                    "delay": AIToolProperty(
+                        type: "number",
+                        description: "Seconds to wait after the action before capturing. Default: 1.0. Use 3.0 or more when the app answers over the network or animates slowly."
+                    ),
+                    "zoom": AIToolProperty(
+                        type: "number",
+                        description: "Optional magnifier span: when present the result is a native crop around the element instead of the whole monitor. 0.02 shows a 4% wide slice."
+                    )
+                ],
+                required: ["target"]
+            )
+        ))
     }
 
     private func computerZoomTool() -> AITool {
@@ -69,9 +115,15 @@ extension ToolExecutionService {
             not pixels, so no arithmetic is involved. \
             Use it when a target is too small or too crowded to place by eye — a disclosure chevron that \
             expands a folder is about 10 points wide, two pixels in the full frame. \
+            Each line also lists, in [brackets], the AX actions the element declares (press, menu, \
+            confirm, inc, dec, pick), or "disabled" when the control is greyed out and ignores them. \
+            Once a target is listed here, act on it with computer_target_ax_action rather than aiming \
+            by hand: it takes the name, aims exactly, and reports whether the state changed. \
             Nothing is drawn on the picture; the directory is a reference that rides beside it. \
             The window is chosen the same way a click chooses it: the topmost window under the cursor, \
-            so move the cursor over the target window first.
+            so move the cursor over the target window first. \
+            Elements that are in the tree but off screen — scrolled away, collapsed, outside the window — \
+            are dropped and counted, so the list is what can actually be hit.
             """,
             parameters: AIToolParameters(
                 properties: [

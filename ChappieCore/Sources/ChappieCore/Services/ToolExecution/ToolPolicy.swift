@@ -116,7 +116,7 @@ public enum ToolPolicy {
         add(.terminal, ["run_terminal", "run_ssh"])
         add(.computerUse, [
             "computer_screenshot", "computer_move_to", "computer_move_by", "computer_click", "computer_scroll",
-            "computer_type", "computer_zoom", "computer_elements"
+            "computer_type", "computer_zoom", "computer_elements", "computer_target_ax_action"
         ])
         add(.forbidden, ["git_diff"])
         add(.fileRead, [
