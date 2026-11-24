@@ -28,6 +28,7 @@ extension ToolExecutionService {
         case "computer_click":      return await performClick(argsData: argsData)
         case "computer_scroll":     return await performFractionScroll(argsData: argsData)
         case "computer_type":       return await performAimedType(argsData: argsData)
+        case "computer_zoom":       return await performZoom(argsData: argsData)
         default:                    return "Error: Unknown computer use tool \(name)"
         }
     }
@@ -48,6 +49,8 @@ extension ToolExecutionService {
             var y: FlexDouble?
             var monitor: FlexInt?
             var delay: FlexDouble?
+            /// Optional magnifier span: when present the result is a native crop, not an overview.
+            var zoom: FlexDouble?
         }
         let raw = String(data: argsData, encoding: .utf8) ?? "<non-utf8>"
         guard let args = try? JSONDecoder().decode(Args.self, from: argsData),
@@ -68,7 +71,33 @@ extension ToolExecutionService {
         }
         guard moved else { return "❌ computer_move_to: Monitor \(monitor) not found." }
         if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+        if let span = args.zoom?.value {
+            return await Self.zoomScreenshot(monitor: monitor, span: span, center: nil)
+        }
         return await Self.overviewScreenshot(monitor: monitor)
+    }
+
+    // MARK: - Magnifier
+
+    private func performZoom(argsData: Data) async -> String {
+        struct Args: Decodable {
+            var span: FlexDouble?
+            var x: FlexDouble?
+            var y: FlexDouble?
+            var monitor: FlexInt?
+            var delay: FlexDouble?
+        }
+        let raw = String(data: argsData, encoding: .utf8) ?? "<non-utf8>"
+        guard let args = try? JSONDecoder().decode(Args.self, from: argsData),
+              let span = args.span?.value else {
+            return "❌ computer_zoom: 'span' is required — half the crop's width as a fraction of the monitor (0.02 shows 4% of the width). Raw args: \(raw)"
+        }
+        let monitor = args.monitor?.value ?? 0
+        let delay   = args.delay?.value ?? 0.3
+        var center: CGPoint?
+        if let x = args.x?.value, let y = args.y?.value { center = CGPoint(x: x, y: y) }
+        if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+        return await Self.zoomScreenshot(monitor: monitor, span: span, center: center)
     }
 
     // MARK: - Move by relative delta
@@ -79,6 +108,8 @@ extension ToolExecutionService {
             var dy: FlexDouble?
             var monitor: FlexInt?
             var delay: FlexDouble?
+            /// Optional magnifier span: when present the result is a native crop, not an overview.
+            var zoom: FlexDouble?
         }
         let raw = String(data: argsData, encoding: .utf8) ?? "<non-utf8>"
         guard let args = try? JSONDecoder().decode(Args.self, from: argsData),
@@ -103,6 +134,9 @@ extension ToolExecutionService {
         CGAssociateMouseAndMouseCursorPosition(1)
         Self.postMouseMoved(to: eventPt)
         if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+        if let span = args.zoom?.value {
+            return await Self.zoomScreenshot(monitor: monitor, span: span, center: nil)
+        }
         return await Self.overviewScreenshot(monitor: monitor)
     }
 

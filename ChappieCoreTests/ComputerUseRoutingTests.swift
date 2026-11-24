@@ -13,8 +13,10 @@ struct ComputerResultRoutingTests {
 
     @Test("All computer tools may answer with text plus a picture")
     func allowed() {
-        for tool in ["computer_screenshot", "computer_move_to", "computer_move_by", "computer_click", "computer_scroll", "computer_type"] {
+        for tool in ["computer_screenshot", "computer_move_to", "computer_move_by", "computer_click",
+                     "computer_scroll", "computer_type", "computer_zoom"] {
             #expect(ToolExecutionService.textAndImageTools.contains(tool))
+            #expect(ToolExecutionService.imageResultTools.contains(tool))
         }
         // Adding the computer tools must not remove the document readers.
         for tool in ToolExecutionService.documentImageTools {

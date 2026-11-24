@@ -16,8 +16,45 @@ extension ToolExecutionService {
             computerMoveByTool(),
             computerClickTool(),
             computerScrollTool(),
-            computerTypeTool()
+            computerTypeTool(),
+            computerZoomTool()
         ]
+    }
+
+    private func computerZoomTool() -> AITool {
+        AITool(function: AIFunctionDefinition(
+            name: "computer_zoom",
+            description: """
+            Magnify around a point: returns a 1:1 native crop of the screen, small and sharp, with the \
+            cursor visible. Use it when the target is too small to read in a full-screen frame — a \
+            disclosure chevron, a checkbox, a one-line list row. \
+            The crop's own edges come back as fractions of the MONITOR, so aim with monitor fractions \
+            interpolated between those edges; a position inside the crop is not a coordinate. \
+            span is half the crop's width as a fraction of the monitor: 0.01 is a 2% wide slice around \
+            the point, 0.05 shows 10%. Smaller span = more magnification. \
+            The cursor does not move: this only changes what you see. computer_move_to and \
+            computer_move_by also accept zoom to move and magnify in one call.
+            """,
+            parameters: AIToolParameters(
+                properties: [
+                    "span": AIToolProperty(
+                        type: "number",
+                        description: "Half the crop width as a fraction of the monitor, 0.005...0.25. 0.02 shows a 4% wide slice. Smaller = more zoom."
+                    ),
+                    "x": AIToolProperty(type: "number", description: "Horizontal centre of the crop as a fraction 0...1 of the monitor. Default: the cursor."),
+                    "y": AIToolProperty(type: "number", description: "Vertical centre of the crop as a fraction 0...1 of the monitor. Default: the cursor."),
+                    "monitor": AIToolProperty(
+                        type: "integer",
+                        description: "Zero-based monitor index. 0 = main display (default)."
+                    ),
+                    "delay": AIToolProperty(
+                        type: "number",
+                        description: "Seconds to wait before capturing. Default: 0.3."
+                    )
+                ],
+                required: ["span"]
+            )
+        ))
     }
 
     // MARK: - Individual definitions
