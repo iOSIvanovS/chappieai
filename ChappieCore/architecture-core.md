@@ -61,6 +61,7 @@ ChappieCore/
         ├── AIClient.swift              # OpenAI-compatible HTTP client (entry point)
         ├── AIClient+HTTP.swift         # HTTP request building + response parsing
         ├── AIClient+Streaming.swift    # SSE streaming parser
+        ├── OpenAICacheSettings.swift   #   Where the OpenAI route puts cache breakpoints (`openaiCachePlacement`: explicit | topLevel, default explicit) and whether `session_id` is sent (`openaiCacheSession`, default off); read per request from UserDefaults so a variant can be tested without a rebuild
         ├── AIClient+Balance.swift      # Separate balance GET for presets with a BalanceEndpoint (RouterAI /credits); never throws
         ├── StreamDiagnostics.swift     # Per-stream counters (finish_reason, chunks, skipped chunks, tool calls) and the STREAM END log line; flags tool calls flattened into text
         ├── StreamDump.swift            # Bounded in-memory buffer of raw SSE lines + StreamDumpReason (why a stream deserves a file); decides, never parses text into a call
@@ -523,10 +524,16 @@ nothing. WHY it matters: on RouterAI's OpenAI route the gateway occasionally fla
 (4 dumps in one day, `finish_reason: stop`, no `tool_calls` key anywhere in the stream — the call was synthesised by
 the translator and given up on). The native route never did it.
 
-**Prompt caching differs by route.** On the OpenAI route the cache hint is a single top-level `cache_control`. On the
-native route it is two block-level breakpoints — the end of `system` and the last block of the last message —
-verified live on RouterAI: top-level there writes the cache and **never reads it back** (`read: 0` on every step),
-while block breakpoints give `read` 16898 -> 17018 with `created` <= 18 (cost 1.84 -> 0.16 RUB per turn). The
+**Prompt caching is BLOCK-LEVEL BREAKPOINTS on both routes.** On the native route: the end of `system` and the
+last block of the last message — verified live on RouterAI, giving `read` 16898 -> 17018 with `created` <= 18
+(cost 1.84 -> 0.16 RUB per turn). On the OpenAI route the same two breakpoints go into the body as
+`cache_control` on message blocks, selected by `OpenAICacheSettings`; `topLevel` is a fallback switch only.
+A single top-level hint is the wrong shape everywhere it was tried. On RouterAI it writes the cache and **never
+reads it back** (`read: 0` on every step). On AITunnel it puts the breakpoint on the LAST cacheable block, and
+on our body that block is the screen frame taken a moment ago — a different image every step — so `read` stalled
+at a fixed 58909 while `created` grew 4-14k per step (6-9 RUB). Explicit breakpoints BEFORE the frame instead
+gave `read` growing by exactly the previous step's `created` (62058 -> 62339 -> 62587 -> 62835 over nine steps)
+with `created` of 234-558. `session_id` measured on and off over five steps: no difference. The
 `anthropic-beta: extended-cache-ttl-2025-04-11` header is sent only when caching is on, and only then does
 `ttl: "1h"` take effect (without it the write silently becomes 0).
 
@@ -536,8 +543,9 @@ in place inside the history gave `read: 8953 (15%)` and `created: 50727` on ever
 the change is written again. The live screen is therefore not history at all: `computer_*` tool results stay
 text-only, the picture is carried beside the history (`ScreenFrame`) and appended as the LAST message, marked
 `isScreenFrame`, so `applyingCacheBreakpoints` puts the breakpoint on the last *prefix* block before it. On the
-OpenAI route the same message is simply the last user turn, which automatic prefix caching already treats the
-same way. Never "clean up" past messages to save space — one edit costs more than the bytes it removes.
+OpenAI route the same message is the last user turn and is skipped the same way: the explicit breakpoint goes on
+the block before it, never on the frame itself. Never "clean up" past messages to save space — one edit costs
+more than the bytes it removes.
 
 **The window keeps an allowance, or the cache is worthless.** A cache read needs a prefix byte-identical
 to the previous request. Sending exactly `limit` messages evicts the oldest one on every turn, so the
@@ -1207,6 +1215,7 @@ Tests: `MessageTimestampTests`, `MemoryDatesTests`.
 | 2026-11 | AX targeting became an ACTION, not an aim. Live run: the directory's coordinates were exact, but after moving to `twist "ViewModels"` the model looked through the magnifier, decided the cursor sat "too far right" and nudged it — a textbook hallucination that only avoided a miss because the chevron is 15 pt wide. The frame is 15x24 pt with the glyph on its leading edge, so the geometric centre is empty cell; that is now `aimPoint`, one implementation used by the directory AND the action tool. New `computer_target_ax_action(target, action)` takes `role:name#n` instead of numbers — no arithmetic to redo, no coordinate to second-guess — and resolves over a FRESH walk, so a stale coordinate cannot be clicked. The directory now prints each element's declared AX actions (`AXUIElementCopyActionNames`, short names), `disabled` when `AXEnabled` is false (a greyed control declares `AXPress` and ignores it — previously invisible in the code), `[?]` when the walk ran out of budget. The walk is filtered to what is actually on screen: the focused window cut to the display, then narrowed by every scroll area, with the dropped count printed (Chromium lists the whole DOM; AppKit virtualises and mostly does not). It runs on a detached task — AX is one cross-process call per attribute, and a per-element action probe is another — under a 3-minute deadline; past it the list is marked partial instead of hanging, and ToolDeadlines gives both AX tools 240 s. An AX action is verified by comparing the element's state before and after (`value`, `AXExpanded`, `AXSelected`), because a declared action is not a promise; `action: mouse` remains the fallback and clicks the element's own point. Covered by ComputerUseAXTargetTests (24) and ComputerUseRoutingTests. NOT verified live: whether AXPress on a disclosure triangle expands a folder in Xcode, and whether Xcode's tree exposes `AXRows` for a collapsed group's children. |
 
 | 2026-11 | Directory lines that were not lines. Live run (Xcode): four of eighty elements printed as several rows, e.g. `[ 7] button "New Conversation" … [press name:move previous` / `target:0x0` / `selector:(null)`. `AXUIElementCopyActionNames` on Xcode's toolbar buttons returns entries that carry a whole debug description with CR/LF in them; printed raw they shifted every following row of the table and were charged as tokens again on every later request. `AXText.oneLine` now collapses whitespace and cuts with an ellipsis — used for element labels (42 chars) and for action names (24) — and `AXActionName.listed` deduplicates and caps the list at six names plus "+N". `short()` applies the same transformation it prints, so a name copied out of the directory still resolves back to the action it came from. Covered by ComputerUseAXTargetTests (3 new cases: multi-line name, dedupe and cap, oneLine). |
+| 2026-11 | The OpenAI route was reading nothing past a fixed point, and the frame was the cause. Measured on AITunnel (`claude-sonnet-5.5`): a top-level `cache_control` places the breakpoint on the LAST cacheable block, which on our body is the screen frame just taken. `read` therefore sat at a constant 58909 while `created` grew 4-14k per step and a step cost 6-9 RUB; trimming was ruled out (the window grew 36 -> 54 messages with no `Trimmed` line, and a shifted head would have dropped `read`). `OpenAICacheSettings` (`openaiCachePlacement`, `openaiCacheSession`) picks the shape per request from UserDefaults, so a variant is tested without a rebuild. With `explicit` the top-level hint is dropped and two block breakpoints are placed — the system prompt and the last message BEFORE the frame; `read` then grows by exactly the previous step's `created` and `created` is 234-558. `explicit` is the default now, `topLevel` and `session_id` remain as fallback switches. `session_id` changed nothing on/off over five steps. The frame stays outside the prefix (prompt - read - created = 1805, its own size) and never enters the history. NOT verified: the cold start under `explicit`, the first trim (never fired in nine steps), a pause past the one-hour TTL. Covered by `OpenAICacheBreakpointTests` (8). |
 
 ### Build and test tools removed (2026-11)
 
