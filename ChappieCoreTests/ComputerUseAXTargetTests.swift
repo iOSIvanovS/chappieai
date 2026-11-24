@@ -239,6 +239,47 @@ struct AXActionNameTests {
     }
 }
 
+@Suite("AX truncated target name")
+struct AXTruncatedTargetTests {
+
+    private func element(_ role: String, _ name: String) -> AXElementInfo {
+        AXElementInfo(role: role, name: name, center: CGPoint(x: 0.1, y: 0.1),
+                      sizePoints: CGSize(width: 320, height: 22), note: "")
+    }
+
+    @Test("A name copied out of the directory resolves although it was cut")
+    func truncatedLabel() {
+        let long = "AVeryLongElementNameThatIsDefinitelyLongerThanFortyTwoCharacters"
+        let printed = AXText.oneLine(long, limit: 42)
+        #expect(printed.hasSuffix("…"), "the directory must really have cut this name")
+        #expect(AXTargetResolver.resolve("row:\(printed)", in: [element("row", long)]) == .found(0))
+    }
+
+    @Test("A hand-typed three-dot ellipsis is stripped as well")
+    func typedEllipsis() {
+        let tree = [element("row", "LongNameHere")]
+        #expect(AXTargetResolver.resolve("row:LongName...", in: tree) == .found(0))
+    }
+
+    @Test("An element whose own name ends with an ellipsis is still found")
+    func ownEllipsis() {
+        let tree = [element("row", "Loading…")]
+        #expect(AXTargetResolver.resolve("row:Loading…", in: tree) == .found(0))
+        #expect(AXTargetResolver.resolve("row:Loading", in: tree) == .found(0))
+    }
+
+    @Test("The ordinal still picks after the ellipsis is stripped")
+    func ordinal() {
+        let tree = [element("row", "SamePrefix…alpha"), element("row", "SamePrefix…beta")]
+        #expect(AXTargetResolver.resolve("row:SamePrefix…#2", in: tree) == .found(1))
+    }
+
+    @Test("A query that is nothing but an ellipsis is refused, not silently empty")
+    func onlyEllipsis() {
+        #expect(AXTargetResolver.parse("row:…") == nil)
+    }
+}
+
 @Suite("AX directory line")
 struct AXDirectoryLineTests {
 

@@ -146,7 +146,9 @@ enum AXTargetResolver {
             ordinal = n
             name = String(name[..<hash])
         }
-        name = name.trimmingCharacters(in: .whitespaces)
+        // The directory cuts a long label with an ellipsis and the model copies it back whole;
+        // the stored name carries no ellipsis, so a truncated query could never match again.
+        name = stripTrailingEllipsis(name)
         guard !role.isEmpty, !name.isEmpty else { return nil }
         return Spec(role: role, name: name, ordinal: ordinal)
     }
@@ -187,6 +189,23 @@ enum AXTargetResolver {
 
     static func normalizeName(_ raw: String) -> String {
         raw.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").lowercased()
+    }
+
+    /// Only a query is stripped, never an element's own name: an element genuinely called
+    /// "Loading…" must still be found by "Loading". Both the single-character ellipsis the
+    /// directory prints and a hand-typed "..." are accepted, and repeated so a name cut twice
+    /// does not leave one behind.
+    static func stripTrailingEllipsis(_ raw: String) -> String {
+        var text = raw.trimmingCharacters(in: .whitespaces)
+        while true {
+            if text.hasSuffix("…") {
+                text = String(text.dropLast()).trimmingCharacters(in: .whitespaces)
+            } else if text.hasSuffix("...") {
+                text = String(text.dropLast(3)).trimmingCharacters(in: .whitespaces)
+            } else {
+                return text
+            }
+        }
     }
 
     /// Up to five elements of ANY role whose name overlaps the query, so a wrong role is visible.
