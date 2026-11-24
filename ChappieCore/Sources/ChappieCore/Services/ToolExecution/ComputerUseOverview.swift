@@ -14,17 +14,21 @@ extension ToolExecutionService {
 
     /// Captures the monitor and returns a ToolImageResult with cursor coordinates.
     @MainActor
-    static func overviewScreenshot(monitor: Int) async -> String {
+    static func overviewScreenshot(
+        monitor: Int,
+        extraText: String = "",
+        toolName: String = "computer_screenshot"
+    ) async -> String {
         let count = NSScreen.screens.count
         guard let screen = Self.screen(at: monitor) else {
-            return "❌ computer_screenshot: Monitor \(monitor) not found. Connected monitors: \(count)."
+            return "❌ \(toolName): Monitor \(monitor) not found. Connected monitors: \(count)."
         }
 
         // Obtain displayID on MainActor, then leave the actor for the SC capture so the
         // SCScreenshotManager completion handler is not forced back onto a busy main thread.
         let dispID = Self.displayID(of: screen)
         guard let full = await Self.captureWithCursor(displayID: dispID) else {
-            return "❌ computer_screenshot: Failed to capture monitor \(monitor)."
+            return "❌ \(toolName): Failed to capture monitor \(monitor)."
         }
 
         // Read cursor position in CGEvent space before building the mapping.
@@ -44,7 +48,8 @@ extension ToolExecutionService {
             monitorIndex: monitor,
             monitorCount: count,
             full: full,
-            cursorEventPt: cursorEvent
+            cursorEventPt: cursorEvent,
+            extraText: extraText
         )
     }
 }

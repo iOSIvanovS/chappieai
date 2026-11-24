@@ -17,7 +17,8 @@ extension ToolExecutionService {
             computerClickTool(),
             computerScrollTool(),
             computerTypeTool(),
-            computerZoomTool()
+            computerZoomTool(),
+            computerElementsTool()
         ]
     }
 
@@ -53,6 +54,37 @@ extension ToolExecutionService {
                     )
                 ],
                 required: ["span"]
+            )
+        ))
+    }
+
+    private func computerElementsTool() -> AITool {
+        AITool(function: AIFunctionDefinition(
+            name: "computer_elements",
+            description: """
+            Return the accessibility directory for the app under the cursor, together with a fresh \
+            screenshot. The directory lists every aimable control — buttons, fields, tabs, menu items, \
+            list rows and disclosure chevrons — one per line, each with its geometric CENTRE as a \
+            fraction of the monitor. Copy c straight into computer_move_to: the digits are fractions, \
+            not pixels, so no arithmetic is involved. \
+            Use it when a target is too small or too crowded to place by eye — a disclosure chevron that \
+            expands a folder is about 10 points wide, two pixels in the full frame. \
+            Nothing is drawn on the picture; the directory is a reference that rides beside it. \
+            The window is chosen the same way a click chooses it: the topmost window under the cursor, \
+            so move the cursor over the target window first.
+            """,
+            parameters: AIToolParameters(
+                properties: [
+                    "limit": AIToolProperty(
+                        type: "integer",
+                        description: "Maximum number of elements to list, in reading order. Default: 120. Lower it to save tokens on a crowded screen; raise it for long lists."
+                    ),
+                    "monitor": AIToolProperty(
+                        type: "integer",
+                        description: "Zero-based monitor index. 0 = main display (default)."
+                    )
+                ],
+                required: []
             )
         ))
     }

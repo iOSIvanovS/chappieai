@@ -158,7 +158,8 @@ extension ToolExecutionService {
         monitorIndex: Int,
         monitorCount: Int,
         full: CGImage,
-        cursorEventPt: CGPoint
+        cursorEventPt: CGPoint,
+        extraText: String = ""
     ) -> String {
         let bounds = CGDisplayBounds(Self.displayID(of: screen))
         let mapping = MonitorMapping(
@@ -179,6 +180,7 @@ extension ToolExecutionService {
             + "screen \(full.width)×\(full.height) device px. "
             + "To move: computer_move_to(x,y), or computer_move_by(dx,dy) with a small fractional delta. "
             + "To click: computer_click (clicks the current cursor position)."
+            + (extraText.isEmpty ? "" : "\n\n" + extraText)
         return ToolImageResult(
             text: text,
             images: [.init(label: "Monitor \(monitorIndex) of \(monitorCount).",

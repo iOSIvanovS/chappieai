@@ -19,7 +19,7 @@ extension ToolPolicy {
     /// (RouterAI was observed dropping tools beyond position ~22).
     public static let dangerOrder: [String] = [
         // Computer Use — first to survive provider tool-list truncation alongside terminal
-        "computer_screenshot", "computer_move_to", "computer_move_by", "computer_click", "computer_scroll", "computer_type", "computer_zoom",
+        "computer_screenshot", "computer_move_to", "computer_move_by", "computer_click", "computer_scroll", "computer_type", "computer_zoom", "computer_elements",
         // Arbitrary commands — promoted to front to survive provider tool-list truncation
         "run_terminal", "run_ssh",
         // Orientation and memory

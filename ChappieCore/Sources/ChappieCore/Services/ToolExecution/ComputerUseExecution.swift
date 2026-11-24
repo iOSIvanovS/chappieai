@@ -29,6 +29,7 @@ extension ToolExecutionService {
         case "computer_scroll":     return await performFractionScroll(argsData: argsData)
         case "computer_type":       return await performAimedType(argsData: argsData)
         case "computer_zoom":       return await performZoom(argsData: argsData)
+        case "computer_elements":   return await performElements(argsData: argsData)
         default:                    return "Error: Unknown computer use tool \(name)"
         }
     }
@@ -98,6 +99,25 @@ extension ToolExecutionService {
         if let x = args.x?.value, let y = args.y?.value { center = CGPoint(x: x, y: y) }
         if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
         return await Self.zoomScreenshot(monitor: monitor, span: span, center: center)
+    }
+
+    // MARK: - Accessibility directory
+
+    /// Screenshot plus the accessibility directory of the app under the cursor. The directory is
+    /// text, riding in the same tool result as the picture, so the model reads the screen by eye
+    /// and aims by exact numbers. Nothing is drawn on the frame: the directory is a reference.
+    private func performElements(argsData: Data) async -> String {
+        struct Args: Decodable {
+            var limit: FlexInt?
+            var monitor: FlexInt?
+        }
+        let args = (try? JSONDecoder().decode(Args.self, from: argsData)) ?? Args()
+        let monitor = args.monitor?.value ?? 0
+        let limit = min(max(args.limit?.value ?? 120, 1), 400)
+        let directory = await Self.axDirectory(monitor: monitor, limit: limit)
+        return await Self.overviewScreenshot(monitor: monitor,
+                                             extraText: directory,
+                                             toolName: "computer_elements")
     }
 
     // MARK: - Move by relative delta
@@ -203,22 +223,15 @@ extension ToolExecutionService {
 
     // MARK: - App activation
 
+    /// Brings the app that owns the point to the front, so the click lands on a key window.
+    /// Uses the same resolution as the AX directory: a wrong answer here aimed the click at the
+    /// Dock while the search was left to the raw window list.
     @MainActor
     static func activateApp(at point: CGPoint) {
-        let windowList = CGWindowListCopyWindowInfo(
-            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
-        ) as? [[CFString: Any]] ?? []
-        for info in windowList {
-            guard let pid    = info[kCGWindowOwnerPID] as? pid_t,
-                  let bounds = info[kCGWindowBounds]   as? [String: CGFloat],
-                  let x = bounds["X"], let y = bounds["Y"],
-                  let w = bounds["Width"], let h = bounds["Height"] else { continue }
-            if CGRect(x: x, y: y, width: w, height: h).contains(point) {
-                NSRunningApplication(processIdentifier: pid)?.activate()
-                return
-            }
-        }
-        NSApp.hide(nil)
+        guard let pid = appUnderCursor(at: point),
+              let app = NSRunningApplication(processIdentifier: pid),
+              !app.isActive else { return }
+        app.activate()
     }
 
     // MARK: - Accessibility
