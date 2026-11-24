@@ -3,8 +3,8 @@
 //
 // WHY THIS FILE:
 // computer_screenshot: captures one whole monitor with the real cursor baked in by SCKit,
-// then returns the picture plus the cursor position in picture pixels. The model works
-// entirely in picture pixels — no fractions, no native resolution, no Retina math.
+// then returns the picture plus the cursor tip as fractions of the monitor. Fractions are the
+// only unit the model uses: they survive any rescaling of the picture, ours or the provider's.
 
 import Foundation
 import CoreGraphics

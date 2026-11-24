@@ -2,8 +2,8 @@
 // ChappieCore
 //
 // Computer Use tool definitions — screenshot, move, click, scroll, type.
-// The model works entirely in picture pixels: it sees a screenshot, reads cursor coordinates
-// from the text, moves the cursor with computer_move_to or computer_move_by, then clicks.
+// Every position is a FRACTION of the monitor (0...1), the single unit used across all the tools:
+// it survives any rescaling of the picture on its way to the model.
 
 import Foundation
 
@@ -27,9 +27,8 @@ extension ToolExecutionService {
             name: "computer_screenshot",
             description: """
             Capture one whole monitor as a clean image, exactly as it is on screen, with the real cursor visible. \
-            The text result says how many monitors are connected, the picture size in pixels, and the current cursor \
-            position in picture pixels (0,0 = top-left). \
-            All coordinates use picture pixels — the same units as computer_move_to and computer_move_by. \
+            The text result gives the cursor tip as fractions of the monitor, plus how many monitors are connected. \
+            Fractions are 0...1 on each axis, (0,0) at the top-left; they are what every tool takes. \
             Use the monitor parameter to look at a different monitor.
             """,
             parameters: AIToolParameters(
@@ -49,15 +48,15 @@ extension ToolExecutionService {
             name: "computer_move_to",
             description: """
             Move the cursor to an absolute position on the screen. \
-            x and y are picture pixels of the monitor image (0,0 = top-left corner). \
-            Read the picture size from the latest computer_screenshot result to know the valid range. \
-            After moving, returns a fresh screenshot with the cursor at the new position and updated cursor coordinates. \
+            x and y are fractions of the monitor from 0 to 1: 0.5 is the middle of that axis, \
+            and the whole range is always valid whatever the screen size or image scale. \
+            After moving, returns a fresh screenshot with the cursor at the new position and its fractions. \
             Use this to reach a distant target. For small corrections near the target, use computer_move_by.
             """,
             parameters: AIToolParameters(
                 properties: [
-                    "x": AIToolProperty(type: "number", description: "Horizontal position in picture pixels."),
-                    "y": AIToolProperty(type: "number", description: "Vertical position in picture pixels."),
+                    "x": AIToolProperty(type: "number", description: "Horizontal position as a fraction 0...1 of the monitor width."),
+                    "y": AIToolProperty(type: "number", description: "Vertical position as a fraction 0...1 of the monitor height."),
                     "monitor": AIToolProperty(
                         type: "integer",
                         description: "Zero-based monitor index. 0 = main display (default)."
@@ -76,15 +75,15 @@ extension ToolExecutionService {
         AITool(function: AIFunctionDefinition(
             name: "computer_move_by",
             description: """
-            Nudge the cursor by a relative offset in picture pixels. \
+            Nudge the cursor by a relative offset, in fractions of the monitor. \
             Positive dx moves right, negative dx moves left. Positive dy moves down, negative dy moves up. \
-            Use this to make small corrections when the cursor is already near the target. \
-            Returns a fresh screenshot with the cursor at the new position and updated cursor coordinates.
+            0.01 is one percent of the width (height for dy) — the usual size of a fine correction. \
+            Returns a fresh screenshot with the cursor at the new position and its fractions.
             """,
             parameters: AIToolParameters(
                 properties: [
-                    "dx": AIToolProperty(type: "number", description: "Horizontal offset in picture pixels. Positive = right."),
-                    "dy": AIToolProperty(type: "number", description: "Vertical offset in picture pixels. Positive = down."),
+                    "dx": AIToolProperty(type: "number", description: "Horizontal offset as a fraction 0...1 of the monitor width. Positive = right."),
+                    "dy": AIToolProperty(type: "number", description: "Vertical offset as a fraction 0...1 of the monitor height. Positive = down."),
                     "monitor": AIToolProperty(
                         type: "integer",
                         description: "Zero-based monitor index. 0 = main display (default)."

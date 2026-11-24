@@ -4,8 +4,8 @@
 // WHY THIS FILE:
 // Screen capture shared by all computer tools. Uses SCScreenshotManager so the system draws
 // the real cursor into the image — the cursor's shape, position, and hotspot are always truthful.
-// MonitorMapping translates between picture pixels (what the model sees) and CGEvent space
-// (what the OS uses for mouse coordinates) so the model never has to convert anything itself.
+// MonitorMapping translates between fractions of the monitor (the only unit the model uses, immune
+// to any rescaling of the picture) and CGEvent space (what the OS uses for mouse coordinates).
 
 import Foundation
 import CoreGraphics
@@ -14,9 +14,8 @@ import ScreenCaptureKit
 
 /// Translates between the compressed picture the model sees and CGEvent screen coordinates.
 ///
-/// The model works entirely in picture pixels. `toEvent` converts a picture point to the
-/// CGEvent coordinate, `toPicture` goes the other way. The model never needs to know the
-/// native resolution or the Retina scale factor.
+/// The model works in fractions of the monitor. `toEvent(fraction:)` converts to the CGEvent
+/// coordinate, `toFraction` goes the other way. The picture size only matters for rendering.
 struct MonitorMapping {
     /// Long side cap keeps token cost predictable. Providers reject images larger than 1568px
     /// on the long side, so staying at 1440 avoids a silent resize that would break pixel math.
@@ -42,31 +41,34 @@ struct MonitorMapping {
         )
     }
 
-    /// Picture pixel → CGEvent point (top-left origin across all displays).
-    func toEvent(_ picturePt: CGPoint) -> CGPoint {
-        let nx = (picturePt.x / scale).rounded()
-        let ny = (picturePt.y / scale).rounded()
-        // Native pixels are top-left relative to this display's capture origin.
-        // CGDisplayBounds gives the display rect in CGEvent space (top-left of main display).
-        let fx = nx / max(nativeSize.width, 1)
-        let fy = ny / max(nativeSize.height, 1)
-        return CGPoint(
-            x: displayBounds.minX + fx * displayBounds.width,
-            y: displayBounds.minY + fy * displayBounds.height
+    /// Fraction of the monitor (0...1 on each axis, top-left origin) → CGEvent point.
+    /// Out-of-range and NaN input is clamped, so a bad number lands on the display edge.
+    func toEvent(fraction f: CGPoint) -> CGPoint {
+        CGPoint(
+            x: displayBounds.minX + MonitorMapping.unit(f.x) * displayBounds.width,
+            y: displayBounds.minY + MonitorMapping.unit(f.y) * displayBounds.height
         )
     }
 
-    /// CGEvent point → picture pixel (clamped to the picture).
-    func toPicture(_ eventPt: CGPoint) -> CGPoint {
-        let fx = (eventPt.x - displayBounds.minX) / max(displayBounds.width, 1)
-        let fy = (eventPt.y - displayBounds.minY) / max(displayBounds.height, 1)
-        let px = (fx * nativeSize.width  * scale).rounded()
-        let py = (fy * nativeSize.height * scale).rounded()
-        return CGPoint(
-            x: min(max(px, 0), pictureSize.width  - 1),
-            y: min(max(py, 0), pictureSize.height - 1)
+    /// CGEvent point → fraction of the monitor, clamped to 0...1.
+    func toFraction(_ eventPt: CGPoint) -> CGPoint {
+        CGPoint(
+            x: MonitorMapping.unit((eventPt.x - displayBounds.minX) / max(displayBounds.width, 1)),
+            y: MonitorMapping.unit((eventPt.y - displayBounds.minY) / max(displayBounds.height, 1))
         )
     }
+
+    /// A fractional delta → CGEvent point offset (no clamping; the caller keeps the result on screen).
+    func eventDelta(fraction d: CGPoint) -> CGPoint {
+        CGPoint(x: d.x * displayBounds.width, y: d.y * displayBounds.height)
+    }
+
+    /// Fractions are model input and may be NaN or out of range.
+    static func unit(_ v: CGFloat) -> CGFloat { v.isNaN ? 0.5 : min(max(v, 0), 1) }
+
+    /// Formats a fraction with the fixed precision the model reads and writes. Four decimals is
+    /// 0.34 device pixels on a 3420-wide display — finer than the model can aim or read.
+    static func format(_ v: CGFloat) -> String { String(format: "%.4f", Double(v)) }
 }
 
 extension ToolExecutionService {
@@ -168,15 +170,15 @@ extension ToolExecutionService {
                                                properties: [.compressionFactor: 0.7]) else {
             return "❌ computer_screenshot: Failed to render monitor \(monitorIndex)."
         }
-        let cursorPic = mapping.toPicture(cursorEventPt)
-        let pw = bitmap.pixelsWide
-        let ph = bitmap.pixelsHigh
+        let cursor = mapping.toFraction(cursorEventPt)
         let text = "Monitor \(monitorIndex) of \(monitorCount) (indexes 0...\(monitorCount - 1)). "
-            + "Picture: \(pw)×\(ph) px. "
-            + "Cursor at (\(Int(cursorPic.x.rounded())), \(Int(cursorPic.y.rounded()))) in picture pixels. "
-            + "All coordinates use picture pixels (0,0 = top-left). "
-            + "To move cursor: computer_move_to(x,y) for a new position, computer_move_by(dx,dy) to nudge. "
-            + "To click: computer_click (clicks current cursor position)."
+            + "Cursor tip at x=\(MonitorMapping.format(cursor.x)), y=\(MonitorMapping.format(cursor.y)). "
+            + "ALL coordinates are FRACTIONS of the monitor, 0...1, (0,0) = top-left, 1 = the far edge. "
+            + "Fractions hold at any image scale, so read a position as a share of the picture. "
+            + "Info only, not for aiming: picture sent \(bitmap.pixelsWide)×\(bitmap.pixelsHigh) px, "
+            + "screen \(full.width)×\(full.height) device px. "
+            + "To move: computer_move_to(x,y), or computer_move_by(dx,dy) with a small fractional delta. "
+            + "To click: computer_click (clicks the current cursor position)."
         return ToolImageResult(
             text: text,
             images: [.init(label: "Monitor \(monitorIndex) of \(monitorCount).",

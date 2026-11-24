@@ -2,7 +2,7 @@
 // ChappieCoreTests
 //
 // Tests for the clean overview: picture is rendered correctly, cursor coordinates
-// are reported in picture pixels, and screenshot arguments survive quoting.
+// are reported as fractions of the monitor, and screenshot arguments survive quoting.
 
 import Testing
 import Foundation
@@ -60,34 +60,50 @@ struct OverviewRenderTests {
 @Suite("MonitorMapping cursor conversion")
 struct CursorConversionTests {
 
-    @Test("Cursor at display top-left maps to picture (0,0)")
+    @Test("Cursor at the display top-left reports fraction (0,0)")
     func cursorTopLeft() {
         let m = MonitorMapping(
             displayBounds: CGRect(x: 0, y: 0, width: 1440, height: 900),
             nativeSize: CGSize(width: 2880, height: 1800))
-        let pic = m.toPicture(CGPoint(x: 0, y: 0))
-        #expect(pic.x == 0)
-        #expect(pic.y == 0)
+        let f = m.toFraction(CGPoint(x: 0, y: 0))
+        #expect(f.x == 0)
+        #expect(f.y == 0)
     }
 
-    @Test("Cursor at display centre maps to picture centre")
+    @Test("Cursor at the display centre reports fraction (0.5, 0.5)")
     func cursorCentre() {
         let m = MonitorMapping(
             displayBounds: CGRect(x: 0, y: 0, width: 1440, height: 900),
             nativeSize: CGSize(width: 2880, height: 1800))
-        let pic = m.toPicture(CGPoint(x: 720, y: 450))
-        #expect(abs(pic.x - 720) < 1)
-        #expect(abs(pic.y - 450) < 1)
+        let f = m.toFraction(CGPoint(x: 720, y: 450))
+        #expect(abs(f.x - 0.5) < 1e-9)
+        #expect(abs(f.y - 0.5) < 1e-9)
     }
 
-    @Test("Cursor outside the display is clamped to the picture boundary")
+    @Test("Cursor outside the display is clamped into 0...1")
     func cursorClamped() {
         let m = MonitorMapping(
             displayBounds: CGRect(x: 0, y: 0, width: 1440, height: 900),
             nativeSize: CGSize(width: 2880, height: 1800))
-        let pic = m.toPicture(CGPoint(x: 9999, y: 9999))
-        #expect(pic.x <= m.pictureSize.width)
-        #expect(pic.y <= m.pictureSize.height)
+        let f = m.toFraction(CGPoint(x: 9999, y: -9999))
+        #expect(f.x == 1)
+        #expect(f.y == 0)
+    }
+
+    @Test("The reported fraction does not depend on the capture size")
+    func cursorIgnoresCaptureSize() {
+        // A Retina and a non-Retina capture of the same display must report the same fraction,
+        // otherwise the coordinates the model reads would drift with the capture settings.
+        let retina = MonitorMapping(
+            displayBounds: CGRect(x: 0, y: 0, width: 1440, height: 900),
+            nativeSize: CGSize(width: 2880, height: 1800))
+        let plain = MonitorMapping(
+            displayBounds: CGRect(x: 0, y: 0, width: 1440, height: 900),
+            nativeSize: CGSize(width: 1440, height: 900))
+        let a = retina.toFraction(CGPoint(x: 360, y: 675))
+        let b = plain.toFraction(CGPoint(x: 360, y: 675))
+        #expect(abs(a.x - b.x) < 1e-9)
+        #expect(abs(a.y - b.y) < 1e-9)
     }
 
     @Test("Cursor on a second monitor (offset origin) converts correctly")
@@ -95,10 +111,10 @@ struct CursorConversionTests {
         let m = MonitorMapping(
             displayBounds: CGRect(x: 1440, y: 0, width: 1280, height: 800),
             nativeSize: CGSize(width: 1280, height: 800))
-        // A cursor at the top-left of the second display should land at picture (0,0).
-        let pic = m.toPicture(CGPoint(x: 1440, y: 0))
-        #expect(pic.x == 0)
-        #expect(pic.y == 0)
+        // A cursor at the top-left of the second display should report fraction (0,0).
+        let f = m.toFraction(CGPoint(x: 1440, y: 0))
+        #expect(f.x == 0)
+        #expect(f.y == 0)
     }
 }
 

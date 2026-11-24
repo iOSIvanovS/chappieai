@@ -5,12 +5,14 @@
 // Entry point and execution for the computer tools. Routing, mouse/keyboard helpers, and the
 // new cursor-first flow all live here. The model moves the cursor with computer_move_to or
 // computer_move_by, sees the result in a screenshot with the real cursor baked in by SCKit,
-// and calls computer_click to click wherever the cursor now sits — no AimStore, no fractions.
+// and calls computer_click to click wherever the cursor now sits — no AimStore, one unit only.
 //
 // COORDINATE SPACE:
-// The model works entirely in picture pixels (the compressed image it sees). MonitorMapping
+// The model works entirely in fractions of the monitor (0...1 on each axis). MonitorMapping
 // in ComputerUseScreenshot.swift converts to CGEvent space (top-left of the main display)
-// before any event is posted. The model never does that conversion.
+// before any event is posted. Fractions were chosen over picture pixels because the picture may
+// be rescaled on its way to the model (ours, then the provider's); a share of the monitor survives
+// any rescaling of a whole-monitor frame, so nothing the model reads or writes can drift.
 
 import Foundation
 import CoreGraphics
@@ -50,7 +52,7 @@ extension ToolExecutionService {
         let raw = String(data: argsData, encoding: .utf8) ?? "<non-utf8>"
         guard let args = try? JSONDecoder().decode(Args.self, from: argsData),
               let x = args.x?.value, let y = args.y?.value else {
-            return "❌ computer_move_to: 'x' and 'y' are required (picture pixels). Raw args: \(raw)"
+            return "❌ computer_move_to: 'x' and 'y' are required, as fractions 0...1 of the monitor. Raw args: \(raw)"
         }
         let monitor = args.monitor?.value ?? 0
         let delay   = args.delay?.value ?? 0.3
@@ -58,7 +60,7 @@ extension ToolExecutionService {
         // Mapping comes from display geometry only — no live capture needed to warp the cursor.
         let moved: Bool = await MainActor.run {
             guard let mapping = Self.monitorMapping(monitor: monitor) else { return false }
-            let target = mapping.toEvent(CGPoint(x: x, y: y))
+            let target = mapping.toEvent(fraction: CGPoint(x: x, y: y))
             CGWarpMouseCursorPosition(target)
             CGAssociateMouseAndMouseCursorPosition(1)
             Self.postMouseMoved(to: target)
@@ -81,21 +83,20 @@ extension ToolExecutionService {
         let raw = String(data: argsData, encoding: .utf8) ?? "<non-utf8>"
         guard let args = try? JSONDecoder().decode(Args.self, from: argsData),
               (args.dx != nil || args.dy != nil) else {
-            return "❌ computer_move_by: at least one of 'dx' or 'dy' is required (picture pixels). Raw args: \(raw)"
+            return "❌ computer_move_by: at least one of 'dx' or 'dy' is required, as fractions of the monitor (0.01 = 1% of the width/height). Raw args: \(raw)"
         }
         let dx      = args.dx?.value ?? 0
         let dy      = args.dy?.value ?? 0
         let monitor = args.monitor?.value ?? 0
         let delay   = args.delay?.value ?? 0.3
 
-        // dx/dy are picture pixels: scale them to event points by displayWidth / pictureWidth,
-        // then add to the live cursor position (already in CGEvent space, any monitor).
+        // A delta is relative to the live cursor: convert it to the monitor's fraction grid, add it
+        // there, clamp to the display, then convert once to CGEvent space.
         let eventPt: CGPoint? = await MainActor.run {
             guard let mapping = Self.monitorMapping(monitor: monitor) else { return nil }
-            let sx = mapping.displayBounds.width  / max(mapping.pictureSize.width,  1)
-            let sy = mapping.displayBounds.height / max(mapping.pictureSize.height, 1)
-            let current = Self.currentCursorPosition()
-            return CGPoint(x: current.x + dx * sx, y: current.y + dy * sy)
+            let here = mapping.toFraction(Self.currentCursorPosition())
+            let target = CGPoint(x: here.x + dx, y: here.y + dy)
+            return mapping.toEvent(fraction: target)
         }
         guard let eventPt else { return "❌ computer_move_by: Monitor \(monitor) not found." }
         CGWarpMouseCursorPosition(eventPt)
