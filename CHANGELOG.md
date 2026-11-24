@@ -12,6 +12,47 @@ were bumped in the project file but never published; they are not listed here.
 
 ---
 
+## [1.1.0] — 2026-11-24
+
+### Computer use
+
+The agent can now work with the screen the way a person does. It is optional,
+switched on per thread in the thread settings, and off by default. macOS asks
+for the Accessibility and Screen Recording permissions the first time.
+
+- `computer_screenshot` shows a whole monitor together with the real cursor.
+- `computer_move_to` and `computer_move_by` move the cursor, `computer_click`
+  clicks where it is. Positions are fractions of the monitor, so they do not
+  depend on the screen size, the Retina factor or how a provider rescales an image.
+- `computer_zoom` shows a small area at native resolution to aim at tiny targets.
+- `computer_scroll` and `computer_type` scroll and enter text; the clipboard is
+  saved and restored around a paste.
+- `computer_elements` lists the controls of the app under the cursor through the
+  macOS accessibility tree: name, role, position, available actions, and whether
+  a folder is expanded or collapsed. Only what is really on screen is listed.
+- `computer_target_ax_action` acts on a control by its name (`twist:ViewModels`)
+  instead of by coordinates, and reports whether its state actually changed.
+  A menu is no longer reported as a failure, and a click that changes nothing
+  visible is no longer answered with "click again".
+- A screen frame is attached to the end of the request and kept out of the
+  cached prefix; frames of earlier steps are dropped from the history.
+
+### Prompt caching
+
+- Claude models reached through an OpenAI-compatible gateway now get explicit
+  cache breakpoints on the system prompt and on the last message before the
+  screen frame. Measured on one gateway: the cached part grows with the
+  conversation and a step writes a few hundred tokens instead of several
+  thousand. An optional `session_id` is available as a switch and changed nothing
+  in the same test.
+
+### Tools
+
+- `run_terminal` and `run_ssh` are listed first among the tools so they survive
+  providers that truncate long tool lists.
+
+---
+
 ## [1.0.30] — 2026-11-17
 
 ### Prompt caching for Anthropic-protocol routes

@@ -59,7 +59,8 @@ A whole landing page — markup, styles, animation and ten languages — from on
 - **Any language, any stack.** Swift, Kotlin, Python, Go, Rust, TypeScript, C++, PHP, Ruby — the agent picks up whichever project you attach, with the build and test commands for that stack.
 - **Three-level memory.** Global, thread and project memory that survives between sessions — and you can browse and prune all three from settings.
 - **Curl-Chappie.** HTTP client for debugging backends: per-thread host allow-list with access levels, secrets kept in Keychain and never shown to the model, shared login sessions, repeatable scenarios.
-- **Smart prompt caching.** On Anthropic-protocol models the prompt cache is kept warm across turns and across relaunches, which cuts the cost of long sessions.
+- **Computer use.** Optional, per thread, off by default. The agent sees your screen, moves the real cursor, clicks, types and scrolls, and can press a button or open a folder by its name through the macOS accessibility tree instead of guessing coordinates.
+- **Smart prompt caching.** On Anthropic-protocol models the prompt cache is kept warm across turns and across relaunches, and Claude models reached through an OpenAI-compatible gateway get explicit cache breakpoints, which cuts the cost of long sessions.
 - **JSON tools.** Inspect, search and edit a JSON file of any size without loading it into the context, leaving every other byte untouched.
 - **Documents and PDF.** Reads Word, Excel, PowerPoint and PDF, including embedded images and scanned pages.
 - **Safety gates.** Access levels for terminal and git, command checks, loop guard, timeouts.
