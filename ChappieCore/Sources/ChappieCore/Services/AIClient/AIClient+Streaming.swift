@@ -13,17 +13,19 @@ extension AIClient {
 
         try Task.checkCancellation()
 
-        let messages = buildMessages(systemPrompt: systemPrompt, chatHistory: chatHistory)
+        let cacheSettings = OpenAICacheSettings.current
+        let messages = buildMessages(systemPrompt: systemPrompt, chatHistory: chatHistory, cacheSettings: cacheSettings)
+        if supportsCaching { print("[AIClient] Cache: \(cacheSettings.summary)") }
         let body = AITunnelRequest(
             model: modelName,
             messages: messages,
             tools: tools.isEmpty ? nil : tools,
             stream: true,
-            // AITunnel (Anthropic): top-level cache_control caches everything automatically —
-            // system prompt, full chat history, and all tool results in one shot.
-            // Anthropic slides the breakpoint forward as the dialogue grows.
-            // Other providers: supportsCaching=false → cacheControl=nil, no effect.
-            cacheControl: supportsCaching ? .oneHour : nil
+            // topLevel: one cache_control, the gateway picks the last cacheable block.
+            // explicit: breakpoints sit on blocks inside the messages, so no top-level one.
+            // supportsCaching=false → nothing is sent, no effect on other providers.
+            cacheControl: supportsCaching && cacheSettings.placement == .topLevel ? .oneHour : nil,
+            sessionID: supportsCaching && cacheSettings.sendSessionID ? OpenAICacheSettings.processSessionID : nil
         )
 
         let request = try buildURLRequest(body: body)

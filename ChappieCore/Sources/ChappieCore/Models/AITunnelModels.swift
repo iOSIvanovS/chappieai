@@ -19,19 +19,23 @@ public struct AITunnelRequest: Encodable, Sendable {
     public let tools: [AITool]?
     public let stream: Bool
     public let cache_control: AICacheControl?
+    /// Pins consecutive requests to one upstream provider, so its prompt cache can be read back.
+    public let session_id: String?
 
     public init(
         model: String,
         messages: [AIMessage],
         tools: [AITool]? = nil,
         stream: Bool = false,
-        cacheControl: AICacheControl? = nil
+        cacheControl: AICacheControl? = nil,
+        sessionID: String? = nil
     ) {
         self.model = model
         self.messages = messages
         self.tools = tools
         self.stream = stream
         self.cache_control = cacheControl
+        self.session_id = sessionID
     }
 }
 

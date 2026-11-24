@@ -22,19 +22,30 @@ extension AIClient {
 
     /// Builds the final message array for the provider.
     ///
-    /// AITunnel: system prompt sent as plain string — top-level cache_control on the request
-    /// covers everything automatically (system + history + tool results).
+    /// Caching routes: placement comes from OpenAICacheSettings (default `explicit`: breakpoints on the
+    /// system prompt and on the last message before the screen frame). The parameter default below is
+    /// the plain layout, used by the connection check where caching is irrelevant.
     /// Strict providers (supportsCaching=false): all messages normalized to plain strings.
-    func buildMessages(systemPrompt: String, chatHistory: [AIMessage]) -> [AIMessage] {
-        // Plain system message for all providers — AITunnel uses top-level cache_control instead.
-        let systemMessage = AIMessage(role: "system", content: systemPrompt)
+    func buildMessages(
+        systemPrompt: String,
+        chatHistory: [AIMessage],
+        cacheSettings: OpenAICacheSettings = OpenAICacheSettings(placement: .topLevel, sendSessionID: false)
+    ) -> [AIMessage] {
+        let explicit = supportsCaching && cacheSettings.placement == .explicit
+
+        // topLevel: plain system message, the request-level cache_control covers everything.
+        // explicit: the system prompt carries its own breakpoint, the stable head of every request.
+        let systemMessage = explicit
+            ? AIMessage(role: "system", contentBlocks: [AIContentBlock(text: systemPrompt, cacheControl: .oneHour)])
+            : AIMessage(role: "system", content: systemPrompt)
 
         var messages: [AIMessage] = [systemMessage]
 
-        // The live screen frame travels under its own role so the Anthropic route can keep it past
-        // the cache breakpoint. Here it is simply the last user turn: this route caches by prefix
-        // automatically, so a picture at the tail costs only itself either way.
-        let history = chatHistory.map(asUserTurnIfScreenFrame)
+        // The live screen frame travels under its own role. It is the last user turn here, and in
+        // explicit mode the breakpoint is placed BEFORE it, so the picture that vanishes on the
+        // next step is never part of a written cache entry.
+        let marked = explicit ? OpenAICacheBreakpoints.marking(chatHistory) : chatHistory
+        let history = marked.map(asUserTurnIfScreenFrame)
 
         if supportsCaching {
             messages.append(contentsOf: history)
@@ -112,6 +123,7 @@ extension AIClient {
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
         applyAuth(to: &request)
+        if let session = body.session_id { request.addValue(session, forHTTPHeaderField: "x-session-id") }
         request.timeoutInterval = AppConfig.shared.requestTimeoutSeconds
         do {
             // Sorted keys for the same reason as in AnthropicClient.buildRequest: JSONEncoder's
