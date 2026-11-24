@@ -36,7 +36,7 @@ ChappieMCPCore/                        # Local Swift package: ALL helper logic (
     ├── Server/
     │   ├── MCPHTTPServer.swift        # Unix Domain Socket server + ToolDispatcher; socket I/O on a private GCD queue
     │   ├── MCPModels.swift            # Wire models (MCPRequest / MCPResponse)
-    │   ├── ToolDispatcher.swift       # Tool name -> implementation, project root restriction
+    │   ├── ToolDispatcher.swift       # Tool name -> implementation, project root restriction. computer_* is NOT routed here: the app handles all nine names locally (ToolExecutionService) before any call reaches the socket
     │   ├── ClientWatcher.swift        # poll()s the client socket while a tool runs; hang-up cancels the tool's Task
     │   └── SocketIO.swift             # poll()-based read/write with one overall deadline per transfer
     └── Tools/
