@@ -42,6 +42,37 @@ enum AXRead {
         return text
     }
 
+    /// A scalar attribute as text. AXValue is a CFNumber on a disclosure triangle and a CFString
+    /// almost everywhere else, so reading it as text alone silently loses the chevron's state.
+    static func scalar(_ element: AXUIElement, _ name: String) -> String? {
+        var raw: AnyObject?
+        guard AXUIElementCopyAttributeValue(element, name as CFString, &raw) == .success,
+              let raw else { return nil }
+        if let text = raw as? String { return text.isEmpty ? nil : text }
+        if let number = raw as? NSNumber { return number.stringValue }
+        return nil
+    }
+
+    /// "expanded" / "collapsed" for a chevron, or nil when the element does not say.
+    /// The value comes first because it is the attribute Xcode's outline actually exposes: the live
+    /// log read `value=0 → value=1` off it. AXExpanded is only the fallback for apps that have no
+    /// numeric value, so a spurious flag on those cannot flip a state the value already gave.
+    static func expansion(_ element: AXUIElement) -> String? {
+        expansionNote(expanded: nil, value: scalar(element, kAXValueAttribute))
+            ?? expansionNote(expanded: bool(element, "AXExpanded"), value: nil)
+    }
+
+    /// The rule behind `expansion(_:)`, pure so it can be tested without a live element.
+    static func expansionNote(expanded flag: Bool?, value: String?) -> String? {
+        switch value {
+        case "1", "true": return "expanded"
+        case "0", "false": return "collapsed"
+        default: break
+        }
+        guard let flag else { return nil }
+        return flag ? "expanded" : "collapsed"
+    }
+
     static func bool(_ element: AXUIElement, _ name: String) -> Bool? {
         var value: AnyObject?
         guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success,

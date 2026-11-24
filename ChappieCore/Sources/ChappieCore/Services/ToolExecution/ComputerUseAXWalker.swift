@@ -252,9 +252,8 @@ private final class AXCollector {
                     if kind.isEmpty { kind = AXRead.string(element, kAXTitleAttribute) ?? "" }
                 case "AXDisclosureTriangle":
                     if twist == nil, let box = AXRead.frame(element) {
-                        let state = AXRead.string(element, kAXValueAttribute) ?? ""
                         twist = (element, AXElementInfo.aimPoint(in: box, role: "twist"),
-                                 box.size, state == "1" ? "expanded" : "collapsed")
+                                 box.size, AXRead.expansion(element) ?? "")
                     }
                 default: break
                 }
@@ -313,7 +312,7 @@ private final class AXCollector {
         }
         var note = ""
         if isTwist {
-            note = (AXRead.string(element, kAXValueAttribute) ?? "") == "1" ? "expanded" : "collapsed"
+            note = AXRead.expansion(element) ?? ""
         }
         var info = AXElementInfo(role: short, name: name, center: fraction,
                                  sizePoints: box.size, note: note)

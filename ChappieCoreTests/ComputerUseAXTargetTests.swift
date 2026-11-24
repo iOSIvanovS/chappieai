@@ -267,3 +267,32 @@ struct AXDirectoryLineTests {
         #expect(AXElementInfo.line(for: info(actions: []), index: 0).contains("no-actions"))
     }
 }
+
+@Suite("AX expansion state")
+struct AXExpansionTests {
+
+    @Test("A chevron's numeric value is what the directory reports")
+    func numeric() {
+        // Xcode's outline exposes AXValue as a CFNumber, not a string: read as text alone it gave
+        // nil, so every folder printed as collapsed — including the open one listing its children.
+        #expect(AXRead.expansionNote(expanded: nil, value: "1") == "expanded")
+        #expect(AXRead.expansionNote(expanded: nil, value: "0") == "collapsed")
+    }
+
+    @Test("The flag is the fallback for apps whose chevron has no numeric value")
+    func flag() {
+        #expect(AXRead.expansionNote(expanded: true, value: nil) == "expanded")
+        #expect(AXRead.expansionNote(expanded: false, value: nil) == "collapsed")
+    }
+
+    @Test("A readable value wins, so a stale flag cannot contradict what was measured")
+    func valueWins() {
+        #expect(AXRead.expansionNote(expanded: false, value: "1") == "expanded")
+    }
+
+    @Test("No readable state is silence, never a guessed 'collapsed'")
+    func unknown() {
+        #expect(AXRead.expansionNote(expanded: nil, value: nil) == nil)
+        #expect(AXRead.expansionNote(expanded: nil, value: "Bogus") == nil)
+    }
+}
