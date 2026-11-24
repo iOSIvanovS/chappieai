@@ -10,6 +10,7 @@ extension AIOrchestrator {
         systemPrompt: String,
         sessionHistory: [AIMessage],
         tools: [AITool],
+        screenFrame: [AIMultimodalPart]? = nil,
         config: AppConfig,
         onToken: (@Sendable (String) -> Void)?,
         onRetry: (@Sendable (RetryStatus?) -> Void)? = nil
@@ -24,9 +25,17 @@ extension AIOrchestrator {
         runner.shouldAbort = { [weak self] in await self?.isInvalidated ?? true }
 
         return try await runner.run(history: sessionHistory, onRetry: onRetry) { history in
-            try await client.streamRequestWithTools(
+            // The live screen goes LAST, after the whole history and therefore after the cache
+            // breakpoint. It changes on every computer-use step; inside the prefix it would force
+            // a rewrite of everything from that point on, every single step. See ScreenFrame.
+            // The history itself is never edited — an append-only prefix is what a cache is.
+            var requestHistory = ImageValve.apply(history)
+            if let screenFrame {
+                requestHistory.append(ScreenFrame.message(parts: screenFrame))
+            }
+            return try await client.streamRequestWithTools(
                 systemPrompt: systemPrompt,
-                chatHistory: ImageValve.apply(history),
+                chatHistory: requestHistory,
                 tools: tools,
                 stallTimeout: stallTimeout,
                 onToken: onToken

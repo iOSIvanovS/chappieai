@@ -182,6 +182,12 @@ public actor AIOrchestrator {
         var loopGuard = LoopGuard()
         var collectedOutputFiles: [String] = []
 
+        /// The live screen of this turn, carried BESIDE the history and never inside it.
+        /// Set by computer_* tools, appended past the cache breakpoint by the clients. Dropped
+        /// when the turn ends: a screen from a finished turn is stale, and the next turn asks
+        /// for a fresh one instead of paying for a picture nobody looks at.
+        var latestScreenFrame: [AIMultimodalPart]? = nil
+
         // No step cap by design: the loop ends on a final answer, Stop/cancel, or a fatal error.
         // Runaway protection is the repeated-call guard + the Stop button, not a magic number.
         while true {
@@ -216,6 +222,7 @@ public actor AIOrchestrator {
                 systemPrompt: systemPrompt,
                 sessionHistory: sessionHistory,
                 tools: tools,
+                screenFrame: latestScreenFrame,
                 config: config,
                 onToken: onToken,
                 onRetry: onRetry
@@ -242,6 +249,7 @@ public actor AIOrchestrator {
                 try await executeToolCalls(
                     toolCalls,
                     sessionHistory: &sessionHistory,
+                    latestScreenFrame: &latestScreenFrame,
                     loopGuard: &loopGuard,
                     collectedOutputFiles: &collectedOutputFiles,
                     onToolCall: onToolCall,

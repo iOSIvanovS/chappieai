@@ -110,6 +110,10 @@ extension ToolExecutionService {
         }
         let filter = SCContentFilter(display: scDisplay, excludingWindows: [])
         let config = SCStreamConfiguration()
+        // Without explicit size SCKit may capture at a default size and distort the aspect ratio.
+        let pixelScale = CGFloat(filter.pointPixelScale)
+        config.width = Int((CGFloat(scDisplay.width) * pixelScale).rounded())
+        config.height = Int((CGFloat(scDisplay.height) * pixelScale).rounded())
         config.capturesShadowsOnly = false
         config.showsCursor = true             // real cursor baked in by the system
         config.colorSpaceName = CGColorSpace.sRGB as CFString

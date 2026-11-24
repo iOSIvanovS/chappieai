@@ -100,9 +100,13 @@ struct AnthropicContentBlock: Encodable {
     var source: AnthropicImageSource? = nil
     /// A tool result carried inside the block array — used when merging same-role messages.
     var toolResult: AnthropicToolResultContent? = nil
-    /// Marks the end of a cached prefix. Only the last block of the last message carries it —
-    /// see applyingCacheBreakpoints.
+    /// Marks the end of a cached prefix. Only the last block of the last message that belongs to
+    /// the prefix carries it — see applyingCacheBreakpoints.
     var cacheControl: AICacheControl? = nil
+    /// Not sent: marks the blocks of the live screen frame (ScreenFrame.role). They are the only
+    /// thing that changes between two computer-use steps, so the breakpoint is placed on the last
+    /// block BEFORE them and they stay outside the cached prefix.
+    var isScreenFrame: Bool = false
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)

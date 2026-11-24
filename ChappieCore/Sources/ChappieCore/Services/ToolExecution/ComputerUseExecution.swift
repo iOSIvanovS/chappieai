@@ -58,8 +58,10 @@ extension ToolExecutionService {
         // Mapping comes from display geometry only — no live capture needed to warp the cursor.
         let moved: Bool = await MainActor.run {
             guard let mapping = Self.monitorMapping(monitor: monitor) else { return false }
-            CGWarpMouseCursorPosition(mapping.toEvent(CGPoint(x: x, y: y)))
+            let target = mapping.toEvent(CGPoint(x: x, y: y))
+            CGWarpMouseCursorPosition(target)
             CGAssociateMouseAndMouseCursorPosition(1)
+            Self.postMouseMoved(to: target)
             return true
         }
         guard moved else { return "❌ computer_move_to: Monitor \(monitor) not found." }
@@ -98,6 +100,7 @@ extension ToolExecutionService {
         guard let eventPt else { return "❌ computer_move_by: Monitor \(monitor) not found." }
         CGWarpMouseCursorPosition(eventPt)
         CGAssociateMouseAndMouseCursorPosition(1)
+        Self.postMouseMoved(to: eventPt)
         if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
         return await Self.overviewScreenshot(monitor: monitor)
     }
@@ -125,6 +128,7 @@ extension ToolExecutionService {
         await MainActor.run { Self.activateApp(at: pt) }
         CGWarpMouseCursorPosition(pt)
         CGAssociateMouseAndMouseCursorPosition(1)
+        Self.postMouseMoved(to: pt)
         try? await Task.sleep(for: .milliseconds(120))
 
         let (dn, up) = Self.cgButtonTypes(for: button)
@@ -145,13 +149,12 @@ extension ToolExecutionService {
     @MainActor
     static func monitorMapping(monitor: Int) -> MonitorMapping? {
         guard let screen = screen(at: monitor) else { return nil }
-        let dispID = displayID(of: screen)
+        let bounds = CGDisplayBounds(displayID(of: screen))
+        // Must match the captured image size: points times backing scale (device pixels).
+        let backing = screen.backingScaleFactor
         return MonitorMapping(
-            displayBounds: CGDisplayBounds(dispID),
-            nativeSize: CGSize(
-                width: CGFloat(CGDisplayPixelsWide(dispID)),
-                height: CGFloat(CGDisplayPixelsHigh(dispID))
-            )
+            displayBounds: bounds,
+            nativeSize: CGSize(width: bounds.width * backing, height: bounds.height * backing)
         )
     }
 
@@ -199,6 +202,17 @@ extension ToolExecutionService {
                               mouseType: type,
                               mouseCursorPosition: point,
                               mouseButton: button) else { return }
+        e.flags = []
+        e.post(tap: .cghidEventTap)
+    }
+
+    /// Warping the cursor emits no mouseMoved event, so apps (browsers especially) never learn
+    /// the pointer moved; post one explicitly.
+    static func postMouseMoved(to point: CGPoint) {
+        guard let e = CGEvent(mouseEventSource: nil,
+                              mouseType: .mouseMoved,
+                              mouseCursorPosition: point,
+                              mouseButton: .left) else { return }
         e.flags = []
         e.post(tap: .cghidEventTap)
     }

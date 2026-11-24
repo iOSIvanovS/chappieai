@@ -7,6 +7,7 @@ extension AIOrchestrator {
     func executeToolCalls(
         _ toolCalls: [AIToolCall],
         sessionHistory: inout [AIMessage],
+        latestScreenFrame: inout [AIMultimodalPart]?,
         loopGuard: inout LoopGuard,
         collectedOutputFiles: inout [String],
         onToolCall: @Sendable (String, String) -> Void,
@@ -91,15 +92,17 @@ extension AIOrchestrator {
                     tool_call_id: toolCall.id,
                     name: toolName
                 ))
-                var parts: [AIMultimodalPart] = [.text(Self.imageIntro(toolName: toolName))]
-                parts.append(contentsOf: withImages.multimodalParts)
-                // Computer-use tools produce a live screenshot on every call. Only the latest
-                // frame matters: drop all previous computer-use screenshot messages so they don't
-                // bloat the payload and blow the cache on long sessions.
                 if toolName.hasPrefix("computer_") {
-                    removeComputerUseScreenshots(from: &sessionHistory)
+                    // The live screen. It is NOT written into the history: the picture changes on
+                    // every call, and a mutating block inside the history would rewrite the whole
+                    // cached prefix each step. The orchestrator carries it beside the history and
+                    // appends it past the cache breakpoint — see ScreenFrame.
+                    latestScreenFrame = withImages.multimodalParts
+                } else {
+                    var parts: [AIMultimodalPart] = [.text(Self.imageIntro(toolName: toolName))]
+                    parts.append(contentsOf: withImages.multimodalParts)
+                    sessionHistory.append(AIMessage(role: "user", multimodalParts: parts))
                 }
-                sessionHistory.append(AIMessage(role: "user", multimodalParts: parts))
                 continue
             }
 
@@ -114,35 +117,10 @@ extension AIOrchestrator {
 
     // MARK: - Helpers
 
-    /// Intro text of a live computer-use frame. It is also the marker that tells such a frame
-    /// apart from a document picture or a `view_image` result when old frames are dropped.
-    static let computerUseFrameIntro = "The screen as it is now, with the real cursor visible:"
-
-    /// Placeholder left where an outdated computer-use frame was removed, so the history still
-    /// reads coherently ("a screenshot was here") without carrying the pixels.
-    static let computerUseFrameStale = "[earlier screen frame removed: only the latest one is kept]"
-
-    /// A document's pictures and a numbered screenshot are introduced differently: the first are
-    /// parts of one file, the second is the very screen the list above describes.
+    /// Pictures of a document sit in the history next to the text that returned them. (The live
+    /// screen is not history — ScreenFrame explains why.)
     static func imageIntro(toolName: String) -> String {
-        if toolName.hasPrefix("computer_") {
-            return computerUseFrameIntro
-        }
-        return "Images contained in the document returned by `\(toolName)` (numbered as in its [image N] markers):"
-    }
-
-    /// Replaces every earlier computer-use frame in `history` with a one-line text note.
-    /// The message itself stays (a user turn must not vanish and break role alternation); only
-    /// the heavy image parts go. Runs before the new frame is appended, so exactly one frame
-    /// ever remains in the history.
-    func removeComputerUseScreenshots(from history: inout [AIMessage]) {
-        for index in history.indices {
-            guard history[index].role == "user",
-                  case .multimodal(let parts) = history[index].content,
-                  case .text(let intro)? = parts.first,
-                  intro == Self.computerUseFrameIntro else { continue }
-            history[index].content = .multimodal([.text(Self.computerUseFrameStale)])
-        }
+        "Images contained in the document returned by `\(toolName)` (numbered as in its [image N] markers):"
     }
 
     /// Parses the structured JSON response from send_attachment / write_document.

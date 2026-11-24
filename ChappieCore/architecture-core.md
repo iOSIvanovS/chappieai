@@ -107,6 +107,7 @@ ChappieCore/
         │   ├── ImageDownscaler.swift   # THE one place an image becomes a request part: long side ≤ 2000 px, JPEG, EXIF + alpha handled, on-disk cache of the downscaled copy
         │   ├── ImageValve.swift        # Emergency valve: past 40 images per request the OLDEST become a text note (normally inactive)
         │   ├── ToolImageResult.swift   # Marker form of "document text + its pictures" (read_document / fetch_attachment of Office files)
+        │   ├── ScreenFrame.swift       # The live screen of a computer-use turn: carried BESIDE the history, appended as the last message so a cache breakpoint never covers it
         │   └── OfficeMediaIntake.swift # App side of the helper's extracted pictures: validate folder + files, downscale, delete the folder
         ├── CommandSafety/
         │   ├── CommandSafety.swift     # Safety NET against catastrophic command mistakes (rm -r on /, ~, system dirs; mkfs; dd/redirect to disks; shutdown/reboot by name; download | shell; fork bomb)
@@ -522,6 +523,15 @@ verified live on RouterAI: top-level there writes the cache and **never reads it
 while block breakpoints give `read` 16898 -> 17018 with `created` <= 18 (cost 1.84 -> 0.16 RUB per turn). The
 `anthropic-beta: extended-cache-ttl-2025-04-11` header is sent only when caching is on, and only then does
 `ttl: "1h"` take effect (without it the write silently becomes 0).
+
+**RULE: a cache is a prefix, so the history is append-only.** Anything mutable must sit *after* the last
+breakpoint. Violating this is silent and expensive: measured on RouterAI, replacing the computer-use screenshot
+in place inside the history gave `read: 8953 (15%)` and `created: 50727` on every step — the whole prefix after
+the change is written again. The live screen is therefore not history at all: `computer_*` tool results stay
+text-only, the picture is carried beside the history (`ScreenFrame`) and appended as the LAST message, marked
+`isScreenFrame`, so `applyingCacheBreakpoints` puts the breakpoint on the last *prefix* block before it. On the
+OpenAI route the same message is simply the last user turn, which automatic prefix caching already treats the
+same way. Never "clean up" past messages to save space — one edit costs more than the bytes it removes.
 
 **The window keeps an allowance, or the cache is worthless.** A cache read needs a prefix byte-identical
 to the previous request. Sending exactly `limit` messages evicts the oldest one on every turn, so the

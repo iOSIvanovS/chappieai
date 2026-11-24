@@ -110,6 +110,13 @@ public struct AIMessage: Sendable {
         }
     }
 
+    /// The multimodal parts, when this message carries images. Used by the clients to read the
+    /// live screen frame that ScreenFrame appends at the tail of a request.
+    public var multimodalParts: [AIMultimodalPart]? {
+        guard case .multimodal(let parts)? = content else { return nil }
+        return parts
+    }
+
     public init(
         role: String,
         content: String? = nil,

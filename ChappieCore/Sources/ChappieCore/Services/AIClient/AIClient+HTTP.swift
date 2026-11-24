@@ -31,14 +31,28 @@ extension AIClient {
 
         var messages: [AIMessage] = [systemMessage]
 
+        // The live screen frame travels under its own role so the Anthropic route can keep it past
+        // the cache breakpoint. Here it is simply the last user turn: this route caches by prefix
+        // automatically, so a picture at the tail costs only itself either way.
+        let history = chatHistory.map(asUserTurnIfScreenFrame)
+
         if supportsCaching {
-            messages.append(contentsOf: chatHistory)
+            messages.append(contentsOf: history)
         } else {
-            messages.append(contentsOf: chatHistory.compactMap { normalizeMessage($0) })
+            messages.append(contentsOf: history.compactMap { normalizeMessage($0) })
         }
 
         print("[AIClient] Request: 1 system + \(chatHistory.count) msgs → \(endpointURL.host ?? "") / \(modelName)")
         return messages
+    }
+
+    /// ScreenFrame.role is an internal marker, not a wire role: OpenAI-compatible APIs know
+    /// system/user/assistant/tool only and would reject anything else.
+    private func asUserTurnIfScreenFrame(_ message: AIMessage) -> AIMessage {
+        guard message.role == ScreenFrame.role else { return message }
+        var copy = message
+        copy.role = "user"
+        return copy
     }
 
     /// Normalizes a message for strict OpenAI-compatible providers (Groq, Ollama, etc.).
