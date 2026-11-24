@@ -77,7 +77,10 @@ extension ToolExecutionService {
         let aim = AXElementInfo.aimPoint(in: box, role: element.role)
 
         if Self.mouseActions.contains(word) {
-            return await clickElement(element, label: label, point: aim,
+            // A real click leaves the same kind of trace an AX action does, and only that one, so
+            // its state is captured here and compared after — the mouse path used to say nothing.
+            let beforeClick = AXRead.stateSummary(live)
+            return await clickElement(element, label: label, point: aim, before: beforeClick,
                                       double: word == "double", monitor: monitor,
                                       delay: delay, zoom: args.zoom?.value)
         }
@@ -111,12 +114,7 @@ extension ToolExecutionService {
             + "c=\(MonitorMapping.format(element.center.x)),"
             + "\(MonitorMapping.format(element.center.y)) "
             + "(frame \(String(format: "%.0fx%.0f", element.sizePoints.width, element.sizePoints.height))pt). "
-        if before == after {
-            text += "State unchanged (\(after)) — a press can still have taken effect elsewhere, so "
-                + "check the picture; if nothing moved, retry with action: mouse."
-        } else {
-            text += "State changed: \(before) → \(after)."
-        }
+        text += AXActionVerdict.note(kind: .ax(axAction), before: before, after: after)
         text += " The cursor did not move: this acted on the element itself."
         if let span = args.zoom?.value {
             return await Self.zoomScreenshot(monitor: monitor, span: span,
@@ -134,6 +132,7 @@ extension ToolExecutionService {
         _ element: AXElementInfo,
         label: String,
         point: CGPoint,
+        before: String,
         double: Bool,
         monitor: Int,
         delay: Double,
@@ -152,9 +151,12 @@ extension ToolExecutionService {
             if index < clicks - 1 { try? await Task.sleep(for: .milliseconds(100)) }
         }
         if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
-        let text = "Clicked \(label) at c=\(MonitorMapping.format(element.center.x)),"
+        let after = element.element.map { AXRead.stateSummary($0) } ?? "no readable state"
+        var text = "Clicked \(label) at c=\(MonitorMapping.format(element.center.x)),"
             + "\(MonitorMapping.format(element.center.y))"
-            + (double ? " (double click)." : ".") + " Real mouse event on the element's own point."
+            + (double ? " (double click)." : ".") + " Real mouse event on the element's own point. "
+        text += AXActionVerdict.note(kind: double ? .doubleClick : .mouse,
+                                     before: before, after: after)
         if let span = zoom {
             return await Self.zoomScreenshot(monitor: monitor, span: span,
                                              center: element.center, note: text)
